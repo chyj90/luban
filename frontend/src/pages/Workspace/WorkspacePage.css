@@ -1,0 +1,304 @@
+.workspace-page {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+  background-image:
+    radial-gradient(circle, rgba(0, 0, 0, 0.12) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  background: #fff;
+  border-bottom: 1px solid #eee;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.workspace-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-logo {
+  font-size: 20px;
+  font-weight: 700;
+  color: #6B8F71;
+}
+
+.workspace-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.workspace-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #555;
+  font-size: 13px;
+}
+
+.workspace-user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #6B8F71;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.workspace-logout {
+  font-size: 13px;
+  color: #999;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 4px 8px;
+}
+
+.workspace-logout:hover {
+  color: #e74c3c;
+  background: none;
+}
+
+.workspace-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.workspace-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.workspace-section-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #4a4a4a;
+  letter-spacing: 0.3px;
+}
+
+.workspace-create-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #6B8F71;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.workspace-create-btn:hover {
+  background: #5a7d60;
+}
+
+.workspace-create-form {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workspace-create-form input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+
+.workspace-create-form input:focus {
+  border-color: #6B8F71;
+  box-shadow: 0 0 0 3px rgba(107, 143, 113, 0.15);
+}
+
+.workspace-create-form .btn-confirm {
+  padding: 10px 20px;
+  background: #6B8F71;
+  color: #fff;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.workspace-create-form .btn-confirm:hover {
+  background: #5a7d60;
+}
+
+.workspace-create-form .btn-cancel {
+  padding: 10px 20px;
+  background: #f5f5f5;
+  color: #666;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.workspace-create-form .btn-cancel:hover {
+  background: #eee;
+}
+
+.app-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.app-card {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #eee;
+  overflow: hidden;
+  cursor: pointer;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.app-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.app-card-header {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  position: relative;
+}
+
+.app-card-icon {
+  width: 28px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #fff;
+}
+
+.app-card-delete {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.app-card:hover .app-card-delete {
+  opacity: 1;
+}
+
+.app-card-delete:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.2);
+}
+
+.app-card-body {
+  padding: 16px;
+}
+
+.app-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-card-meta {
+  font-size: 12px;
+  color: #999;
+}
+
+.workspace-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+}
+
+.workspace-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.workspace-empty-text {
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+
+.workspace-empty-hint {
+  font-size: 13px;
+  color: #bbb;
+}
+
+.workspace-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: #999;
+  font-size: 15px;
+}
+
+.workspace-loading-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #999;
+  font-size: 14px;
+  gap: 12px;
+}
+
+.workspace-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #6B8F71;
+  border-radius: 50%;
+  animation: workspace-spin 0.6s linear infinite;
+}
+
+@keyframes workspace-spin {
+  to { transform: rotate(360deg); }
+}

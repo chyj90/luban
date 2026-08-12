@@ -1,0 +1,11 @@
+export const BEHAVIOR_RULES = {
+  askBeforeUnclear: '需求不明确时必须主动提问，绝不猜测执行',
+  confirmBeforeDelete: '删除操作前必须明确告知用户并等待确认',
+  reportAfterAction: '每次操作后报告执行结果',
+  analyzeFailure: '操作失败时分析原因并提供替代方案',
+  useChinese: '回答使用中文',
+  checkBeforeCreate: '创建查询前必须调用 list_queries 检查是否已存在',
+  getBeforeModify: '修改现有页面时，必须先调用 get_code_page 获取完整代码，增量修改',
+  noProbeBeforePlan: '创建计划前禁止使用 create_query 探测数据',
+  updateOnlyChanged: '使用 update_code_page 时只传入需要修改的字段',
+} as const;
