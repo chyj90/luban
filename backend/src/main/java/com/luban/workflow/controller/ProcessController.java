@@ -1,6 +1,7 @@
 package com.luban.workflow.controller;
 
 import com.luban.entity.User;
+import com.luban.workflow.config.TestDataService;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.service.ProcessService;
 import lombok.RequiredArgsConstructor;
@@ -16,11 +17,13 @@ import java.util.Map;
 public class ProcessController {
 
     private final ProcessService processService;
+    private final TestDataService testDataService;
 
     @GetMapping
     public List<WorkflowDefinition> listDefinitions(
-            @RequestParam(required = false) Long applicationId) {
-        if (applicationId != null) return processService.listDefinitionsByApp(applicationId);
+            @RequestParam(required = false) Long applicationId,
+            @RequestParam(required = false) String status) {
+        if (applicationId != null) return processService.listDefinitionsByApp(applicationId, status);
         return List.of();
     }
 
@@ -69,5 +72,17 @@ public class ProcessController {
     @GetMapping("/{id}/versions")
     public List<WorkflowDefinition> getVersions(@PathVariable Long id) {
         return processService.getVersions(id);
+    }
+
+    @PostMapping("/test-data/init")
+    public Map<String, Object> initTestData(@RequestParam Long applicationId) {
+        testDataService.initApplicationRoles(applicationId);
+        return Map.of("success", true, "applicationId", applicationId);
+    }
+
+    @PostMapping("/test-data/reset")
+    public Map<String, Object> resetTestData(@RequestParam Long applicationId) {
+        testDataService.resetApplicationRoles(applicationId);
+        return Map.of("success", true, "applicationId", applicationId);
     }
 }

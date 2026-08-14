@@ -25,7 +25,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
 
   const sendUpdatePage = useCallback((cp: CodePageData) => {
     const iframe = iframeRef.current;
-    if (!iframe || !shellReadyRef.current) return;
+    if (!iframe || !shellReadyRef.current || !cp) return;
     iframe.contentWindow?.postMessage({
       type: 'UPDATE_PAGE',
       css: cp.css || '',
@@ -35,6 +35,9 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
       bridgeScript: buildBridgeContent(queryNames),
     }, '*');
   }, [queryNames, buildBridgeContent]);
+
+  const sendUpdatePageRef = useRef(sendUpdatePage);
+  sendUpdatePageRef.current = sendUpdatePage;
 
   // Build shell — rebuild when queryNames changes (e.g., queries loaded after backend restart)
   useEffect(() => {
@@ -74,7 +77,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
         shellReadyRef.current = true;
         if (wasNotReady) {
           const cp = codePageRef.current;
-          sendUpdatePage(cp);
+          sendUpdatePageRef.current(cp);
         }
       }
     };

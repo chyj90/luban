@@ -1,12 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { usePageStore } from '@/stores/pageStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useLoadingStore } from '@/stores/loadingStore';
 import { EditorSidebar } from '@/components/EditorSidebar';
 import { InteliPreview } from '@/components/InteliPreview';
 import { InteliEditor } from '@/components/InteliEditor';
 import { QueryEditor } from '@/components/QueryEditor';
 import { AgentPanel } from '@/components/AgentPanel';
+import { DevToolbar } from '@/components/DevToolbar';
 import ProcessList from '@/pages/workflow/ProcessList';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import MyWorkflow from '@/pages/workflow/MyWorkflow';
@@ -14,7 +16,7 @@ import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
 import Organization from '@/pages/workflow/Organization';
-import { listPages, getApplication, listQueries } from '@/api';
+import { listPages, listQueries } from '@/api';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
 import './AppEditorPage.css';
@@ -24,13 +26,13 @@ type EditingFile = 'html' | 'css' | 'js';
 type SidebarTab = 'pages' | 'queries' | 'workflow' | 'datasources';
 
 export type WorkflowView =
-  | { view: 'processes' }
-  | { view: 'designer'; processId?: number; formMode?: boolean; formId?: number }
-  | { view: 'my-workflow' }
-  | { view: 'forms' }
-  | { view: 'form-preview'; formId: number }
-  | { view: 'instance-detail'; instanceId: number }
-  | { view: 'organization' };
+  | { view: 'processes'; appId?: number }
+  | { view: 'designer'; processId?: number; formMode?: boolean; formId?: number; appId?: number }
+  | { view: 'my-workflow'; appId?: number }
+  | { view: 'forms'; appId?: number }
+  | { view: 'form-preview'; formId: number; appId?: number }
+  | { view: 'instance-detail'; instanceId: number; appId?: number }
+  | { view: 'organization'; appId?: number };
 
 const FILE_TABS: { key: EditingFile; label: string }[] = [
   { key: 'html', label: 'index.html' },
@@ -40,16 +42,14 @@ const FILE_TABS: { key: EditingFile; label: string }[] = [
 
 export function AppEditorPage() {
   const { appId } = useParams<{ appId: string }>();
-  const navigate = useNavigate();
   const { currentPage, loading, fetchPage } = usePageStore();
+  const setGlobalLoading = useLoadingStore((s) => s.setLoading);
   const user = useAuthStore((s) => s.user);
   const [pages, setPages] = useState<Page[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<number>(0);
-  const [appName, setAppName] = useState('');
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null);
-  const [workflowView, setWorkflowView] = useState<WorkflowView>({ view: 'processes' });
+  const [workflowView, setWorkflowView] = useState<WorkflowView>({ view: 'processes', appId: Number(appId) });
   const [editingFile, setEditingFile] = useState<EditingFile | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
@@ -75,12 +75,6 @@ export function AppEditorPage() {
 
   useEffect(() => {
     if (appId) {
-      getApplication(Number(appId)).then((res) => {
-        setAppName(res.data.name);
-        setWorkspaceId(res.data.workspaceId);
-      }).catch((err) => {
-        console.error('获取应用失败:', err.response?.status, err.response?.data);
-      });
       loadPages();
     }
   }, [appId, loadPages]);
@@ -115,11 +109,11 @@ export function AppEditorPage() {
   };
 
   const handleWorkflowNavigate = useCallback((view: WorkflowView) => {
-    setWorkflowView(view);
+    setWorkflowView({ ...view, appId: view.appId ?? Number(appId) });
     setEditingFile(null);
     setSelectedQuery(null);
     setSidebarTab('workflow');
-  }, []);
+  }, [appId]);
 
   const handleSidebarTabChange = useCallback((tab: SidebarTab) => {
     setSidebarTab(tab);
@@ -146,60 +140,22 @@ export function AppEditorPage() {
     return () => window.removeEventListener('keydown', handler);
   }, [previewFullscreen]);
 
-  if (loading || !workspaceId) {
-    return (
-      <div className="editor-loading">
-        <div className="editor-loading-spinner" />
-        <span>加载中...</span>
-      </div>
-    );
-  }
+  useEffect(() => {
+    setGlobalLoading(loading);
+  }, [loading, setGlobalLoading]);
 
-  if (!currentPage && sidebarTab !== 'workflow') {
-    return (
-      <div className="editor-loading">
-        <div className="editor-loading-spinner" />
-        <span>加载中...</span>
-      </div>
-    );
-  }
+  if (loading || !appId) return null;
+
+  if (!currentPage && sidebarTab !== 'workflow') return null;
 
   return (
     <div className="app-editor">
-      <header className="app-editor-header">
-        <div className="app-editor-header-left">
-          <button className="app-editor-back" onClick={() => navigate('/workspace')} title="返回工作区">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-          </button>
-          <div className="app-editor-logo">
-            <svg width="22" height="22" viewBox="0 0 24 24">
-              <path d="M12 2L2 7l10 5 10-5-10-5Z" stroke="#1677ff" fill="#e6f4ff" />
-              <path d="M2 17l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
-              <path d="M2 12l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
-            </svg>
-            <span className="app-editor-logo-text">鲁班</span>
-          </div>
-          <span className="app-editor-breadcrumb-sep">/</span>
-          <span className="app-editor-app-name">{appName}</span>
-        </div>
-        <div className="app-editor-spacer" />
-        {user && (
-          <div className="app-editor-user">
-            <span className="app-editor-user-name">{user.name}</span>
-            <div className="app-editor-user-avatar">
-              {user.name?.charAt(0)?.toUpperCase() || 'U'}
-            </div>
-          </div>
-        )}
-      </header>
+      <DevToolbar appId={Number(appId)} />
 
       <div className="app-editor-body">
         <EditorSidebar
           appId={Number(appId)}
           currentPageId={currentPage?.id ?? 0}
-          workspaceId={workspaceId}
           pages={pages}
           selectedQuery={selectedQuery}
           activeTab={sidebarTab}
@@ -228,7 +184,7 @@ export function AppEditorPage() {
                   formMode={workflowView.formMode}
                   formId={workflowView.formId}
                   appId={Number(appId)}
-                  onBack={() => setWorkflowView({ view: workflowView.formMode ? 'forms' : 'processes' })}
+                  onBack={() => setWorkflowView({ view: workflowView.formMode ? 'forms' : 'processes', appId: Number(appId) })}
                 />
               )}
               {workflowView.view === 'my-workflow' && (
@@ -248,14 +204,14 @@ export function AppEditorPage() {
                 <FormPreview
                   embedded
                   formId={workflowView.formId}
-                  onBack={() => setWorkflowView({ view: 'forms' })}
+                  onBack={() => setWorkflowView({ view: 'forms', appId: Number(appId) })}
                 />
               )}
               {workflowView.view === 'instance-detail' && (
                 <InstanceDetail
                   embedded
                   instanceId={workflowView.instanceId}
-                  onBack={() => setWorkflowView({ view: 'my-workflow' })}
+                  onBack={() => setWorkflowView({ view: 'my-workflow', appId: Number(appId) })}
                 />
               )}
               {workflowView.view === 'organization' && (

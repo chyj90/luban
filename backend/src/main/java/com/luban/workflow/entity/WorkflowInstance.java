@@ -15,8 +15,14 @@ public class WorkflowInstance {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Transient
+    private String applicationName;
+
     @Column(nullable = false)
     private Long workflowId;
+
+    @Column(nullable = false)
+    private Long applicationId;
 
     @Column(nullable = false)
     private Integer workflowVersion;
@@ -53,6 +59,12 @@ public class WorkflowInstance {
 
     @Column
     private Long subProcessDefinitionId;
+
+    @Column(nullable = false)
+    private Boolean isTest = false;
+
+    @Column(nullable = false)
+    private Integer definitionVersion = 1;
 
     @Column(nullable = false)
     private LocalDateTime updatedAt;

@@ -256,6 +256,40 @@
   border-color: #dc2626;
 }
 
+.appLink {
+  color: #1677ff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.appLink:hover {
+  color: #4096ff;
+  text-decoration: underline;
+}
+
+.testBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #fffbe6;
+  border-bottom: 1px solid #ffe58f;
+  font-size: 13px;
+  color: #ad6800;
+}
+
+.testBannerDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #faad14;
+  flex-shrink: 0;
+}
+
+.testRow {
+  border-left: 3px solid #faad14;
+}
+
 /* Empty state */
 .empty {
   display: flex;
@@ -264,6 +298,16 @@
   justify-content: center;
   padding: 64px 48px;
   text-align: center;
+}
+
+.emptyList {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: #8c9cab;
+  font-size: 14px;
 }
 
 .emptyIconWrap {
@@ -303,4 +347,94 @@
   padding: 80px 0;
   font-size: 14px;
   color: #8c9cab;
+}
+
+/* Embedded mode */
+.embedded {
+  padding: 16px 16px 0;
+  min-height: 0;
+}
+
+/* Start list - card grid */
+.startList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.startCard {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.2s, border-color 0.2s;
+  cursor: pointer;
+}
+
+.startCard:hover {
+  border-color: #1677ff;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.1);
+}
+
+.startCardBody {
+  flex: 1;
+  padding: 20px 20px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 120px;
+}
+
+.startCardName {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f1f1f;
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.startCardDesc {
+  font-size: 13px;
+  color: #5a6a7e;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  flex: 1;
+}
+
+.startCardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-top: 1px solid #f0f2f5;
+  background: #fafafa;
+}
+
+.startCardVersion {
+  font-size: 12px;
+  color: #8c9cab;
+  background: #f5f7fa;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.startCardBtn {
+  padding: 4px 14px;
+  border: 1px solid #1677ff;
+  border-radius: 6px;
+  background: #fff;
+  color: #1677ff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.startCardBtn:hover {
+  background: #1677ff;
+  color: #fff;
 }

@@ -1,82 +1,46 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { ProtectedRoute, GuestRoute } from './guards';
+import { AppLayout } from '@/pages/AppLayout';
 import { LoginPage } from '@/pages/Login/LoginPage';
 import { RegisterPage } from '@/pages/Login/RegisterPage';
-import { WorkspacePage } from '@/pages/Workspace/WorkspacePage';
-import { AppEditorPage } from '@/pages/AppEditor/AppEditorPage';
-import ProcessList from '@/pages/workflow/ProcessList';
+import { AppHubPage } from '@/pages/AppHub/AppHubPage';
+import { AppEntryPage } from '@/pages/AppEntry';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import MyWorkflow from '@/pages/workflow/MyWorkflow';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
-import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
-import Organization from '@/pages/workflow/Organization';
 
 export const router = createBrowserRouter([
   {
     element: <GuestRoute />,
     children: [
-      {
-        path: '/login',
-        element: <LoginPage />,
-      },
-      {
-        path: '/register',
-        element: <RegisterPage />,
-      },
+      { path: '/login', element: <LoginPage /> },
+      { path: '/register', element: <RegisterPage /> },
     ],
   },
   {
     element: <ProtectedRoute />,
     children: [
       {
-        path: '/workspace',
-        element: <WorkspacePage />,
+        element: <AppLayout />,
+        children: [
+          { path: '/apps', element: <AppHubPage /> },
+          { path: '/apps/:appId', element: <AppEntryPage /> },
+          { path: '/apps/:appId/designer/:id', element: <WorkflowDesigner /> },
+          { path: '/apps/:appId/designer', element: <WorkflowDesigner /> },
+          { path: '/apps/:appId/instances/:id', element: <InstanceDetail /> },
+          { path: '/apps/:appId/forms/:id/preview', element: <FormPreview /> },
+          { path: '/work', element: <MyWorkflow /> },
+        ],
       },
-      {
-        path: '/app/:appId',
-        element: <AppEditorPage />,
-      },
-      {
-        path: '/workflow/processes',
-        element: <ProcessList />,
-      },
-      {
-        path: '/workflow/designer/:id',
-        element: <WorkflowDesigner />,
-      },
-      {
-        path: '/workflow/designer',
-        element: <WorkflowDesigner />,
-      },
-      {
-        path: '/workflow/tasks',
-        element: <MyWorkflow />,
-      },
-      {
-        path: '/workflow/instances/:id',
-        element: <InstanceDetail />,
-      },
-      {
-        path: '/workflow/forms',
-        element: <FormList />,
-      },
-      {
-        path: '/workflow/forms/:id/preview',
-        element: <FormPreview />,
-      },
-      {
-        path: '/workflow/my-workflow',
-        element: <MyWorkflow />,
-      },
-      {
-        path: '/workflow/organization',
-        element: <Organization />,
-      },
+      { path: '/workspace', element: <Navigate to="/apps" replace /> },
+      { path: '/workflow/tasks', element: <Navigate to="/work" replace /> },
+      { path: '/workflow/my-workflow', element: <Navigate to="/work" replace /> },
+      { path: '/workflow/*', element: <Navigate to="/apps" replace /> },
     ],
   },
   {
     path: '*',
-    element: <Navigate to="/workspace" replace />,
+    element: <Navigate to="/apps" replace />,
   },
 ]);

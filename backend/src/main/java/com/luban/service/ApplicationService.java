@@ -7,9 +7,12 @@ import com.luban.entity.Page;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.CodePageRepository;
 import com.luban.repository.PageRepository;
+import com.luban.workflow.config.TestDataService;
+import com.luban.workflow.repository.WorkflowDefinitionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,17 +22,41 @@ public class ApplicationService {
     private final ApplicationRepository applicationRepository;
     private final PageRepository pageRepository;
     private final CodePageRepository codePageRepository;
+    private final WorkflowDefinitionRepository workflowDefinitionRepository;
+    private final TestDataService testDataService;
 
     public ApplicationService(ApplicationRepository applicationRepository,
                               PageRepository pageRepository,
-                              CodePageRepository codePageRepository) {
+                              CodePageRepository codePageRepository,
+                              WorkflowDefinitionRepository workflowDefinitionRepository,
+                              TestDataService testDataService) {
         this.applicationRepository = applicationRepository;
         this.pageRepository = pageRepository;
         this.codePageRepository = codePageRepository;
+        this.workflowDefinitionRepository = workflowDefinitionRepository;
+        this.testDataService = testDataService;
     }
 
-    public List<Application> listByWorkspace(Long workspaceId) {
-        return applicationRepository.findByWorkspaceId(workspaceId);
+    public List<Application> listByCreatedBy(Long userId) {
+        List<Application> myApps = applicationRepository.findByCreatedBy(userId);
+        for (Application app : myApps) {
+            app.setWorkflowCount(workflowDefinitionRepository.countByApplicationId(app.getId()));
+            app.setPublishedWorkflowCount(workflowDefinitionRepository.countByApplicationIdAndStatus(app.getId(), "PUBLISHED"));
+        }
+
+        List<Application> otherApps = applicationRepository.findAllWithPublishedWorkflows();
+        List<Application> others = new ArrayList<>();
+        for (Application app : otherApps) {
+            if (!app.getCreatedBy().equals(userId)) {
+                app.setWorkflowCount(workflowDefinitionRepository.countByApplicationId(app.getId()));
+                app.setPublishedWorkflowCount(workflowDefinitionRepository.countByApplicationIdAndStatus(app.getId(), "PUBLISHED"));
+                others.add(app);
+            }
+        }
+
+        List<Application> result = new ArrayList<>(myApps);
+        result.addAll(others);
+        return result;
     }
 
     public Application getById(Long id) {
@@ -38,10 +65,10 @@ public class ApplicationService {
     }
 
     @Transactional
-    public Application create(CreateAppRequest request) {
+    public Application create(CreateAppRequest request, Long userId) {
         Application app = new Application();
         app.setName(request.getName());
-        app.setWorkspaceId(request.getWorkspaceId());
+        app.setCreatedBy(userId);
         app.setSlug(generateSlug(request.getName()));
         app = applicationRepository.save(app);
 
@@ -236,7 +263,11 @@ public class ApplicationService {
         codePageRepository.save(defaultCodePage);
 
         app.setDefaultPageId(defaultPage.getId());
-        return applicationRepository.save(app);
+        app = applicationRepository.save(app);
+
+        testDataService.initApplicationRoles(app.getId());
+
+        return app;
     }
 
     public Application update(Long id, String name) {

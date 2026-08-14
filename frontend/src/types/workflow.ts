@@ -2,7 +2,6 @@ export interface FormDefinition {
   id: number;
   name: string;
   description: string;
-  workspaceId: number;
   applicationId: number;
   codePageId: number;
   fields: string;
@@ -23,6 +22,7 @@ export interface WorkflowDefinition {
   nodes: string;
   edges: string;
   createdBy: number;
+  publishedVersionId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -40,7 +40,11 @@ export interface FormWorkflowBinding {
 export interface WorkflowInstance {
   id: number;
   workflowId: number;
+  applicationId: number;
+  applicationName?: string;
   workflowVersion: number;
+  definitionVersion: number;
+  isTest: boolean;
   formId: number;
   formData: string;
   status: 'RUNNING' | 'COMPLETED' | 'REJECTED' | 'CANCELLED' | 'FROZEN';
@@ -56,6 +60,8 @@ export interface WorkflowInstance {
 export interface WorkflowTask {
   id: number;
   instanceId: number;
+  applicationId: number;
+  applicationName?: string;
   nodeId: string;
   assigneeId: number;
   assigneeType: 'NORMAL' | 'TRANSFER' | 'DELEGATE' | 'ADD_SIGN';
@@ -129,7 +135,7 @@ export interface Role {
   name: string;
   slug: string;
   description: string;
-  workspaceId: number;
+  applicationId: number;
   memberIds: string;
   createdAt: string;
   updatedAt: string;

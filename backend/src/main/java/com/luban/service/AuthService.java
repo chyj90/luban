@@ -5,11 +5,11 @@ import com.luban.dto.LoginRequest;
 import com.luban.dto.RegisterRequest;
 import com.luban.entity.User;
 import com.luban.entity.UserSession;
-import com.luban.entity.Workspace;
 import com.luban.repository.UserRepository;
 import com.luban.repository.UserSessionRepository;
-import com.luban.repository.WorkspaceRepository;
 import com.luban.security.JwtTokenProvider;
+import com.luban.workflow.entity.Member;
+import com.luban.workflow.repository.MemberRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,18 +21,18 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
-    private final WorkspaceRepository workspaceRepository;
+    private final MemberRepository memberRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
-                       WorkspaceRepository workspaceRepository,
+                       MemberRepository memberRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
-        this.workspaceRepository = workspaceRepository;
+        this.memberRepository = memberRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
     }
@@ -47,12 +47,20 @@ public class AuthService {
         user.setEmail(request.getEmail());
         user.setName(request.getName());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
-        user = userRepository.save(user);
+        userRepository.save(user);
 
-        Workspace workspace = new Workspace();
-        workspace.setName("我的工作区");
-        workspace.setOwnerId(user.getId());
-        workspaceRepository.save(workspace);
+        Member member = memberRepository.findByEmail(request.getEmail()).orElse(null);
+        if (member != null) {
+            member.setUserId(user.getId());
+            memberRepository.save(member);
+        } else {
+            member = new Member();
+            member.setUserId(user.getId());
+            member.setName(request.getName());
+            member.setEmail(request.getEmail());
+            member.setProvider("manual");
+            memberRepository.save(member);
+        }
 
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);

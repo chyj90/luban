@@ -186,7 +186,7 @@ export function useQueryBridge(
 
         if (d.js) {
           var script = document.createElement('script');
-          script.textContent = d.js;
+          script.textContent = 'try {\\n' + d.js + '\\n} catch(e) { console.error("[鲁班] 页面脚本错误:", e); }';
           document.body.appendChild(script);
           if (document.readyState === 'complete' || document.readyState === 'interactive') {
             document.dispatchEvent(new Event('DOMContentLoaded'));

@@ -3,6 +3,7 @@ import { createPageTools } from './pageTools';
 import { createCodePageTools } from './codePageTools';
 import { createObservationTools } from './observationTools';
 import { createFindQueryTool } from './findQueryTool';
+import { createFindWorkflowTool } from './findWorkflowTool';
 import { planSkill } from '../skills';
 import type { ChatRouter } from '../core/chatRouter';
 
@@ -14,6 +15,9 @@ export function createInteliTools(context: ToolContext, chatRouter?: ChatRouter)
     ...createCodePageTools(context),
     ...createObservationTools(context),
     ...planSkill.getTools(),
-    ...(chatRouter ? [createFindQueryTool(context, chatRouter)] : []),
+    ...(chatRouter ? [
+      createFindQueryTool(context, chatRouter),
+      createFindWorkflowTool(context, chatRouter),
+    ] : []),
   ];
 }

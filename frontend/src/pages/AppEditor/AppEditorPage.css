@@ -1,15 +1,16 @@
 .app-editor {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #f4f6f9;
+  padding-bottom: 36px;
 }
 
 .app-editor-header {
   display: flex;
   align-items: center;
-  height: 50px;
-  padding: 0 20px;
+  height: 40px;
+  padding: 0 16px;
   background: #fff;
   border-bottom: 1px solid #e8edf3;
   gap: 10px;
@@ -132,7 +133,7 @@
 /* Agent FAB */
 .app-editor-agent-fab {
   position: fixed;
-  bottom: 24px;
+  bottom: 60px;
   right: 24px;
   width: 48px;
   height: 48px;
@@ -302,30 +303,6 @@
 .app-editor-code-body {
   flex: 1;
   overflow: hidden;
-}
-.editor-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  gap: 12px;
-  color: #8c9cab;
-  font-size: 14px;
-  background: #f4f6f9;
-}
-
-.editor-loading-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid #e8edf3;
-  border-top-color: #1677ff;
-  border-radius: 50%;
-  animation: editor-spin 0.6s linear infinite;
-}
-
-@keyframes editor-spin {
-  to { transform: rotate(360deg); }
 }
 
 .app-editor-preview-fullscreen-btn {

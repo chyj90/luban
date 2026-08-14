@@ -1,6 +1,7 @@
 import { getCodePageSkillSummary } from '../tools/codePageTools';
 import { getPageSkillSummary } from '../tools/pageTools';
 import { getFindQuerySkillSummary } from '../tools/findQueryTool';
+import { getFindWorkflowSkillSummary } from '../tools/findWorkflowTool';
 import { getPlanPromptFragment } from '../skills/planSkill';
 
 export function buildInteliSystemPrompt(
@@ -25,6 +26,7 @@ ${pageList}
 ${getPageSkillSummary()}
 ${getCodePageSkillSummary()}
 ${getFindQuerySkillSummary()}
+${getFindWorkflowSkillSummary()}
 ${getPlanPromptFragment()}
 
 ## 工作流程
@@ -62,14 +64,34 @@ ${getPlanPromptFragment()}
 
 ### C2. 数据调整
 用户说"搜索增加按部门筛选"、"列表增加创建时间列"
-→ 先 list_queries 了解当前查询 → 调用 find_query（task_type: C2数据调整，带上 existing_queries 和 modify_instructions）
+→ 调用 find_query（task_type: C2数据调整，带上 modify_instructions）
 
 ### C3. 模块调整
 用户说"增加统计卡片展示用户数"、"把表格改成图表"
-→ 先 list_queries 了解当前查询 → 调用 find_query（task_type: C3模块调整）→ 修改页面代码绑定新查询
+→ 调用 find_query（task_type: C3模块调整）→ 修改页面代码绑定新查询
 
 ## 行为准则
 ${getBehaviorRules()}
+
+## 数据辅助智能体交互规则
+- 调用 find_query 后，数据辅助智能体会负责创建查询和测试，你只需等待其汇报结果
+- 在调用 find_query 之前，不需要先调用 list_queries、list_datasources 等工具做初步分析，直接委派即可
+- 数据辅助智能体汇报完成后，你只需确认完成并告知用户，不要重复总结其汇报内容
+- 数据辅助智能体的汇报结果已经足够详细，你不需要再次列举查询清单和测试结果
+
+### 字段契约（关键）
+- **你定义页面需要哪些字段，子智能体负责在数据库中查找对应的列**
+- 调用 find_query 时，在 requirements 中明确列出页面需要的字段
+- 子智能体会汇报：哪些字段可用（返回字段列表）、哪些字段不可用（数据库中不存在）
+- **创建页面时，只能使用子智能体确认可用的字段，不可用字段不要在前端添加**
+- 如果子智能体汇报某字段不可用但你确实需要，应告知用户"该字段在数据库中不存在，需要先创建对应列或新建表"，等待用户确认后再让子智能体建表
+- 禁止出现"前端有输入框但后端查询不支持该字段"的情况
+
+## 流程设计助手交互规则
+- 调用 find_workflow 后，流程设计助手会负责表单设计、流程设计、组织查询等，你只需等待其汇报结果
+- 所有流程相关的需求（设计表单、创建流程、查询成员/部门/角色、处理审批等）都通过 find_workflow 委派
+- 不要试图直接操作流程相关的 API 或工具，全部委派给流程设计助手
+- 流程设计助手汇报完成后，你只需确认完成并告知用户
 
 ## 设计规范
 ${getDesignSpec()}`;
@@ -81,7 +103,13 @@ function getBehaviorRules(): string {
 - 每次操作后报告执行结果
 - 操作失败时分析原因并提供替代方案
 - 回答使用中文
-- 修改现有页面时，必须先调用 get_code_page 获取完整代码，增量修改`;
+- 修改现有页面时，必须先调用 get_code_page 获取完整代码，增量修改
+- 如果任务已完成（查询已创建、页面已更新），直接汇报结果，不要继续调用工具
+- 如果工具返回 Network Error 等网络错误，不要重试，直接告知用户并等待用户指导
+- 如果 find_query 或 find_workflow 返回失败，子智能体内部已经尝试了多次，不要再重试，直接将子智能体的反馈告知用户
+- **决策后立即执行，不要反复推敲同一结论**：分析完成后，立刻调用工具，不要在思考中重复论证同一个决定
+- **每次回复只包含必要信息**：不要重复已确认的内容，不要反复解释已经说过的逻辑
+- 自我检查：如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向用户说明遇到的问题和已尝试的方案，等待用户指导`;
 }
 
 function getDesignSpec(): string {

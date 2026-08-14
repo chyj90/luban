@@ -28,6 +28,16 @@ export interface LLMResponse {
   }>;
 }
 
+export interface LLMStreamChunk {
+  type: 'content' | 'tool_call' | 'done';
+  content?: string;
+  reasoning?: boolean;
+  toolCall?: {
+    id: string;
+    function: { name: string; arguments: string };
+  };
+}
+
 export interface LLMCallOptions {
   baseUrl: string;
   apiKey: string;
@@ -242,5 +252,179 @@ export function parseToolArguments(rawArgs: string): Record<string, unknown> {
       }
     }
     return {};
+  }
+}
+
+export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator<LLMStreamChunk> {
+  const { baseUrl, apiKey, model, messages, tools, temperature, timeout, signal } = options;
+
+  const startTime = Date.now();
+  const msgSummary = messages.map((m) => `${m.role}${m.tool_calls ? `(${m.tool_calls.length} tool_calls)` : ''}${m.tool_call_id ? `(tool_call_id)` : ''}`).join(' → ');
+  const toolNames = tools.map((t) => t.function.name).join(', ');
+  console.log(`[LLM] 流式调用 ${model} | 消息: ${msgSummary} | 工具: [${toolNames}] | temperature: ${temperature}`);
+
+  const apiUrl = `${baseUrl}/chat/completions`;
+  const requestBody = JSON.stringify({
+    model,
+    messages,
+    tools,
+    tool_choice: 'auto',
+    temperature,
+    stream: true,
+  });
+
+  let lastProcessedIndex = 0;
+  let lineBuffer = '';
+  let contentText = '';
+  const toolCallsMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+  const pending: LLMStreamChunk[] = [];
+  let waiter: (() => void) | null = null;
+  let finished = false;
+  let streamError: Error | null = null;
+
+  const wake = () => {
+    if (waiter) {
+      const w = waiter;
+      waiter = null;
+      w();
+    }
+  };
+
+  const processSSELine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith('data: ')) return;
+    const data = trimmed.slice(6);
+    if (data === '[DONE]') {
+      for (const tc of toolCallsMap.values()) {
+        pending.push({
+          type: 'tool_call',
+          toolCall: { id: tc.id, function: { name: tc.name, arguments: tc.arguments } },
+        });
+      }
+      pending.push({ type: 'done' });
+      finished = true;
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(data);
+      const delta = parsed.choices?.[0]?.delta;
+      if (!delta) return;
+
+      if (delta.content) {
+        contentText += delta.content;
+        pending.push({ type: 'content', content: delta.content });
+      }
+
+      if (delta.reasoning_content) {
+        contentText += delta.reasoning_content;
+        pending.push({ type: 'content', content: delta.reasoning_content, reasoning: true });
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? toolCallsMap.size;
+          if (!toolCallsMap.has(idx)) {
+            toolCallsMap.set(idx, {
+              id: tc.id || '',
+              name: tc.function?.name || '',
+              arguments: tc.function?.arguments || '',
+            });
+          } else {
+            const existing = toolCallsMap.get(idx)!;
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name = tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          }
+        }
+      }
+    } catch {
+      // 忽略无法解析的行
+    }
+  };
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', apiUrl, true);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+  xhr.timeout = timeout;
+
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      xhr.abort();
+    });
+  }
+
+  xhr.onprogress = () => {
+    const fullText = xhr.responseText;
+    const newText = fullText.slice(lastProcessedIndex);
+    lastProcessedIndex = fullText.length;
+
+    lineBuffer += newText;
+    const lines = lineBuffer.split('\n');
+    lineBuffer = lines.pop() || '';
+
+    for (const line of lines) {
+      processSSELine(line);
+    }
+    wake();
+  };
+
+  xhr.onloadend = () => {
+    if (lineBuffer.trim()) {
+      processSSELine(lineBuffer);
+      lineBuffer = '';
+    }
+
+    if (!finished) {
+      for (const tc of toolCallsMap.values()) {
+        pending.push({
+          type: 'tool_call',
+          toolCall: { id: tc.id, function: { name: tc.name, arguments: tc.arguments } },
+        });
+      }
+      pending.push({ type: 'done' });
+      finished = true;
+    }
+
+    if (xhr.status !== 0 && xhr.status >= 400) {
+      streamError = new Error(`LLM API 流式调用失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500) || ''}`);
+      console.error(`[LLM] 流式API 失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500)}`);
+    }
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[LLM] 流式 ${elapsed}ms | content: "${contentText.slice(0, 200)}${contentText.length > 200 ? '...' : ''}" | tool_calls: ${toolCallsMap.size}`);
+
+    wake();
+  };
+
+  xhr.onerror = () => {
+    streamError = new Error('网络请求失败');
+    finished = true;
+    wake();
+  };
+
+  xhr.ontimeout = () => {
+    streamError = new Error(`LLM 调用超时（${timeout / 1000}秒）`);
+    finished = true;
+    wake();
+  };
+
+  xhr.send(requestBody);
+
+  while (true) {
+    while (pending.length > 0) {
+      yield pending.shift()!;
+    }
+    if (finished) break;
+    await new Promise<void>((resolve) => { waiter = resolve; });
+  }
+
+  if (streamError) {
+    if (streamError.message.includes('Cancelled') || streamError.message.includes('abort')) {
+      throw new Error('Cancelled');
+    }
+    throw streamError;
   }
 }

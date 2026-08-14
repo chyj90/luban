@@ -1,0 +1,69 @@
+.appuser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #f5f7fa;
+}
+
+/* ── 页面标签 ──────────────────────────────── */
+
+.appuser-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 16px;
+  background: #fff;
+  border-bottom: 1px solid #e8edf3;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.appuser-tabs-left {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.appuser-tab {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #718096;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.appuser-tab:hover {
+  color: #1677ff;
+}
+
+.appuser-tab.active {
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+  font-weight: 500;
+}
+
+/* ── 页面内容区 (iframe) ──────────────────────────────── */
+
+.appuser-page {
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+}
+
+.appuser-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.appuser-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #a0aec0;
+  font-size: 14px;
+}

@@ -37,10 +37,15 @@ export default function ApproverSelector({ config, onChange }: ApproverSelectorP
   };
 
   useEffect(() => {
-    const type = config.approverType as string | undefined;
+    let type = config.approverType as string | undefined;
     if (!type) {
-      onChange('approverCount', 0);
-      return;
+      if ((config.approverIds as string[])?.length) {
+        type = 'member';
+        onChange('approverType', 'member');
+      } else {
+        onChange('approverCount', 0);
+        return;
+      }
     }
     if (type === 'member') {
       const ids = (config.approverIds as string[]) || [];

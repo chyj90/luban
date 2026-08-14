@@ -1,16 +1,17 @@
 export interface Application {
   id: number;
   name: string;
-  workspaceId: number;
+  createdBy: number;
   slug: string;
   color: string;
   icon: string;
   defaultPageId: number;
   createdAt: string;
   updatedAt: string;
+  workflowCount?: number;
+  publishedWorkflowCount?: number;
 }
 
 export interface CreateAppRequest {
-  workspaceId: number;
   name: string;
 }

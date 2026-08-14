@@ -25,7 +25,7 @@ public class Role {
     private String description;
 
     @Column(nullable = false)
-    private Long workspaceId;
+    private Long applicationId;
 
     @Column(columnDefinition = "JSON")
     private String memberIds;

@@ -87,6 +87,11 @@
             <artifactId>groovy-jsr223</artifactId>
             <version>4.0.18</version>
         </dependency>
+        <dependency>
+            <groupId>ognl</groupId>
+            <artifactId>ognl</artifactId>
+            <version>3.3.4</version>
+        </dependency>
     </dependencies>
 
     <build>

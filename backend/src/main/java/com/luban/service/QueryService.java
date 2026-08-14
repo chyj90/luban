@@ -6,10 +6,13 @@ import com.luban.dto.RunQueryResponse;
 import com.luban.dto.UpdateQueryRequest;
 import com.luban.entity.Datasource;
 import com.luban.entity.Query;
+import com.luban.entity.User;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -22,6 +25,9 @@ import java.time.Duration;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import ognl.Ognl;
+import ognl.OgnlContext;
 
 @Service
 public class QueryService {
@@ -84,7 +90,15 @@ public class QueryService {
         if (defaultParams != null) mergedParams.putAll(defaultParams);
         if (request.getParams() != null) mergedParams.putAll(request.getParams());
 
-        String finalBody = resolveTemplate(query.getBody(), mergedParams);
+        Map<String, Object> authParams = new HashMap<>();
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof User user) {
+            authParams.put("userId", user.getId());
+            authParams.put("userName", user.getName());
+            authParams.put("userEmail", user.getEmail());
+        }
+
+        String finalBody = resolveTemplate(query.getBody(), mergedParams, authParams);
         Map<String, Object> config = fromJsonMap(ds.getConfig());
 
         return switch (ds.getType()) {
@@ -262,9 +276,10 @@ public class QueryService {
         }
     }
 
-    private String resolveTemplate(String body, Map<String, Object> params) {
+    private String resolveTemplate(String body, Map<String, Object> params, Map<String, Object> authParams) {
         if (body == null) return "";
         String resolved = resolveDynamicTags(body, params);
+        resolved = resolveAuthVariables(resolved, authParams);
         return resolveVariables(resolved, params);
     }
 
@@ -351,33 +366,14 @@ public class QueryService {
     }
 
     private boolean evaluateCondition(String condition, Map<String, Object> params) {
-        // "paramName != null"
-        Pattern neNull = Pattern.compile("^(\\w+)\\s*!=\\s*null$");
-        Matcher m = neNull.matcher(condition);
-        if (m.matches()) return params.get(m.group(1)) != null;
-
-        // "paramName == null"
-        Pattern eqNull = Pattern.compile("^(\\w+)\\s*==\\s*null$");
-        m = eqNull.matcher(condition);
-        if (m.matches()) return params.get(m.group(1)) == null;
-
-        // "paramName != ''"
-        Pattern neEmpty = Pattern.compile("^(\\w+)\\s*!=\\s*''$");
-        m = neEmpty.matcher(condition);
-        if (m.matches()) {
-            Object v = params.get(m.group(1));
-            return v != null && !v.toString().isEmpty();
+        try {
+            OgnlContext ctx = new OgnlContext(null, null, null);
+            ctx.setValues(params);
+            Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, params);
+            return result instanceof Boolean ? (Boolean) result : false;
+        } catch (Exception e) {
+            return false;
         }
-
-        // "paramName" (truthy)
-        Pattern justName = Pattern.compile("^(\\w+)$");
-        m = justName.matcher(condition);
-        if (m.matches()) {
-            Object v = params.get(m.group(1));
-            return v != null && !v.toString().isEmpty();
-        }
-
-        return false;
     }
 
     private String resolveWhere(String content) {
@@ -427,6 +423,21 @@ public class QueryService {
     }
 
     // ── 变量替换 ────────────────────────────────────────────────
+
+    private String resolveAuthVariables(String body, Map<String, Object> authParams) {
+        if (authParams == null || authParams.isEmpty()) return body;
+        Pattern pattern = Pattern.compile("\\{\\{\\s*this\\.auth\\.(\\w+)\\s*\\}\\}");
+        Matcher matcher = pattern.matcher(body);
+        StringBuilder sb = new StringBuilder();
+        while (matcher.find()) {
+            String key = matcher.group(1);
+            Object value = authParams.get(key);
+            String replacement = value != null ? formatSqlValue(value) : "NULL";
+            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
 
     private String resolveVariables(String body, Map<String, Object> params) {
         Pattern pattern = Pattern.compile("\\{\\{\\s*this\\.params\\.(\\w+)\\s*\\}\\}");

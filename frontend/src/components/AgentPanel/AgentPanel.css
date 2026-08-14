@@ -53,12 +53,10 @@
 
 .ap-message {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
   max-width: 100%;
-}
-
-.ap-message-user {
-  flex-direction: row-reverse;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
 }
 
 .ap-message-avatar {
@@ -77,56 +75,6 @@
 .ap-message-user .ap-message-avatar {
   background: #1677ff;
   color: #fff;
-}
-
-.ap-message-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.ap-message-content {
-  padding: 10px 14px;
-  border-radius: 10px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #1f1f1f;
-  background: #f4f6f9;
-  word-break: break-word;
-}
-
-.ap-message-user .ap-message-content {
-  background: #e6f4ff;
-  color: #1f1f1f;
-}
-
-.ap-message-content pre {
-  background: #1e1e2e;
-  color: #cdd6f4;
-  padding: 12px;
-  border-radius: 6px;
-  overflow-x: auto;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 8px 0;
-}
-
-.ap-message-content code {
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 12px;
-}
-
-.ap-message-content p {
-  margin: 0 0 8px;
-}
-
-.ap-message-content p:last-child {
-  margin-bottom: 0;
-}
-
-.ap-message-time {
-  font-size: 11px;
-  color: #8c9cab;
-  margin-top: 4px;
 }
 
 /* Tool calls */
@@ -672,11 +620,154 @@
   background: #fff2f0;
 }
 
-/* ===== Message role / text / streaming / tool calls (used by TSX) ===== */
-.ap-message-role {
+/* ===== Message header / body / text / streaming / tool calls (used by TSX) ===== */
+.ap-message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.ap-message-sender {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+/* 用户消息 */
+.ap-message-by-user .ap-message-sender {
+  color: #5b8cbd;
+}
+
+/* 智能体消息 — 颜色由 JS agentColor() 动态设置，这里只做兜底 */
+.ap-message-by-agent .ap-message-sender {
+  color: #7a7a9e;
+}
+
+/* 工具消息 */
+.ap-message-by-tool .ap-message-sender {
+  color: #b8956a;
+}
+
+/* 系统消息 */
+.ap-message-by-system .ap-message-sender {
+  color: #8c8c8c;
+}
+
+/* 消息气泡 */
+.ap-message-by-user .ap-message-body {
+  border-left: 3px solid #a3c5e8;
+  background: #f0f5fa;
+}
+
+.ap-message-by-agent .ap-message-body {
+  border-left: 3px solid #c4c4d8;
+  background: #f6f6fa;
+}
+
+.ap-message-by-tool .ap-message-body {
+  border-left: 3px solid #d4c4a8;
+  background: #faf7f2;
+}
+
+.ap-message-by-system .ap-message-body {
+  border-left: 3px solid #d9d9d9;
+  background: #fafafa;
+}
+
+.ap-message-time {
   font-size: 11px;
   color: #8c9cab;
-  margin-bottom: 4px;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.ap-message-body {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1f1f1f;
+  background: #f4f6f9;
+  word-break: break-word;
+}
+
+.ap-message-body pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+.ap-message-body code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+.ap-message-body p {
+  margin: 0 0 8px;
+}
+
+.ap-message-body p:last-child {
+  margin-bottom: 0;
+}
+
+.ap-message-body ul,
+.ap-message-body ol {
+  padding-left: 20px;
+  margin: 4px 0 8px;
+}
+
+.ap-message-body li {
+  margin-bottom: 2px;
+}
+
+.ap-message-body blockquote {
+  border-left: 3px solid #d9d9d9;
+  padding-left: 12px;
+  margin: 8px 0;
+  color: #666;
+}
+
+.ap-message-body table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.ap-message-body th,
+.ap-message-body td {
+  border: 1px solid #d9d9d9;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.ap-message-body th {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.ap-message-body h1,
+.ap-message-body h2,
+.ap-message-body h3,
+.ap-message-body h4 {
+  margin: 12px 0 6px;
+  font-weight: 600;
+}
+
+.ap-message-body h1 { font-size: 18px; }
+.ap-message-body h2 { font-size: 16px; }
+.ap-message-body h3 { font-size: 14px; }
+.ap-message-body h4 { font-size: 13px; }
+
+.ap-message-body hr {
+  border: none;
+  border-top: 1px solid #e8e8e8;
+  margin: 12px 0;
 }
 
 .ap-message-text {
@@ -753,13 +844,13 @@
 }
 
 .ap-tool-call-detail {
-  padding: 8px 10px;
+  padding: 5px 8px;
   background: #fff;
   border-top: 1px solid #e8edf3;
 }
 
 .ap-tool-call-section {
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .ap-tool-call-section:last-child {
@@ -770,22 +861,91 @@
   font-size: 11px;
   font-weight: 600;
   color: #8c9cab;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .ap-tool-call-pre {
   margin: 0;
-  padding: 6px 8px;
+  padding: 4px 6px;
   background: #f4f6f9;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10px;
   color: #334155;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 120px;
+  max-height: 80px;
   overflow-y: auto;
-  line-height: 1.5;
+  line-height: 1.4;
   font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+}
+
+/* 思考过程 */
+.ap-reasoning {
+  margin-bottom: 8px;
+  border: 1px solid #e8d5b0;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fef9f0 0%, #fdf5e6 100%);
+  overflow: hidden;
+}
+
+.ap-reasoning-summary {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #8b7355;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ap-reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ap-reasoning-icon {
+  font-size: 13px;
+}
+
+.ap-reasoning-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: #c4a97d;
+}
+
+.ap-reasoning-content {
+  padding: 0 10px 8px;
+  font-size: 12px;
+  color: #6b5b3e;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ap-reasoning-content p {
+  margin: 4px 0;
+}
+
+.ap-reasoning-content ul,
+.ap-reasoning-content ol {
+  padding-left: 18px;
+  margin: 4px 0;
+}
+
+.ap-reasoning-content code {
+  background: #f0e6d3;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #5c4a2e;
+}
+
+.ap-reasoning-content pre {
+  background: #f0e6d3;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  overflow-x: auto;
 }
 
 /* ===== Mentions ===== */

@@ -1,47 +1,61 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { WorkflowTask, WorkflowInstance } from '../../types/workflow';
+import { useLoadingStore } from '../../stores/loadingStore';
+import type { WorkflowTask, WorkflowInstance, WorkflowDefinition } from '../../types/workflow';
 import { taskApi, instanceApi } from '../../api/workflow';
+import { isImpersonating } from '../../utils/impersonation';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './MyWorkflow.module.css';
 
 interface MyWorkflowProps {
   embedded?: boolean;
+  workflows?: WorkflowDefinition[];
+  appId?: number;
   onNavigate?: (view: WorkflowView) => void;
 }
 
-type TabKey = 'initiated' | 'pending' | 'processed';
+type TabKey = 'start' | 'initiated' | 'pending' | 'processed';
 
-const TABS: { key: TabKey; label: string }[] = [
+const BASE_TABS: { key: TabKey; label: string }[] = [
   { key: 'initiated', label: '我发起的' },
   { key: 'pending', label: '待审批' },
   { key: 'processed', label: '已处理' },
 ];
 
-export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
+export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: MyWorkflowProps = {}) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<TabKey>('initiated');
+  const setGlobalLoading = useLoadingStore((s) => s.setLoading);
+  const hasStartTab = !!workflows;
+  const [tab, setTab] = useState<TabKey>(hasStartTab ? 'start' : 'initiated');
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    setGlobalLoading(loading);
+  }, [loading, setGlobalLoading]);
+
   const goTo = (view: WorkflowView) => {
     if (onNavigate) {
       onNavigate(view);
-    } else if (view.view === 'instance-detail') {
-      navigate(`/workflow/instances/${view.instanceId}`);
+    } else if (view.view === 'instance-detail' && view.appId != null) {
+      navigate(`/apps/${view.appId}/instances/${view.instanceId}`);
     }
   };
 
   useEffect(() => {
+    if (tab === 'start') {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     if (tab === 'initiated') {
-      instanceApi.list()
+      instanceApi.list({ isTest: isImpersonating() ? true : false })
         .then(setInstances)
         .catch(console.error)
         .finally(() => setLoading(false));
     } else {
-      taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'COMPLETED' })
+      taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'COMPLETED', isTest: isImpersonating() ? true : false })
         .then(setTasks)
         .catch(console.error)
         .finally(() => setLoading(false));
@@ -63,20 +77,27 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
   };
 
   const isInitiatedTab = tab === 'initiated';
+  const isStartTab = tab === 'start';
+  const tabs = hasStartTab
+    ? [{ key: 'start' as TabKey, label: '发起流程' }, ...BASE_TABS]
+    : BASE_TABS;
 
   return (
-    <div className={styles.page}>
-      <div className={styles.header}>
-        <div>
-          <h1 className={styles.title}>我的工作</h1>
-          <p className={styles.subtitle}>查看我发起的流程和待处理的任务</p>
-        </div>
-      </div>
-
-      <hr className={styles.divider} />
+    <div className={`${styles.page} ${embedded ? styles.embedded : ''}`}>
+      {!embedded && (
+        <>
+          <div className={styles.header}>
+            <div>
+              <h1 className={styles.title}>我的工作</h1>
+              <p className={styles.subtitle}>查看我发起的流程和待处理的任务</p>
+            </div>
+          </div>
+          <hr className={styles.divider} />
+        </>
+      )}
 
       <div className={styles.tabs}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             key={t.key}
             className={`${styles.tab} ${tab === t.key ? styles.tabActive : ''}`}
@@ -87,9 +108,36 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
         ))}
       </div>
 
-      {loading ? (
-        <div className={styles.loading}>加载中...</div>
-      ) : isInitiatedTab ? (
+      {loading ? null : isStartTab ? (
+        workflows!.length > 0 ? (
+          <div className={styles.startList}>
+            {workflows!.map((wf) => (
+              <div key={wf.id} className={styles.startCard}>
+                <div className={styles.startCardBody}>
+                  <div className={styles.startCardName}>{wf.name}</div>
+                  {wf.description && (
+                    <div className={styles.startCardDesc}>{wf.description}</div>
+                  )}
+                </div>
+                <div className={styles.startCardFooter}>
+                  <span className={styles.startCardVersion}>v{wf.version}</span>
+                  <button
+                    className={styles.startCardBtn}
+                    onClick={() => {
+                      const targetAppId = appId || wf.applicationId;
+                      navigate(`/workflow/designer?processId=${wf.id}&mode=start&appId=${targetAppId}`);
+                    }}
+                  >
+                    发起
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className={styles.emptyList}>暂无可用流程，请联系管理员发布流程</div>
+        )
+      ) : (isInitiatedTab ? (
         instances.length === 0 ? (
           <div className={styles.empty}>
             <div className={styles.emptyIconWrap}>
@@ -102,11 +150,18 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
           </div>
         ) : (
           <div className={styles.card}>
+            {instances.some(inst => inst.isTest) && (
+              <div className={styles.testBanner}>
+                <span className={styles.testBannerDot} />
+                当前为测试数据视图
+              </div>
+            )}
             <div className={styles.tableWrap}>
               <table className={styles.table}>
                 <thead>
                   <tr>
                     <th>流程名称</th>
+                    <th className={styles.cellCenter}>应用</th>
                     <th className={styles.cellCenter}>当前节点</th>
                     <th className={styles.cellCenter}>状态</th>
                     <th className={styles.cellCenter}>发起时间</th>
@@ -115,9 +170,17 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
                 </thead>
                 <tbody>
                   {instances.map((inst) => (
-                    <tr key={inst.id}>
+                    <tr key={inst.id} className={inst.isTest ? styles.testRow : undefined}>
                       <td>
                         <span className={styles.instanceName}>流程 #{inst.workflowId}</span>
+                      </td>
+                      <td className={styles.cellCenter}>
+                        <span
+                          className={styles.appLink}
+                          onClick={() => navigate(`/apps/${inst.applicationId}`)}
+                        >
+                          {inst.applicationName || `应用 #${inst.applicationId}`}
+                        </span>
                       </td>
                       <td className={styles.cellCenter}>{inst.currentNodes || '-'}</td>
                       <td className={styles.cellCenter}>{statusBadge(inst.status)}</td>
@@ -127,7 +190,7 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
                       <td className={styles.cellActions}>
                         <button
                           className={styles.actionBtn}
-                          onClick={() => goTo({ view: 'instance-detail', instanceId: inst.id })}
+                          onClick={() => goTo({ view: 'instance-detail', instanceId: inst.id, appId: inst.applicationId })}
                         >
                           查看详情
                         </button>
@@ -175,6 +238,7 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
                 <thead>
                   <tr>
                     <th>任务节点</th>
+                    <th className={styles.cellCenter}>应用</th>
                     <th className={styles.cellCenter}>类型</th>
                     <th className={styles.cellCenter}>状态</th>
                     <th className={styles.cellCenter}>分配时间</th>
@@ -188,6 +252,14 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
                       <td>
                         <span className={styles.instanceName}>{task.nodeId}</span>
                       </td>
+                      <td className={styles.cellCenter}>
+                        <span
+                          className={styles.appLink}
+                          onClick={() => navigate(`/apps/${task.applicationId}`)}
+                        >
+                          {task.applicationName || `应用 #${task.applicationId}`}
+                        </span>
+                      </td>
                       <td className={styles.cellCenter}>{task.assigneeType}</td>
                       <td className={styles.cellCenter}>{statusBadge(task.status)}</td>
                       <td className={styles.cellCenter}>
@@ -199,7 +271,7 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
                       <td className={styles.cellActions}>
                         <button
                           className={styles.actionBtn}
-                          onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId })}
+                          onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId, appId: task.applicationId })}
                         >
                           查看详情
                         </button>
@@ -211,7 +283,7 @@ export default function MyWorkflow({ onNavigate }: MyWorkflowProps = {}) {
             </div>
           </div>
         )
-      )}
+      ))}
     </div>
   );
 }

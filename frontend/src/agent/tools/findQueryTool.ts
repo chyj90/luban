@@ -23,7 +23,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
     name: 'find_query',
     description: `向数据辅助智能体请求创建或修改查询。
 使用时机：任何需要查询数据的需求（用户列表、搜索、筛选、统计等）。
-主智能体不知道数据库结构，调用此工具让 DBA 自行建好查询并调试通过。
+主智能体定义页面需要的字段，DBA 在数据库中查找对应列并创建查询，汇报可用/不可用字段。
 返回的 queries 列表可直接用于页面绑定（如 {{ QueryName.data }}）。`,
     category: 'query',
     parameters: {
@@ -41,7 +41,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
         requirements: {
           type: 'array',
           items: { type: 'string' },
-          description: '数据需求列表，用业务语言描述，不要写 SQL 或表名',
+          description: '数据需求列表，用业务语言描述，明确列出页面需要的字段。例如："员工列表，需要字段：姓名、部门、职位、手机号、入职日期、状态"',
         },
         existing_queries: {
           type: 'array',
@@ -96,9 +96,10 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
         console.log(`[find_query] 即将委派 data-assistant | 消息长度: ${userMessage.length}`);
         const routeStart = Date.now();
         await chatRouter.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
-          systemPrompt: dbaPrompt,
-          tools: dbaTools,
-          agentContext: {
+      systemPrompt: dbaPrompt,
+      tools: dbaTools,
+      isDelegated: true,
+      agentContext: {
             taskType: typedArgs.task_type,
             targetPage: typedArgs.target_page,
             requirements: typedArgs.requirements,
@@ -136,6 +137,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
         const errorResult: FindQueryResult = {
           success: false,
           message: `数据辅助智能体执行失败: ${(e as Error).message}`,
+          _noRetry: true,
         };
 
         console.log(`[find_query] 执行失败 | ${(e as Error).message}`);
@@ -153,7 +155,6 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
 export function getFindQuerySkillSummary(): string {
   return `## 查询管理
 - 你**不知道**数据库结构和表名，**不能**创建查询
-- 任何需要数据的需求，调用 find_query 工具，用业务语言描述需求
-- 样式调整不需要调用 find_query
-- 创建查询前先 list_queries 了解当前查询`;
+- 任何需要数据的需求，调用 find_query 工具，在 requirements 中明确列出页面需要的字段
+- 样式调整不需要调用 find_query`;
 }

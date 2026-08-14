@@ -16,6 +16,14 @@ axiosInstance.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  if (!config.url?.startsWith('/auth/')) {
+    const impersonateUserId = localStorage.getItem('impersonate_user_id');
+    const impersonateAppId = localStorage.getItem('impersonate_app_id');
+    if (impersonateUserId && impersonateAppId) {
+      config.headers['X-Impersonate-User-Id'] = impersonateUserId;
+      config.headers['X-Impersonate-Application-Id'] = impersonateAppId;
+    }
+  }
   return config;
 });
 

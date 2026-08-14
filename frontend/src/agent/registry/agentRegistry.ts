@@ -1,15 +1,16 @@
 import type { ToolDefinition, ToolContext } from '@/types/agent';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
+import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
 import { createInteliTools } from '../tools';
 import { createDataAssistantTools } from '../tools/dbaTools';
+import { createWorkflowTools } from '../tools/workflowTools';
 
 export interface AgentContext {
   applicationId: number;
   pageId: number;
   pageName: string;
   allPages: Array<{ id: number; name: string }>;
-  workspaceId: number;
   taskType?: string;
   targetPage?: string;
   requirements?: string[];
@@ -54,6 +55,15 @@ export const AGENTS: AgentDefinition[] = [
         modifyInstructions: ctx.modifyInstructions,
       }),
     buildTools: (ctx) => createDataAssistantTools(ctx),
+  },
+  {
+    id: 'workflow-assistant',
+    name: '流程设计助手',
+    icon: '',
+    description: '流程设计助手，负责设计表单、审批流程、查询组织、管理审批',
+    isDefault: false,
+    buildSystemPrompt: () => WORKFLOW_AGENT_PROMPT,
+    buildTools: (ctx) => createWorkflowTools(ctx),
   },
 ];
 

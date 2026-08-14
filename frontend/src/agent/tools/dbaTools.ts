@@ -91,12 +91,14 @@ export function createDataAssistantTools(context: ToolContext): ToolDefinition[]
 body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
   SELECT * FROM users WHERE name = {{ this.params.userName }}
 
-支持动态 SQL 标签（<if>、<where>、<set>、<foreach>），标签内 > < 无需转义：
+支持动态 SQL 标签（<if>、<where>、<set>、<foreach>），标签内 > < 无需转义。OGNL 表达式支持 and/or/! 等运算符：
   SELECT * FROM users
   <where>
-    <if test="name != null">AND name = {{ this.params.name }}</if>
-    <if test="status != null">AND status = {{ this.params.status }}</if>
+    <if test="name != null and name != ''">AND name = {{ this.params.name }}</if>
+    <if test="status != null and status != ''">AND status = {{ this.params.status }}</if>
+    <if test="ids != null and !ids.empty">AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">{{ this.params.id }}</foreach></if>
   </where>
+注意：params 默认值为空字符串 ""，因此判断条件需同时检查 != null 和 != ''，否则空字符串会被当作有效值传入 SQL。
 
 ## REST API 查询
 body 填写端点路径（相对路径如 /users 或绝对路径如 https://...）：

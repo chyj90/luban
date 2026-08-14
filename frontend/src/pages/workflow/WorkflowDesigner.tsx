@@ -16,7 +16,7 @@ import {
 import type { Connection, Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { WorkflowNode, WorkflowEdge } from '../../types/workflow';
-import { workflowApi, formApi, bindingApi } from '../../api/workflow';
+import { workflowApi, formApi, bindingApi, instanceApi } from '../../api/workflow';
 import { toast } from '@/stores/toastStore';
 import ApproverSelector from './ApproverSelector';
 import Select from './Select';
@@ -135,13 +135,17 @@ export default function WorkflowDesigner({
 }) {
   const [searchParams] = useSearchParams();
   const formMode = propFormMode || searchParams.get('formMode') === 'true';
+  const startMode = !propFormMode && searchParams.get('mode') === 'start';
   const resolvedFormId = formId || (searchParams.get('formId') ? Number(searchParams.get('formId')) : undefined);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedNodeConfig, setSelectedNodeConfig] = useState<Record<string, unknown>>({});
   const [workflowName, setWorkflowName] = useState('');
+  const [workflowDescription, setWorkflowDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [boundFormId, setBoundFormId] = useState<number | null>(null);
   const [formFieldNames, setFormFieldNames] = useState<string[]>([]);
   const [formPickerOpen, setFormPickerOpen] = useState(false);
@@ -167,6 +171,20 @@ export default function WorkflowDesigner({
 
   const [editingFieldIndex, setEditingFieldIndex] = useState<number | null>(null);
 
+  const [startFormFields, setStartFormFields] = useState<Array<{
+    key: string;
+    label: string;
+    type: string;
+    required: boolean;
+    options: Array<{ label: string; value: string }>;
+    columns: Array<{ key: string; label: string; type: string }>;
+  }>>([]);
+  const [startFormData, setStartFormData] = useState<Record<string, string>>({});
+  const [startFormLoading, setStartFormLoading] = useState(false);
+  const [startFormError, setStartFormError] = useState<string | null>(null);
+  const [startSubmitting, setStartSubmitting] = useState(false);
+  const [startWorkflowName, setStartWorkflowName] = useState('');
+
   const historyRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
   const historyPosRef = useRef(-1);
   const restoringRef = useRef(false);
@@ -191,6 +209,55 @@ export default function WorkflowDesigner({
     if (initRef.current) return;
     pushHistory();
   }, [nodes, edges, pushHistory]);
+
+  // Load start form data when in start mode
+  useEffect(() => {
+    if (!startMode || !processId) return;
+    setStartFormLoading(true);
+    setStartFormError(null);
+    Promise.all([
+      workflowApi.getDefinition(processId),
+      bindingApi.list({ workflowId: processId }),
+    ]).then(([def, bindings]) => {
+      setStartWorkflowName(def.name || '未命名流程');
+      const binding = bindings.find(b => b.workflowId === processId);
+      if (!binding) {
+        setStartFormError('该流程未关联表单');
+        setStartFormLoading(false);
+        return;
+      }
+      return formApi.get(binding.formId).then((form) => {
+        try {
+          const fields = form.fields ? JSON.parse(form.fields) : [];
+          if (Array.isArray(fields) && fields.length > 0) {
+            setStartFormFields(fields.map((f: any) => ({
+              key: f.key || f.name || '',
+              label: f.label || f.name || '',
+              type: f.type || 'text',
+              required: f.required || false,
+              options: f.options || [],
+              columns: f.columns || [],
+            })));
+            const initial: Record<string, string> = {};
+            fields.forEach((f: any) => {
+              initial[f.key || f.name || ''] = '';
+            });
+            setStartFormData(initial);
+          } else {
+            setStartFormFields([]);
+          }
+        } catch {
+          setStartFormFields([]);
+        }
+      }).catch(() => {
+        setStartFormError('加载表单失败');
+      });
+    }).catch(() => {
+      setStartFormError('加载流程信息失败');
+    }).finally(() => {
+      setStartFormLoading(false);
+    });
+  }, [startMode, processId]);
 
   const handleUndo = useCallback(() => {
     if (historyPosRef.current <= 0) return;
@@ -288,6 +355,7 @@ export default function WorkflowDesigner({
     if (processId) {
       workflowApi.getDefinition(processId).then((def) => {
         setWorkflowName(def.name || '');
+        setWorkflowDescription(def.description || '');
         try {
           if (def.nodes) {
             const parsed = JSON.parse(def.nodes);
@@ -410,6 +478,7 @@ export default function WorkflowDesigner({
       }
       const data = {
         name: workflowName.trim(),
+        description: workflowDescription.trim(),
         applicationId: appId,
         nodes: JSON.stringify(nodes),
         edges: JSON.stringify(edges),
@@ -422,7 +491,7 @@ export default function WorkflowDesigner({
         toast.success('创建成功');
         // Update URL if navigating from /workflow/designer to /workflow/designer/:id
         if (!embedded) {
-          window.history.replaceState(null, '', `/workflow/designer/${created.id}`);
+          window.history.replaceState(null, '', `/apps/${appId}/designer/${created.id}`);
         }
       }
     } catch (e: any) {
@@ -431,7 +500,82 @@ export default function WorkflowDesigner({
     } finally {
       setSaving(false);
     }
-  }, [workflowName, nodes, edges, processId, embedded]);
+  }, [workflowName, workflowDescription, nodes, edges, processId, embedded]);
+
+  const handlePublish = useCallback(async () => {
+    if (!processId) {
+      toast.warning('请先保存流程后再发布');
+      return;
+    }
+    if (!workflowName.trim()) {
+      toast.warning('请输入流程名称');
+      return;
+    }
+    setShowPublishDialog(true);
+  }, [processId, workflowName]);
+
+  const confirmPublish = useCallback(async () => {
+    if (!processId) return;
+    setPublishing(true);
+    setShowPublishDialog(false);
+    try {
+      await workflowApi.publishDefinition(processId);
+      toast.success('发布成功');
+      if (!embedded) {
+        window.location.reload();
+      }
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || '发布失败';
+      toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发布失败');
+    } finally {
+      setPublishing(false);
+    }
+  }, [processId, embedded]);
+
+  const handleTest = useCallback(async () => {
+    if (!processId) {
+      toast.warning('请先保存流程后再发起测试');
+      return;
+    }
+    try {
+      await workflowApi.initTestData(appId!);
+      const def = await workflowApi.getDefinition(processId);
+      const isTest = true;
+      await instanceApi.start({
+        definitionId: processId,
+        formData: '{}',
+        isTest,
+      });
+      toast.success('测试流程已发起，请前往「我的工作」查看');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || '发起测试失败';
+      toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发起测试失败');
+    }
+  }, [processId, appId]);
+
+  const handleSubmitStartForm = useCallback(async () => {
+    if (!processId) return;
+    const missing = startFormFields.filter(f => f.required && !startFormData[f.key]?.trim());
+    if (missing.length > 0) {
+      toast.warning(`请填写：${missing.map(f => f.label).join('、')}`);
+      return;
+    }
+    setStartSubmitting(true);
+    try {
+      const formData = JSON.stringify(startFormData);
+      await instanceApi.start({
+        definitionId: processId,
+        formData,
+        isTest: false,
+      });
+      toast.success('流程已发起，请前往「我的工作」查看');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || e?.message || '发起失败';
+      toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发起失败');
+    } finally {
+      setStartSubmitting(false);
+    }
+  }, [processId, startFormFields, startFormData]);
 
   const GATEWAY_TYPES = new Set(['condition', 'parallel']);
 
@@ -1090,6 +1234,164 @@ export default function WorkflowDesigner({
     );
   }
 
+  if (startMode) {
+    const renderField = (field: { key: string; label: string; type: string; required: boolean; options: Array<{ label: string; value: string }> }) => {
+      const val = startFormData[field.key] || '';
+      const onChange = (v: string) => setStartFormData(prev => ({ ...prev, [field.key]: v }));
+
+      if (field.type === 'select' || field.type === 'radio') {
+        return (
+          <select
+            className={styles.configInput}
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <option value="">请选择</option>
+            {field.options.map((opt, i) => (
+              <option key={i} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        );
+      }
+      if (field.type === 'checkbox') {
+        return (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {field.options.map((opt, i) => {
+              const checked = val.split(',').includes(opt.value);
+              return (
+                <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={e => {
+                      const current = val ? val.split(',').filter(Boolean) : [];
+                      const next = e.target.checked
+                        ? [...current, opt.value]
+                        : current.filter(v => v !== opt.value);
+                      onChange(next.join(','));
+                    }}
+                  />
+                  {opt.label}
+                </label>
+              );
+            })}
+          </div>
+        );
+      }
+      if (field.type === 'textarea') {
+        return (
+          <textarea
+            className={styles.configInput}
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            rows={3}
+            style={{ width: '100%', resize: 'vertical' }}
+          />
+        );
+      }
+      if (field.type === 'number') {
+        return (
+          <input
+            className={styles.configInput}
+            type="number"
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        );
+      }
+      if (field.type === 'date') {
+        return (
+          <input
+            className={styles.configInput}
+            type="date"
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        );
+      }
+      return (
+        <input
+          className={styles.configInput}
+          type="text"
+          value={val}
+          onChange={e => onChange(e.target.value)}
+          style={{ width: '100%' }}
+        />
+      );
+    };
+
+    return (
+      <div className={styles.designer}>
+        <div className={styles.toolbar}>
+          <button className={styles.toolbarBtn} onClick={() => window.history.back()}>
+            ← 返回
+          </button>
+          <span className={styles.toolbarTitle}>{startWorkflowName}</span>
+        </div>
+        <div className={styles.body} style={{ justifyContent: 'center', padding: '32px 0' }}>
+          <div style={{ width: 520, maxWidth: '100%' }}>
+            {startFormLoading && (
+              <div className={styles.emptyState}>
+                <div className={styles.emptyText}>加载中...</div>
+              </div>
+            )}
+            {startFormError && !startFormLoading && (
+              <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                <p>{startFormError}</p>
+                <button className={styles.toolbarBtn} onClick={() => window.history.back()} style={{ marginTop: 16 }}>
+                  返回
+                </button>
+              </div>
+            )}
+            {!startFormLoading && !startFormError && startFormFields.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                <p>该流程没有表单字段</p>
+                <button
+                  className={styles.toolbarBtnPrimary}
+                  onClick={handleSubmitStartForm}
+                  disabled={startSubmitting}
+                  style={{ marginTop: 16 }}
+                >
+                  {startSubmitting ? '提交中...' : '直接发起'}
+                </button>
+              </div>
+            )}
+            {!startFormLoading && !startFormError && startFormFields.length > 0 && (
+              <div style={{ background: '#fff', borderRadius: 8, padding: 24, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+                <h2 style={{ margin: '0 0 24px', fontSize: 18, fontWeight: 600 }}>{startWorkflowName}</h2>
+                {startFormFields.map((field) => (
+                  <div key={field.key} style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500, color: '#333' }}>
+                      {field.label}
+                      {field.required && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>}
+                    </label>
+                    {renderField(field)}
+                  </div>
+                ))}
+                <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
+                  <button
+                    className={styles.toolbarBtnPrimary}
+                    onClick={handleSubmitStartForm}
+                    disabled={startSubmitting}
+                    style={{ flex: 1 }}
+                  >
+                    {startSubmitting ? '提交中...' : '提交'}
+                  </button>
+                  <button className={styles.toolbarBtn} onClick={() => window.history.back()}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={styles.designer} style={embedded ? { height: '100%' } : undefined}>
       <div className={styles.toolbar}>
@@ -1100,10 +1402,13 @@ export default function WorkflowDesigner({
           <button className={styles.toolbarBtn} onClick={handleUndo}>撤销</button>
           <button className={styles.toolbarBtn} onClick={handleRedo}>重做</button>
           <button className={styles.toolbarBtn} onClick={handleAutoLayout}>自动布局</button>
+          <button className={styles.toolbarBtn} onClick={handleTest} disabled={!processId}>发起测试</button>
           <button className={styles.toolbarBtnPrimary} onClick={handleSave} disabled={saving}>
             {saving ? '保存中...' : '保存'}
           </button>
-          <button className={styles.toolbarBtnSuccess}>发布</button>
+          <button className={styles.toolbarBtnSuccess} onClick={handlePublish} disabled={publishing || !processId}>
+            {publishing ? '发布中...' : '发布'}
+          </button>
         </div>
       </div>
 
@@ -1159,12 +1464,6 @@ export default function WorkflowDesigner({
               strokeDasharray: '6 3',
             }}
           >
-            <input
-              className={styles.canvasTitle}
-              value={workflowName}
-              onChange={(e) => setWorkflowName(e.target.value)}
-              placeholder="输入流程名称"
-            />
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
           </ReactFlow>
@@ -1367,6 +1666,25 @@ export default function WorkflowDesigner({
             </div>
           ) : (
             <div className={styles.emptyState}>
+              <div className={styles.configGroup}>
+                <label className={styles.configLabel}>流程名称</label>
+                <input
+                  className={styles.configInput}
+                  value={workflowName}
+                  onChange={(e) => setWorkflowName(e.target.value)}
+                  placeholder="输入流程名称"
+                />
+              </div>
+              <div className={styles.configGroup}>
+                <label className={styles.configLabel}>流程描述</label>
+                <textarea
+                  className={styles.configTextarea}
+                  value={workflowDescription}
+                  onChange={(e) => setWorkflowDescription(e.target.value)}
+                  placeholder="输入流程描述（可选，用于用户发起时展示）"
+                  rows={3}
+                />
+              </div>
               <div className={styles.emptyIcon}>
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.4"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </div>
@@ -1382,6 +1700,24 @@ export default function WorkflowDesigner({
         <span>连线: {edges.length}</span>
         <span>缩放: {Math.round(viewportZoom * 100)}%</span>
       </div>
+
+      {showPublishDialog && (
+        <div className={styles.modalOverlay} onClick={() => setShowPublishDialog(false)}>
+          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalTitle}>发布流程</div>
+            <div className={styles.modalBody}>
+              <p>发布后，普通用户将可以发起此流程。</p>
+              <p>同时会创建新的草稿版本供您继续编辑。</p>
+            </div>
+            <div className={styles.modalFooter}>
+              <button className={styles.toolbarBtn} onClick={() => setShowPublishDialog(false)}>取消</button>
+              <button className={styles.toolbarBtnSuccess} onClick={confirmPublish} disabled={publishing}>
+                {publishing ? '发布中...' : '确认发布'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1407,15 +1743,25 @@ function EndNode({ data }: { data: Record<string, unknown> }) {
 }
 
 function ApprovalNode({ data }: { data: Record<string, unknown> }) {
+  const config = (data.config || {}) as Record<string, unknown>;
+  const approverType = config.approverType as string | undefined;
+  const approverCount = config.approverCount as number | undefined;
+  const approverIds = config.approverIds as string[] | undefined;
+  const computedCount = approverType === 'member'
+    ? (approverIds?.length || 0)
+    : (approverType ? 1 : 0);
+  const displayCount = approverCount != null ? approverCount : computedCount;
   return (
     <div className={styles.customNode} style={{ borderColor: NODE_COLORS.approval }}>
       <Handle type="target" position={Position.Top} className={styles.handle} />
       <div className={styles.nodeIcon} style={{ background: NODE_COLORS.approval }}>{NODE_ICONS.approval}</div>
       <div className={styles.nodeLabel}>{data.label as string}</div>
       <div className={styles.nodeSubLabel}>
-        {(data.config as Record<string, unknown>)?.approverCount
-          ? `${(data.config as Record<string, unknown>).approverCount} 位审批人`
-          : '未设置审批人'}
+        {displayCount > 0
+          ? `${displayCount} 位审批人`
+          : approverType
+            ? '已设置审批人'
+            : '未设置审批人'}
       </div>
       <Handle type="source" position={Position.Bottom} className={styles.handle} />
     </div>

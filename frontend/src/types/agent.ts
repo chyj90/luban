@@ -10,6 +10,7 @@ export interface Message {
   id: string;
   role: MessageRole;
   content: string;
+  reasoningContent?: string;
   timestamp: number;
   toolCalls?: ToolCall[];
   toolCallId?: string;
@@ -43,7 +44,6 @@ export type ToolCategory = 'page' | 'code' | 'datasource' | 'query' | 'observati
 export interface ToolContext {
   applicationId: number;
   pageId: number;
-  workspaceId: number;
   dispatch: (event: AgentEvent) => void;
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
@@ -56,6 +56,7 @@ export interface ToolExecuteResult {
   message: string;
   data?: unknown;
   _pause?: boolean;
+  _noRetry?: boolean;
 }
 
 export interface ToolCallResult {

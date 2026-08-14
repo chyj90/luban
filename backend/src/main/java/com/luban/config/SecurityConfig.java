@@ -1,6 +1,10 @@
 package com.luban.config;
 
+import com.luban.security.ImpersonationFilter;
 import com.luban.security.JwtAuthFilter;
+import com.luban.workflow.repository.MemberRepository;
+import com.luban.repository.ApplicationRepository;
+import com.luban.repository.UserRepository;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,7 +29,15 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public ImpersonationFilter impersonationFilter(ApplicationRepository appRepo,
+                                                    UserRepository userRepo,
+                                                    MemberRepository memberRepo) {
+        return new ImpersonationFilter(appRepo, userRepo, memberRepo);
+    }
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                    ImpersonationFilter impersonationFilter) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -40,7 +52,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/**").permitAll()
                 .anyRequest().authenticated()
             )
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(impersonationFilter, JwtAuthFilter.class);
 
         return http.build();
     }

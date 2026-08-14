@@ -15,8 +15,8 @@ public class RoleController {
     private final RoleRepository roleRepository;
 
     @GetMapping
-    public List<Role> list(@RequestParam Long workspaceId) {
-        return roleRepository.findByWorkspaceId(workspaceId);
+    public List<Role> list(@RequestParam Long applicationId) {
+        return roleRepository.findByApplicationId(applicationId);
     }
 
     @GetMapping("/{id}")

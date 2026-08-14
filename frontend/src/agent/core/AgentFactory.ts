@@ -4,7 +4,7 @@ import { AGENT_CONFIG } from '../config';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { createInteliTools } from '../tools';
 import { formatUnfinishedPlansForPrompt } from './planContext';
-import { runAgentLoop, type AgentLoopOptions } from './agentLoop';
+import { runAgentLoop } from './agentLoop';
 import { planSkill } from '../skills';
 import type { ChatRouter } from './chatRouter';
 
@@ -18,7 +18,6 @@ export interface AgentFactoryOptions {
   sessionId: string;
   dispatch: (event: { type: string; payload: unknown }) => void;
   applicationId: string;
-  workspaceId: number;
   addMessage: (msg: Message) => void;
   updateMessage: (id: string, updates: Partial<Message>) => void;
   removeMessage: (id: string) => void;
@@ -35,6 +34,7 @@ export interface AgentFactoryOptions {
   agentId?: string;
   agentName?: string;
   agentIcon?: string;
+  isDelegated?: boolean;
 }
 
 export type AgentExecutor = {
@@ -47,11 +47,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     providerType, model, baseUrl,
     currentPageId, currentPageName, allPages,
     sessionId, dispatch,
-    applicationId, workspaceId,
+    applicationId,
     addMessage, updateMessage, removeMessage, setStatus, setStreaming, setError,
     addPlan, updatePlan, updateStep,
     overrideSystemPrompt, overrideTools, chatRouter,
-    agentId, agentName, agentIcon,
+    agentId, agentName, agentIcon, isDelegated,
   } = options;
 
   let abortController: AbortController | null = null;
@@ -72,7 +72,6 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
   const toolContext = {
     applicationId: Number(applicationId),
     pageId: currentPageId,
-    workspaceId,
     dispatch,
   };
   const tools = overrideTools || createInteliTools(toolContext, chatRouter);
@@ -105,8 +104,10 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         agentName: name,
         agentIcon: icon,
       };
-      addMessage(userMsg);
-      console.log(`[AgentFactory:${name}] addMessage(user) | id=${userMsg.id.slice(0, 8)}`);
+      if (!isDelegated) {
+        addMessage(userMsg);
+        console.log(`[AgentFactory:${name}] addMessage(user) | id=${userMsg.id.slice(0, 8)}`);
+      }
       conversationMessages.push(userMsg);
 
       if (!conversationMessages.some((m) => m.role === 'system')) {
@@ -122,7 +123,10 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       setStreaming(true);
 
       let streamingContent = '';
+      let streamingReasoning = '';
       let streamingMsgId = '';
+      let lastStreamingUpdate = 0;
+      const STREAMING_THROTTLE_MS = 50;
 
       try {
         const apiKey = await resolveApiKey(providerType);
@@ -141,15 +145,24 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           onStatusChange: (status) => {
             setStatus(status);
           },
-          onStreamingContent: (content) => {
-            console.log(`[AgentFactory:${name}] onStreamingContent | "${content.slice(0, 40)}" | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'new'}`);
-            streamingContent = content;
+          onStreamingContent: (content, reasoning) => {
+            if (reasoning) {
+              streamingReasoning += content;
+            } else {
+              streamingContent += content;
+            }
+            const now = Date.now();
+            if (now - lastStreamingUpdate < STREAMING_THROTTLE_MS && streamingMsgId) {
+              return;
+            }
+            lastStreamingUpdate = now;
             if (!streamingMsgId) {
               streamingMsgId = crypto.randomUUID();
               addMessage({
                 id: streamingMsgId,
                 role: 'assistant',
-                content,
+                content: streamingContent,
+                reasoningContent: streamingReasoning || undefined,
                 timestamp: Date.now(),
                 isStreaming: true,
                 agentId: agentId || 'main-agent',
@@ -157,7 +170,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
                 agentIcon: icon,
               });
             } else {
-              updateMessage(streamingMsgId, { content, isStreaming: true });
+              updateMessage(streamingMsgId, {
+                content: streamingContent,
+                reasoningContent: streamingReasoning || undefined,
+                isStreaming: true,
+              });
             }
           },
           onClearStreaming: () => {
@@ -167,6 +184,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             }
             streamingMsgId = '';
             streamingContent = '';
+            streamingReasoning = '';
             setStreaming(false);
           },
           onAddMessage: (msg) => {
@@ -188,27 +206,27 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           onStepUpdate: (planId, stepId, status, result) => {
             updateStep(planId, stepId, { status: status as any, result });
           },
-          onToolCall: (toolName, input, messageId) => {
+          onToolCall: (toolName, input, messageId, toolCallId) => {
             console.log(`[${name}] tool call: ${toolName}`, JSON.stringify(input, null, 2));
             const store = useAgentStore.getState();
             const msg = store.messages.find((m) => m.id === messageId);
             if (msg?.toolCalls) {
               const updatedToolCalls = msg.toolCalls.map((tc) =>
-                tc.name === toolName && tc.status === 'pending'
+                tc.id === toolCallId
                   ? { ...tc, status: 'running' as const }
                   : tc,
               );
               updateMessage(messageId, { toolCalls: updatedToolCalls });
             }
           },
-          onToolResult: (toolName, result, messageId) => {
+          onToolResult: (toolName, result, messageId, toolCallId) => {
             const status = result.success ? 'SUCCESS' : 'FAIL';
             console.log(`[${name}] tool result: ${status} ${toolName}`);
             const store = useAgentStore.getState();
             const msg = store.messages.find((m) => m.id === messageId);
             if (msg?.toolCalls) {
               const updatedToolCalls = msg.toolCalls.map((tc) =>
-                tc.name === toolName && tc.status === 'running'
+                tc.id === toolCallId
                   ? { ...tc, status: result.success ? 'done' as const : 'error' as const, result: result.message }
                   : tc,
               );
@@ -225,6 +243,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               payload: { phase: 'agent', inputTokens: input, outputTokens: output, totalTokens: input + output },
             });
           },
+          throwOnStuck: !!isDelegated,
         });
 
         setStatus('completed');
@@ -237,6 +256,10 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         if (err.message === 'Cancelled' || err.name === 'AbortError') {
           console.log(`[AgentFactory:${name}] run() 被取消 | ${Date.now() - runStart}ms`);
           return;
+        }
+        if (err.message?.startsWith('__STUCK__')) {
+          console.log(`[AgentFactory:${name}] run() 卡住，向上传播 | ${err.message}`);
+          throw err;
         }
         console.log(`[AgentFactory:${name}] run() 错误 | ${err.message}`);
         setError(err.message);

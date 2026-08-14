@@ -139,6 +139,35 @@ luban/
 
 ---
 
+## 核心数据模型
+
+### User 与 Member 的关系（重要）
+
+```
+members（超集：组织通讯录）
+  │
+  ├── 有 userId → 正式用户 ──→ users（子集：登录账号）
+  │     └── 可登录、可被分配任务、可审批
+  │
+  └── 无 userId → 测试用户
+        └── 仅用于流程模拟，不可登录
+```
+
+| 表 | 用途 | 类比 |
+|----|------|------|
+| **users** | 登录认证（邮箱、密码、JWT） | 门禁卡 |
+| **members** | 组织信息（姓名、部门、职位、工号、上级） | 公司花名册 |
+
+**关键规则：**
+
+- 用户注册时自动同步创建 Member（`AuthService.register()`）
+- Member 是超集：包含正式用户（有 userId）和测试用户（userId = NULL）
+- 每个 User 对应唯一一个 Member（`Member.userId`），一对一
+- 流程设计器选人从 `members` 表读，DevToolbar 模拟用户也从 `members` 表读
+- 测试用户不可登录，仅通过 DevToolbar 模拟使用
+
+---
+
 ## 快速开始
 
 ### 环境要求

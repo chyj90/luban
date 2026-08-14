@@ -19,7 +19,7 @@ public class Application {
     private String name;
 
     @Column(nullable = false)
-    private Long workspaceId;
+    private Long createdBy;
 
     @Column(unique = true, length = 100)
     private String slug;
@@ -49,4 +49,10 @@ public class Application {
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
     }
+
+    @Transient
+    private Long workflowCount;
+
+    @Transient
+    private Long publishedWorkflowCount;
 }

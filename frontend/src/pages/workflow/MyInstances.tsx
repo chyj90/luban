@@ -18,8 +18,8 @@ export default function MyInstances({ embedded, onNavigate }: MyInstancesProps =
   const goTo = (view: WorkflowView) => {
     if (onNavigate) {
       onNavigate(view);
-    } else if (view.view === 'instance-detail') {
-      navigate(`/workflow/instances/${view.instanceId}`);
+    } else if (view.view === 'instance-detail' && view.appId != null) {
+      navigate(`/apps/${view.appId}/instances/${view.instanceId}`);
     }
   };
 
@@ -97,7 +97,7 @@ export default function MyInstances({ embedded, onNavigate }: MyInstancesProps =
                       <td className={styles.cellActions}>
                         <button
                           className={styles.actionBtn}
-                          onClick={() => goTo({ view: 'instance-detail', instanceId: inst.id })}
+                          onClick={() => goTo({ view: 'instance-detail', instanceId: inst.id, appId: inst.applicationId })}
                         >
                           查看详情
                         </button>

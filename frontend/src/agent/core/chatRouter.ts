@@ -7,7 +7,7 @@ import { createFindQueryTool } from '../tools/findQueryTool';
 
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
-  'providerType' | 'model' | 'baseUrl' | 'currentPageId' | 'currentPageName' | 'allPages' | 'applicationId' | 'workspaceId'
+  'providerType' | 'model' | 'baseUrl' | 'currentPageId' | 'currentPageName' | 'allPages' | 'applicationId'
 > & {
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
@@ -129,6 +129,7 @@ export class ChatRouter {
       systemPrompt?: string;
       tools?: ToolDefinition[];
       agentContext?: Record<string, unknown>;
+      isDelegated?: boolean;
     },
   ): Promise<AgentExecutor> {
     const agentDef = getAgentById(agentId);
@@ -176,7 +177,6 @@ export class ChatRouter {
     const toolContext = {
       applicationId: Number(this.sessionOptions.applicationId),
       pageId: this.sessionOptions.currentPageId,
-      workspaceId: this.sessionOptions.workspaceId,
       dispatch: this.callbacks.dispatch,
       onPagesChange: this.callbacks.onPagesChange || this.sessionOptions.onPagesChange,
       onPageChange: this.callbacks.onPageChange || this.sessionOptions.onPageChange,
@@ -193,7 +193,6 @@ export class ChatRouter {
       pageId: this.sessionOptions.currentPageId,
       pageName: this.sessionOptions.currentPageName,
       allPages: this.sessionOptions.allPages,
-      workspaceId: this.sessionOptions.workspaceId,
       ...(overrides?.agentContext as Record<string, unknown> || {}),
     });
 
@@ -217,6 +216,7 @@ export class ChatRouter {
       agentId: agentDef.id,
       agentName: agentDef.name,
       agentIcon: agentDef.icon,
+      isDelegated: overrides?.isDelegated || false,
     });
   }
 }

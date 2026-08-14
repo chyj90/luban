@@ -19,7 +19,7 @@ export function LoginPage() {
     try {
       const res = await login({ email, password });
       setAuth(res.data.token, res.data.user);
-      navigate('/workspace');
+      navigate('/apps');
     } catch {
       setError('登录失败，请检查邮箱和密码');
     } finally {
@@ -34,7 +34,6 @@ export function LoginPage() {
           <h1>鲁班</h1>
           <p>AI 驱动应用构建平台</p>
         </div>
-        <h2 className="login-title">登录</h2>
 
         {error && <div className="login-error">{error}</div>}
 

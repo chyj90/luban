@@ -59,16 +59,25 @@ public class ProcessEngine {
     @Transactional
     public WorkflowInstance startProcess(Long workflowDefinitionId, String formDataJson,
                                           Long initiatorId, String initiatorName) {
+        return startProcess(workflowDefinitionId, formDataJson, initiatorId, initiatorName, false);
+    }
+
+    @Transactional
+    public WorkflowInstance startProcess(Long workflowDefinitionId, String formDataJson,
+                                          Long initiatorId, String initiatorName, boolean isTest) {
         WorkflowDefinition definition = workflowDefinitionRepository.findById(workflowDefinitionId)
                 .orElseThrow(() -> new RuntimeException("流程定义不存在: " + workflowDefinitionId));
 
-        if (!"PUBLISHED".equals(definition.getStatus())) {
+        if (!isTest && !"PUBLISHED".equals(definition.getStatus())) {
             throw new RuntimeException("流程定义未发布，无法发起");
         }
 
         WorkflowInstance instance = new WorkflowInstance();
         instance.setWorkflowId(definition.getId());
+        instance.setApplicationId(definition.getApplicationId());
         instance.setWorkflowVersion(definition.getVersion());
+        instance.setDefinitionVersion(definition.getVersion());
+        instance.setIsTest(isTest);
         instance.setFormId(null);
         instance.setStatus("RUNNING");
         instance.setFormData(formDataJson);
@@ -78,7 +87,7 @@ public class ProcessEngine {
         workflowInstanceRepository.save(instance);
 
         recordHistory(instance.getId(), null, "START", "SUBMIT", initiatorId,
-                "发起流程", null, null, null);
+                isTest ? "[测试] 发起流程" : "发起流程", null, null, null);
 
         // 找到开始节点后的第一个节点，创建任务
         createTasksForNextNodes(definition, instance, "start", formDataJson);
@@ -342,6 +351,7 @@ public class ProcessEngine {
         // 创建新任务给转办目标
         WorkflowTask newTask = new WorkflowTask();
         newTask.setInstanceId(task.getInstanceId());
+        newTask.setApplicationId(task.getApplicationId());
         newTask.setNodeId(task.getNodeId());
         newTask.setAssigneeId(targetUserId);
         newTask.setAssigneeType("TRANSFER");
@@ -375,6 +385,7 @@ public class ProcessEngine {
 
             WorkflowTask newTask = new WorkflowTask();
             newTask.setInstanceId(task.getInstanceId());
+            newTask.setApplicationId(task.getApplicationId());
             newTask.setNodeId(task.getNodeId());
             newTask.setAssigneeId(addUserId);
             newTask.setAssigneeType("ADD_SIGN");
@@ -434,6 +445,7 @@ public class ProcessEngine {
         // 创建委派任务，记录归属原处理人
         WorkflowTask newTask = new WorkflowTask();
         newTask.setInstanceId(task.getInstanceId());
+        newTask.setApplicationId(task.getApplicationId());
         newTask.setNodeId(task.getNodeId());
         newTask.setAssigneeId(delegateUserId);
         newTask.setAssigneeType("DELEGATE");
@@ -568,6 +580,7 @@ public class ProcessEngine {
         // 创建新任务给上级
         WorkflowTask newTask = new WorkflowTask();
         newTask.setInstanceId(task.getInstanceId());
+        newTask.setApplicationId(task.getApplicationId());
         newTask.setNodeId(task.getNodeId());
         newTask.setAssigneeId(member.getLeaderId());
         newTask.setAssigneeType("DELEGATE");
@@ -900,6 +913,7 @@ public class ProcessEngine {
                                     String assigneeType, Long originalAssigneeId, String collaborationMode) {
         WorkflowTask task = new WorkflowTask();
         task.setInstanceId(instance.getId());
+        task.setApplicationId(instance.getApplicationId());
         task.setNodeId(nodeId);
         task.setAssigneeId(assigneeId);
         task.setAssigneeType(assigneeType);
@@ -965,6 +979,7 @@ public class ProcessEngine {
                                                Map<String, Object> formData, int index, int total) {
         WorkflowInstance sub = new WorkflowInstance();
         sub.setWorkflowId(subDef.getId());
+        sub.setApplicationId(subDef.getApplicationId());
         sub.setWorkflowVersion(subDef.getVersion());
         sub.setFormId(parent.getFormId());
         sub.setStatus("RUNNING");

@@ -106,13 +106,14 @@ body 填写端点路径（相对路径如 /users 或绝对路径如 https://...�
   - 其他字段：用于替换端点中的 {{ this.params.xxx }}
 
 ## SQL 动态标签完整示例
+params 默认值为空字符串 ""，因此判断条件需同时检查 != null 和 != ''，支持 and/or/! 运算符：
 \`\`\`sql
 SELECT * FROM users
 <where>
-  <if test="name != null">AND name = {{ this.params.name }}</if>
-  <if test="status != null">AND status = {{ this.params.status }}</if>
+  <if test="name != null and name != ''">AND name = {{ this.params.name }}</if>
+  <if test="status != null and status != ''">AND status = {{ this.params.status }}</if>
   <if test="ageMin != null">AND age >= {{ this.params.ageMin }}</if>
-  <if test="ids != null">AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">{{ this.params.id }}</foreach></if>
+  <if test="ids != null and !ids.empty">AND id IN <foreach collection="ids" item="id" open="(" separator="," close=")">{{ this.params.id }}</foreach></if>
 </where>
 ORDER BY id
 \`\`\`

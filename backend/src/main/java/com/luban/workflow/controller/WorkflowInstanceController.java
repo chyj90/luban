@@ -21,12 +21,15 @@ public class WorkflowInstanceController {
     public WorkflowInstance start(@RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         Long definitionId = Long.valueOf(params.get("definitionId").toString());
         String formData = params.getOrDefault("formData", "{}").toString();
-        return processService.startProcess(definitionId, formData, user.getId(), user.getName());
+        boolean isTest = Boolean.parseBoolean(params.getOrDefault("isTest", "false").toString());
+        return processService.startProcess(definitionId, formData, user.getId(), user.getName(), isTest);
     }
 
     @GetMapping
-    public List<WorkflowInstance> list(@AuthenticationPrincipal User user) {
-        return processService.listMyInstances(user.getId());
+    public List<WorkflowInstance> list(@AuthenticationPrincipal User user,
+                                        @RequestParam(required = false) Boolean isTest,
+                                        @RequestParam(required = false) Long applicationId) {
+        return processService.listMyInstances(user.getId(), isTest, applicationId);
     }
 
     @GetMapping("/{id}")

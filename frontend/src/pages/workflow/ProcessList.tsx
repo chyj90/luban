@@ -28,7 +28,7 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
     if (onNavigate) {
       onNavigate(view);
     } else if (view.view === 'designer') {
-      navigate(`/workflow/designer/${view.processId || 'new'}`);
+      navigate(`/apps/${appId}/designer/${view.processId || 'new'}`);
     }
   };
 
@@ -211,7 +211,17 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
                       </button>
                       </div>
                     </td>
-                    <td>v{def.version}</td>
+                    <td>
+                      {def.status === 'DRAFT' && def.publishedVersionId ? (
+                        <span className={styles.versionInfo}>
+                          已发布版本: v{def.version - 1} | 草稿版本: v{def.version} (编辑中)
+                        </span>
+                      ) : def.status === 'DRAFT' ? (
+                        <span className={styles.versionInfo}>v{def.version} (草稿)</span>
+                      ) : (
+                        <span className={styles.versionInfo}>v{def.version} (已发布)</span>
+                      )}
+                    </td>
                     <td>{statusBadge(def.status)}</td>
                     <td>
                       {new Date(def.updatedAt).toLocaleString('zh-CN')}
@@ -227,6 +237,11 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
                         <button
                           className={styles.actionBtnPrimary}
                           onClick={() => {
+                            if (!window.confirm(
+                              `确认发布流程「${def.name}」？\n\n` +
+                              `版本: v${def.version}\n` +
+                              `发布后，所有用户将可使用此版本发起流程。`
+                            )) return;
                             workflowApi.publishDefinition(def.id).then(() => {
                               setDefinitions((prev) =>
                                 prev.map((d) =>

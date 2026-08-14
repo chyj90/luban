@@ -22,9 +22,9 @@ export default function FormList({ embedded, appId: propAppId, onNavigate }: For
     if (onNavigate) {
       onNavigate(view);
     } else if (view.view === 'designer') {
-      navigate(`/workflow/designer?formMode=true${view.formId ? `&formId=${view.formId}` : ''}`);
+      navigate(`/apps/${view.appId}/designer?formMode=true${view.formId ? `&formId=${view.formId}` : ''}`);
     } else if (view.view === 'form-preview') {
-      navigate(`/workflow/forms/${view.formId}/preview`);
+      navigate(`/apps/${view.appId}/forms/${view.formId}/preview`);
     }
   };
 

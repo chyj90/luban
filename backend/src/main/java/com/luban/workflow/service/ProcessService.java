@@ -2,6 +2,7 @@ package com.luban.workflow.service;
 
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
+import com.luban.repository.ApplicationRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -15,10 +16,13 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ProcessService {
 
+    private final ApplicationRepository applicationRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final WorkflowInstanceRepository workflowInstanceRepository;
     private final WorkflowTaskRepository workflowTaskRepository;
     private final WorkflowHistoryRepository workflowHistoryRepository;
+    private final FormDefinitionRepository formDefinitionRepository;
+    private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
     private final DepartmentRepository departmentRepository;
@@ -26,6 +30,13 @@ public class ProcessService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public List<WorkflowDefinition> listDefinitionsByApp(Long applicationId) {
+        return workflowDefinitionRepository.findByApplicationId(applicationId);
+    }
+
+    public List<WorkflowDefinition> listDefinitionsByApp(Long applicationId, String status) {
+        if (status != null && !status.isEmpty()) {
+            return workflowDefinitionRepository.findByApplicationIdAndStatus(applicationId, status);
+        }
         return workflowDefinitionRepository.findByApplicationId(applicationId);
     }
 
@@ -45,9 +56,6 @@ public class ProcessService {
     @Transactional
     public WorkflowDefinition updateDefinition(Long id, WorkflowDefinition updated) {
         WorkflowDefinition existing = getDefinition(id);
-        if ("PUBLISHED".equals(existing.getStatus())) {
-            throw new RuntimeException("已发布的流程不能直接修改，请先下线");
-        }
         validateNodeConfig(updated.getNodes());
         existing.setName(updated.getName());
         existing.setDescription(updated.getDescription());
@@ -58,16 +66,92 @@ public class ProcessService {
 
     @Transactional
     public WorkflowDefinition publishDefinition(Long id) {
-        WorkflowDefinition definition = getDefinition(id);
-        definition.setStatus("PUBLISHED");
-        return workflowDefinitionRepository.save(definition);
+        WorkflowDefinition draft = getDefinition(id);
+        if (!"DRAFT".equals(draft.getStatus())) {
+            throw new RuntimeException("只有草稿版本的流程定义可以发布");
+        }
+        validateNodeConfig(draft.getNodes());
+
+        int publishedVersion = draft.getVersion();
+        draft.setStatus("PUBLISHED");
+        draft.setFormSnapshot(snapshotForm(draft.getId()));
+        draft = workflowDefinitionRepository.save(draft);
+
+        WorkflowDefinition newDraft = new WorkflowDefinition();
+        newDraft.setName(draft.getName());
+        newDraft.setDescription(draft.getDescription());
+        newDraft.setApplicationId(draft.getApplicationId());
+        newDraft.setVersion(publishedVersion + 1);
+        newDraft.setStatus("DRAFT");
+        newDraft.setNodes(draft.getNodes());
+        newDraft.setEdges(draft.getEdges());
+        newDraft.setCreatedBy(draft.getCreatedBy());
+        newDraft.setPublishedVersionId(draft.getId());
+        newDraft = workflowDefinitionRepository.save(newDraft);
+
+        log.info("流程定义发布成功: v{} 已发布(id={}), 新草稿 v{} 已创建(id={})",
+                publishedVersion, draft.getId(), newDraft.getVersion(), newDraft.getId());
+        return draft;
+    }
+
+    private String snapshotForm(Long workflowId) {
+        List<FormWorkflowBinding> bindings = formWorkflowBindingRepository.findByWorkflowId(workflowId);
+        if (bindings.isEmpty()) return null;
+        Long formId = bindings.get(0).getFormId();
+        return formDefinitionRepository.findById(formId)
+                .map(form -> {
+                    try {
+                        Map<String, Object> snapshot = new LinkedHashMap<>();
+                        snapshot.put("id", form.getId());
+                        snapshot.put("name", form.getName());
+                        snapshot.put("fields", form.getFields());
+                        return objectMapper.writeValueAsString(snapshot);
+                    } catch (Exception e) {
+                        log.warn("表单快照创建失败: workflowId={}, formId={}", workflowId, formId, e);
+                        return null;
+                    }
+                })
+                .orElse(null);
+    }
+
+    private void populateAppNames(List<WorkflowInstance> instances) {
+        if (instances == null || instances.isEmpty()) return;
+        for (WorkflowInstance inst : instances) {
+            applicationRepository.findById(inst.getApplicationId())
+                    .ifPresent(app -> inst.setApplicationName(app.getName()));
+        }
+    }
+
+    private void populateTaskAppNames(List<WorkflowTask> tasks) {
+        if (tasks == null || tasks.isEmpty()) return;
+        for (WorkflowTask task : tasks) {
+            applicationRepository.findById(task.getApplicationId())
+                    .ifPresent(app -> task.setApplicationName(app.getName()));
+        }
     }
 
     @Transactional
     public WorkflowDefinition unpublishDefinition(Long id) {
         WorkflowDefinition definition = getDefinition(id);
-        definition.setStatus("DRAFT");
+        if (!"PUBLISHED".equals(definition.getStatus())) {
+            throw new RuntimeException("只能下线已发布的流程");
+        }
+
+        WorkflowDefinition draft = getDraftForPublished(definition);
+        draft.setPublishedVersionId(null);
+        workflowDefinitionRepository.save(draft);
+
+        definition.setStatus("ARCHIVED");
         return workflowDefinitionRepository.save(definition);
+    }
+
+    private WorkflowDefinition getDraftForPublished(WorkflowDefinition published) {
+        List<WorkflowDefinition> drafts = workflowDefinitionRepository
+                .findByApplicationIdAndStatus(published.getApplicationId(), "DRAFT");
+        return drafts.stream()
+                .filter(d -> published.getId().equals(d.getPublishedVersionId()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("找不到已发布流程对应的草稿版本"));
     }
 
     @Transactional
@@ -76,11 +160,51 @@ public class ProcessService {
         if ("PUBLISHED".equals(definition.getStatus())) {
             throw new RuntimeException("已发布的流程不能删除，请先下线");
         }
+
+        if (definition.getPublishedVersionId() != null) {
+            WorkflowDefinition published = workflowDefinitionRepository
+                    .findById(definition.getPublishedVersionId()).orElse(null);
+            if (published != null) {
+                published.setPublishedVersionId(null);
+                workflowDefinitionRepository.save(published);
+            }
+        }
+
         workflowDefinitionRepository.deleteById(id);
     }
 
     public List<WorkflowInstance> listMyInstances(Long userId) {
-        return workflowInstanceRepository.findByInitiatorId(userId);
+        List<WorkflowInstance> instances = workflowInstanceRepository.findByInitiatorId(userId);
+        populateAppNames(instances);
+        return instances;
+    }
+
+    public List<WorkflowInstance> listMyInstances(Long userId, Boolean isTest) {
+        List<WorkflowInstance> instances;
+        if (isTest != null) {
+            instances = workflowInstanceRepository.findByInitiatorIdAndIsTest(userId, isTest);
+        } else {
+            instances = workflowInstanceRepository.findByInitiatorIdAndIsTest(userId, false);
+        }
+        populateAppNames(instances);
+        return instances;
+    }
+
+    public List<WorkflowInstance> listMyInstances(Long userId, Boolean isTest, Long applicationId) {
+        List<WorkflowInstance> instances;
+        if (applicationId != null) {
+            instances = workflowInstanceRepository.findByInitiatorIdAndIsTestAndApplicationId(userId, isTest != null ? isTest : false, applicationId);
+        } else {
+            instances = listMyInstances(userId, isTest);
+        }
+        populateAppNames(instances);
+        return instances;
+    }
+
+    public List<WorkflowInstance> listInstancesByApp(Long applicationId) {
+        return workflowInstanceRepository.findByWorkflowIdIn(
+                workflowDefinitionRepository.findByApplicationId(applicationId)
+                        .stream().map(WorkflowDefinition::getId).toList());
     }
 
     public WorkflowInstance getInstance(Long id) {
@@ -93,11 +217,67 @@ public class ProcessService {
     }
 
     public List<WorkflowTask> getPendingTasks(Long userId) {
-        return workflowTaskRepository.findByAssigneeIdAndStatus(userId, "PENDING");
+        List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeIdAndStatus(userId, "PENDING");
+        populateTaskAppNames(tasks);
+        return tasks;
+    }
+
+    public List<WorkflowTask> getPendingTasks(Long userId, Long applicationId) {
+        List<WorkflowTask> tasks;
+        if (applicationId != null) {
+            tasks = workflowTaskRepository.findByAssigneeIdAndStatusAndApplicationId(userId, "PENDING", applicationId);
+        } else {
+            tasks = getPendingTasks(userId);
+        }
+        populateTaskAppNames(tasks);
+        return tasks;
+    }
+
+    public List<WorkflowTask> getPendingTasks(Long userId, Long applicationId, Boolean isTest) {
+        List<WorkflowTask> tasks;
+        if (isTest != null) {
+            if (applicationId != null) {
+                tasks = workflowTaskRepository.findByAssigneeIdAndStatusAndApplicationIdAndIsTest(userId, "PENDING", applicationId, isTest);
+            } else {
+                tasks = workflowTaskRepository.findByAssigneeIdAndStatusAndIsTest(userId, "PENDING", isTest);
+            }
+        } else {
+            tasks = getPendingTasks(userId, applicationId);
+        }
+        populateTaskAppNames(tasks);
+        return tasks;
     }
 
     public List<WorkflowTask> getCompletedTasks(Long userId) {
-        return workflowTaskRepository.findByAssigneeId(userId);
+        List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeId(userId);
+        populateTaskAppNames(tasks);
+        return tasks;
+    }
+
+    public List<WorkflowTask> getCompletedTasks(Long userId, Long applicationId) {
+        List<WorkflowTask> tasks;
+        if (applicationId != null) {
+            tasks = workflowTaskRepository.findByAssigneeIdAndApplicationId(userId, applicationId);
+        } else {
+            tasks = getCompletedTasks(userId);
+        }
+        populateTaskAppNames(tasks);
+        return tasks;
+    }
+
+    public List<WorkflowTask> getCompletedTasks(Long userId, Long applicationId, Boolean isTest) {
+        List<WorkflowTask> tasks;
+        if (isTest != null) {
+            if (applicationId != null) {
+                tasks = workflowTaskRepository.findByAssigneeIdAndApplicationIdAndIsTest(userId, applicationId, isTest);
+            } else {
+                tasks = workflowTaskRepository.findByAssigneeIdAndIsTest(userId, isTest);
+            }
+        } else {
+            tasks = getCompletedTasks(userId, applicationId);
+        }
+        populateTaskAppNames(tasks);
+        return tasks;
     }
 
     public long getPendingTaskCount(Long userId) {
@@ -106,7 +286,31 @@ public class ProcessService {
 
     @Transactional
     public WorkflowInstance startProcess(Long definitionId, String formData, Long userId, String userName) {
-        return processEngine.startProcess(definitionId, formData, userId, userName);
+        return startProcess(definitionId, formData, userId, userName, false);
+    }
+
+    @Transactional
+    public WorkflowInstance startProcess(Long definitionId, String formData, Long userId, String userName, boolean isTest) {
+        WorkflowDefinition definition = getDefinition(definitionId);
+
+        if (!isTest && !"PUBLISHED".equals(definition.getStatus())) {
+            throw new RuntimeException("流程定义未发布，无法发起正式流程");
+        }
+
+        if (isTest && "PUBLISHED".equals(definition.getStatus())) {
+            throw new RuntimeException("已发布流程不能发起测试，请使用草稿版本");
+        }
+
+        Long effectiveDefinitionId = definitionId;
+        if (!isTest && definition.getPublishedVersionId() != null) {
+            WorkflowDefinition published = workflowDefinitionRepository
+                    .findById(definition.getPublishedVersionId()).orElse(null);
+            if (published != null) {
+                effectiveDefinitionId = published.getId();
+            }
+        }
+
+        return processEngine.startProcess(effectiveDefinitionId, formData, userId, userName, isTest);
     }
 
     @Transactional

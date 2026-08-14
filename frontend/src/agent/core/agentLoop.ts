@@ -1,5 +1,5 @@
 import type { Message, Plan, Step, ToolDefinition, ToolExecuteResult } from '@/types/agent';
-import { callLLMAPI, buildToolDefinitions, parseToolArguments, type LLMMessage, type ToolDef } from './llmClient';
+import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage, type ToolDef } from './llmClient';
 
 export interface AgentLoopOptions {
   baseUrl: string;
@@ -13,16 +13,17 @@ export interface AgentLoopOptions {
   signal?: AbortSignal;
   conversationMessages: Message[];
   onStatusChange: (status: string) => void;
-  onStreamingContent: (content: string) => void;
+  onStreamingContent: (content: string, reasoning?: boolean) => void;
   onClearStreaming: () => void;
   onAddMessage: (msg: Message) => void;
   onPlanCreate: (plan: Plan) => void;
   onPlanConfirm: (planId: string, action: 'confirm' | 'abandon') => boolean;
   onStepUpdate: (planId: string, stepId: string, status: string, result?: string) => void;
-  onToolCall: (name: string, input: Record<string, unknown>, messageId: string) => void;
-  onToolResult: (name: string, result: ToolExecuteResult, messageId: string) => void;
+  onToolCall: (name: string, input: Record<string, unknown>, messageId: string, toolCallId: string) => void;
+  onToolResult: (name: string, result: ToolExecuteResult, messageId: string, toolCallId: string) => void;
   onError: (error: string) => void;
   onTokenUsage: (input: number, output: number) => void;
+  throwOnStuck?: boolean;
 }
 
 export interface AgentLoopResult {
@@ -37,7 +38,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     conversationMessages: initialMessages,
     onStatusChange, onStreamingContent, onClearStreaming,
     onAddMessage, onPlanCreate, onPlanConfirm, onStepUpdate,
-    onToolCall, onToolResult, onError, onTokenUsage,
+    onToolCall, onToolResult, onError, onTokenUsage, throwOnStuck,
   } = options;
 
   const conversationMessages = [...initialMessages];
@@ -47,8 +48,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     parameters: t.parameters,
   })));
 
-  let consecutiveFailures = 0;
-  const MAX_CONSECUTIVE_FAILURES = 3;
+  let sameProblemCount = 0;
+  const MAX_SAME_PROBLEM = 2;
+  let lastRoundTools: Set<string> = new Set();
+  let _stopRequested = false;
+  let _stuckForcedStop = false;
 
   console.log(`[AgentLoop] 开始 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
 
@@ -58,14 +62,17 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     console.log(`[AgentLoop] 轮 第 ${iteration + 1}/${maxIterations} 轮`);
 
     onStatusChange('executing');
-    onStreamingContent('思考中...');
-    console.log(`[AgentLoop] onStreamingContent('思考中...') 已调用`);
-
     const apiMessages = buildAPIMessages(conversationMessages);
     console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
 
     try {
-      const response = await callLLMAPI({
+      let content = '';
+      const toolCallsAccumulated: Array<{
+        id: string;
+        function: { name: string; arguments: string };
+      }> = [];
+
+      const streamGen = callLLMAPIStream({
         baseUrl, apiKey, model,
         messages: apiMessages,
         tools: toolDefs,
@@ -74,12 +81,34 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         signal,
       });
 
-      onClearStreaming();
-      console.log(`[AgentLoop] onClearStreaming 已调用`);
+      for await (const chunk of streamGen) {
+        if (chunk.type === 'content' && chunk.content) {
+          onStreamingContent(chunk.content, chunk.reasoning);
+          content += chunk.content;
+        } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+          toolCallsAccumulated.push(chunk.toolCall);
+        }
+      }
 
-      const { content, toolCalls } = response;
+      onClearStreaming();
+
+      const toolCalls = toolCallsAccumulated;
 
       if (toolCalls.length > 0) {
+        if (_stuckForcedStop) {
+          console.log('[AgentLoop] 强制停止：系统已提醒卡住，但 LLM 仍尝试调用工具，直接退出');
+          const finalMsg: Message = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: '我在同一个问题上尝试了多次但没有进展，需要您的帮助。请告诉我下一步该如何处理？',
+            timestamp: Date.now(),
+          };
+          conversationMessages.push(finalMsg);
+          onAddMessage(finalMsg);
+          onStatusChange('completed');
+          return { response: finalMsg.content, conversationMessages };
+        }
+
         console.log(`[AgentLoop] LLM 返回 ${toolCalls.length} 个 tool call: [${toolCalls.map((tc) => tc.function.name).join(', ')}]`);
 
         const assistantMsg: Message = {
@@ -114,11 +143,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
               message: `工具 "${toolName}" 不存在`,
             };
             allToolResults.push({ toolCallId: toolCall.id, toolName, result: errResult });
-            onToolResult(toolName, errResult, assistantMsg.id);
+            onToolResult(toolName, errResult, assistantMsg.id, toolCall.id);
             continue;
           }
 
-          onToolCall(toolName, toolInput, assistantMsg.id);
+          onToolCall(toolName, toolInput, assistantMsg.id, toolCall.id);
 
           let toolResult: ToolExecuteResult;
           try {
@@ -131,7 +160,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
             toolResult = { success: false, message: err.message };
           }
 
-          onToolResult(toolName, toolResult, assistantMsg.id);
+          onToolResult(toolName, toolResult, assistantMsg.id, toolCall.id);
 
           if (toolResult._pause) {
             for (const { toolCallId: tcid, result: r } of allToolResults) {
@@ -181,17 +210,55 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           });
         }
 
-        const failedResults = allToolResults.filter((r) => !r.result.success);
-        if (failedResults.length > 0) {
-          consecutiveFailures++;
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            onError(`连续 ${consecutiveFailures} 次工具调用失败，已停止执行`);
-            return { response: null, conversationMessages };
+        const thisRoundTools = new Set(allToolResults.map((r) => r.toolName));
+        const hasOverlap = lastRoundTools.size > 0 && [...thisRoundTools].some((t) => lastRoundTools.has(t));
+
+        if (hasOverlap) {
+          sameProblemCount++;
+          console.log(`[AgentLoop] 相同问题计数: ${sameProblemCount}/${MAX_SAME_PROBLEM} | 工具重叠: [${[...thisRoundTools].join(', ')}]`);
+          if (sameProblemCount >= MAX_SAME_PROBLEM && !_stopRequested) {
+            _stopRequested = true;
+            const reminderMsg = {
+              role: 'system' as const,
+              content: '你似乎卡在同一个问题上（连续3轮使用相同工具），请回顾之前的尝试。如果没有进展，请停止并向用户说明情况，等待用户指导。',
+            };
+            conversationMessages.push({
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: reminderMsg.content,
+              timestamp: Date.now(),
+            });
+            console.log('[AgentLoop] 注入系统提醒：疑似卡在同一问题');
+            if (throwOnStuck) {
+              throw new Error('__STUCK__: 同一问题尝试多次无进展');
+            }
+            _stuckForcedStop = true;
+            sameProblemCount = 0;
           }
         } else {
-          consecutiveFailures = 0;
+          sameProblemCount = 0;
+        }
+        lastRoundTools = thisRoundTools;
+
+        const hasNoRetryFailure = allToolResults.some((r) => !r.result.success && r.result._noRetry);
+        if (hasNoRetryFailure && !_stopRequested) {
+          _stopRequested = true;
+          _stuckForcedStop = true;
+          const noRetryMsg = {
+            role: 'system' as const,
+            content: '子智能体已尝试多次失败，不要再重试，直接将子智能体的反馈告知用户，等待用户指导。',
+          };
+          conversationMessages.push({
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: noRetryMsg.content,
+            timestamp: Date.now(),
+          });
+          console.log('[AgentLoop] 注入系统提醒：子智能体失败，不可重试');
         }
       } else {
+        sameProblemCount = 0;
+        lastRoundTools = new Set();
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
@@ -201,7 +268,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         conversationMessages.push(assistantMsg);
         onAddMessage(assistantMsg);
         onStatusChange('completed');
-        return { response: content, conversationMessages };
+        return { response: content || '执行完毕。', conversationMessages };
       }
     } catch (err: any) {
       if (err.message === 'Cancelled' || err.name === 'AbortError') throw err;

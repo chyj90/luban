@@ -38,7 +38,7 @@ export default function FormPreview({ embedded, formId: propFormId, onBack }: Fo
   return (
     <div className={styles.page}>
       <div className={styles.header}>
-        <button className={styles.backBtn} onClick={() => onBack ? onBack() : navigate('/workflow/forms')}>
+        <button className={styles.backBtn} onClick={() => onBack ? onBack() : navigate('/apps')}>
           ← 返回
         </button>
         <h1 className={styles.title}>表单预览: {form.name}</h1>

@@ -2,9 +2,7 @@ package com.luban.config;
 
 import com.luban.entity.Application;
 import com.luban.entity.User;
-import com.luban.entity.Workspace;
 import com.luban.repository.ApplicationRepository;
-import com.luban.repository.WorkspaceRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +15,6 @@ import org.springframework.web.servlet.HandlerInterceptor;
 public class ApplicationOwnershipInterceptor implements HandlerInterceptor {
 
     private final ApplicationRepository applicationRepository;
-    private final WorkspaceRepository workspaceRepository;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -45,8 +42,7 @@ public class ApplicationOwnershipInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        Workspace workspace = workspaceRepository.findById(app.getWorkspaceId()).orElse(null);
-        if (workspace == null || !workspace.getOwnerId().equals(user.getId())) {
+        if (!app.getCreatedBy().equals(user.getId())) {
             response.setStatus(403);
             return false;
         }

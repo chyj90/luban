@@ -15,8 +15,14 @@ public class WorkflowTask {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Transient
+    private String applicationName;
+
     @Column(nullable = false)
     private Long instanceId;
+
+    @Column(nullable = false)
+    private Long applicationId;
 
     @Column(nullable = false, length = 50)
     private String nodeId;

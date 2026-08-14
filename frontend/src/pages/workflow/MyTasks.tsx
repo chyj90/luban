@@ -19,8 +19,8 @@ export default function MyTasks({ embedded, onNavigate }: MyTasksProps = {}) {
   const goTo = (view: WorkflowView) => {
     if (onNavigate) {
       onNavigate(view);
-    } else if (view.view === 'instance-detail') {
-      navigate(`/workflow/instances/${view.instanceId}`);
+    } else if (view.view === 'instance-detail' && view.appId != null) {
+      navigate(`/apps/${view.appId}/instances/${view.instanceId}`);
     }
   };
 
@@ -85,7 +85,7 @@ export default function MyTasks({ embedded, onNavigate }: MyTasksProps = {}) {
               <div
                 key={task.id}
                 className={styles.card}
-                onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId })}
+                onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId, appId: task.applicationId })}
               >
                 <div className={styles.cardHeader}>
                   <span className={styles.cardTitle}>{task.nodeId}</span>

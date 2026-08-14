@@ -6,6 +6,6 @@ import java.util.List;
 import java.util.Optional;
 
 public interface RoleRepository extends JpaRepository<Role, Long> {
-    List<Role> findByWorkspaceId(Long workspaceId);
+    List<Role> findByApplicationId(Long applicationId);
     Optional<Role> findBySlug(String slug);
 }

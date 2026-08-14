@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, memo } from 'react';
+import type { Message } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
 import { useLLMStore } from '@/stores/llmStore';
+import { toast } from '@/stores/toastStore';
 import { vaultManager } from '@/agent/core/vaultManager';
 import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
@@ -11,6 +13,55 @@ import { listPages } from '@/api';
 import type { ProviderType, Plan } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
 import './AgentPanel.css';
+
+function formatTableResult(text: string): string {
+  const lines = text.split('\n');
+  const result: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      const cells = trimmed.split('|').map((c) => c.trim()).filter(Boolean);
+      if (cells.length > 6) {
+        const headerCells = cells;
+        const sepLine = lines[i + 1]?.trim();
+        if (sepLine && sepLine.startsWith('|') && sepLine.includes('---')) {
+          result.push(`**表格（${headerCells.length} 列）**`);
+          i += 2;
+
+          while (i < lines.length) {
+            const rowLine = lines[i]?.trim();
+            if (!rowLine || !rowLine.startsWith('|')) break;
+            const rowCells = rowLine.split('|').map((c) => c.trim()).filter(Boolean);
+            result.push('');
+            for (let j = 0; j < headerCells.length; j++) {
+              result.push(`- **${headerCells[j]}**：${rowCells[j] || '—'}`);
+            }
+            i++;
+          }
+          continue;
+        }
+      }
+    }
+    result.push(line);
+    i++;
+  }
+
+  return result.join('\n');
+}
+
+/** 根据智能体名称生成一致的柔和颜色 */
+function agentColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 35%, 45%)`;
+}
 
 interface AgentPanelProps {
   appId: string;
@@ -24,13 +75,152 @@ interface AgentPanelProps {
 
 type TabView = 'chat' | 'plan' | 'settings';
 
+const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
+  const isPlanMsg = msg.role === 'plan';
+  const roleLabel = (() => {
+    if (msg.role === 'user') return '你';
+    if (msg.role === 'tool') return '工具';
+    if (msg.agentName) return `${msg.agentIcon || ''} ${msg.agentName}`;
+    if (msg.role === 'assistant') return 'AI';
+    return '系统';
+  })();
+  const roleClass = msg.role === 'user'
+    ? 'ap-message-by-user'
+    : msg.agentName || msg.role === 'assistant'
+      ? 'ap-message-by-agent'
+      : msg.role === 'tool'
+        ? 'ap-message-by-tool'
+        : 'ap-message-by-system';
+
+  return (
+    <div className={`ap-message ${isPlanMsg ? 'ap-message-plan' : ''} ${roleClass}`}>
+      <div className="ap-message-header">
+        <span className="ap-message-sender" style={msg.agentName ? { color: agentColor(msg.agentName) } : undefined}>
+          {roleLabel}
+          {msg.isStreaming && <span className="ap-streaming-dot" />}
+        </span>
+        <span className="ap-message-time">
+          {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+        </span>
+      </div>
+      <div className={`ap-message-body ${msg.role}${msg.isStreaming ? ' streaming' : ''}`}>
+        {msg.reasoningContent && (
+          <details className="ap-reasoning">
+            <summary className="ap-reasoning-summary">
+              <span className="ap-reasoning-icon">🧠</span>
+              思考过程
+              <span className="ap-reasoning-hint">点击展开</span>
+            </summary>
+            <div className="ap-reasoning-content">
+              <ReactMarkdown>{msg.reasoningContent}</ReactMarkdown>
+            </div>
+          </details>
+        )}
+        {msg.role === 'assistant' || msg.role === 'plan' ? (
+          <ReactMarkdown>{msg.content}</ReactMarkdown>
+        ) : (
+          <div className="ap-message-text">{msg.content}</div>
+        )}
+        {msg.toolCalls?.map((tc) => {
+          const statusIcon = <span className={`ap-tool-status-dot ${tc.status}`} />;
+          return (
+            <details key={tc.id} className="ap-tool-call">
+              <summary className="ap-tool-call-summary">
+                <span className="ap-tool-call-icon">{statusIcon}</span>
+                <span className="ap-tool-call-name">{tc.name}</span>
+                <span className={`ap-tool-call-status ${tc.status}`}>{tc.status}</span>
+              </summary>
+              <div className="ap-tool-call-detail">
+                <div className="ap-tool-call-section">
+                  <div className="ap-tool-call-label">输入</div>
+                  <pre className="ap-tool-call-pre">{JSON.stringify(tc.arguments, null, 2)}</pre>
+                </div>
+                {tc.result && (
+                  <div className="ap-tool-call-section">
+                    <div className="ap-tool-call-label">输出</div>
+                    <pre className="ap-tool-call-pre">{formatTableResult(tc.result)}</pre>
+                  </div>
+                )}
+              </div>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}, (prev, next) => {
+  return prev.msg.content === next.msg.content
+    && prev.msg.isStreaming === next.msg.isStreaming
+    && prev.msg.reasoningContent === next.msg.reasoningContent
+    && JSON.stringify(prev.msg.toolCalls) === JSON.stringify(next.msg.toolCalls);
+});
+
 const PROVIDERS: { key: ProviderType; label: string }[] = [
   { key: 'openai', label: 'OpenAI' },
   { key: 'anthropic', label: 'Anthropic' },
   { key: 'deepseek', label: 'DeepSeek' },
 ];
 
-export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId, onPagesChange, onPageChange, onQuerySelect, onQueriesChange }: AgentPanelProps) {
+function formatExport(messages: import('@/types/agent').Message[]): string {
+  const lines: string[] = [];
+  lines.push(`# AI Agent 会话记录`);
+  lines.push(`# 导出时间: ${new Date().toLocaleString()}`);
+  lines.push(`# 消息总数: ${messages.length}`);
+  lines.push('');
+  lines.push('---');
+  lines.push('');
+
+  for (const msg of messages) {
+    const time = new Date(msg.timestamp).toLocaleString();
+    const roleLabel = msg.role === 'user' ? '👤 用户'
+      : msg.agentName ? `🤖 ${msg.agentName}`
+      : msg.role === 'assistant' ? '🤖 智能体'
+      : msg.role === 'tool' ? '🔧 工具'
+      : msg.role === 'system' ? '⚙️ 系统'
+      : msg.role === 'plan' ? '📋 计划'
+      : msg.role;
+
+    lines.push(`### ${roleLabel}  [${time}]`);
+    lines.push('');
+    if (msg.reasoningContent) {
+      lines.push('<details>');
+      lines.push('<summary>💭 思考过程</summary>');
+      lines.push('');
+      lines.push(msg.reasoningContent);
+      lines.push('');
+      lines.push('</details>');
+      lines.push('');
+    }
+    if (msg.content) {
+      lines.push(msg.content);
+      lines.push('');
+    }
+
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      for (const tc of msg.toolCalls) {
+        lines.push(`> 🔨 调用: ${tc.name}  [${tc.status}]`);
+        if (tc.arguments && Object.keys(tc.arguments).length > 0) {
+          lines.push('> 输入:');
+          lines.push('> ```json');
+          lines.push(`> ${JSON.stringify(tc.arguments, null, 2).replace(/\n/g, '\n> ')}`);
+          lines.push('> ```');
+        }
+        if (tc.result) {
+          lines.push('> 输出:');
+          const formattedResult = tc.name === 'run_query' ? formatTableResult(tc.result) : tc.result;
+          lines.push(`> ${formattedResult.replace(/\n/g, '\n> ')}`);
+        }
+        lines.push('');
+      }
+    }
+    lines.push('---');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<TabView>('chat');
@@ -44,6 +234,8 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [tokenUsage, setTokenUsage] = useState<{ inputTokens: number; outputTokens: number; totalTokens: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isUserAtBottomRef = useRef(true);
   const chatRouterRef = useRef<ChatRouter | null>(null);
 
   const {
@@ -85,7 +277,9 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
   }, [appId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isUserAtBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const dispatchEvent = (event: { type: string; payload: unknown }) => {
@@ -108,18 +302,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
       case 'FIND_QUERY_COMPLETE': {
         const payload = event.payload as { success: boolean; message: string; queries?: Array<{ id: number; name: string }> };
         console.log(`[AgentPanel] FIND_QUERY_COMPLETE | success=${payload.success} | queries=${payload.queries?.length || 0}`);
-        if (payload.success && payload.queries) {
-          const queryList = payload.queries.map((q) => `  - ${q.name} (ID:${q.id})`).join('\n');
-          addMessage({
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: `数据辅助智能体已完成：\n${queryList}`,
-            timestamp: Date.now(),
-            agentId: 'data-assistant',
-            agentName: '数据辅助智能体',
-            agentIcon: '',
-          });
-        } else {
+        if (!payload.success) {
           addMessage({
             id: crypto.randomUUID(),
             role: 'system',
@@ -181,7 +364,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
       currentPageName,
       allPages,
       applicationId: appId,
-      workspaceId: 0,
       onPagesChange,
       onPageChange,
       onQuerySelect,
@@ -213,6 +395,9 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
 
     const userMsg = input;
     setInput('');
+
+    isUserAtBottomRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
 
     await runAgent(userMsg);
   };
@@ -487,6 +672,24 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>
           </button>
+          <button className="ap-clear-btn" onClick={() => {
+            const text = formatExport(messages);
+            navigator.clipboard.writeText(text).then(() => {
+              toast.success('已复制到剪贴板');
+            }).catch(() => {
+              const blob = new Blob([text], { type: 'text/markdown' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `agent-session-${Date.now()}.md`;
+              a.click();
+              URL.revokeObjectURL(url);
+            });
+          }} title="导出会话记录">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+            </svg>
+          </button>
           <div className="ap-tabs">
             <button
               className={`ap-tab ${activeTab === 'chat' ? 'active' : ''}`}
@@ -690,56 +893,16 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
 
         {activeTab === 'chat' && (
           <>
-            <div className="ap-messages">
-              {messages.map((msg) => {
-                const isPlanMsg = msg.role === 'plan';
-                const roleLabel = (() => {
-                  if (msg.role === 'user') return '你';
-                  if (msg.role === 'tool') return '工具';
-                  if (msg.agentName) return `${msg.agentIcon || ''} ${msg.agentName}`;
-                  if (msg.role === 'assistant') return 'AI';
-                  return '系统';
-                })();
-                return (
-                  <div key={msg.id} className={`ap-message ${isPlanMsg ? 'ap-message-plan' : ''}`}>
-                    <div className="ap-message-role">
-                      {roleLabel}
-                      {msg.isStreaming && <span className="ap-streaming-dot" />}
-                    </div>
-                    <div className={`ap-message-body ${msg.role}${msg.isStreaming ? ' streaming' : ''}`}>
-                      {msg.role === 'assistant' || msg.role === 'plan' ? (
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                      ) : (
-                        <div className="ap-message-text">{msg.content}</div>
-                      )}
-                      {msg.toolCalls?.map((tc) => {
-                        const statusIcon = <span className={`ap-tool-status-dot ${tc.status}`} />;
-                        return (
-                          <details key={tc.id} className="ap-tool-call">
-                            <summary className="ap-tool-call-summary">
-                              <span className="ap-tool-call-icon">{statusIcon}</span>
-                              <span className="ap-tool-call-name">{tc.name}</span>
-                              <span className={`ap-tool-call-status ${tc.status}`}>{tc.status}</span>
-                            </summary>
-                            <div className="ap-tool-call-detail">
-                              <div className="ap-tool-call-section">
-                                <div className="ap-tool-call-label">输入</div>
-                                <pre className="ap-tool-call-pre">{JSON.stringify(tc.arguments, null, 2)}</pre>
-                              </div>
-                              {tc.result && (
-                                <div className="ap-tool-call-section">
-                                  <div className="ap-tool-call-label">输出</div>
-                                  <pre className="ap-tool-call-pre">{tc.result}</pre>
-                                </div>
-                              )}
-                            </div>
-                          </details>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="ap-messages" ref={messagesContainerRef}
+                onScroll={() => {
+                  const el = messagesContainerRef.current;
+                  if (!el) return;
+                  const threshold = 50;
+                  isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+                }}>
+              {messages.map((msg) => (
+                <MessageItem key={msg.id} msg={msg} />
+              ))}
 
               
 

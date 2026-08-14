@@ -6,8 +6,8 @@ interface ApplicationState {
   applications: Application[];
   loading: boolean;
   error: string | null;
-  fetchApplications: (workspaceId: number) => Promise<void>;
-  addApplication: (workspaceId: number, name: string) => Promise<Application>;
+  fetchApplications: () => Promise<void>;
+  addApplication: (name: string) => Promise<Application>;
   removeApplication: (id: number) => Promise<void>;
 }
 
@@ -15,10 +15,10 @@ export const useApplicationStore = create<ApplicationState>((set) => ({
   applications: [],
   loading: false,
   error: null,
-  fetchApplications: async (workspaceId) => {
+  fetchApplications: async () => {
     set({ loading: true, error: null });
     try {
-      const res = await listApplications(workspaceId);
+      const res = await listApplications();
       set({ applications: res.data });
     } catch (e) {
       set({ error: (e as Error).message });
@@ -26,8 +26,8 @@ export const useApplicationStore = create<ApplicationState>((set) => ({
       set({ loading: false });
     }
   },
-  addApplication: async (workspaceId, name) => {
-    const res = await createApplication({ workspaceId, name });
+  addApplication: async (name) => {
+    const res = await createApplication({ name });
     set((state) => ({ applications: [...state.applications, res.data] }));
     return res.data;
   },

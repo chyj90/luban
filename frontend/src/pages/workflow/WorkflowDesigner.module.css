@@ -22,6 +22,13 @@
   margin-left: auto;
 }
 
+.toolbarTitle {
+  margin-left: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
 .toolbarBtn {
   padding: 6px 14px;
   border: 1px solid #e8edf3;
@@ -172,21 +179,9 @@
   overflow: hidden;
 }
 
-.canvasTitle {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  font-size: 12px;
-  color: #8c9cab;
-  background: rgba(255, 255, 255, 0.8);
-  padding: 4px 10px;
-  border-radius: 4px;
-  pointer-events: none;
-}
-
 /* Right Panel */
 .rightPanel {
-  width: 300px;
+  width: 380px;
   background: #fff;
   border-left: 1px solid #e8edf3;
   display: flex;
@@ -237,6 +232,31 @@
 }
 
 .configInput::placeholder {
+  color: #8c9cab;
+}
+
+.configTextarea {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1f1f1f;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.configTextarea:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.configTextarea::placeholder {
   color: #8c9cab;
 }
 
@@ -323,8 +343,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
+  padding: 16px 24px;
   text-align: center;
+}
+
+.emptyState .configGroup {
+  width: 100%;
+  text-align: left;
 }
 
 .emptyIcon {
@@ -336,6 +361,7 @@
   align-items: center;
   justify-content: center;
   color: #1677ff;
+  margin-top: 24px;
   margin-bottom: 16px;
 }
 
@@ -594,4 +620,47 @@
 
 .formPickCancel:hover {
   color: #ff4d4f;
+}
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modalContent {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 400px;
+  max-width: 480px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+}
+
+.modalTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f1f1f;
+  margin-bottom: 16px;
+}
+
+.modalBody {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.6;
+}
+
+.modalBody p {
+  margin: 0 0 8px;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
 }

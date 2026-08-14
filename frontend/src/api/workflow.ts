@@ -38,7 +38,7 @@ export const formApi = {
 };
 
 export const workflowApi = {
-  listDefinitions: (params?: { applicationId?: number }) =>
+  listDefinitions: (params?: { applicationId?: number; status?: string }) =>
     api.get<WorkflowDefinition[]>('/workflows', { params }).then(r => r.data),
 
   getDefinition: (id: number) =>
@@ -67,11 +67,17 @@ export const workflowApi = {
 
   getVersions: (id: number) =>
     api.get<WorkflowDefinition[]>(`/workflows/${id}/versions`).then(r => r.data),
+
+  initTestData: (applicationId: number) =>
+    api.post('/workflows/test-data/init', null, { params: { applicationId } }).then(r => r.data),
+
+  resetTestData: (applicationId: number) =>
+    api.post('/workflows/test-data/reset', null, { params: { applicationId } }).then(r => r.data),
 };
 
 export const instanceApi = {
-  list: () =>
-    api.get<WorkflowInstance[]>('/workflow-instances').then(r => r.data),
+  list: (params?: { isTest?: boolean }) =>
+    api.get<WorkflowInstance[]>('/workflow-instances', { params }).then(r => r.data),
 
   get: (id: number) =>
     api.get<WorkflowInstance>(`/workflow-instances/${id}`).then(r => r.data),
@@ -79,7 +85,7 @@ export const instanceApi = {
   getHistory: (id: number) =>
     api.get<WorkflowHistory[]>(`/workflow-instances/${id}/history`).then(r => r.data),
 
-  start: (params: { definitionId: number; formData: string }) =>
+  start: (params: { definitionId: number; formData: string; isTest?: boolean }) =>
     api.post<WorkflowInstance>('/workflow-instances', params).then(r => r.data),
 
   cancel: (id: number) =>
@@ -163,8 +169,8 @@ export const orgApi = {
   getDepartmentMembers: (id: number) =>
     api.get<Member[]>(`/departments/${id}/members`).then(r => r.data),
 
-  getRoles: (workspaceId: number) =>
-    api.get<Role[]>('/roles', { params: { workspaceId } }).then(r => r.data),
+  getRoles: (applicationId: number) =>
+    api.get<Role[]>('/roles', { params: { applicationId } }).then(r => r.data),
 
   createRole: (data: Partial<Role>) =>
     api.post<Role>('/roles', data).then(r => r.data),

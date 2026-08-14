@@ -5,8 +5,8 @@ export async function getApplication(id: number) {
   return get<Application>(`/applications/${id}`);
 }
 
-export async function listApplications(workspaceId: number) {
-  return get<Application[]>('/applications', { params: { workspaceId } });
+export async function listApplications() {
+  return get<Application[]>('/applications');
 }
 
 export async function createApplication(data: CreateAppRequest) {

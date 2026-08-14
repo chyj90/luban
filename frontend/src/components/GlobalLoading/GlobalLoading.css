@@ -1,0 +1,32 @@
+.global-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.global-loading-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.global-loading-icon {
+  animation: global-loading-spin 1s linear infinite;
+}
+
+@keyframes global-loading-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.global-loading-text {
+  font-size: 13px;
+  color: #8c9cab;
+  letter-spacing: 1px;
+}

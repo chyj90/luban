@@ -43,14 +43,21 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String token = extractToken(request);
         String path = request.getRequestURI();
 
+        log.info("JwtAuthFilter 进入, path={}, hasToken={}", path, token != null);
+
         if (token == null) {
-            log.debug("JWT filter: 无 token, path={}", path);
+            log.info("JwtAuthFilter 跳过: 无token, path={}", path);
             filterChain.doFilter(request, response);
             return;
         }
 
         if (!jwtTokenProvider.validateToken(token)) {
             log.warn("JWT filter: token 无效或已过期, path={}", path);
+            if (path.startsWith("/api/v1/auth/")) {
+                log.debug("JWT filter: auth 端点，跳过 token 校验");
+                filterChain.doFilter(request, response);
+                return;
+            }
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token 无效或已过期");
             return;
         }
@@ -58,15 +65,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         Optional<UserSession> sessionOpt = userSessionRepository.findByToken(token);
         if (sessionOpt.isEmpty()) {
             log.warn("JWT filter: 会话不存在, path={}", path);
+            if (path.startsWith("/api/v1/auth/")) {
+                log.debug("JWT filter: auth 端点，跳过会话校验");
+                filterChain.doFilter(request, response);
+                return;
+            }
             response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "会话不存在，请重新登录");
             return;
         }
 
-        userRepository.findById(sessionOpt.get().getUserId()).ifPresent(user -> {
-            log.debug("JWT filter: 认证成功, userId={}, path={}", user.getId(), path);
+        userRepository.findById(sessionOpt.get().getUserId()).ifPresentOrElse(user -> {
+            log.info("JwtAuthFilter 认证成功: userId={}, name={}, path={}", user.getId(), user.getName(), path);
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
             SecurityContextHolder.getContext().setAuthentication(auth);
+        }, () -> {
+            log.warn("JwtAuthFilter 用户不存在: userId={}, path={}", sessionOpt.get().getUserId(), path);
         });
 
         filterChain.doFilter(request, response);

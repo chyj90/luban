@@ -13,7 +13,6 @@ type TabKey = 'pages' | 'queries' | 'workflow' | 'datasources';
 interface EditorSidebarProps {
   appId: number;
   currentPageId: number;
-  workspaceId: number;
   pages: Page[];
   selectedQuery: Query | null;
   activeTab?: TabKey;
@@ -25,7 +24,7 @@ interface EditorSidebarProps {
   onTabChange: (tab: TabKey) => void;
 }
 
-export function EditorSidebar({ appId, currentPageId, workspaceId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange }: EditorSidebarProps) {
+export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange }: EditorSidebarProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');

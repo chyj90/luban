@@ -1,4 +1,4 @@
-.workspace-page {
+.applist-page {
   min-height: 100vh;
   background-color: #f4f6f9;
   background-image:
@@ -6,7 +6,7 @@
   background-size: 20px 20px;
 }
 
-.workspace-header {
+.applist-header {
   display: flex;
   align-items: center;
   height: 50px;
@@ -17,42 +17,42 @@
   flex-shrink: 0;
 }
 
-.workspace-header-left {
+.applist-header-left {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.workspace-logo {
+.applist-logo {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
 
-.workspace-logo-text {
+.applist-logo-text {
   font-size: 15px;
   font-weight: 600;
   color: #1f1f1f;
 }
 
-.workspace-spacer {
+.applist-spacer {
   flex: 1;
 }
 
-.workspace-user {
+.applist-user {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
 }
 
-.workspace-user-name {
+.applist-user-name {
   font-size: 13px;
   color: #5a6a7e;
 }
 
-.workspace-user-avatar {
+.applist-user-avatar {
   width: 28px;
   height: 28px;
   border-radius: 50%;
@@ -65,7 +65,7 @@
   flex-shrink: 0;
 }
 
-.workspace-logout {
+.applist-logout {
   font-size: 13px;
   color: #8c9cab;
   cursor: pointer;
@@ -75,32 +75,32 @@
   margin-left: 8px;
 }
 
-.workspace-logout:hover {
+.applist-logout:hover {
   color: #e74c3c;
   background: none;
 }
 
-.workspace-content {
+.applist-content {
   max-width: 1200px;
   margin: 0 auto;
   padding: 32px 24px;
 }
 
-.workspace-section-header {
+.applist-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 20px;
 }
 
-.workspace-section-title {
+.applist-section-title {
   font-size: 16px;
   font-weight: 500;
   color: #4a4a4a;
   letter-spacing: 0.3px;
 }
 
-.workspace-create-btn {
+.applist-create-btn {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -115,11 +115,11 @@
   transition: background 0.2s;
 }
 
-.workspace-create-btn:hover {
+.applist-create-btn:hover {
   background: #4096ff;
 }
 
-.workspace-create-form {
+.applist-create-form {
   background: #fff;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
@@ -130,7 +130,7 @@
   gap: 12px;
 }
 
-.workspace-create-form input {
+.applist-create-form input {
   flex: 1;
   padding: 10px 12px;
   border: 1px solid #e8edf3;
@@ -139,12 +139,12 @@
   outline: none;
 }
 
-.workspace-create-form input:focus {
+.applist-create-form input:focus {
   border-color: #1677ff;
   box-shadow: 0 0 0 3px rgba(107, 143, 113, 0.15);
 }
 
-.workspace-create-form .btn-confirm {
+.applist-create-form .btn-confirm {
   padding: 10px 20px;
   background: #1677ff;
   color: #fff;
@@ -154,11 +154,11 @@
   cursor: pointer;
 }
 
-.workspace-create-form .btn-confirm:hover {
+.applist-create-form .btn-confirm:hover {
   background: #4096ff;
 }
 
-.workspace-create-form .btn-cancel {
+.applist-create-form .btn-cancel {
   padding: 10px 20px;
   background: #f4f6f9;
   color: #5a6a7e;
@@ -168,7 +168,7 @@
   cursor: pointer;
 }
 
-.workspace-create-form .btn-cancel:hover {
+.applist-create-form .btn-cancel:hover {
   background: #eee;
 }
 
@@ -257,29 +257,29 @@
   color: #8c9cab;
 }
 
-.workspace-empty {
+.applist-empty {
   text-align: center;
   padding: 60px 20px;
   color: #8c9cab;
 }
 
-.workspace-empty-icon {
+.applist-empty-icon {
   font-size: 48px;
   margin-bottom: 16px;
   opacity: 0.3;
 }
 
-.workspace-empty-text {
+.applist-empty-text {
   font-size: 15px;
   margin-bottom: 8px;
 }
 
-.workspace-empty-hint {
+.applist-empty-hint {
   font-size: 13px;
   color: #bbb;
 }
 
-.workspace-loading {
+.applist-loading {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -288,7 +288,7 @@
   font-size: 15px;
 }
 
-.workspace-loading-inline {
+.applist-loading-inline {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -297,17 +297,4 @@
   color: #8c9cab;
   font-size: 14px;
   gap: 12px;
-}
-
-.workspace-loading-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid #e2e8f0;
-  border-top-color: #1677ff;
-  border-radius: 50%;
-  animation: workspace-spin 0.6s linear infinite;
-}
-
-@keyframes workspace-spin {
-  to { transform: rotate(360deg); }
 }

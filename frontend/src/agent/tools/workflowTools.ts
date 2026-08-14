@@ -38,7 +38,6 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
         properties: {
           name: { type: 'string', description: '流程名称' },
           description: { type: 'string', description: '流程描述' },
-          workspaceId: { type: 'number', description: '工作区 ID' },
           applicationId: { type: 'number', description: '应用 ID' },
           formId: { type: 'number', description: '关联的表单 ID' },
           nodes: {
@@ -85,14 +84,13 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
             },
           },
         },
-        required: ['name', 'workspaceId', 'applicationId'],
+        required: ['name', 'applicationId'],
       },
       handler: async (params) => {
-        const { name, description, workspaceId, applicationId, nodes, edges } = params;
+        const { name, description, applicationId, nodes, edges } = params;
         const result = await workflowApi.createDefinition({
           name,
           description,
-          workspaceId,
           applicationId,
           nodes: JSON.stringify(nodes || []),
           edges: JSON.stringify(edges || []),
@@ -121,7 +119,6 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
         properties: {
           name: { type: 'string', description: '表单名称' },
           description: { type: 'string', description: '表单描述' },
-          workspaceId: { type: 'number', description: '工作区 ID' },
           applicationId: { type: 'number', description: '应用 ID' },
           fields: {
             type: 'array',
@@ -149,14 +146,13 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
             },
           },
         },
-        required: ['name', 'workspaceId', 'applicationId', 'fields'],
+        required: ['name', 'applicationId', 'fields'],
       },
       handler: async (params) => {
-        const { name, description, workspaceId, applicationId, fields } = params;
+        const { name, description, applicationId, fields } = params;
         const result = await formApi.create({
           name,
           description,
-          workspaceId,
           applicationId,
           fields: JSON.stringify(fields),
         });
@@ -198,18 +194,14 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
     },
     {
       name: 'search_roles',
-      description: '搜索工作区角色',
+      description: '搜索应用角色',
       category: 'workflow',
       parameters: {
         type: 'object',
-        properties: {
-          workspaceId: { type: 'number', description: '工作区 ID' },
-        },
-        required: ['workspaceId'],
+        properties: {},
       },
-      handler: async (params) => {
-        const { workspaceId } = params;
-        const roles = await orgApi.getRoles(workspaceId);
+      handler: async () => {
+        const roles = await orgApi.getRoles(context.applicationId);
         return { success: true, data: roles };
       },
     },

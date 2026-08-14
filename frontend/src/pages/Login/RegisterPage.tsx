@@ -32,7 +32,6 @@ export function RegisterPage() {
           <h1>鲁班</h1>
           <p>AI 驱动应用构建平台</p>
         </div>
-        <h2 className="login-title">注册</h2>
 
         {error && <div className="login-error">{error}</div>}
 

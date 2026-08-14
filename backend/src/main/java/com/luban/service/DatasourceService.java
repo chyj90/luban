@@ -5,10 +5,8 @@ import com.luban.dto.TestDatasourceResponse;
 import com.luban.entity.Application;
 import com.luban.entity.Datasource;
 import com.luban.entity.User;
-import com.luban.entity.Workspace;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
-import com.luban.repository.WorkspaceRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -33,16 +31,13 @@ public class DatasourceService {
 
     private final DatasourceRepository datasourceRepository;
     private final ApplicationRepository applicationRepository;
-    private final WorkspaceRepository workspaceRepository;
     private final ObjectMapper objectMapper;
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              ApplicationRepository applicationRepository,
-                             WorkspaceRepository workspaceRepository,
                              ObjectMapper objectMapper) {
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
-        this.workspaceRepository = workspaceRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -53,9 +48,7 @@ public class DatasourceService {
         }
         Application app = applicationRepository.findById(applicationId)
                 .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
-        Workspace workspace = workspaceRepository.findById(app.getWorkspaceId())
-                .orElseThrow(() -> new IllegalArgumentException("工作区不存在"));
-        if (!workspace.getOwnerId().equals(user.getId())) {
+        if (!app.getCreatedBy().equals(user.getId())) {
             throw new RuntimeException("无权访问该应用的数据源");
         }
     }
