@@ -24,14 +24,14 @@ export function formatUnfinishedPlansForPrompt(): string {
 
   unfinished.forEach((plan) => {
     const isFocused = plan.id === state.focusPlanId;
-    const statusLabel = plan.status === 'draft' ? '📝 待确认' : plan.status === 'confirmed' ? '✅ 已确认' : '⏳ 执行中';
+    const statusLabel = plan.status === 'draft' ? '[待确认]' : plan.status === 'confirmed' ? '[已确认]' : '[执行中]';
     lines.push(
       `### ${isFocused ? '【当前焦点】' : ''}${plan.agentName} [${statusLabel}]: ${plan.steps.map((s) => s.description).join(' → ')}`,
     );
     lines.push('- 步骤:');
     plan.steps.forEach((s) => {
       const statusIcon =
-        s.status === 'done' ? '✅' : s.status === 'running' ? '⏳' : '⬜';
+        s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : '[待定]';
       lines.push(`  ${s.order + 1}. ${statusIcon} ${s.description}`);
     });
     lines.push('');

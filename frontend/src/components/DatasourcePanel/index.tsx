@@ -8,10 +8,10 @@ interface DatasourcePanelProps {
   applicationId: number;
 }
 
-const DS_TYPES: { value: DatasourceType; label: string; icon: string; color: string }[] = [
-  { value: 'MySQL', label: 'MySQL', icon: '🐬', color: '#00758F' },
-  { value: 'PostgreSQL', label: 'PostgreSQL', icon: '🐘', color: '#336791' },
-  { value: 'REST_API', label: 'REST API', icon: '🔗', color: '#6B8F71' },
+const DS_TYPES: { value: DatasourceType; label: string; color: string }[] = [
+  { value: 'MySQL', label: 'MySQL', color: '#00758F' },
+  { value: 'PostgreSQL', label: 'PostgreSQL', color: '#336791' },
+  { value: 'REST_API', label: 'REST API', color: '#6B8F71' },
 ];
 
 const isJdbcType = (type: string) => type === 'MySQL' || type === 'PostgreSQL';
@@ -160,7 +160,6 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 className={`ds-type-chip ${form.type === t.value ? 'active' : ''}`}
                 onClick={() => setForm({ ...form, type: t.value })}
               >
-                <span className="ds-type-icon">{t.icon}</span>
                 {t.label}
               </button>
             ))}
@@ -227,7 +226,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                       className="ds-kv-remove"
                       onClick={() => setForm({ ...form, headers: form.headers.filter((_, j) => j !== i) })}
                     >
-                      ✕
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
                 ))}
@@ -294,8 +293,8 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
           return (
             <div key={ds.id} className="ds-card">
               <div className="ds-card-main">
-                <div className="ds-card-icon" style={{ background: info.color + '14' }}>
-                  <span>{info.icon}</span>
+                <div className="ds-card-icon" style={{ background: info.color + '14', color: info.color }}>
+                  {info.label.charAt(0)}
                 </div>
                 <div className="ds-card-info">
                   <span className="ds-card-name">{ds.name}</span>
@@ -307,22 +306,29 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
               </div>
               <div className="ds-card-actions">
                 <button className="ds-action-btn" onClick={() => handleEdit(ds)}>
-                  ✏️ 编辑
+                  编辑
                 </button>
                 <button
                   className="ds-action-btn"
                   onClick={() => handleTest(ds.id)}
                   disabled={testing === ds.id}
                 >
-                  {testing === ds.id ? '⏳' : '🔌'} 测试
+                  {testing === ds.id ? '测试中...' : '测试'}
                 </button>
                 {isJdbcType(ds.type) && (
                   <button className="ds-action-btn" onClick={() => handleViewStructure(ds.id)}>
-                    📋 {selectedDsId === ds.id ? '收起' : '结构'}
+                    {selectedDsId === ds.id ? '收起' : '结构'}
                   </button>
                 )}
                 <button className="ds-action-btn ds-action-danger" onClick={() => handleDelete(ds.id)}>
-                  🗑 删除
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                  删除
                 </button>
               </div>
 

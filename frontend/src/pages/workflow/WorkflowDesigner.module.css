@@ -1,0 +1,597 @@
+.designer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #f4f6f9;
+}
+
+/* Toolbar / Header */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e8edf3;
+  flex-shrink: 0;
+}
+
+.toolbarActions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.toolbarBtn {
+  padding: 6px 14px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 13px;
+  color: #1f1f1f;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbarBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.toolbarBtn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.toolbarBtnPrimary {
+  padding: 6px 14px;
+  border: 1px solid #1677ff;
+  border-radius: 4px;
+  background: #1677ff;
+  font-size: 13px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.toolbarBtnPrimary:hover {
+  background: #4096ff;
+  border-color: #4096ff;
+}
+
+.toolbarBtnPrimary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toolbarBtnSuccess {
+  padding: 6px 14px;
+  border: 1px solid #52c41a;
+  border-radius: 4px;
+  background: #52c41a;
+  font-size: 13px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.toolbarBtnSuccess:hover {
+  background: #73d13d;
+  border-color: #73d13d;
+}
+
+/* Body */
+.body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+/* Left Panel */
+.leftPanel {
+  width: 200px;
+  background: #fff;
+  border-right: 1px solid #e8edf3;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.panelTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a6a7e;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 10px;
+}
+
+.nodeCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  cursor: grab;
+  transition: all 0.15s;
+  margin-bottom: 8px;
+}
+
+.nodeCard:hover {
+  border-color: #1677ff;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.1);
+}
+
+.nodeCard:active {
+  cursor: grabbing;
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.15);
+}
+
+.nodeCardIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: #e6f4ff;
+  color: #1677ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.nodeCardLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f1f1f;
+}
+
+.nodeCardDesc {
+  font-size: 11px;
+  color: #8c9cab;
+  margin-top: 2px;
+}
+
+/* Canvas */
+.canvas {
+  flex: 1;
+  position: relative;
+  background: #f4f6f9;
+  background-image: radial-gradient(circle, #e8edf3 1px, transparent 1px);
+  background-size: 20px 20px;
+  overflow: hidden;
+}
+
+.canvasTitle {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  font-size: 12px;
+  color: #8c9cab;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 4px 10px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+/* Right Panel */
+.rightPanel {
+  width: 300px;
+  background: #fff;
+  border-left: 1px solid #e8edf3;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* Config Panel Title */
+.configPanelTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f1f1f;
+  padding: 12px 16px 0;
+  margin-bottom: 4px;
+}
+
+/* Config Group */
+.configGroup {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.configLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: #5a6a7e;
+  margin-bottom: 6px;
+  display: block;
+}
+
+.configInput {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #1f1f1f;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.configInput:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.configInput::placeholder {
+  color: #8c9cab;
+}
+
+.configInputSmall {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #1f1f1f;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.configInputSmall:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.configHint {
+  font-size: 12px;
+  color: #8c9cab;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+/* Custom Node */
+.customNode {
+  padding: 10px 16px;
+  border: 2px solid #e8edf3;
+  border-radius: 8px;
+  background: #fff;
+  min-width: 180px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.15s;
+}
+
+.customNode:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.nodeIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.nodeLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1f1f1f;
+  display: inline;
+  vertical-align: middle;
+}
+
+.nodeSubLabel {
+  font-size: 11px;
+  color: #8c9cab;
+  margin-top: 4px;
+}
+
+/* Handle */
+.handle {
+  width: 10px;
+  height: 10px;
+  border: 2px solid #1677ff;
+  background: #fff;
+  border-radius: 50%;
+}
+
+/* Empty State */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.emptyIcon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #e6f4ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #1677ff;
+  margin-bottom: 16px;
+}
+
+.emptyIcon svg {
+  width: 32px;
+  height: 32px;
+}
+
+.emptyText {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f1f1f;
+  margin-bottom: 4px;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: #8c9cab;
+}
+
+/* Status Bar */
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 16px;
+  background: #fafafa;
+  border-top: 1px solid #e8edf3;
+  font-size: 12px;
+  color: #8c9cab;
+  flex-shrink: 0;
+}
+
+/* Condition Editor */
+.conditionItem {
+  padding: 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  background: #fafafa;
+}
+
+.conditionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.conditionIndex {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #e6f4ff;
+  color: #1677ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.conditionTarget {
+  font-size: 12px;
+  color: #5a6a7e;
+  font-weight: 500;
+}
+
+.conditionRef {
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.conditionRefTitle {
+  font-size: 11px;
+  font-weight: 600;
+  color: #5a6a7e;
+  margin-bottom: 6px;
+}
+
+.conditionOpList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.conditionOpTag {
+  padding: 2px 8px;
+  background: #e6f4ff;
+  color: #1677ff;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.conditionParamList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conditionParamGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.conditionParamGroupLabel {
+  font-size: 11px;
+  color: #5a6a7e;
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.conditionParamTag {
+  padding: 2px 8px;
+  background: #f4f6f9;
+  color: #5a6a7e;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: monospace;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.conditionParamTag:hover {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+/* Approver Type Tags */
+.approverTypeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approverTypeTag {
+  padding: 5px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  color: #5a6a7e;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.approverTypeTag:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.approverTypeTagActive {
+  padding: 5px 12px;
+  border: 1px solid #1677ff;
+  border-radius: 4px;
+  background: #e6f4ff;
+  font-size: 12px;
+  color: #1677ff;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Form Bind */
+.formBindRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.formBindStatus {
+  font-size: 12px;
+  color: #52c41a;
+  font-weight: 500;
+}
+
+.formBindBtn {
+  padding: 4px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  color: #5a6a7e;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.formBindBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.formPicker {
+  max-height: 200px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  margin-top: 8px;
+}
+
+.formPickerTitle {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a6a7e;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.formPickerItem {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #1f1f1f;
+  cursor: pointer;
+  transition: background 0.15s;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.formPickerItem:last-child {
+  border-bottom: none;
+}
+
+.formPickerItem:hover {
+  background: #f4f6f9;
+  color: #1677ff;
+}
+
+.formPickerEmpty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: #8c9cab;
+}
+
+.formPickCancel {
+  padding: 8px 14px;
+  border: none;
+  border-top: 1px solid #e8edf3;
+  background: none;
+  font-size: 12px;
+  color: #8c9cab;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+  transition: color 0.15s;
+}
+
+.formPickCancel:hover {
+  color: #ff4d4f;
+}

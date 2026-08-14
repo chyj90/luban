@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.util.stream.Collectors;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -227,8 +228,7 @@ public class QueryService {
                         List<String> columns = list.isEmpty() ? List.of("result") : new ArrayList<>(list.get(0).keySet());
                         List<List<Object>> rows = list.stream()
                                 .map(m -> columns.stream().map(m::get).toList())
-                                .map(ArrayList::new)
-                                .toList();
+                                .collect(Collectors.toList());
                         return new RunQueryResponse(columns, new ArrayList<>(rows), rows.size(), executionTime);
                     } catch (Exception e2) {
                         return new RunQueryResponse(

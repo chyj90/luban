@@ -1,0 +1,122 @@
+.grid {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  background: #fafafa;
+  border-bottom: 1px solid #e8e8e8;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a6a7e;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf3;
+  transition: background 0.15s;
+}
+
+.row:hover {
+  background: #fafafa;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.colField {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fieldLabel {
+  font-size: 14px;
+  color: #333;
+  font-weight: 500;
+}
+
+.fieldKey {
+  font-size: 11px;
+  color: #8c9cab;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+.colCheck {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.colCheck input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #1677ff;
+}
+
+.colCheck input[type='checkbox']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.colAction {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+}
+
+.advancedBtn {
+  padding: 4px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+  color: #5a6a7e;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.advancedBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.expanded {
+  width: 100%;
+  padding: 12px;
+  margin-top: 8px;
+  background: #f4f6f9;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.expandedSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.expandedLabel {
+  font-size: 12px;
+  color: #5a6a7e;
+  font-weight: 500;
+}
+
+.empty {
+  text-align: center;
+  padding: 20px 0;
+  color: #8c9cab;
+  font-size: 13px;
+}

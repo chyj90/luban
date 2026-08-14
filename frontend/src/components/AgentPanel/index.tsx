@@ -89,41 +89,41 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
   }, [messages]);
 
   const dispatchEvent = (event: { type: string; payload: unknown }) => {
-    console.log(`[AgentPanel] 📩 dispatch 收到事件: ${event.type}`);
+    console.log(`[AgentPanel] dispatch 收到事件: ${event.type}`);
     switch (event.type) {
       case 'FIND_QUERY_START': {
         const payload = event.payload as { taskType: string; targetPage: string; requirements: string[] };
-        console.log(`[AgentPanel] 📊 FIND_QUERY_START | targetPage=${payload.targetPage} | requirements=${payload.requirements?.length}条`);
+        console.log(`[AgentPanel] FIND_QUERY_START | targetPage=${payload.targetPage} | requirements=${payload.requirements?.length}条`);
         addMessage({
           id: crypto.randomUUID(),
           role: 'system',
-          content: `📊 数据辅助智能体正在为「${payload.targetPage}」创建查询...`,
+          content: `数据辅助智能体正在为「${payload.targetPage}」创建查询...`,
           timestamp: Date.now(),
           agentId: 'data-assistant',
           agentName: '数据辅助智能体',
-          agentIcon: '📊',
+          agentIcon: '',
         });
         break;
       }
       case 'FIND_QUERY_COMPLETE': {
         const payload = event.payload as { success: boolean; message: string; queries?: Array<{ id: number; name: string }> };
-        console.log(`[AgentPanel] 📊 FIND_QUERY_COMPLETE | success=${payload.success} | queries=${payload.queries?.length || 0}`);
+        console.log(`[AgentPanel] FIND_QUERY_COMPLETE | success=${payload.success} | queries=${payload.queries?.length || 0}`);
         if (payload.success && payload.queries) {
           const queryList = payload.queries.map((q) => `  - ${q.name} (ID:${q.id})`).join('\n');
           addMessage({
             id: crypto.randomUUID(),
             role: 'system',
-            content: `📊 数据辅助智能体已完成：\n${queryList}`,
+            content: `数据辅助智能体已完成：\n${queryList}`,
             timestamp: Date.now(),
             agentId: 'data-assistant',
             agentName: '数据辅助智能体',
-            agentIcon: '📊',
+            agentIcon: '',
           });
         } else {
           addMessage({
             id: crypto.randomUUID(),
             role: 'system',
-            content: `⚠️ ${payload.message}`,
+            content: payload.message,
             timestamp: Date.now(),
           });
         }
@@ -278,7 +278,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
   };
 
   const handleCancel = () => {
-    console.log('[AgentPanel] ⏹ handleCancel 被调用');
+    console.log('[AgentPanel] handleCancel 被调用');
     const draftPlan = draftPlans[0];
     const executingPlan = focusedPlans[0];
     if (draftPlan) {
@@ -307,7 +307,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
     addMessage({
       id: crypto.randomUUID(),
       role: 'system',
-      content: '❌ 计划已拒绝',
+      content: '计划已拒绝',
       timestamp: Date.now(),
     });
   };
@@ -317,7 +317,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
     upsertPlanMessage(plan.id);
     const doneSteps = plan.steps.filter((s) => s.status === 'done');
     const pendingSteps = plan.steps.filter((s) => s.status !== 'done');
-    const doneSummary = doneSteps.map((s) => `- ${s.description} ✓`).join('\n');
+    const doneSummary = doneSteps.map((s) => `- ${s.description} [完成]`).join('\n');
     const pendingSummary = pendingSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
     const continueMsg = `继续执行计划。\n已完成：\n${doneSummary}\n剩余步骤：\n${pendingSummary}`;
     setInput('');
@@ -442,7 +442,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
                 >
                   <span className="ap-plan-step-icon">
                     {hasSubPlan ? (isExpanded ? '▼' : '▶') : ''}
-                    {step.status === 'done' ? '✅' : step.status === 'running' ? '⏳' : step.status === 'error' ? '❌' : '⬜'}
+                    <span className={`ap-step-status-dot ${step.status}`} />
                   </span>
                   <span className="ap-plan-step-desc">{step.description}</span>
                 </div>
@@ -483,7 +483,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
         </div>
         <div className="ap-header-right">
           <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); chatRouterRef.current = null; }} title="清空对话和计划">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>
           </button>
@@ -585,7 +585,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
                       </button>
                     </div>
                     {testResult === 'success' && (
-                      <span className="ap-test-ok">连接成功 ✓</span>
+                      <span className="ap-test-ok">连接成功</span>
                     )}
                     {testResult === 'fail' && (
                       <span className="ap-test-fail">连接失败，请检查 API Key 和 Base URL</span>
@@ -713,7 +713,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
                         <div className="ap-message-text">{msg.content}</div>
                       )}
                       {msg.toolCalls?.map((tc) => {
-                        const statusIcon = tc.status === 'done' ? '✅' : tc.status === 'running' ? '⏳' : tc.status === 'error' ? '❌' : '⬜';
+                        const statusIcon = <span className={`ap-tool-status-dot ${tc.status}`} />;
                         return (
                           <details key={tc.id} className="ap-tool-call">
                             <summary className="ap-tool-call-summary">
@@ -723,12 +723,12 @@ export function AgentPanel({ appId, currentPageId, currentPageName, workspaceId,
                             </summary>
                             <div className="ap-tool-call-detail">
                               <div className="ap-tool-call-section">
-                                <div className="ap-tool-call-label">📥 输入</div>
+                                <div className="ap-tool-call-label">输入</div>
                                 <pre className="ap-tool-call-pre">{JSON.stringify(tc.arguments, null, 2)}</pre>
                               </div>
                               {tc.result && (
                                 <div className="ap-tool-call-section">
-                                  <div className="ap-tool-call-label">📤 输出</div>
+                                  <div className="ap-tool-call-label">输出</div>
                                   <pre className="ap-tool-call-pre">{tc.result}</pre>
                                 </div>
                               )}

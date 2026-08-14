@@ -67,7 +67,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
       const typedArgs = args as unknown as FindQueryArgs;
       const execStart = Date.now();
 
-      console.log(`[find_query] 🚀 开始执行 | taskType=${typedArgs.task_type} | targetPage=${typedArgs.target_page} | requirements=${typedArgs.requirements.length}条`);
+      console.log(`[find_query] 开始执行 | taskType=${typedArgs.task_type} | targetPage=${typedArgs.target_page} | requirements=${typedArgs.requirements.length}条`);
 
       context.dispatch({
         type: 'FIND_QUERY_START',
@@ -77,7 +77,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
           requirements: typedArgs.requirements,
         },
       });
-      console.log('[find_query] 📤 已 dispatch FIND_QUERY_START');
+      console.log('[find_query] 已 dispatch FIND_QUERY_START');
 
       try {
         const dbaPrompt = buildDataAssistantPrompt({
@@ -93,7 +93,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
 
         const userMessage = `请为「${typedArgs.target_page}」创建以下查询：\n${typedArgs.requirements.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')}${typedArgs.modify_instructions?.length ? `\n\n需要修改的查询：\n${typedArgs.modify_instructions.map((m: string, i: number) => `${i + 1}. ${m}`).join('\n')}` : ''}`;
 
-        console.log(`[find_query] 🔀 即将委派 data-assistant | 消息长度: ${userMessage.length}`);
+        console.log(`[find_query] 即将委派 data-assistant | 消息长度: ${userMessage.length}`);
         const routeStart = Date.now();
         await chatRouter.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
           systemPrompt: dbaPrompt,
@@ -106,7 +106,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
             modifyInstructions: typedArgs.modify_instructions,
           },
         });
-        console.log(`[find_query] 🔀 data-assistant 委派完成 | ⏱ ${Date.now() - routeStart}ms`);
+        console.log(`[find_query] data-assistant 委派完成 | ${Date.now() - routeStart}ms`);
 
         const allQueries = await listQueries(context.applicationId);
         const queries = allQueries.data.map((q) => ({
@@ -129,7 +129,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
           type: 'FIND_QUERY_COMPLETE',
           payload: result,
         });
-        console.log(`[find_query] 📤 已 dispatch FIND_QUERY_COMPLETE | queries=${queries.length} | 总耗时 ${Date.now() - execStart}ms`);
+        console.log(`[find_query] 已 dispatch FIND_QUERY_COMPLETE | queries=${queries.length} | 总耗时 ${Date.now() - execStart}ms`);
 
         return result;
       } catch (e) {
@@ -138,7 +138,7 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
           message: `数据辅助智能体执行失败: ${(e as Error).message}`,
         };
 
-        console.log(`[find_query] ❌ 执行失败 | ${(e as Error).message}`);
+        console.log(`[find_query] 执行失败 | ${(e as Error).message}`);
         context.dispatch({
           type: 'FIND_QUERY_COMPLETE',
           payload: errorResult,

@@ -3,7 +3,7 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: #f5f5f5;
+  background: #f4f6f9;
 }
 
 .login-card {
@@ -22,7 +22,7 @@
 .login-logo h1 {
   font-size: 28px;
   font-weight: 700;
-  color: #6B8F71;
+  color: #1677ff;
   margin: 0;
 }
 
@@ -71,7 +71,7 @@
 .login-field input {
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #e8edf3;
   border-radius: 6px;
   font-size: 14px;
   outline: none;
@@ -79,14 +79,14 @@
 }
 
 .login-field input:focus {
-  border-color: #6B8F71;
+  border-color: #1677ff;
   box-shadow: 0 0 0 3px rgba(107, 143, 113, 0.15);
 }
 
 .login-submit {
   width: 100%;
   padding: 12px;
-  background: #6B8F71;
+  background: #1677ff;
   color: #fff;
   font-size: 15px;
   font-weight: 600;
@@ -98,7 +98,7 @@
 }
 
 .login-submit:hover {
-  background: #5a7d60;
+  background: #4096ff;
 }
 
 .login-submit:disabled {
@@ -110,11 +110,11 @@
   text-align: center;
   margin-top: 20px;
   font-size: 13px;
-  color: #666;
+  color: #5a6a7e;
 }
 
 .login-footer a {
-  color: #6B8F71;
+  color: #1677ff;
   text-decoration: none;
   font-weight: 500;
 }

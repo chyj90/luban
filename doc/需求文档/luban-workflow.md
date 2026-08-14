@@ -4528,7 +4528,7 @@ form_workflow_bindings
 ```typescript
 interface IdentityProvider {
   // 提供商标识
-  readonly type: 'dingtalk' | 'feishu' | 'wecom' | 'ldap' | 'oidc';
+  readonly type: 'dingtalk' | 'feishu' | 'wecom' | 'ldap' | 'oidc' | 'local';
 
   // ===== 认证 =====
   authenticate(credential: AuthCredential): Promise<UserContext>;
@@ -4563,6 +4563,7 @@ interface IdentityProvider {
 | **企业微信** | OAuth 2.0 | `cgi-bin/department/list` + `cgi-bin/user/list` + `cgi-bin/user/get` | 需配置可信域名；部门 ID 需递归获取；敏感字段需额外授权 |
 | **LDAP** | 用户名密码绑定 | JNDI/LDAP 查询 `ou=users` | 需配置 Base DN、搜索过滤器；属性映射需手动配置 |
 | **OIDC** | 标准 OIDC 流程 | 无（组织同步需额外配置，或通过 API 手动导入） | 用户字段映射通过 claims 配置 |
+| **本地模式** | 用户名+密码本地验证 | 无需同步，数据在本地 | 开箱即用，预置测试用户和组织架构；详见 5.6 |
 
 ### 5.2 外部同步方式
 
@@ -4662,6 +4663,246 @@ T+15: 用户 A 发起请假 → autoFill 部门=研发部（JWT 中的旧值）
 ```
 
 **结论**：autoFill 使用 JWT 中的值（不实时），但审批人查找使用 Member 表（准实时）。这是有意为之的权衡——autoFill 的数据即时性要求不高，但审批人查找必须准确。如果用户部门变更，建议用户重新登录即可刷新 JWT。
+
+### 5.6 内置测试模式（无外部平台时）
+
+> **核心问题**：如果我没有钉钉、飞书、企业微信等第三方平台，如何测试设计出的流程？如何验证审批流程能否正确流转？
+
+**答案**：鲁班内置一套**本地身份模拟系统**，专为开发测试场景设计，无需任何外部平台即可完成完整的流程测试。
+
+#### 5.6.1 设计目标
+
+| 目标 | 说明 |
+|------|------|
+| **零依赖** | 无需钉钉、飞书、企微、LDAP 等任何外部平台 |
+| **开箱即用** | 首次启动自动创建预置测试用户和组织架构 |
+| **完整闭环** | 支持从发起申请 → 逐级审批 → 驳回/通过 → 归档的完整流程测试 |
+| **多用户模拟** | 可在不同测试用户之间快速切换，模拟不同角色的审批操作 |
+| **不影响生产** | 测试模式与外部平台模式数据隔离，切换后数据不互通 |
+
+#### 5.6.2 身份提供商：`local`
+
+在 `IdentityProvider` 接口中新增 `local` 类型，作为内置的本地身份模拟器：
+
+```typescript
+// 身份提供商类型扩展
+type IdentityProviderType = 'dingtalk' | 'feishu' | 'wecom' | 'ldap' | 'oidc' | 'local';
+```
+
+**`local` 提供商的特点**：
+
+| 特性 | 说明 |
+|------|------|
+| **认证方式** | 用户名+密码（本地验证），或选择预置用户直接登录 |
+| **用户数据** | 预置一套完整的测试组织架构，管理员可增删改 |
+| **组织同步** | 不需要同步，数据就在本地 |
+| **适用场景** | 开发调试、功能演示、无外部平台的小团队试用 |
+
+#### 5.6.3 预置测试组织架构
+
+系统首次启动时，自动创建以下测试数据：
+
+```
+测试公司
+├── 技术部（部门负责人：张三）
+│   ├── 张三（zhangsan） — 技术总监，角色：部门负责人
+│   ├── 李四（lisi）     — 前端开发，直属上级：张三
+│   └── 王五（wangwu）   — 后端开发，直属上级：张三
+├── 财务部（部门负责人：赵六）
+│   ├── 赵六（zhaoliu）  — 财务总监，角色：部门负责人
+│   └── 钱七（qianqi）   — 会计，直属上级：赵六
+├── 人事部（部门负责人：孙八）
+│   └── 孙八（sunba）    — HR 总监，角色：部门负责人
+└── 总经办（部门负责人：周九）
+    └── 周九（zhoujiu）  — 总经理，角色：部门负责人
+```
+
+**预置角色**：
+
+| 角色名称 | 角色标识 | 成员 | 典型用途 |
+|---------|---------|------|---------|
+| 部门负责人 | `role_dept_manager` | 张三、赵六、孙八、周九 | 审批节点配置"部门负责人" |
+| 财务审批组 | `role_finance` | 赵六、钱七 | 审批节点配置"指定角色→财务审批组" |
+| HR 审批组 | `role_hr` | 孙八 | 审批节点配置"指定角色→HR 审批组" |
+| 高管审批组 | `role_executive` | 周九 | 审批节点配置"指定角色→高管审批组" |
+
+**预置用户密码**：所有预置用户默认密码为 `luban123`，首次登录后强制修改。
+
+#### 5.6.4 身份提供商配置
+
+在应用设置中，身份提供商选择"本地模式"：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  身份提供商配置                                          │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  提供商类型：                                            │
+│  ○ 钉钉  ○ 飞书  ○ 企业微信  ○ LDAP  ○ OIDC            │
+│  ● 本地模式（无需外部平台）                               │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ ℹ️ 本地模式说明                                  │    │
+│  │                                                 │    │
+│  │ 本地模式使用内置用户系统，无需对接任何外部平台。    │    │
+│  │ 适用于：                                        │    │
+│  │  • 开发调试：快速验证流程设计是否正确             │    │
+│  │  • 功能演示：向客户展示流程功能                   │    │
+│  │  • 小团队试用：无需外部平台即可体验完整功能       │    │
+│  │                                                 │    │
+│  │ ⚠️ 注意：本地模式仅适用于测试和演示，生产环境      │    │
+│  │    请切换到钉钉/飞书/企微等正式身份提供商。       │    │
+│  │    切换身份提供商后，原有流程数据保留，但用户       │    │
+│  │    身份将重新映射。                              │    │
+│  └─────────────────────────────────────────────────┘    │
+│                                                         │
+│  [保存配置]                                              │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### 5.6.5 测试用户管理
+
+管理员可在后台管理测试用户：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  测试用户管理                                    [+ 添加] │
+├─────────────────────────────────────────────────────────┤
+│  🔍 [搜索用户名称/账号_________]                         │
+├─────────────────────────────────────────────────────────┤
+│  用户名    │ 姓名  │ 部门     │ 职位       │ 角色        │
+│───────────┼───────┼─────────┼───────────┼────────────│
+│  zhangsan │ 张三  │ 技术部   │ 技术总监   │ 部门负责人   │
+│  lisi     │ 李四  │ 技术部   │ 前端开发   │ —           │
+│  wangwu   │ 王五  │ 技术部   │ 后端开发   │ —           │
+│  zhaoliu  │ 赵六  │ 财务部   │ 财务总监   │ 财务审批组   │
+│  qianqi   │ 钱七  │ 财务部   │ 会计       │ 财务审批组   │
+│  sunba    │ 孙八  │ 人事部   │ HR 总监    │ HR 审批组    │
+│  zhoujiu  │ 周九  │ 总经办   │ 总经理     │ 高管审批组   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**支持操作**：
+- 添加/删除测试用户
+- 修改用户部门、职位、直属上级
+- 将用户加入/移出自定义角色
+- 重置用户密码
+- 批量导入用户（CSV）
+
+#### 5.6.6 多用户模拟切换
+
+在测试模式下，用户可在不同身份之间快速切换，模拟完整的审批流程：
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  当前用户：李四（lisi）— 技术部 — 前端开发          [▼] │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ 切换用户：                                      │    │
+│  │  ○ 张三（zhangsan）— 技术部 — 技术总监          │    │
+│  │  ● 李四（lisi）    — 技术部 — 前端开发          │    │
+│  │  ○ 王五（wangwu）  — 技术部 — 后端开发          │    │
+│  │  ○ 赵六（zhaoliu） — 财务部 — 财务总监          │    │
+│  │  ○ 周九（zhoujiu） — 总经办 — 总经理            │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**切换行为**：
+- 切换用户后，页面刷新，当前身份变为所选用户
+- 待办列表、已办列表、发起权限等随身份切换变化
+- 顶部栏始终显示当前模拟的用户名，并有明显标识（如橙色边框 + "测试模式"标签）
+- 此功能仅在 `local` 模式下可用，切换到外部平台后隐藏
+
+**典型测试流程**：
+
+```
+1. 以"李四"身份登录 → 发起请假申请 → 提交
+2. 切换到"张三"身份（李四的直属上级）→ 待办列表出现请假审批 → 审批通过
+3. 切换到"周九"身份（总经理）→ 待办列表出现请假审批 → 审批通过
+4. 流程结束 → 查看归档记录
+```
+
+#### 5.6.7 测试模式标识
+
+在测试模式下，全局显示醒目的提示，防止误操作：
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  ⚠️ 测试模式 · 当前使用本地用户系统 · 数据仅供测试，请勿用于生产环境    [×] │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+- 所有页面顶部固定显示黄色/橙色提示条
+- 用户头像区域显示"测试"标签
+- 流程实例数据标记 `is_test=true`，便于后续清理
+
+#### 5.6.8 从本地模式迁移到外部平台
+
+当团队准备好接入外部平台时，迁移步骤如下：
+
+```
+步骤 1：在身份提供商配置中切换到目标平台（如钉钉）
+        ↓
+步骤 2：配置平台凭证（AppKey/AppSecret），测试连接
+        ↓
+步骤 3：执行首次组织同步 → 拉取真实组织架构和人员
+        ↓
+步骤 4：用户映射
+        ├── 自动映射：邮箱/手机号相同的用户自动关联
+        ├── 手动映射：管理员手动关联测试用户与真实用户
+        └── 未映射：测试用户标记为"未映射"，保留历史数据但不可登录
+        ↓
+步骤 5：测试流程是否正常流转
+        ↓
+步骤 6：确认无误后，关闭测试模式提示条
+```
+
+**数据保留策略**：
+- 测试模式下创建的流程定义、表单定义**保留**（这些是设计成果，不依赖用户体系）
+- 测试模式下创建的流程实例**保留**（标记为测试数据，可批量清理）
+- 测试用户数据在迁移后**不删除**，但禁止登录（仅外部平台用户可登录）
+
+#### 5.6.9 测试模式与流程设计器
+
+在测试模式下，流程设计器中的审批人选择器可以直接选择预置的测试用户和角色：
+
+```
+审批人配置（测试模式）：
+
+┌─────────────────────────────────────┐
+│  审批人                              │
+│                                     │
+│  审批人类型：                        │
+│  ● 指定人员  ○ 指定角色  ○ 部门负责人 │
+│  ○ 直属上级  ○ 表单字段  ○ 动态脚本   │
+│                                     │
+│  已选人员：                          │
+│  ┌──────────────────────────────┐   │
+│  │ 张三（技术部·技术总监）  [×]  │   │
+│  │ 赵六（财务部·财务总监）  [×]  │   │
+│  └──────────────────────────────┘   │
+│  [+ 选择人员]                        │
+│                                     │
+│  ┌──────────────────────────────┐   │
+│  │ 选择人员（测试模式）          │   │
+│  │ 🔍 [搜索_________]           │   │
+│  │                              │   │
+│  │ ▼ 技术部                     │   │
+│  │   ☑ 张三（技术总监）         │   │
+│  │   ☐ 李四（前端开发）         │   │
+│  │   ☐ 王五（后端开发）         │   │
+│  │ ▼ 财务部                     │   │
+│  │   ☑ 赵六（财务总监）         │   │
+│  │   ☐ 钱七（会计）             │   │
+│  │ ▼ 人事部                     │   │
+│  │   ☐ 孙八（HR 总监）          │   │
+│  │ ▼ 总经办                     │   │
+│  │   ☐ 周九（总经理）           │   │
+│  │                              │   │
+│  │ [确定]  [取消]               │   │
+│  └──────────────────────────────┘   │
+└─────────────────────────────────────┘
+```
 
 ---
 
@@ -5092,6 +5333,50 @@ interface WorkflowDesignResult {
 
 ---
 
+### 6.10 AI 生成内容 Lint 校验
+
+> **核心问题**：大模型（LLM）返回的结果具有不可控性，Agent 生成的表单 HTML/CSS/JS 代码、JSON Schema 配置、流程定义等可能存在语法错误、格式违规、逻辑矛盾等问题。必须在保存前进行自动化 Lint 校验，确保生成内容符合规范。
+
+#### 6.10.1 校验范围与时机
+
+| 校验对象 | 触发时机 | 校验重点 |
+|---------|---------|---------|
+| **表单 HTML 代码** | Agent 生成/修改表单代码后 | HTML 结构规范、`data-field` 属性完整性、必填类名检查 |
+| **表单 CSS 代码** | Agent 生成/修改表单代码后 | CSS 语法正确性、必填选择器存在性 |
+| **表单 JS 代码** | Agent 生成/修改表单代码后 | JS 语法检查、ES5 兼容性、函数声明方式 |
+| **表单字段 Schema (JSON)** | Agent 创建/更新表单定义后 | JSON 格式校验、Schema 结构完整性、字段 key 唯一性 |
+| **流程定义 (JSON)** | Agent 创建/更新流程定义后 | 节点/边 JSON 格式、节点合法性、连线完整性、无孤立节点 |
+| **条件表达式** | Agent 配置条件分支后 | 表达式语法正确性、引用的字段 key 是否存在 |
+| **表单-流程绑定** | Agent 创建绑定后 | formId/workflowId 存在性、主键冲突 |
+
+#### 6.10.2 校验级别策略
+
+| 级别 | 行为 | 前端展示 |
+|------|------|---------|
+| **ERROR** | 阻断保存，必须修复后才能入库 | 红色边框 + 错误图标 |
+| **WARNING** | 允许保存，但记录警告日志 | 黄色边框 + 警告图标 |
+| **PASSED** | 校验通过，直接保存 | 绿色对勾 |
+
+#### 6.10.3 自动修复策略
+
+```
+Agent 生成内容 → 后端 Lint 校验 → passed=true → 直接保存
+                                    passed=false → 返回 ERROR 给 Agent
+                                    Agent 自动修复后重试
+                                    最多重试 3 次，超过则返回给用户手动处理
+```
+
+#### 6.10.4 Lint API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/lint/form-code` | 校验表单代码（HTML/CSS/JS） |
+| `POST` | `/api/v1/lint/field-schema` | 校验字段 Schema JSON |
+| `POST` | `/api/v1/lint/workflow` | 校验流程定义（nodes/edges） |
+| `POST` | `/api/v1/lint/condition` | 校验条件表达式 |
+
+---
+
 ## 七、数据库设计
 
 ### 7.1 新增表结构
@@ -5281,6 +5566,7 @@ excel_import_rows（Excel 行数据）
 | PUT | `/api/v1/workflows/{id}` | 更新流程定义 |
 | DELETE | `/api/v1/workflows/{id}` | 删除流程 |
 | POST | `/api/v1/workflows/{id}/publish` | 发布流程（生成新版本） |
+| POST | `/api/v1/workflows/{id}/unpublish` | 下线流程 |
 | GET | `/api/v1/workflows/{id}/versions` | 获取版本列表 |
 | POST | `/api/v1/workflows/{id}/validate` | 校验流程 |
 | POST | `/api/v1/workflows/{id}/copy` | 复制流程 |
@@ -5306,6 +5592,10 @@ excel_import_rows（Excel 行数据）
 | PUT | `/api/v1/workflow-instances/{id}/cancel` | 撤销流程 |
 | PUT | `/api/v1/workflow-instances/{id}/freeze` | 冻结流程（管理员） |
 | PUT | `/api/v1/workflow-instances/{id}/unfreeze` | 解冻流程（管理员） |
+| POST | `/api/v1/workflow-instances/{id}/reject-to` | 驳回至指定节点 |
+| POST | `/api/v1/workflow-instances/{id}/force-jump` | 强制跳转至指定节点 |
+| POST | `/api/v1/workflow-instances/{id}/resubmit` | 驳回后重新提交 |
+| GET | `/api/v1/workflow-instances/{id}/sub-processes` | 获取子流程列表 |
 
 ### 8.6 任务（待办） API
 
@@ -5319,6 +5609,7 @@ excel_import_rows（Excel 行数据）
 | PUT | `/api/v1/tasks/{id}/transfer` | 转办 |
 | PUT | `/api/v1/tasks/{id}/delegate` | 委派 |
 | PUT | `/api/v1/tasks/{id}/add-sign` | 加签 |
+| POST | `/api/v1/tasks/{id}/reject-previous` | 逐级驳回至上一节点 |
 
 ### 8.7 管理员干预 API
 
@@ -5333,15 +5624,43 @@ excel_import_rows（Excel 行数据）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/v1/departments` | 部门树 |
+| GET | `/api/v1/departments` | 部门列表（可按 parentId 过滤） |
+| GET | `/api/v1/departments/tree` | 部门树结构 |
+| GET | `/api/v1/departments/{id}` | 部门详情 |
 | GET | `/api/v1/departments/{id}/members` | 部门成员 |
-| GET | `/api/v1/members` | 人员搜索（关键词） |
+| GET | `/api/v1/members` | 人员搜索（关键词/部门） |
+| GET | `/api/v1/members/{id}` | 成员详情 |
 | GET | `/api/v1/roles` | 自定义角色列表 |
 | POST | `/api/v1/roles` | 创建自定义角色 |
 | PUT | `/api/v1/roles/{id}` | 更新角色成员 |
 | DELETE | `/api/v1/roles/{id}` | 删除角色 |
 | POST | `/api/v1/sync/organization` | 手动触发组织同步 |
 | POST | `/api/v1/sync/organization/callback` | 外部系统同步回调接口 |
+
+### 8.9 Excel 导入 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/excel/parse` | 解析上传的 Excel 文件 |
+| POST | `/api/v1/excel/guess-mapping` | 智能匹配 Excel 表头与字段映射 |
+
+### 8.10 文件上传 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/files/upload` | 上传文件 |
+| GET | `/api/v1/files/download/{fileName}` | 下载文件 |
+| GET | `/api/v1/files/thumbnail/{fileName}` | 获取缩略图 |
+| DELETE | `/api/v1/files/{fileName}` | 删除文件 |
+
+### 8.11 Lint 校验 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/lint/form-code` | 校验表单代码（HTML/CSS/JS） |
+| POST | `/api/v1/lint/field-schema` | 校验字段 Schema（JSON） |
+| POST | `/api/v1/lint/workflow` | 校验流程定义 |
+| POST | `/api/v1/lint/condition` | 校验条件表达式 |
 
 ---
 
@@ -5351,15 +5670,14 @@ excel_import_rows（Excel 行数据）
 
 | 页面 | 路由 | 说明 |
 |------|------|------|
-| 工作流管理 | `/workspace/:id/workflows` | 流程列表，创建/编辑/删除/发布 |
-| 流程设计器 | `/workspace/:id/workflows/:wid/designer` | 可视化流程编辑器，三栏布局参考钉钉 OA 审批风格（详见 3.1.1） |
-| 表单管理 | `/workspace/:id/forms` | 表单列表，创建/编辑/删除/发布 |
-| 表单预览 | `/workspace/:id/forms/:fid/preview` | 表单预览（桌面端 + 移动端 Tab 切换），表单代码由 CodePage 渲染 |
-| 我的待办 | `/workspace/:id/todos` | 当前用户的待办任务列表 |
-| 我的已办 | `/workspace/:id/done` | 当前用户的已办任务列表 |
-| 我发起的 | `/workspace/:id/my-instances` | 当前用户发起的流程列表 |
-| 流程详情 | `/workspace/:id/instances/:iid` | 流程实例详情（含审批轨迹图、表单数据） |
-| 组织管理 | `/workspace/:id/organization` | 部门树、人员查看（只读） |
+| 工作流管理 | `/workflow/processes` | 流程列表，创建/编辑/删除/发布 |
+| 流程设计器 | `/workflow/designer/:id` | 可视化流程编辑器，三栏布局参考钉钉 OA 审批风格（详见 3.1.1） |
+| 表单管理 | `/workflow/forms` | 表单列表，创建/编辑/删除/发布 |
+| 表单预览 | `/workflow/forms/:id/preview` | 表单预览（桌面端 + 移动端 Tab 切换），表单代码由 CodePage 渲染 |
+| 我的待办 | `/workflow/tasks` | 当前用户的待办/已办任务列表（Tab 切换） |
+| 我发起的 | `/workflow/my-instances` | 当前用户发起的流程列表 |
+| 流程详情 | `/workflow/instances/:id` | 流程实例详情（含审批轨迹图、表单数据） |
+| 组织管理 | `/workflow/organization` | 部门树、人员查看（只读） |
 
 ### 9.2 新增组件
 
@@ -5424,14 +5742,332 @@ excel_import_rows（Excel 行数据）
 
 ### 10.2 技术选型
 
-| 层级 | 技术 |
+#### 10.2.1 后端技术栈
+
+| 层级 | 技术 | 版本 | 选型理由 |
+|------|------|------|---------|
+| **基础框架** | Spring Boot | 3.3.2（与主项目一致） | 开箱即用，生态成熟 |
+| **ORM** | Spring Data JPA + Hibernate | 6.x（随 Spring Boot） | 主项目已使用，保持一致性 |
+| **数据库** | MySQL | 8.0+ | 主项目已使用，Flyway 管理迁移 |
+| **数据库迁移** | Flyway | 随 Spring Boot | 主项目已使用，保持一致性 |
+| **认证鉴权** | Spring Security + JWT | 0.12.6（jjwt） | 主项目已有，复用 `JwtTokenProvider` 和 `@AuthenticationPrincipal` |
+| **模块化** | Maven 多模块 | — | luban-core + luban-workflow，Spring Boot Auto-Configuration 实现可插拔 |
+| **JSON 处理** | Jackson | 随 Spring Boot | 主项目已有，用于节点配置、字段 Schema 等 JSON 字段的序列化 |
+| **Excel 解析** | Apache POI | 5.2.x | 成熟稳定，支持 .xls/.xlsx 解析，用于表单 Excel 上传字段 |
+| **文件存储** | 本地文件系统 + OSS 抽象层 | — | 编辑期存临时目录，提交后移动到正式目录；预留 OSS 接口 |
+| **表达式引擎** | Spring Expression Language (SpEL) | 随 Spring Boot | 轻量、无额外依赖，用于条件分支表达式求值 |
+| **通知推送** | WebSocket（STOMP） | 随 Spring Boot | 站内实时通知（待办提醒）；预留邮件/钉钉/企微通知接口 |
+
+#### 10.2.2 工作流引擎：自研轻量级状态机
+
+**为什么不引入 Activiti / Flowable / Camunda？**
+
+| 对比维度 | 重型引擎（Flowable/Camunda） | 自研轻量级状态机 |
+|---------|---------------------------|----------------|
+| **学习成本** | 高，需学习 BPMN 2.0 规范、引擎 API、部署流程 | 低，纯 Java 代码，状态机模式直观 |
+| **依赖体积** | 大，Flowable 引入 50+ 依赖 | 零额外依赖 |
+| **灵活性** | 受 BPMN 规范约束，动态修改需重新部署 | 完全自由，节点配置即 JSON，运行时动态修改 |
+| **与 AI Agent 集成** | 需适配 BPMN XML，Agent 生成 BPMN 不现实 | Agent 直接生成 JSON 配置，天然适配 |
+| **调试排查** | 引擎内部黑盒，排查困难 | 代码透明，断点即可调试 |
+| **启动速度** | 慢，需初始化流程引擎 | 快，无额外初始化开销 |
+| **适用场景** | 大型企业，数百种流程，BPMN 专业人员维护 | 中小团队，AI 辅助设计，流程数量可控 |
+
+**自研引擎核心设计**：
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  ProcessEngine                       │
+│                                                     │
+│  startProcess(defId, formData, initiator)           │
+│       │                                             │
+│       ▼                                             │
+│  ┌─────────────────────────────────────────────┐    │
+│  │            NodeExecutor 接口                  │    │
+│  │                                             │    │
+│  │  + execute(context: ExecutionContext)        │    │
+│  │     → NextNodeResult                        │    │
+│  └─────────────────────────────────────────────┘    │
+│       │                                             │
+│       ├── StartNodeExecutor                         │
+│       ├── ApprovalNodeExecutor                      │
+│       │     ├── resolveApprovers()   // 解析审批人   │
+│       │     ├── checkAutoSkip()     // 自动跳过     │
+│       │     └── createTask()         // 创建待办     │
+│       ├── ConditionNodeExecutor                     │
+│       │     └── evaluateCondition()  // SpEL 求值    │
+│       ├── ParallelGatewayExecutor                   │
+│       │     ├── fork()               // 分支        │
+│       │     └── join()               // 汇合        │
+│       ├── CcNodeExecutor                           │
+│       ├── SubProcessNodeExecutor                   │
+│       └── EndNodeExecutor                          │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐    │
+│  │            TaskService                       │    │
+│  │                                             │    │
+│  │  + completeTask(taskId, action, comment)     │    │
+│  │  + rejectTask(taskId, targetNodeId, comment) │    │
+│  │  + transferTask(taskId, targetUserId)        │    │
+│  │  + delegateTask(taskId, targetUserId)        │    │
+│  │  + addSignTask(taskId, userIds)              │    │
+│  └─────────────────────────────────────────────┘    │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐    │
+│  │            DeadlineScheduler                 │    │
+│  │                                             │    │
+│  │  + checkDeadlines()  // 定时扫描超时任务     │    │
+│  │  + sendReminder()    // 催办提醒             │    │
+│  │  + escalate()        // 自动升级             │    │
+│  └─────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────┘
+```
+
+**状态机状态定义**：
+
+| 状态 | 说明 | 触发动作 |
+|------|------|---------|
+| `DRAFT` | 草稿 | 用户保存草稿 |
+| `PENDING` | 审批中 | 提交审批 |
+| `APPROVED` | 已通过 | 所有审批节点通过 |
+| `REJECTED` | 已驳回 | 任意审批节点驳回 |
+| `CANCELLED` | 已取消 | 发起人撤回 |
+| `TERMINATED` | 已终止 | 管理员强制终止 |
+| `ARCHIVED` | 已归档 | 流程结束 + 归档周期到 |
+
+**状态流转**：
+
+```
+DRAFT ──提交──→ PENDING ──全部通过──→ APPROVED ──归档──→ ARCHIVED
+                  │  │
+                  │  └──驳回──→ REJECTED ──重新提交──→ PENDING
+                  │
+                  ├──撤回──→ CANCELLED
+                  │
+                  └──管理员终止──→ TERMINATED
+```
+
+##### 10.2.2.1 与 Activiti 详细对比
+
+**Activiti 简介**：Apache 顶级项目，Java 生态最知名的 BPMN 2.0 工作流引擎，被 Alfresco、Spring Boot 官方集成，广泛应用于金融、政务、OA 等场景。
+
+**一、功能覆盖度对比**
+
+| 功能 | Activiti | 自研引擎 | 备注 |
+|------|----------|---------|------|
+| 流程定义 | BPMN 2.0 XML 文件 | JSON 节点配置 | Activiti 需专业工具（如 Camunda Modeler）设计；自研 JSON 可由 AI Agent 直接生成 |
+| 用户任务（审批节点） | ✅ UserTask + 多实例 | ✅ 审批节点 + 六种审批人类型 | 功能等价，自研审批人来源更灵活（表单字段、动态脚本） |
+| 排他网关（条件分支） | ✅ ExclusiveGateway | ✅ 条件分支 + SpEL 表达式 | 功能等价，Activiti 支持更复杂的条件组合 |
+| 并行网关 | ✅ ParallelGateway | ✅ 并行分支 | 功能等价 |
+| 包容网关 | ✅ InclusiveGateway | ❌ 暂不支持 | 复杂场景，可用并行+条件组合替代 |
+| 子流程 / 调用活动 | ✅ SubProcess + CallActivity | ✅ 子流程节点 | 功能等价 |
+| 边界事件 / 中间事件 | ✅ 定时器、信号、消息 | ⚠️ 仅超时（DeadlineScheduler） | Activiti 事件体系更完善，但 90% 的审批场景不需要 |
+| 流程变量 | ✅ 强类型变量 | ✅ 表单数据 JSON + 字段 Schema | 自研更灵活，但缺少类型校验 |
+| 历史记录 | ✅ 自动全量记录 | ✅ 流转历史表 | 功能等价 |
+| 版本管理 | ✅ 流程定义版本 | ✅ 流程定义版本 | 功能等价 |
+| 驳回 / 退回 | ⚠️ 非标准 BPMN，需自行实现 | ✅ 原生支持驳回至任意节点 | 自研更适合中国式审批 |
+| 转办 / 委派 / 加签 | ⚠️ 非标准 BPMN，需自行实现 | ✅ 原生支持 | 自研更适合中国式审批 |
+| 会签 / 或签 / 依次 | ⚠️ 需通过多实例+扩展实现 | ✅ 原生支持四种协作模式 | 自研更适合中国式审批 |
+| 超时 / SLA | ⚠️ 需定时器边界事件 | ✅ 内置 DeadlineScheduler | 自研更简单直接 |
+| 字段权限 | ❌ 不支持 | ✅ 审批节点可配置字段级权限 | 自研独有功能 |
+| 动态修改运行中流程 | ❌ 需重新部署 | ✅ 草稿可随时修改，已发布流程下线后修改 | 自研更灵活 |
+| 流程图可视化 | ✅ BPMN.js 渲染 | ✅ React Flow 节点卡片 | 自研 UI 更现代化（钉钉风格） |
+| REST API | ✅ 完整 REST API | ✅ 自建 REST API | 功能等价 |
+| Spring Boot 集成 | ✅ activiti-spring-boot-starter | ✅ Spring Boot Auto-Configuration | 自研更轻量 |
+| 数据库兼容 | MySQL / Oracle / PostgreSQL / H2 等 | MySQL（当前） | 自研可扩展 |
+| 集群 / 分布式 | ✅ 支持 | ⚠️ 暂不支持，可后续扩展 | 单节点满足中小团队需求 |
+
+**二、架构对比**
+
+| 维度 | Activiti | 自研引擎 |
+|------|----------|---------|
+| **核心架构** | 命令模式 + 拦截器链（CommandContext 线程绑定） | 简单状态机 + NodeExecutor 策略模式 |
+| **持久化** | MyBatis + 20+ 张内置表 | JPA + 6 张核心表（process_definitions / process_instances / process_tasks / task_history / form_definitions / form_data） |
+| **事务管理** | 引擎内部事务，与 Spring 事务隔离 | 直接使用 Spring 事务，与主项目一致 |
+| **异步执行** | 内置 Job Executor（线程池 + 定时任务） | Spring @Scheduled + @Async |
+| **表达式引擎** | JUEL（UEL 规范） | SpEL（Spring 原生） |
+| **代码量** | 约 50 万行 Java 代码 | 预估 3000-5000 行核心代码 |
+| **启动时间** | 3-5 秒（初始化引擎 + 加载流程定义） | < 1 秒（零初始化） |
+| **内存占用** | 约 100-200MB 额外内存 | 约 10-20MB 额外内存 |
+
+**三、学习曲线对比**
+
+```
+Activiti 学习路径（约 2-4 周）：
+  理解 BPMN 2.0 规范（事件、网关、活动、顺序流）
+  → 学习引擎 API（ProcessEngine、RuntimeService、TaskService、HistoryService）
+  → 掌握流程部署（BPMN XML + 资源配置）
+  → 理解命令模式与拦截器
+  → 学习多实例与边界事件
+  → 排查引擎内部错误
+
+自研引擎学习路径（约 1-2 天）：
+  理解 JSON 节点配置结构
+  → 调用 ProcessEngine.startProcess() / TaskService.completeTask()
+  → 断点调试 NodeExecutor 执行链
+  → 完成
+```
+
+**四、Activiti 适合的场景**
+
+| 场景 | 说明 |
 |------|------|
-| **后端模块化** | Maven 多模块（luban-core + luban-workflow），Spring Boot Auto-Configuration 可插拔 |
-| 流程设计器 | React Flow（@xyflow/react） |
-| 表单渲染 | 复用 CodePage 机制（HTML/CSS/JS 原生渲染），`FormRenderer` 注入工作流上下文 |
-| 流程引擎 | 自研（轻量级状态机，不引入 Activiti/Flowable 重型引擎） |
-| 条件表达式 | 自研表达式解析器 或 MVEL |
-| 通知推送 | 预留接口，对接邮件/钉钉/企微 |
+| 已有 BPMN 专业人员 | 团队有懂 BPMN 2.0 的业务分析师，能用 Camunda Modeler 设计流程 |
+| 需要与外部系统深度集成 | 需要调用外部 WebService、消息队列、信号事件等 |
+| 流程极度复杂 | 数百个节点、多层嵌套子流程、复杂事件驱动 |
+| 需要分布式/集群 | 高并发场景，需多节点部署和分布式事务 |
+| 已有 Activiti 技术栈 | 团队有 Activiti 使用经验，迁移成本低 |
+| 合规性要求 | 金融、政务等需要 BPMN 标准审计报告的行业 |
+
+**五、自研引擎适合的场景（鲁班的定位）**
+
+| 场景 | 说明 |
+|------|------|
+| AI 辅助设计 | 流程由 AI Agent 生成 JSON，而非人工拖拽 BPMN |
+| 审批流程为主 | 请假、报销、合同审批等典型 OA 场景，不需要复杂事件 |
+| 中小团队 | 节点数 3-15 个，日均流程实例 < 1000 |
+| 快速迭代 | 需求变化频繁，流程需要随时调整，不能等"重新部署" |
+| 无 BPMN 专业人员 | 团队不熟悉 BPMN 2.0，也不打算招聘 |
+| 中国式审批 | 驳回、转办、委派、加签、会签/或签/依次审批等中国特色需求 |
+| 字段级权限 | 审批过程中控制表单字段的可见/可编辑 |
+| 轻量级嵌入 | 不希望引入 50+ 依赖和 20+ 张表 |
+
+**六、迁移路径**
+
+如果未来团队规模扩大，需要 Activiti 级别的能力，迁移路径清晰：
+
+```
+自研引擎 (JSON 配置) → 生成 BPMN XML → 导入 Activiti
+```
+
+1. 自研引擎的 JSON 配置可完整映射为 BPMN 2.0 元素（审批节点→UserTask，条件分支→ExclusiveGateway 等）
+2. 自研引擎的核心表（process_definitions / process_instances / process_tasks）与 Activiti 表结构兼容
+3. 迁移成本：约 1-2 周（写一个 JSON→BPMN 转换器 + 数据迁移脚本）
+
+**七、结论**
+
+|  | Activiti | 自研引擎 |
+|---|---------|---------|
+| **功能完整度** | 95%（BPMN 全支持） | 80%（覆盖 90% 审批场景） |
+| **开发成本** | 0（现成） | 约 2-3 周核心开发 |
+| **维护成本** | 高（引擎升级、BUG 修复依赖社区） | 低（代码完全可控） |
+| **AI 适配性** | 差（需生成 BPMN XML） | 优（AI 直接生成 JSON） |
+| **灵活性** | 低（受 BPMN 规范约束） | 高（完全自由扩展） |
+| **启动速度** | 慢 | 快 |
+| **依赖体积** | 大 | 小 |
+| **适合鲁班** | ❌ | ✅ |
+
+**最终决策**：自研轻量级状态机。鲁班的核心价值是"AI 降低使用门槛"，引入 Activiti 会让 AI 必须学会生成 BPMN XML（极高难度），而自研引擎的 JSON 配置与 AI 天然适配。20% 不覆盖的 BPMN 功能（包容网关、复杂事件、分布式等）在审批场景中极少使用，不影响核心体验。
+
+#### 10.2.3 前端技术栈
+
+| 层级 | 技术 | 版本 | 选型理由 |
+|------|------|------|---------|
+| **框架** | React | 19.x | 主项目已使用 |
+| **语言** | TypeScript | 5.x | 主项目已使用 |
+| **构建工具** | Vite | 6.x | 主项目已使用 |
+| **路由** | React Router | 7.x | 主项目已使用 |
+| **状态管理** | Zustand | 5.x | 主项目已使用，比 Redux 轻量 |
+| **HTTP 客户端** | Axios | 1.x | 主项目已使用 |
+| **UI 组件库** | 无，纯手写 CSS | — | 主项目风格，保持一致性 |
+| **图标** | Lucide React | 1.x | 主项目已使用 |
+
+**新增依赖**：
+
+| 依赖 | 版本 | 用途 | 包大小 |
+|------|------|------|--------|
+| **@xyflow/react** | ^12.x | 流程设计器画布（节点拖拽、连线、缩放、撤销/重做） | ~150KB gzipped |
+| **xlsx** | ^0.18.x | Excel 文件前端解析（不上传后端即可预览） | ~120KB gzipped |
+| **file-saver** | ^2.x | 浏览器端文件下载（导出流程、导出数据） | ~3KB gzipped |
+| **@types/file-saver** | ^2.x | file-saver 的 TypeScript 类型 | — |
+
+**为什么选择 @xyflow/react（React Flow）？**
+
+| 对比维度 | React Flow | 自研画布 | 其他方案（AntV X6 / GoJS） |
+|---------|-----------|---------|--------------------------|
+| **React 集成** | 原生 React 组件，声明式 API | 需自行封装 | X6 有 React 封装但不够成熟 |
+| **定制能力** | 节点、边、连线完全可自定义 React 组件 | 完全自由但开发量大 | 定制较复杂 |
+| **交互体验** | 内置拖拽、缩放、框选、小地图、撤销/重做 | 需从零实现 | 功能全但学习曲线陡 |
+| **社区活跃度** | 35k+ GitHub Stars，MIT 协议 | — | GoJS 商业收费 |
+| **包体积** | ~150KB gzipped | 0 | X6 ~200KB，GoJS ~300KB |
+| **与钉钉风格适配** | 节点卡片样式、连线动画、小地图均可轻松实现 | 可完全还原 | 通用画布，需额外适配 |
+
+**React Flow 核心能力映射**：
+
+| 需求 | React Flow 对应能力 |
+|------|-------------------|
+| 三栏布局画布 | `<ReactFlow>` 组件嵌入中间面板 |
+| 左侧节点面板拖拽 | `onDragOver` + `onDrop` 创建节点 |
+| 节点卡片样式 | 自定义 `CustomNode` React 组件 |
+| 节点间 "+" 按钮 | 自定义 `Edge` 带中间按钮 |
+| 连线箭头 | 内置 `MarkerType.ArrowClosed` |
+| 条件分支标签 | 自定义 `EdgeLabel` 组件 |
+| 画布缩放 | 内置 `useReactFlow().zoomIn/zoomOut()` |
+| 撤销/重做 | 需自行实现（基于 `onNodesChange` 历史栈） |
+| 小地图 | 内置 `<MiniMap>` 组件 |
+| 选中节点 → 右侧属性面板 | `onNodeClick` 回调更新选中状态 |
+| 自动布局 | `dagre` 布局算法（可选依赖） |
+
+**xlsx 库用途**：
+
+| 功能 | 说明 |
+|------|------|
+| 前端解析 Excel | 用户选择文件后，纯前端解析工作表数据，无需上传后端 |
+| 预览表格 | 解析后在前端渲染预览表格，支持编辑 |
+| 列映射 | 根据 `excelConfig.columns` 匹配列名与表单字段 |
+| 校验 | 前端校验数据类型、必填项、格式 |
+
+#### 10.2.4 后端 Maven 依赖清单
+
+```xml
+<!-- luban-workflow/pom.xml 核心依赖 -->
+
+<!-- 基础：复用 luban-core 的 JPA、Security 等 -->
+<dependency>
+    <groupId>com.luban</groupId>
+    <artifactId>luban-core</artifactId>
+    <version>${project.version}</version>
+</dependency>
+
+<!-- Spring Boot Starter Web（复用 luban-core） -->
+<!-- Spring Boot Starter Data JPA（复用 luban-core） -->
+<!-- Spring Boot Starter Security（复用 luban-core） -->
+
+<!-- Excel 解析 -->
+<dependency>
+    <groupId>org.apache.poi</groupId>
+    <artifactId>poi-ooxml</artifactId>
+    <version>5.2.5</version>
+</dependency>
+
+<!-- WebSocket 通知 -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-websocket</artifactId>
+</dependency>
+
+<!-- 可选：Groovy 脚本引擎（动态审批人脚本） -->
+<dependency>
+    <groupId>org.apache.groovy</groupId>
+    <artifactId>groovy</artifactId>
+    <version>4.0.22</version>
+    <optional>true</optional>
+</dependency>
+```
+
+#### 10.2.5 前端 package.json 新增依赖
+
+```json
+{
+  "dependencies": {
+    "@xyflow/react": "^12.4.0",
+    "xlsx": "^0.18.5",
+    "file-saver": "^2.0.5"
+  },
+  "devDependencies": {
+    "@types/file-saver": "^2.0.7"
+  }
+}
+```
 
 ### 10.3 项目结构调整
 
@@ -5464,7 +6100,7 @@ excel_import_rows（Excel 行数据）
 
 ## 十一、开放问题（待确认）
 
-1. **流程引擎选型**：自研轻量级状态机 vs 引入 Flowable？自研更灵活但开发量大，Flowable 功能全但较重
+1. ~~流程引擎选型~~ → **已决策**：自研轻量级状态机，不引入 Flowable/Camunda。详见 10.2.2。
 2. **组织同步频率**：实时同步还是定时同步？增量还是全量？
 3. **移动端适配**：表单填写和审批是否需要移动端（H5/小程序）？
 4. **通知渠道**：优先支持哪些通知方式（站内/邮件/钉钉/企微）？

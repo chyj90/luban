@@ -77,7 +77,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
 
     switch (event.type) {
       case 'run.start':
-        console.log(`${prefix} ▶ run.start`);
+        console.log(`${prefix} run.start`);
         setStatus('planning');
         streamingMsgId = crypto.randomUUID();
         addMessage({
@@ -94,7 +94,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
         break;
 
       case 'plan.step-added':
-        console.log(`${prefix} 📝 plan.step-added: "${cleanDesc(event.step.description)}" (index: ${event.index})`);
+        console.log(`${prefix} plan.step-added: "${cleanDesc(event.step.description)}" (index: ${event.index})`);
         if (streamingMsgId) {
           updateMessage(streamingMsgId, {
             content: `正在规划步骤 ${event.index + 1}：${cleanDesc(event.step.description)}`,
@@ -103,7 +103,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
         break;
 
       case 'plan.thought-delta':
-        console.log(`${prefix} 💭 plan.thought-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
+        console.log(`${prefix} plan.thought-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
         appendStreamingDelta(event.delta);
         break;
 
@@ -115,7 +115,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
           status: 'pending' as const,
           order: i,
         }));
-        console.log(`${prefix} 📋 plan.created: ${stepCount} steps`, steps.map((s) => s.description));
+        console.log(`${prefix} plan.created: ${stepCount} steps`, steps.map((s) => s.description));
         const hasAutoMarker = event.plan.steps.some(
           (s: any) => s.description.startsWith('[AUTO]') || s.description.includes('[BLOCKER]'),
         );
@@ -141,7 +141,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'step.start': {
-        console.log(`${prefix} 🔨 step.start: "${cleanDesc(event.step.description)}" (id: ${event.step.id})`);
+        console.log(`${prefix} step.start: "${cleanDesc(event.step.description)}" (id: ${event.step.id})`);
         if (planId) {
           updateStep(planId, event.step.id, { status: 'running' });
         }
@@ -152,19 +152,19 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'step.text-delta':
-        console.log(`${prefix} 💬 step.text-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
+        console.log(`${prefix} step.text-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
         appendStreamingDelta(event.delta);
         break;
 
       case 'step.tool-call':
-        console.log(`${prefix} 🔧 step.tool-call: ${event.name}`, JSON.stringify(event.input, null, 2));
+        console.log(`${prefix} step.tool-call: ${event.name}`, JSON.stringify(event.input, null, 2));
         break;
 
       case 'step.tool-result': {
         const resultPreview = typeof event.output === 'string'
           ? event.output.slice(0, 300)
           : JSON.stringify(event.output).slice(0, 300);
-        console.log(`${prefix} 📤 step.tool-result: ${event.ok ? '✅' : '❌'} ${resultPreview}${String(event.output).length > 300 ? '...' : ''}`);
+        console.log(`${prefix} step.tool-result: ${event.ok ? 'OK' : 'ERR'} ${resultPreview}${String(event.output).length > 300 ? '...' : ''}`);
         if (!event.ok && planId) {
           updateStep(planId, event.step.id, { status: 'error' });
         }
@@ -172,14 +172,14 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'step.complete': {
-        console.log(`${prefix} ✅ step.complete: "${cleanDesc(event.step.description)}" blocked=${event.result.blocked} summary="${event.result.summary}"`);
+        console.log(`${prefix} OK step.complete: "${cleanDesc(event.step.description)}" blocked=${event.result.blocked} summary="${event.result.summary}"`);
         if (planId) {
           updateStep(planId, event.step.id, {
             status: event.result.blocked ? 'error' : 'done',
             result: event.result.summary,
           });
           if (event.result.blocked) {
-            console.log(`${prefix} 🛑 step blocked, aborting...`);
+            console.log(`${prefix} step blocked, aborting...`);
             onStepBlocked();
           }
         }
@@ -188,7 +188,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'plan.revised': {
-        console.log(`${prefix} 🔄 plan.revised: ${event.plan?.steps.length} steps`, event.plan?.steps.map((s: any) => cleanDesc(s.description)));
+        console.log(`${prefix} 轮 plan.revised: ${event.plan?.steps.length} steps`, event.plan?.steps.map((s: any) => cleanDesc(s.description)));
         if (planId && event.plan) {
           const revisedSteps: Step[] = event.plan.steps.map((s, i) => ({
             id: s.id,
@@ -202,12 +202,12 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'final.text-delta':
-        console.log(`${prefix} 💬 final.text-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
+        console.log(`${prefix} final.text-delta: ${event.delta.slice(0, 200)}${event.delta.length > 200 ? '...' : ''}`);
         appendStreamingDelta(event.delta);
         break;
 
       case 'final': {
-        console.log(`${prefix} 🏁 final: text=${event.text?.slice(0, 100) || '(none)'}`);
+        console.log(`${prefix} 开始 final: text=${event.text?.slice(0, 100) || '(none)'}`);
         flushStreamingMessage();
         if (event.text) {
           addMessage({
@@ -228,7 +228,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'usage': {
-        console.log(`${prefix} 📊 usage: phase=${event.phase} input=${event.usage.inputTokens} output=${event.usage.outputTokens} total=${event.usage.totalTokens}`);
+        console.log(`${prefix} usage: phase=${event.phase} input=${event.usage.inputTokens} output=${event.usage.outputTokens} total=${event.usage.totalTokens}`);
         dispatch({
           type: 'TOKEN_USAGE',
           payload: {
@@ -242,13 +242,13 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'error':
-        console.error(`${prefix} ❌ error:`, event.error);
+        console.error(`${prefix} ERR error:`, event.error);
         setError(event.error);
         setStreaming(false);
         break;
 
       case 'stopped':
-        console.log(`${prefix} ⏹ stopped`);
+        console.log(`${prefix} STOP stopped`);
         setStatus('cancelled');
         setStreaming(false);
         break;

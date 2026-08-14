@@ -312,10 +312,10 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
 
   const dsTypeLabel = (type: string) => {
     switch (type) {
-      case 'MYSQL': return { icon: '🐬', label: 'MySQL' };
-      case 'POSTGRESQL': return { icon: '🐘', label: 'PostgreSQL' };
-      case 'REST_API': return { icon: '🔗', label: 'REST API' };
-      default: return { icon: '', label: type };
+      case 'MYSQL': return { label: 'MySQL' };
+      case 'POSTGRESQL': return { label: 'PostgreSQL' };
+      case 'REST_API': return { label: 'REST API' };
+      default: return { label: type };
     }
   };
 
@@ -340,9 +340,9 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
     <div className="qe-container">
       <div className="qe-header">
         <div className="qe-header-left">
-          <span className="qe-title">⚡ {query.name}</span>
+          <span className="qe-title">{query.name}</span>
           {selectedDs && (
-            <span className="qe-ds-tag">{dsInfo.icon} {dsInfo.label}</span>
+            <span className="qe-ds-tag">{dsInfo.label}</span>
           )}
         </div>
         <div className="qe-header-actions">
@@ -354,7 +354,7 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
           </button>
           <button className="qe-btn qe-save-btn" onClick={handleSave}>保存</button>
           <button className="qe-btn qe-run-btn" onClick={handleRun} disabled={running}>
-            {running ? '⏳ 执行中...' : '▶ 运行'}
+            {running ? '执行中...' : '运行'}
           </button>
         </div>
       </div>

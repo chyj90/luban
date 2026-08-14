@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
@@ -16,17 +16,36 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shellReadyRef = useRef(false);
   const shellBuiltRef = useRef(false);
+  const lastQueryNamesRef = useRef<string[]>([]);
   const codePageRef = useRef(codePage);
   codePageRef.current = codePage;
   const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, allPages, onNavigate);
 
   const queryNames = useMemo(() => queries.map((q) => q.name), [queries]);
 
-  // Build shell once — all CDN libs are loaded lazily by the shell script
+  const sendUpdatePage = useCallback((cp: CodePageData) => {
+    const iframe = iframeRef.current;
+    if (!iframe || !shellReadyRef.current) return;
+    iframe.contentWindow?.postMessage({
+      type: 'UPDATE_PAGE',
+      css: cp.css || '',
+      html: cp.html || '',
+      js: cp.js || '',
+      libraries: cp.libraries || [],
+      bridgeScript: buildBridgeContent(queryNames),
+    }, '*');
+  }, [queryNames, buildBridgeContent]);
+
+  // Build shell — rebuild when queryNames changes (e.g., queries loaded after backend restart)
   useEffect(() => {
-    if (shellBuiltRef.current) return;
     const iframe = iframeRef.current;
     if (!iframe) return;
+
+    const prevNames = lastQueryNamesRef.current;
+    const namesChanged = prevNames.length !== queryNames.length ||
+      prevNames.some((n, i) => n !== queryNames[i]);
+
+    if (shellBuiltRef.current && !namesChanged) return;
 
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -44,6 +63,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
     shellReadyRef.current = false;
     iframe.srcdoc = html;
     shellBuiltRef.current = true;
+    lastQueryNamesRef.current = [...queryNames];
   }, [buildShellScript, queryNames]);
 
   // Listen for SHELL_READY from the iframe, send initial page on first ready
@@ -54,13 +74,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
         shellReadyRef.current = true;
         if (wasNotReady) {
           const cp = codePageRef.current;
-          iframeRef.current?.contentWindow?.postMessage({
-            type: 'UPDATE_PAGE',
-            css: cp.css || '',
-            html: cp.html || '',
-            js: cp.js || '',
-            libraries: cp.libraries || [],
-          }, '*');
+          sendUpdatePage(cp);
         }
       }
     };
@@ -73,14 +87,8 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
     const iframe = iframeRef.current;
     if (!iframe || !shellReadyRef.current) return;
 
-    iframe.contentWindow?.postMessage({
-      type: 'UPDATE_PAGE',
-      css: codePage.css || '',
-      html: codePage.html || '',
-      js: codePage.js || '',
-      libraries: codePage.libraries || [],
-    }, '*');
-  }, [codePage]);
+    sendUpdatePage(codePage);
+  }, [codePage, sendUpdatePage]);
 
   // Update bridge (query globals) when queries change
   useEffect(() => {
@@ -94,12 +102,12 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   }, [queryNames, buildBridgeContent]);
 
   return (
-    <div className="preview-iframe-wrap">
+    <div className="ip-frame-wrap">
       <iframe
         ref={iframeRef}
         title="preview"
         sandbox="allow-scripts allow-same-origin"
-        className="preview-iframe"
+        className="ip-frame"
       />
     </div>
   );

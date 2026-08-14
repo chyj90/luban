@@ -1,6 +1,6 @@
 .workspace-page {
   min-height: 100vh;
-  background-color: #f5f5f5;
+  background-color: #f4f6f9;
   background-image:
     radial-gradient(circle, rgba(0, 0, 0, 0.12) 1px, transparent 1px);
   background-size: 20px 20px;
@@ -9,61 +9,70 @@
 .workspace-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 16px 32px;
+  height: 50px;
+  padding: 0 20px;
   background: #fff;
-  border-bottom: 1px solid #eee;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  border-bottom: 1px solid #e8edf3;
+  gap: 10px;
+  flex-shrink: 0;
 }
 
 .workspace-header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .workspace-logo {
-  font-size: 20px;
-  font-weight: 700;
-  color: #6B8F71;
-}
-
-.workspace-header-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.workspace-logo-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.workspace-spacer {
+  flex: 1;
 }
 
 .workspace-user {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #555;
+  flex-shrink: 0;
+}
+
+.workspace-user-name {
   font-size: 13px;
+  color: #5a6a7e;
 }
 
 .workspace-user-avatar {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: #6B8F71;
-  color: #fff;
+  background: #e6f4ff;
+  color: #1677ff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .workspace-logout {
   font-size: 13px;
-  color: #999;
+  color: #8c9cab;
   cursor: pointer;
   background: none;
   border: none;
   padding: 4px 8px;
+  margin-left: 8px;
 }
 
 .workspace-logout:hover {
@@ -96,7 +105,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 16px;
-  background: #6B8F71;
+  background: #1677ff;
   color: #fff;
   font-size: 14px;
   font-weight: 500;
@@ -107,7 +116,7 @@
 }
 
 .workspace-create-btn:hover {
-  background: #5a7d60;
+  background: #4096ff;
 }
 
 .workspace-create-form {
@@ -124,20 +133,20 @@
 .workspace-create-form input {
   flex: 1;
   padding: 10px 12px;
-  border: 1px solid #ddd;
+  border: 1px solid #e8edf3;
   border-radius: 6px;
   font-size: 14px;
   outline: none;
 }
 
 .workspace-create-form input:focus {
-  border-color: #6B8F71;
+  border-color: #1677ff;
   box-shadow: 0 0 0 3px rgba(107, 143, 113, 0.15);
 }
 
 .workspace-create-form .btn-confirm {
   padding: 10px 20px;
-  background: #6B8F71;
+  background: #1677ff;
   color: #fff;
   font-weight: 500;
   border: none;
@@ -146,13 +155,13 @@
 }
 
 .workspace-create-form .btn-confirm:hover {
-  background: #5a7d60;
+  background: #4096ff;
 }
 
 .workspace-create-form .btn-cancel {
   padding: 10px 20px;
-  background: #f5f5f5;
-  color: #666;
+  background: #f4f6f9;
+  color: #5a6a7e;
   font-weight: 500;
   border: none;
   border-radius: 6px;
@@ -245,13 +254,13 @@
 
 .app-card-meta {
   font-size: 12px;
-  color: #999;
+  color: #8c9cab;
 }
 
 .workspace-empty {
   text-align: center;
   padding: 60px 20px;
-  color: #999;
+  color: #8c9cab;
 }
 
 .workspace-empty-icon {
@@ -275,7 +284,7 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  color: #999;
+  color: #8c9cab;
   font-size: 15px;
 }
 
@@ -285,7 +294,7 @@
   align-items: center;
   justify-content: center;
   padding: 60px 20px;
-  color: #999;
+  color: #8c9cab;
   font-size: 14px;
   gap: 12px;
 }
@@ -294,7 +303,7 @@
   width: 28px;
   height: 28px;
   border: 3px solid #e2e8f0;
-  border-top-color: #6B8F71;
+  border-top-color: #1677ff;
   border-radius: 50%;
   animation: workspace-spin 0.6s linear infinite;
 }

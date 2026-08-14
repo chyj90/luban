@@ -1,0 +1,396 @@
+.renderer {
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.formHeader {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.formTitle {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.formDesc {
+  font-size: 13px;
+  color: #8c9cab;
+  margin: 6px 0 0;
+}
+
+.formBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.formRow {
+  display: flex;
+  gap: 18px;
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+}
+
+.required {
+  color: #ff4d4f;
+  margin-right: 4px;
+}
+
+.fieldInput {
+  padding: 10px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.fieldInput:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.fieldInput:disabled {
+  background: #f4f6f9;
+  color: #5a6a7e;
+  cursor: not-allowed;
+}
+
+.fieldTextarea {
+  padding: 10px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.fieldTextarea:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.fieldSelect {
+  padding: 10px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  background: #fff;
+  cursor: pointer;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.fieldSelect:focus {
+  border-color: #1677ff;
+}
+
+.fileUpload {
+  padding: 12px;
+  border: 1px dashed #e8edf3;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.fileInfo {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #1677ff;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #e8edf3;
+}
+
+.cancelBtn {
+  padding: 10px 24px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  color: #333;
+}
+
+.cancelBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.submitBtn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.submitBtn:hover {
+  background: #40a9ff;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px;
+  color: #8c9cab;
+  font-size: 14px;
+}
+
+.error {
+  text-align: center;
+  padding: 60px;
+  color: #ff4d4f;
+  font-size: 14px;
+}
+
+/* Computed field */
+.computedField {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f4f6f9;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #8c9cab;
+}
+
+.computedLabel {
+  font-weight: 500;
+  color: #5a6a7e;
+  margin-right: 8px;
+}
+
+.computedFormula {
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-size: 12px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.06);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Excel field */
+.excelField {
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.excelUpload {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  background: #fafafa;
+  border-bottom: 1px solid #e8edf3;
+  font-size: 13px;
+  color: #5a6a7e;
+}
+
+.excelTableWrap {
+  overflow-x: auto;
+}
+
+.excelTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.excelTable th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: #5a6a7e;
+  background: #fafafa;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.excelTable td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+
+.excelPlaceholder {
+  color: #bfbfbf !important;
+  font-style: italic;
+}
+
+/* Detail table */
+.detailTable {
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.addRowBtn {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-top: 1px dashed #e8edf3;
+  background: #fafafa;
+  font-size: 13px;
+  color: #1677ff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.addRowBtn:hover {
+  background: #f0f5ff;
+}
+
+/* Switch */
+.switchWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.switchInput {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switchSlider {
+  width: 44px;
+  height: 22px;
+  background: #d9d9d9;
+  border-radius: 11px;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.switchSlider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.switchInput:checked + .switchSlider {
+  background: #1677ff;
+}
+
+.switchInput:checked + .switchSlider::after {
+  transform: translateX(22px);
+}
+
+.switchInput:disabled + .switchSlider {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Radio group */
+.radioGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radioItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+}
+
+.radioItem input[type="radio"] {
+  accent-color: #1677ff;
+}
+
+.radioItem input[type="radio"]:disabled {
+  cursor: not-allowed;
+}
+
+/* Checkbox group */
+.checkboxGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkboxItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+}
+
+.checkboxItem input[type="checkbox"] {
+  accent-color: #1677ff;
+}
+
+.checkboxItem input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+}
+
+/* Placeholder fields (member, department) */
+.placeholderField {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fafafa;
+  font-size: 13px;
+  color: #8c9cab;
+  cursor: pointer;
+}
+
+.placeholderField:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.configHint {
+  font-size: 13px;
+  color: #8c9cab;
+  font-style: italic;
+}

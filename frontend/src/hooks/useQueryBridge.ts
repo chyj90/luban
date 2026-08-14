@@ -172,6 +172,12 @@ export function useQueryBridge(
       var pending = libs.length;
 
       function applyPage() {
+        if (d.bridgeScript) {
+          var bridgeEl = document.createElement('script');
+          bridgeEl.textContent = d.bridgeScript;
+          document.head.appendChild(bridgeEl);
+        }
+
         var styleEl = document.getElementById('__page_style__');
         if (styleEl) styleEl.textContent = d.css || '';
 
@@ -204,7 +210,10 @@ export function useQueryBridge(
             var script = document.createElement('script');
             script.src = url;
             script.onload = onLibLoaded;
-            script.onerror = onLibLoaded;
+            script.onerror = function() {
+              console.error('[鲁班] 库加载失败: ' + url);
+              onLibLoaded();
+            };
             document.head.appendChild(script);
           }
         });

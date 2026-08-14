@@ -1,17 +1,18 @@
 .editor-sidebar {
   display: flex;
   height: 100%;
-  background: #f8fafc;
+  background: #fff;
   min-width: 340px;
   flex-shrink: 0;
+  border-right: 1px solid #e8edf3;
 }
 
 .editor-sidebar-tabs {
   display: flex;
   flex-direction: column;
   width: 48px;
-  border-right: 1px solid #e2e8f0;
-  background: #f1f5f9;
+  border-right: 1px solid #e8edf3;
+  background: #fafafa;
   padding: 8px 0;
   gap: 4px;
 }
@@ -26,7 +27,7 @@
   border: none;
   background: none;
   cursor: pointer;
-  color: #64748b;
+  color: #5a6a7e;
   font-size: 11px;
   border-radius: 6px;
   margin: 0 4px;
@@ -34,18 +35,30 @@
 }
 
 .editor-sidebar-tab:hover {
-  background: #e2e8f0;
-  color: #334155;
+  background: #e8edf3;
+  color: #1f1f1f;
 }
 
 .editor-sidebar-tab.active {
-  background: #e2e8f0;
-  color: #1e293b;
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.editor-sidebar-tab-bottom {
+  margin-top: auto !important;
 }
 
 .editor-sidebar-tab-icon {
-  font-size: 18px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
+
+.editor-sidebar-tab-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .editor-sidebar-tab-label {
@@ -71,7 +84,7 @@
   justify-content: space-between;
   font-size: 12px;
   font-weight: 600;
-  color: #64748b;
+  color: #5a6a7e;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 8px;
@@ -80,11 +93,10 @@
 .editor-sidebar-add-btn {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid #d1d5db;
   background: #fff;
-  color: #64748b;
-  font-size: 14px;
+  color: #5a6a7e;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -93,7 +105,7 @@
 }
 
 .editor-sidebar-add-btn:hover {
-  background: #e2e8f0;
+  background: #e8edf3;
   border-color: #9ca3af;
 }
 
@@ -107,24 +119,28 @@
   flex: 1;
   padding: 6px 8px;
   border: 1px solid #d1d5db;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 13px;
   outline: none;
 }
 
 .editor-sidebar-new-form input:focus {
-  border-color: #6B8F71;
-  box-shadow: 0 0 0 1px rgba(107, 143, 113, 0.2);
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
 }
 
 .editor-sidebar-new-form button {
   padding: 6px 10px;
-  background: #6B8F71;
+  background: #1677ff;
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
+}
+
+.editor-sidebar-new-form button:hover {
+  background: #4096ff;
 }
 
 .editor-sidebar-list {
@@ -141,7 +157,7 @@
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
-  color: #334155;
+  color: #1f1f1f;
   transition: background 0.1s;
   min-width: 0;
   position: relative;
@@ -152,16 +168,26 @@
 }
 
 .editor-sidebar-item:hover {
-  background: #e2e8f0;
+  background: #f4f6f9;
 }
 
 .editor-sidebar-item.active {
-  background: #dbeafe;
-  color: #1e40af;
+  background: #e6f4ff;
+  color: #1677ff;
 }
 
 .editor-sidebar-item-icon {
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.editor-sidebar-item-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .editor-sidebar-item-name {
@@ -176,7 +202,6 @@
 }
 
 .editor-sidebar-item-dots {
-  width: 24px;
   height: 24px;
   border: none;
   background: transparent;
@@ -186,7 +211,7 @@
   padding: 0;
   line-height: 1;
   flex-shrink: 0;
-  color: #94a3b8;
+  color: #8c9cab;
   letter-spacing: 1px;
   transition: all 0.15s;
   display: flex;
@@ -202,8 +227,8 @@
 }
 
 .editor-sidebar-item-dots:hover {
-  background: #e2e8f0;
-  color: #334155;
+  background: #e8edf3;
+  color: #1f1f1f;
 }
 
 .editor-sidebar-item-dropdown {
@@ -211,9 +236,9 @@
   right: 0;
   top: 28px;
   background: #fff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #e8edf3;
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   z-index: 100;
   min-width: 100px;
   overflow: hidden;
@@ -226,29 +251,32 @@
   border: none;
   background: #fff;
   font-size: 12px;
-  color: #334155;
+  color: #1f1f1f;
   cursor: pointer;
   text-align: left;
   transition: background 0.1s;
 }
 
 .editor-sidebar-item-dropdown button:hover {
-  background: #f1f5f9;
+  background: #f4f6f9;
 }
 
 .editor-sidebar-item-dropdown button.danger {
-  color: #dc2626;
+  color: #1677ff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .editor-sidebar-item-dropdown button.danger:hover {
-  background: #fef2f2;
+  background: #e6f4ff;
 }
 
 .editor-sidebar-item-rename-input {
   flex: 1;
   padding: 2px 6px;
-  border: 1px solid #3B82F6;
-  border-radius: 3px;
+  border: 1px solid #1677ff;
+  border-radius: 4px;
   font-size: 13px;
   outline: none;
   min-width: 0;
@@ -257,10 +285,9 @@
 
 .editor-sidebar-item-rename-ok,
 .editor-sidebar-item-rename-cancel {
-  width: 18px;
   height: 18px;
   border: none;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 10px;
   display: flex;
@@ -272,26 +299,26 @@
 }
 
 .editor-sidebar-item-rename-ok {
-  background: #6B8F71;
+  background: #1677ff;
   color: #fff;
 }
 
 .editor-sidebar-item-rename-ok:hover {
-  background: #5a7a5f;
+  background: #4096ff;
 }
 
 .editor-sidebar-item-rename-cancel {
-  background: #e2e8f0;
-  color: #64748b;
+  background: #e8edf3;
+  color: #5a6a7e;
 }
 
 .editor-sidebar-item-rename-cancel:hover {
-  background: #cbd5e1;
+  background: #d1d5db;
 }
 
 .editor-sidebar-empty {
   padding: 24px 12px;
   text-align: center;
-  color: #94a3b8;
+  color: #8c9cab;
   font-size: 13px;
 }

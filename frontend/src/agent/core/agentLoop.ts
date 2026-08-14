@@ -50,19 +50,19 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   let consecutiveFailures = 0;
   const MAX_CONSECUTIVE_FAILURES = 3;
 
-  console.log(`[AgentLoop] 🏁 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
+  console.log(`[AgentLoop] 开始 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) throw new Error('Cancelled');
 
-    console.log(`[AgentLoop] 🔄 第 ${iteration + 1}/${maxIterations} 轮`);
+    console.log(`[AgentLoop] 轮 第 ${iteration + 1}/${maxIterations} 轮`);
 
     onStatusChange('executing');
     onStreamingContent('思考中...');
-    console.log(`[AgentLoop] 📤 onStreamingContent('思考中...') 已调用`);
+    console.log(`[AgentLoop] onStreamingContent('思考中...') 已调用`);
 
     const apiMessages = buildAPIMessages(conversationMessages);
-    console.log(`[AgentLoop] 📨 API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
+    console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
 
     try {
       const response = await callLLMAPI({
@@ -75,12 +75,12 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       });
 
       onClearStreaming();
-      console.log(`[AgentLoop] 🧹 onClearStreaming 已调用`);
+      console.log(`[AgentLoop] onClearStreaming 已调用`);
 
       const { content, toolCalls } = response;
 
       if (toolCalls.length > 0) {
-        console.log(`[AgentLoop] 🔧 LLM 返回 ${toolCalls.length} 个 tool call: [${toolCalls.map((tc) => tc.function.name).join(', ')}]`);
+        console.log(`[AgentLoop] LLM 返回 ${toolCalls.length} 个 tool call: [${toolCalls.map((tc) => tc.function.name).join(', ')}]`);
 
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
@@ -125,9 +125,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
             const toolStart = Date.now();
             toolResult = await tool.execute(toolInput, {} as any);
             const toolElapsed = Date.now() - toolStart;
-            console.log(`[AgentLoop] 🔧 ${toolName} ⏱ ${toolElapsed}ms | ${toolResult.success ? '✅' : '❌'} ${toolResult.message.slice(0, 200)}${toolResult._pause ? ' | ⏸ pause' : ''}`);
+            console.log(`[AgentLoop] ${toolName} ${toolElapsed}ms | ${toolResult.success ? 'OK' : 'ERR'} ${toolResult.message.slice(0, 200)}${toolResult._pause ? ' | pause' : ''}`);
           } catch (err: any) {
-            console.error(`[AgentLoop] 🔧 ${toolName} ❌ 异常: ${err.message}`);
+            console.error(`[AgentLoop] ${toolName} ERR 异常: ${err.message}`);
             toolResult = { success: false, message: err.message };
           }
 
@@ -205,14 +205,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       }
     } catch (err: any) {
       if (err.message === 'Cancelled' || err.name === 'AbortError') throw err;
-      console.error(`[AgentLoop] ❌ 第 ${iteration + 1} 轮错误: ${err.message}`);
+      console.error(`[AgentLoop] ERR 第 ${iteration + 1} 轮错误: ${err.message}`);
       onError(err.message);
       onStatusChange('error');
       return { response: null, conversationMessages };
     }
   }
 
-  console.log(`[AgentLoop] ⚠️ 达到最大迭代次数 ${maxIterations}`);
+  console.log(`[AgentLoop] WARN 达到最大迭代次数 ${maxIterations}`);
   onStatusChange('completed');
   return { response: null, conversationMessages };
 }

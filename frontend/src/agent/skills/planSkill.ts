@@ -22,18 +22,18 @@ function generateItemId(): string {
 function buildPlanSummary(plan: { agentIcon?: string; agentName?: string; steps: Array<{ description: string; status: string; result?: string }>; status: string }): string {
   const statusLabel = (() => {
     switch (plan.status) {
-      case 'draft': return '📝 待确认';
-      case 'confirmed': return '▶️ 执行中';
-      case 'executing': return '▶️ 执行中';
-      case 'completed': return '✅ 已完成';
-      case 'rejected': return '❌ 已拒绝';
-      case 'stopped': return '⏹ 已停止';
+      case 'draft': return '[待确认]';
+      case 'confirmed': return '[执行中]';
+      case 'executing': return '[执行中]';
+      case 'completed': return '[已完成]';
+      case 'rejected': return '[已拒绝]';
+      case 'stopped': return '[已停止]';
       default: return '';
     }
   })();
-  const agentHeader = `${plan.agentIcon || '📋'} **${plan.agentName || '计划'}** ${statusLabel}`;
+  const agentHeader = `**${plan.agentName || '计划'}** ${statusLabel}`;
   const steps = plan.steps.map((s) => {
-    const statusIcon = s.status === 'done' ? '✅' : s.status === 'running' ? '⏳' : s.status === 'error' ? '❌' : '⬜';
+    const statusIcon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
     const result = s.result ? ` - ${s.result}` : '';
     return `${statusIcon} ${s.description}${result}`;
   }).join('\n\n');
@@ -130,7 +130,7 @@ function createPlanTools(): ToolDefinition[] {
           id: planId,
           agentId: 'main-agent',
           agentName: '主智能体',
-          agentIcon: '🤖',
+          agentIcon: '',
           steps: items.map((item, index) => ({
             id: item.id || generateItemId(),
             description: item.description,
@@ -507,7 +507,7 @@ export function getPlanPromptFragment(): string {
 export const planSkill: Skill = {
   id: 'plan',
   name: '计划管理',
-  icon: '📋',
+  icon: '',
   description: '提供计划创建、更新、确认和状态跟踪能力，支持多步骤任务编排',
   enabled: true,
   getTools: createPlanTools,

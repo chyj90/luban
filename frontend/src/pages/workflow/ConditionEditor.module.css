@@ -1,0 +1,156 @@
+.editor {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fafafa;
+}
+
+.tab {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: #5a6a7e;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  color: #1677ff;
+}
+
+.tabActive {
+  color: #1677ff;
+  background: #fff;
+  font-weight: 600;
+}
+
+.visual {
+  padding: 12px;
+}
+
+.conditionRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.select {
+  padding: 6px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 13px;
+  background: #fff;
+  outline: none;
+  min-width: 100px;
+}
+
+.select:focus {
+  border-color: #1677ff;
+}
+
+.input {
+  padding: 6px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
+  flex: 1;
+  min-width: 100px;
+}
+
+.input:focus {
+  border-color: #1677ff;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.andBtn,
+.orBtn {
+  padding: 5px 14px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #fff;
+  transition: all 0.2s;
+}
+
+.andBtn:hover:not(:disabled) {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.orBtn:hover:not(:disabled) {
+  border-color: #fa8c16;
+  color: #fa8c16;
+}
+
+.andBtn:disabled,
+.orBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.preview {
+  margin-top: 12px;
+  padding: 10px;
+  background: #f4f6f9;
+  border-radius: 4px;
+}
+
+.previewLabel {
+  font-size: 12px;
+  color: #8c9cab;
+  margin-bottom: 4px;
+}
+
+.previewCode {
+  font-size: 13px;
+  color: #333;
+  font-family: 'Menlo', 'Consolas', monospace;
+  word-break: break-all;
+}
+
+.codeMode {
+  padding: 12px;
+}
+
+.codeArea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'Menlo', 'Consolas', monospace;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.codeArea:focus {
+  border-color: #1677ff;
+}
+
+.codeHint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8c9cab;
+}
+
+.codeHint code {
+  background: #f4f6f9;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 12px;
+}

@@ -95,7 +95,7 @@ export class ChatRouter {
       }
     }
 
-    console.log(`[ChatRouter] 🧭 路由 → ${agentDef.name}(${agentDef.id}) | 输入: "${userInput.slice(0, 100)}${userInput.length > 100 ? '...' : ''}"`);
+    console.log(`[ChatRouter] ROUTE 路由 → ${agentDef.name}(${agentDef.id}) | 输入: "${userInput.slice(0, 100)}${userInput.length > 100 ? '...' : ''}"`);
 
     if (this.activeAgentId === agentDef.id && this.activeExecutor) {
       return {
@@ -134,26 +134,26 @@ export class ChatRouter {
     const agentDef = getAgentById(agentId);
     if (!agentDef) throw new Error(`未找到智能体: ${agentId}`);
 
-    console.log(`[ChatRouter] 🔀 委派 → ${agentDef.name}(${agentId}) | 任务: "${task.slice(0, 100)}${task.length > 100 ? '...' : ''}"${overrides?.tools ? ` | 覆盖工具: [${overrides.tools.map((t) => t.name).join(', ')}]` : ''}`);
+    console.log(`[ChatRouter] DELEGATE 委派 → ${agentDef.name}(${agentId}) | 任务: "${task.slice(0, 100)}${task.length > 100 ? '...' : ''}"${overrides?.tools ? ` | 覆盖工具: [${overrides.tools.map((t) => t.name).join(', ')}]` : ''}`);
 
     const previousAgentId = this.activeAgentId;
     const previousExecutor = this.activeExecutor;
 
-    console.log(`[ChatRouter] 🔀 创建 executor 前 | activeAgentId=${this.activeAgentId} | 即将创建 ${agentId}`);
+    console.log(`[ChatRouter] DELEGATE 创建 executor 前 | activeAgentId=${this.activeAgentId} | 即将创建 ${agentId}`);
     const executor = await this.createExecutor(agentDef, sessionId, overrides);
     this.allExecutors.add(executor);
-    console.log(`[ChatRouter] 🔀 executor 已创建 | 开始执行 run`);
+    console.log(`[ChatRouter] DELEGATE executor 已创建 | 开始执行 run`);
     this.activeAgentId = agentDef.id;
     this.activeExecutor = executor;
 
     try {
       const runStart = Date.now();
       await executor.run(task);
-      console.log(`[ChatRouter] 🔀 委派完成 → ${agentDef.name}(${agentId}) | run ⏱ ${Date.now() - runStart}ms`);
+      console.log(`[ChatRouter] DELEGATE 委派完成 → ${agentDef.name}(${agentId}) | run ${Date.now() - runStart}ms`);
       return executor;
     } finally {
       this.allExecutors.delete(executor);
-      console.log(`[ChatRouter] 🔀 恢复 activeAgent | ${agentDef.id} → ${previousAgentId}`);
+      console.log(`[ChatRouter] DELEGATE 恢复 activeAgent | ${agentDef.id} → ${previousAgentId}`);
       this.activeAgentId = previousAgentId;
       this.activeExecutor = previousExecutor;
     }

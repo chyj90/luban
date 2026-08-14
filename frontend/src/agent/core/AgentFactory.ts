@@ -78,7 +78,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
   const tools = overrideTools || createInteliTools(toolContext, chatRouter);
 
   const name = agentName || '主智能体';
-  const icon = agentIcon || '🤖';
+  const icon = agentIcon || '';
 
   async function resolveApiKey(providerType: string): Promise<string> {
     const { vaultManager } = await import('./vaultManager');
@@ -94,7 +94,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       abortController = new AbortController();
       const runStart = Date.now();
 
-      console.log(`[AgentFactory:${name}] 🏁 run() 开始 | userMessage: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '...' : ''}"`);
+      console.log(`[AgentFactory:${name}] run() 开始 | userMessage: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '...' : ''}"`);
 
       const userMsg: Message = {
         id: crypto.randomUUID(),
@@ -106,7 +106,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         agentIcon: icon,
       };
       addMessage(userMsg);
-      console.log(`[AgentFactory:${name}] 📝 addMessage(user) | id=${userMsg.id.slice(0, 8)}`);
+      console.log(`[AgentFactory:${name}] addMessage(user) | id=${userMsg.id.slice(0, 8)}`);
       conversationMessages.push(userMsg);
 
       if (!conversationMessages.some((m) => m.role === 'system')) {
@@ -142,7 +142,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             setStatus(status);
           },
           onStreamingContent: (content) => {
-            console.log(`[AgentFactory:${name}] 📝 onStreamingContent | "${content.slice(0, 40)}" | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'new'}`);
+            console.log(`[AgentFactory:${name}] onStreamingContent | "${content.slice(0, 40)}" | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'new'}`);
             streamingContent = content;
             if (!streamingMsgId) {
               streamingMsgId = crypto.randomUUID();
@@ -161,7 +161,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             }
           },
           onClearStreaming: () => {
-            console.log(`[AgentFactory:${name}] 🧹 onClearStreaming | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'none'}`);
+            console.log(`[AgentFactory:${name}] onClearStreaming | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'none'}`);
             if (streamingMsgId) {
               removeMessage(streamingMsgId);
             }
@@ -170,7 +170,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             setStreaming(false);
           },
           onAddMessage: (msg) => {
-            console.log(`[AgentFactory:${name}] 📝 onAddMessage | role=${msg.role} | content="${(msg.content || '').slice(0, 60)}"`);
+            console.log(`[AgentFactory:${name}] onAddMessage | role=${msg.role} | content="${(msg.content || '').slice(0, 60)}"`);
             const enrichedMsg = {
               ...msg,
               agentId: agentId || 'main-agent',
@@ -189,7 +189,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             updateStep(planId, stepId, { status: status as any, result });
           },
           onToolCall: (toolName, input, messageId) => {
-            console.log(`[${name}] 🔧 tool call: ${toolName}`, JSON.stringify(input, null, 2));
+            console.log(`[${name}] tool call: ${toolName}`, JSON.stringify(input, null, 2));
             const store = useAgentStore.getState();
             const msg = store.messages.find((m) => m.id === messageId);
             if (msg?.toolCalls) {
@@ -202,8 +202,8 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             }
           },
           onToolResult: (toolName, result, messageId) => {
-            const status = result.success ? '✅' : '❌';
-            console.log(`[${name}] 📤 tool result: ${status} ${toolName}`);
+            const status = result.success ? 'SUCCESS' : 'FAIL';
+            console.log(`[${name}] tool result: ${status} ${toolName}`);
             const store = useAgentStore.getState();
             const msg = store.messages.find((m) => m.id === messageId);
             if (msg?.toolCalls) {
@@ -232,13 +232,13 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
         conversationMessages.length = 0;
         conversationMessages.push(...result.conversationMessages);
-        console.log(`[AgentFactory:${name}] ✅ run() 完成 | ⏱ ${Date.now() - runStart}ms`);
+        console.log(`[AgentFactory:${name}] run() 完成 | ${Date.now() - runStart}ms`);
       } catch (err: any) {
         if (err.message === 'Cancelled' || err.name === 'AbortError') {
-          console.log(`[AgentFactory:${name}] ⏹ run() 被取消 | ⏱ ${Date.now() - runStart}ms`);
+          console.log(`[AgentFactory:${name}] run() 被取消 | ${Date.now() - runStart}ms`);
           return;
         }
-        console.log(`[AgentFactory:${name}] ❌ run() 错误 | ${err.message}`);
+        console.log(`[AgentFactory:${name}] run() 错误 | ${err.message}`);
         setError(err.message);
         setStreaming(false);
         setStatus('error');

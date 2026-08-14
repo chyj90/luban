@@ -31,7 +31,7 @@ export const AGENTS: AgentDefinition[] = [
   {
     id: 'main-agent',
     name: '主智能体',
-    icon: '🤖',
+    icon: '',
     description: '主智能体，负责设计页面、选择查询和API、生成代码',
     isDefault: true,
     buildSystemPrompt: (ctx) =>
@@ -41,7 +41,7 @@ export const AGENTS: AgentDefinition[] = [
   {
     id: 'data-assistant',
     name: '数据辅助智能体',
-    icon: '📊',
+    icon: '',
     description: '数据辅助智能体，负责连接数据源、创建查询、执行调试',
     isDefault: false,
     buildSystemPrompt: (ctx) =>

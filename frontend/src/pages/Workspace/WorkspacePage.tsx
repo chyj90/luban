@@ -71,15 +71,25 @@ export function WorkspacePage() {
     <div className="workspace-page">
       <header className="workspace-header">
         <div className="workspace-header-left">
-          <span className="workspace-logo">鲁班</span>
-        </div>
-        <div className="workspace-header-right">
-          <div className="workspace-user">
-            <div className="workspace-user-avatar">{getInitials(user?.name || '')}</div>
-            <span>{user?.name}</span>
+          <div className="workspace-logo">
+            <svg width="22" height="22" viewBox="0 0 24 24">
+              <path d="M12 2L2 7l10 5 10-5-10-5Z" stroke="#1677ff" fill="#e6f4ff" />
+              <path d="M2 17l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
+              <path d="M2 12l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
+            </svg>
+            <span className="workspace-logo-text">鲁班</span>
           </div>
-          <button className="workspace-logout" onClick={handleLogout}>退出</button>
         </div>
+        <div className="workspace-spacer" />
+        {user && (
+          <div className="workspace-user">
+            <span className="workspace-user-name">{user.name}</span>
+            <div className="workspace-user-avatar">
+              {getInitials(user.name || '')}
+            </div>
+          </div>
+        )}
+        <button className="workspace-logout" onClick={handleLogout}>退出</button>
       </header>
 
       <div className="workspace-content">
@@ -149,7 +159,9 @@ export function WorkspacePage() {
               </div>
             ) : applications.length === 0 && !showCreateApp && (
               <div className="workspace-empty">
-                <div className="workspace-empty-icon">📂</div>
+                <div className="workspace-empty-icon">
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                </div>
                 <div className="workspace-empty-text">暂无应用</div>
                 <div className="workspace-empty-hint">点击"新建应用"开始创建你的第一个应用</div>
               </div>

@@ -12,10 +12,28 @@ import { listDatasources } from '@/api/datasource';
 import { listQueries } from '@/api';
 
 export function createDataAssistantTools(context: ToolContext): ToolDefinition[] {
+  const testedDatasources = new Set<number>();
+
+  async function ensureDatasourceConnected(datasourceId: number): Promise<string | null> {
+    if (testedDatasources.has(datasourceId)) {
+      return null;
+    }
+    try {
+      await testDatasource(datasourceId);
+      testedDatasources.add(datasourceId);
+      return null;
+    } catch (e: any) {
+      const datasources = await listDatasources(context.applicationId).then(r => r.data).catch(() => []);
+      const ds = datasources.find((d: any) => d.id === datasourceId);
+      const dsName = ds ? `「${ds.name}」` : `ID:${datasourceId}`;
+      return `数据源 ${dsName} 连接失败，请先在「数据源管理」中检查连接配置并确保测试通过后再继续。`;
+    }
+  }
+
   return [
     {
       name: 'list_datasources',
-      description: '列出当前工作区中所有数据源。',
+      description: '列出当前工作区中所有数据源，包含每个数据源的连接状态（connected/error/pending）。',
       category: 'observation',
       parameters: { type: 'object', properties: {} },
       async execute() {
@@ -24,8 +42,26 @@ export function createDataAssistantTools(context: ToolContext): ToolDefinition[]
       },
     },
     {
+      name: 'test_datasource',
+      description: '测试指定数据源的连接是否正常。在创建查询或执行 SQL 之前，务必先调用此工具确认数据源连通。',
+      category: 'datasource',
+      parameters: {
+        type: 'object',
+        properties: { datasourceId: { type: 'number', description: '数据源 ID' } },
+        required: ['datasourceId'],
+      },
+      async execute(args) {
+        try {
+          await testDatasource(args.datasourceId as number);
+          return { success: true, message: '数据源连接正常' };
+        } catch (e: any) {
+          return { success: false, message: `数据源连接失败: ${e.message || '未知错误'}` };
+        }
+      },
+    },
+    {
       name: 'fetch_datasource_structure',
-      description: '获取数据源的数据库结构，包括所有表和字段信息。',
+      description: '获取数据源的数据库结构，包括所有表和字段信息。调用前请确保数据源连接正常。',
       category: 'datasource',
       parameters: {
         type: 'object',
@@ -49,7 +85,7 @@ export function createDataAssistantTools(context: ToolContext): ToolDefinition[]
     },
     {
       name: 'create_query',
-      description: `创建一个新的查询。
+      description: `创建一个新的查询。首次使用某个数据源时会自动探测连通性，不通则暂停。后续操作不会重复探测。
 
 ## SQL 查询
 body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
@@ -83,9 +119,14 @@ body 填写端点路径（相对路径如 /users 或绝对路径如 https://...�
         required: ['name', 'datasourceId', 'body'],
       },
       async execute(args) {
+        const dsId = args.datasourceId as number;
+        const pauseMsg = await ensureDatasourceConnected(dsId);
+        if (pauseMsg) {
+          return { success: false, message: pauseMsg, _pause: true };
+        }
         const res = await createQuery({
           applicationId: context.applicationId,
-          datasourceId: args.datasourceId as number,
+          datasourceId: dsId,
           name: args.name as string,
           body: args.body as string,
           params: (args.params as Record<string, unknown>) || {},
@@ -131,7 +172,7 @@ body 填写端点路径（相对路径如 /users 或绝对路径如 https://...�
     },
     {
       name: 'run_query',
-      description: '执行一个查询，用于测试查询是否正确。params 传入扁平对象，如 { name: "张三", age: 25 }，对应 SQL 中的 {{ this.params.xxx }}。',
+      description: '执行一个查询，用于测试查询是否正确。首次使用某个数据源时会自动探测连通性，不通则暂停。后续操作不会重复探测。params 传入扁平对象，如 { name: "张三", age: 25 }，对应 SQL 中的 {{ this.params.xxx }}。',
       category: 'query',
       parameters: {
         type: 'object',
@@ -142,10 +183,19 @@ body 填写端点路径（相对路径如 /users 或绝对路径如 https://...�
         required: ['queryId'],
       },
       async execute(args) {
-        const res = await runQuery(args.queryId as number, {
+        const qId = args.queryId as number;
+        const queries = await listQueries(context.applicationId);
+        const query = queries.data.find((q: any) => q.id === qId);
+        if (query?.datasourceId) {
+          const pauseMsg = await ensureDatasourceConnected(query.datasourceId);
+          if (pauseMsg) {
+            return { success: false, message: pauseMsg, _pause: true };
+          }
+        }
+        const res = await runQuery(qId, {
           params: (args.params as Record<string, unknown>) || undefined,
         });
-        context.onQuerySelect?.({ id: args.queryId as number, name: `查询 ${args.queryId}` });
+        context.onQuerySelect?.({ id: qId, name: `查询 ${qId}` });
         const { columns, rows, totalCount, executionTime } = res.data;
         const displayRows = rows.slice(0, 20);
         const tableHeader = columns.join(' | ');
@@ -162,7 +212,7 @@ body 填写端点路径（相对路径如 /users 或绝对路径如 https://...�
     },
     {
       name: 'connect_datasource',
-      description: '连接一个新的数据源。支持 MySQL、PostgreSQL、REST API。',
+      description: '连接一个新的数据源。支持 MySQL、PostgreSQL、REST API。连接后会自动测试连通性。',
       category: 'datasource',
       parameters: {
         type: 'object',
