@@ -50,6 +50,9 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   console.log(`[AgentLoop] 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
 
+  const toolRetryCounts = new Map<string, number>();
+  const MAX_RETRIES = 3;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) throw new Error('Cancelled');
 
@@ -142,6 +145,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           }
 
           onToolResult(toolName, toolResult, assistantMsg.id, toolCall.id);
+
+          if (!toolResult.success) {
+            const retries = (toolRetryCounts.get(toolName) || 0) + 1;
+            toolRetryCounts.set(toolName, retries);
+            console.log(`[AgentLoop] ${toolName} 失败 ${retries}/${MAX_RETRIES}`);
+            if (retries >= MAX_RETRIES) {
+              toolResult._noRetry = true;
+              console.log(`[AgentLoop] ${toolName} 已达最大重试次数 ${MAX_RETRIES}，注入停止指令`);
+            }
+          }
 
           if (toolResult._pause) {
             conversationMessages.push({

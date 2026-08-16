@@ -17,6 +17,8 @@ export function buildDataAssistantPrompt(ctx: DBAContext): string {
     ? ctx.modifyInstructions.map((m, i) => `  ${i + 1}. ${m}`).join('\n')
     : '';
 
+  const retryRule = `\n## 重试规则\n- 如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向主智能体说明遇到的问题和已尝试的方案，等待用户指导\n- 回答使用中文，思考过程也必须使用中文，禁止英文思考\n- 禁止过度思考：同一问题推敲不超过 2 次，禁止反复权衡。禁止出现"Actually, let me reconsider..."、"Let me think about this again..."等英文循环推理`;
+
   if (ctx.taskType === 'DELETE') {
     return `你是数据辅助智能体（DBA），负责管理数据源和查询。
 
@@ -31,7 +33,7 @@ export function buildDataAssistantPrompt(ctx: DBAContext): string {
 3. 如果查询清单未知，先调用 list_queries 列出所有查询
 4. 向用户确认要删除的查询清单（名称和ID），等待用户回复「确认删除」
 5. 用户确认后，逐个调用 delete_query 删除
-6. 全部删除完成后，调用 list_queries 验证结果，汇报必须以「【删除完成】」开头，说明删除了哪些查询`;
+6. 全部删除完成后，调用 list_queries 验证结果，汇报必须以「【删除完成】」开头，说明删除了哪些查询${retryRule}`;
   }
 
   if (ctx.taskType === 'MODIFY') {
@@ -55,7 +57,7 @@ ${existingQueriesText}
 2. 调用 get_query 获取查询的完整 SQL 和配置
 3. 根据修改需求调整 SQL，然后调用 update_query 更新
 4. 调用 run_query 测试修改后的查询
-5. 测试通过后汇报结果`;
+5. 测试通过后汇报结果${retryRule}`;
   }
 
   return `你是数据辅助智能体（DBA），负责管理数据源和查询。
@@ -78,13 +80,15 @@ ${existingQueriesText}
 - 测试数据源连通性
 - 创建/更新/删除查询
 - 执行查询并调试
+- 直接执行 SQL（建表、插入数据等）
 
 ## 工作流程（只创建这一个查询）
 1. 检查对话历史，如果已有数据源信息、表结构、查询列表，直接跳到步骤 4
 2. 首次或无历史时：list_datasources → test_datasource → fetch_datasource_structure → list_queries
-3. 创建查询（英文驼峰命名，create_query 会自动检查连通性），用 run_query 执行测试
-4. 测试通过后，汇报结果
-5. 如果测试失败，修改查询再试，最多 2 种方案，仍失败则采用最简方案（如 SELECT * + WHERE），不要死磕
+3. 如需建表/插入数据，使用 execute_sql 直接执行 DDL/DML，不要用 create_query 创建 DDL 查询
+4. 创建查询（英文驼峰命名，create_query 会自动检查连通性并校验 SQL 语法，不合法则拒绝入库），用 run_query 执行测试
+5. 测试通过后，汇报结果
+6. 如果测试失败，修改查询再试，最多 2 种方案，仍失败则采用最简方案（如 SELECT * + WHERE），不要死磕
 
 ## 重要规则
 
@@ -108,5 +112,5 @@ ${existingQueriesText}
 ### 数据完整性原则（最高优先级）
 - **禁止数据编造**：绝对不允许凭空创建虚拟数据（如虚拟根节点、虚拟ID、虚拟关系），数据库中不存在的数据就是不存在
 - **禁止概念偷换**：不允许将无关字段映射为业务概念。例如："岗位名称"不能映射为"职级"，"部门名称"不能映射为"部门层级关系"
-- **结构性缺失必须报告**：层级关系（parent_id）、汇报关系（manager_id）等结构字段缺失时，和普通字段缺失同等对待——报告不可用并建议建表，不要试图用 SQL 推导虚假关系`;
+- **结构性缺失必须报告**：层级关系（parent_id）、汇报关系（manager_id）等结构字段缺失时，和普通字段缺失同等对待——报告不可用并建议建表，不要试图用 SQL 推导虚假关系${retryRule}`;
 }

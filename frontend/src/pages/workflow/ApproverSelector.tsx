@@ -31,6 +31,10 @@ export default function ApproverSelector({ config, onChange }: ApproverSelectorP
   );
   const [ratio, setRatio] = useState<number>((config.approvalRatio as number) || 50);
 
+  useEffect(() => {
+    setActiveType((config.approverType as string) || 'member');
+  }, [config.approverType]);
+
   const handleTypeChange = (type: string) => {
     setActiveType(type);
     onChange('approverType', type);

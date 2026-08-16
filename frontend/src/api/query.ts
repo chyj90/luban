@@ -20,3 +20,7 @@ export async function deleteQuery(id: number) {
 export async function runQuery(id: number, data?: RunQueryRequest) {
   return post<RunQueryResponse>(`/queries/${id}/run`, data);
 }
+
+export async function executeSql(datasourceId: number, sql: string) {
+  return post<RunQueryResponse>('/queries/execute', { datasourceId, sql });
+}

@@ -195,6 +195,7 @@ public class LintService {
             }
 
             boolean hasStart = false, hasEnd = false;
+            boolean hasNodeTypeHint = false;
             for (JsonNode node : nodes) {
                 if (!node.has("nodeId")) {
                     errors.add(Map.of("category", "Workflow", "message", "节点缺少 nodeId", "severity", "ERROR"));
@@ -209,16 +210,28 @@ public class LintService {
                     if ("end".equals(nodeType)) hasEnd = true;
                     if (!VALID_NODE_TYPES.contains(nodeType)) {
                         warnings.add(Map.of("category", "Workflow", "message",
-                            "未知节点类型: " + nodeType + " (节点: " + nodeId + ")", "severity", "WARNING"));
+                            "未知节点类型: " + nodeType + " (节点: " + nodeId + ")，有效值: " + VALID_NODE_TYPES, "severity", "WARNING"));
                     }
+                } else {
+                    if (node.has("data") && node.get("data").has("nodeType")) {
+                        hasNodeTypeHint = true;
+                    }
+                    errors.add(Map.of("category", "Workflow", "message",
+                        "节点 " + nodeId + " 缺少顶层 nodeType 字段，lint 通过 node.has(\"nodeType\") 读取节点类型，请将 nodeType 放在节点顶层（与 nodeId 同级），不要放在 data 内部", "severity", "ERROR"));
                 }
             }
 
             if (!hasStart) {
-                errors.add(Map.of("category", "Workflow", "message", "缺少开始节点", "severity", "ERROR"));
+                String hint = hasNodeTypeHint
+                    ? "（你可能把 nodeType 放在了 data 内部，lint 只读取节点顶层的 nodeType 字段，请将 nodeType: \"start\" 移到节点顶层）"
+                    : "（需要有一个节点顶层 nodeType 为 \"start\"）";
+                errors.add(Map.of("category", "Workflow", "message", "缺少开始节点" + hint, "severity", "ERROR"));
             }
             if (!hasEnd) {
-                errors.add(Map.of("category", "Workflow", "message", "缺少结束节点", "severity", "ERROR"));
+                String hint = hasNodeTypeHint
+                    ? "（你可能把 nodeType 放在了 data 内部，lint 只读取节点顶层的 nodeType 字段，请将 nodeType: \"end\" 移到节点顶层）"
+                    : "（需要有一个节点顶层 nodeType 为 \"end\"）";
+                errors.add(Map.of("category", "Workflow", "message", "缺少结束节点" + hint, "severity", "ERROR"));
             }
 
             if (edges.isArray()) {

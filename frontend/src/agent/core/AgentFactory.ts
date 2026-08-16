@@ -2,10 +2,9 @@ import type { Message, Plan, Step, ToolDefinition } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
 import { AGENT_CONFIG } from '../config';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
-import { createInteliTools } from '../tools';
 import { formatUnfinishedPlansForPrompt } from './planContext';
 import { runAgentLoop } from './agentLoop';
-import { getPlanPromptFragment } from '../tools/requirementTools';
+import { getPlanPromptFragment } from '../registry/skills/promptFragments';
 import type { ChatRouter } from './chatRouter';
 
 export interface AgentFactoryOptions {
@@ -76,7 +75,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     pageId: currentPageId,
     dispatch,
   };
-  const tools = overrideTools || createInteliTools(toolContext, chatRouter);
+  const tools = overrideTools || [];
 
   const name = agentName || '主智能体';
   const icon = agentIcon || '';

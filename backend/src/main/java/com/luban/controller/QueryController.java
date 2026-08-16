@@ -50,4 +50,11 @@ public class QueryController {
         if (request == null) request = new RunQueryRequest();
         return ResponseEntity.ok(ApiResponse.ok(queryService.run(id, request)));
     }
+
+    @PostMapping("/execute")
+    public ResponseEntity<ApiResponse<RunQueryResponse>> execute(
+            @RequestBody ExecuteSqlRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                queryService.executeSql(request.getDatasourceId(), request.getSql())));
+    }
 }

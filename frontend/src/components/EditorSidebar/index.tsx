@@ -18,6 +18,8 @@ interface EditorSidebarProps {
   selectedQuery: Query | null;
   activeTab?: TabKey;
   workflowView?: WorkflowView;
+  queries?: Query[];
+  onQueriesChange?: () => void;
   onPageChange: (pageId: number) => void;
   onPagesChange: () => void;
   onQuerySelect: (query: Query | null) => void;
@@ -25,7 +27,7 @@ interface EditorSidebarProps {
   onTabChange: (tab: TabKey) => void;
 }
 
-export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange }: EditorSidebarProps) {
+export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange }: EditorSidebarProps) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');
@@ -244,6 +246,8 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
             applicationId={appId}
             selectedQuery={selectedQuery}
             onQuerySelect={onQuerySelect}
+            queries={queries}
+            onQueriesChange={onQueriesChange}
           />
         )}
 

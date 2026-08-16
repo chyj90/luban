@@ -39,7 +39,7 @@ export interface ToolDefinition {
   requiresConfirmation?: boolean;
 }
 
-export type ToolCategory = 'page' | 'code' | 'datasource' | 'query' | 'observation' | 'deploy' | 'plan';
+export type ToolCategory = 'page' | 'code' | 'datasource' | 'query' | 'observation' | 'deploy' | 'plan' | 'workflow' | 'delegate';
 
 export interface WorkflowNavigateView {
   view: string;
@@ -66,6 +66,23 @@ export interface ToolExecuteResult {
   message: string;
   data?: unknown;
   _pause?: boolean;
+  _noRetry?: boolean;
+}
+
+export interface DelegateQueryArgs {
+  task_type: string;
+  target_page: string;
+  query_name: string;
+  requirement: string;
+  existing_queries?: Array<{ id: number; name: string; description: string }>;
+  modify_instructions?: string[];
+}
+
+export interface DelegateQueryResult {
+  success: boolean;
+  message: string;
+  details?: string;
+  data?: unknown;
   _noRetry?: boolean;
 }
 

@@ -8,7 +8,7 @@ import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { getSubPlans } from '@/agent/core/planContext';
-import { upsertPlanMessage } from '@/agent/tools/requirementTools';
+import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
 import { listPages } from '@/api';
 import type { ProviderType, Plan } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
@@ -104,49 +104,65 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
           {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
-      <div className={`ap-message-body ${msg.role}${msg.isStreaming ? ' streaming' : ''}`}>
-        {msg.reasoningContent && (
-          <details className="ap-reasoning">
-            <summary className="ap-reasoning-summary">
-              <span className="ap-reasoning-icon">🧠</span>
-              思考过程
-              <span className="ap-reasoning-hint">点击展开</span>
+      {msg.reasoningContent && (
+        <details className="ap-reasoning">
+          <summary className="ap-reasoning-summary">
+            <svg className="ap-reasoning-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a4 4 0 0 1 4 4c0 1.1-.4 2.1-1.2 2.8l-.8.8V12a2 2 0 0 1-4 0V9.6l-.8-.8A4 4 0 0 1 12 2z"/>
+              <path d="M12 16v.01"/>
+              <path d="M9 20h6"/>
+              <path d="M12 19v-3"/>
+            </svg>
+            思考过程
+            <span className="ap-reasoning-hint">点击展开</span>
+          </summary>
+          <div className="ap-reasoning-content">
+            <ReactMarkdown>{msg.reasoningContent}</ReactMarkdown>
+          </div>
+        </details>
+      )}
+      {msg.toolCalls?.map((tc) => {
+        const statusIcon = <span className={`ap-tool-status-dot ${tc.status}`} />;
+        return (
+          <details key={tc.id} className="ap-tool-call">
+            <summary className="ap-tool-call-summary">
+              <span className="ap-tool-call-icon">{statusIcon}</span>
+              <span className="ap-tool-call-name">{tc.name}</span>
+              <span className={`ap-tool-call-status ${tc.status}`}>{tc.status}</span>
             </summary>
-            <div className="ap-reasoning-content">
-              <ReactMarkdown>{msg.reasoningContent}</ReactMarkdown>
+            <div className="ap-tool-call-detail">
+              <div className="ap-tool-call-section">
+                <div className="ap-tool-call-label">输入</div>
+                <pre className="ap-tool-call-pre">{JSON.stringify(tc.arguments, null, 2)}</pre>
+              </div>
+              {tc.result && (
+                <div className="ap-tool-call-section">
+                  <div className="ap-tool-call-label">输出</div>
+                  <pre className="ap-tool-call-pre">{formatTableResult(tc.result)}</pre>
+                </div>
+              )}
             </div>
           </details>
-        )}
-        {msg.toolCalls && msg.toolCalls.length > 0 ? null : msg.role === 'assistant' || msg.role === 'plan' ? (
-          <ReactMarkdown>{msg.content}</ReactMarkdown>
-        ) : (
-          <div className="ap-message-text">{msg.content}</div>
-        )}
-        {msg.toolCalls?.map((tc) => {
-          const statusIcon = <span className={`ap-tool-status-dot ${tc.status}`} />;
-          return (
-            <details key={tc.id} className="ap-tool-call">
-              <summary className="ap-tool-call-summary">
-                <span className="ap-tool-call-icon">{statusIcon}</span>
-                <span className="ap-tool-call-name">{tc.name}</span>
-                <span className={`ap-tool-call-status ${tc.status}`}>{tc.status}</span>
-              </summary>
-              <div className="ap-tool-call-detail">
-                <div className="ap-tool-call-section">
-                  <div className="ap-tool-call-label">输入</div>
-                  <pre className="ap-tool-call-pre">{JSON.stringify(tc.arguments, null, 2)}</pre>
-                </div>
-                {tc.result && (
-                  <div className="ap-tool-call-section">
-                    <div className="ap-tool-call-label">输出</div>
-                    <pre className="ap-tool-call-pre">{formatTableResult(tc.result)}</pre>
-                  </div>
-                )}
-              </div>
-            </details>
-          );
-        })}
-      </div>
+        );
+      })}
+      {(!msg.toolCalls || msg.toolCalls.length === 0) && msg.content && (
+        <div className={`ap-message-body ${msg.role}${msg.isStreaming ? ' streaming' : ''}`}>
+          {msg.role === 'assistant' || msg.role === 'plan' ? (
+            <ReactMarkdown>{msg.content}</ReactMarkdown>
+          ) : (
+            <div className="ap-message-text">{msg.content}</div>
+          )}
+        </div>
+      )}
+      {msg.toolCalls && msg.toolCalls.length > 0 && msg.content && (
+        <div className={`ap-message-body ${msg.role}${msg.isStreaming ? ' streaming' : ''}`}>
+          {msg.role === 'assistant' || msg.role === 'plan' ? (
+            <ReactMarkdown>{msg.content}</ReactMarkdown>
+          ) : (
+            <div className="ap-message-text">{msg.content}</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }, (prev, next) => {
@@ -244,17 +260,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
 
   const getDebugLogKey = () => `debug_chat_log_${appId}`;
 
-  const loadDebugLog = () => {
-    try {
-      const stored = localStorage.getItem(getDebugLogKey());
-      if (stored) {
-        lastApiMessagesRef.current = JSON.parse(stored);
-      }
-    } catch {
-      // ignore parse error
-    }
-  };
-
   const saveDebugLog = (messages: any[]) => {
     lastApiMessagesRef.current = messages;
     try {
@@ -303,16 +308,55 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   }, [appId]);
 
   useEffect(() => {
-    loadDebugLog();
+    try {
+      const stored = localStorage.getItem(`debug_chat_log_${appId}`);
+      if (stored) {
+        lastApiMessagesRef.current = JSON.parse(stored);
+      }
+    } catch {
+      // ignore parse error
+    }
   }, [appId]);
+
+  // 切换应用时重置聊天路由，避免旧应用的执行器上下文被复用
+  useEffect(() => {
+    chatRouterRef.current?.cancel();
+    chatRouterRef.current = null;
+    lastApiMessagesRef.current = [];
+  }, [appId]);
+
+  // 打开面板时滚动到底部
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        el.scrollTop = el.scrollHeight;
+        (window as any).bug_trace_log('scroll-init', {
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+        });
+      }, 0);
+    });
+  }, []);
 
   useEffect(() => {
     if (isUserAtBottomRef.current) {
       const now = Date.now();
-      if (now - lastScrollTimeRef.current < 100) return;
+      const throttleMs = isStreaming ? 30 : 100;
+      if (now - lastScrollTimeRef.current < throttleMs) return;
       lastScrollTimeRef.current = now;
       requestAnimationFrame(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+        const el = messagesContainerRef.current;
+        if (!el) return;
+        el.scrollTop = el.scrollHeight;
+        (window as any).bug_trace_log('scroll-auto', {
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+          messagesCount: messages.length,
+          isStreaming: isStreaming,
+        });
       });
     }
   }, [messages]);
@@ -469,7 +513,8 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     setInput('');
 
     isUserAtBottomRef.current = true;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
 
     await runAgent(userMsg);
   };
@@ -1066,6 +1111,12 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
                   if (!el) return;
                   const threshold = 50;
                   isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+                  (window as any).bug_trace_log('scroll-user', {
+                    scrollTop: el.scrollTop,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight,
+                    isAtBottom: isUserAtBottomRef.current,
+                  });
                 }}>
               {messages.map((msg) => (
                 <MessageItem key={msg.id} msg={msg} />
@@ -1075,7 +1126,10 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
 
               {isStreaming && !messages.some((m) => m.isStreaming) && (
                 <div className="ap-thinking">
-                  <span className="ap-thinking-dot" />
+                  <svg className="ap-thinking-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                  </svg>
                   AI 正在思考
                   {tokenUsage && (
                     <span className="ap-token-count">

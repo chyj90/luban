@@ -3,10 +3,8 @@ import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
 import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
 import { ANALYSIS_AGENT_PROMPT } from '../prompts/analysisAgent';
-import { createInteliTools } from '../tools';
-import { createDataAssistantTools } from '../tools/dbaTools';
-import { createWorkflowTools } from '../tools/workflowTools';
-import { getRequirementTools } from '../tools/requirementTools';
+import { resolveSkills } from './skillRegistry';
+import type { ChatRouter } from '../core/chatRouter';
 
 export interface AgentContext {
   applicationId: number;
@@ -27,7 +25,30 @@ export interface AgentDefinition {
   description: string;
   isDefault: boolean;
   buildSystemPrompt: (ctx: AgentContext) => string;
-  buildTools: (ctx: ToolContext) => ToolDefinition[];
+  /** 该 Agent 允许使用的技能 ID 列表，通过 Skill Registry 解析为工具 */
+  allowedSkills: string[];
+  /** @deprecated 使用 allowedSkills 替代，保留用于向后兼容 */
+  buildTools?: (ctx: ToolContext) => ToolDefinition[];
+}
+
+/**
+ * 通过 Skill 注册表解析 Agent 的工具列表。
+ * 这是 Agent 获取工具的新入口，替代硬编码的 buildTools。
+ */
+export function resolveAgentTools(
+  agentDef: AgentDefinition,
+  ctx: ToolContext,
+  chatRouter?: ChatRouter,
+): ToolDefinition[] {
+  // 优先使用 allowedSkills（新方式）
+  if (agentDef.allowedSkills && agentDef.allowedSkills.length > 0) {
+    return resolveSkills(agentDef.allowedSkills, ctx, chatRouter);
+  }
+  // 向后兼容：使用旧的 buildTools
+  if (agentDef.buildTools) {
+    return agentDef.buildTools(ctx);
+  }
+  return [];
 }
 
 export const AGENTS: AgentDefinition[] = [
@@ -39,7 +60,14 @@ export const AGENTS: AgentDefinition[] = [
     isDefault: true,
     buildSystemPrompt: (ctx) =>
       buildInteliSystemPrompt(ctx.applicationId, ctx.pageId, ctx.pageName, ctx.allPages),
-    buildTools: (ctx) => createInteliTools(ctx),
+    allowedSkills: [
+      'page:create', 'page:delete', 'page:rename',
+      'code:create', 'code:get', 'code:update',
+      'observation:list_pages', 'observation:record',
+      'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
+      'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
+      'delegate:query', 'delegate:workflow', 'delegate:analysis',
+    ],
   },
   {
     id: 'data-assistant',
@@ -56,7 +84,10 @@ export const AGENTS: AgentDefinition[] = [
         existingQueries: ctx.existingQueries,
         modifyInstructions: ctx.modifyInstructions,
       }),
-    buildTools: (ctx) => createDataAssistantTools(ctx),
+    allowedSkills: [
+      'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
+      'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get',
+    ],
   },
   {
     id: 'workflow-assistant',
@@ -65,7 +96,13 @@ export const AGENTS: AgentDefinition[] = [
     description: '流程设计助手，负责设计表单、审批流程、查询组织、管理审批',
     isDefault: false,
     buildSystemPrompt: () => WORKFLOW_AGENT_PROMPT,
-    buildTools: (ctx) => createWorkflowTools(ctx),
+    allowedSkills: [
+      'workflow:design_form', 'workflow:design', 'workflow:bind',
+      'workflow:search_members', 'workflow:search_roles', 'workflow:search_departments',
+      'workflow:list_instances', 'workflow:approve', 'workflow:reject',
+      'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
+      'workflow:lint', 'workflow:copy', 'workflow:preview',
+    ],
   },
   {
     id: 'analysis-assistant',
@@ -74,7 +111,10 @@ export const AGENTS: AgentDefinition[] = [
     description: '需求分析助手，负责从业务视角分析用户需求，不涉及技术实现',
     isDefault: false,
     buildSystemPrompt: () => ANALYSIS_AGENT_PROMPT,
-    buildTools: () => getRequirementTools(),
+    allowedSkills: [
+      'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
+      'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
+    ],
   },
 ];
 

@@ -1,9 +1,8 @@
 import type { ToolDefinition, Message } from '@/types/agent';
 import { createAgent } from './AgentFactory';
 import type { AgentExecutor, AgentFactoryOptions } from './AgentFactory';
-import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMentions } from '../registry/agentRegistry';
+import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMentions, resolveAgentTools } from '../registry/agentRegistry';
 import type { AgentDefinition } from '../registry/agentRegistry';
-import { createDelegateQueryTool } from '../tools/findQueryTool';
 
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
@@ -189,10 +188,7 @@ export class ChatRouter {
       onWorkflowNavigate: this.callbacks.onWorkflowNavigate || this.sessionOptions.onWorkflowNavigate,
     };
 
-    const tools = overrides?.tools || agentDef.buildTools(toolContext);
-    const finalTools = agentDef.id === 'main-agent'
-      ? [...tools, createDelegateQueryTool(toolContext, this)]
-      : tools;
+    const tools = overrides?.tools || resolveAgentTools(agentDef, toolContext, this);
     const systemPrompt = overrides?.systemPrompt || agentDef.buildSystemPrompt({
       applicationId: Number(this.sessionOptions.applicationId),
       pageId: this.sessionOptions.currentPageId,
@@ -216,7 +212,7 @@ export class ChatRouter {
       setError: this.callbacks.setError,
       agentType: agentDef.id === 'main-agent' ? 'main-agent' : 'data-assistant',
       overrideSystemPrompt: systemPrompt,
-      overrideTools: finalTools,
+      overrideTools: tools,
       chatRouter: this,
       agentId: agentDef.id,
       agentName: agentDef.name,

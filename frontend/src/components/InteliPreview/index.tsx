@@ -109,7 +109,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
       <iframe
         ref={iframeRef}
         title="preview"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts allow-same-origin allow-modals"
         className="ip-frame"
       />
     </div>

@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { usePageStore } from '@/stores/pageStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
+import { useAgentStore } from '@/stores/agentStore';
 import { EditorSidebar } from '@/components/EditorSidebar';
 import { InteliPreview } from '@/components/InteliPreview';
 import { InteliEditor } from '@/components/InteliEditor';
@@ -79,6 +80,13 @@ export function AppEditorPage() {
     }
   }, [appId, loadPages]);
 
+  const setAppId = useAgentStore((s) => s.setAppId);
+  useEffect(() => {
+    if (appId) {
+      setAppId(Number(appId));
+    }
+  }, [appId, setAppId]);
+
   const handleQuerySelect = useCallback((query: { id: number; name: string }) => {
     setEditingFile(null);
     listQueries(Number(appId)).then((res) => {
@@ -88,6 +96,10 @@ export function AppEditorPage() {
       }
     }).catch(() => {});
     setSidebarTab('queries');
+  }, [appId]);
+
+  const refreshQueries = useCallback(() => {
+    listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
   }, [appId]);
 
   const handlePageChange = (pageId: number) => {
@@ -160,6 +172,8 @@ export function AppEditorPage() {
           selectedQuery={selectedQuery}
           activeTab={sidebarTab}
           workflowView={workflowView}
+          queries={queries}
+          onQueriesChange={refreshQueries}
           onPageChange={handlePageChange}
           onPagesChange={loadPages}
           onQuerySelect={setSelectedQuery}
@@ -333,9 +347,7 @@ export function AppEditorPage() {
               onPagesChange={loadPages}
               onPageChange={handlePageChange}
               onQuerySelect={handleQuerySelect}
-              onQueriesChange={() => {
-                listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
-              }}
+              onQueriesChange={refreshQueries}
               onWorkflowNavigate={handleWorkflowNavigate}
             />
           </div>

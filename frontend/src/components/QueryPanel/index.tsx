@@ -11,19 +11,25 @@ interface QueryPanelProps {
   applicationId: number;
   selectedQuery: Query | null;
   onQuerySelect: (query: Query | null) => void;
+  queries?: Query[];
+  onQueriesChange?: () => void;
 }
 
-export function QueryPanel({ applicationId, selectedQuery, onQuerySelect }: QueryPanelProps) {
-  const [queries, setQueries] = useState<Query[]>([]);
+export function QueryPanel({ applicationId, selectedQuery, onQuerySelect, queries: externalQueries, onQueriesChange }: QueryPanelProps) {
+  const [internalQueries, setInternalQueries] = useState<Query[]>([]);
+  const queries = externalQueries ?? internalQueries;
+  const setQueries = onQueriesChange
+    ? (() => {}) 
+    : setInternalQueries;
   const [showForm, setShowForm] = useState(false);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [form, setForm] = useState({ name: '', datasourceId: 0, body: '' });
 
   useEffect(() => {
-    if (applicationId) {
-      listQueries(applicationId).then((res) => setQueries(res.data));
+    if (applicationId && !externalQueries) {
+      listQueries(applicationId).then((res) => setInternalQueries(res.data));
     }
-  }, [applicationId]);
+  }, [applicationId, externalQueries]);
 
   useEffect(() => {
     if (applicationId) {
@@ -53,7 +59,11 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect }: Quer
       name: form.name.trim(),
       body: form.body,
     });
-    setQueries([...queries, res.data]);
+    if (onQueriesChange) {
+      onQueriesChange();
+    } else {
+      setInternalQueries([...queries, res.data]);
+    }
     setShowForm(false);
     onQuerySelect(res.data);
   };
@@ -67,7 +77,11 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect }: Quer
     });
     if (!confirmed) return;
     await deleteQuery(id);
-    setQueries(queries.filter((q) => q.id !== id));
+    if (onQueriesChange) {
+      onQueriesChange();
+    } else {
+      setInternalQueries(queries.filter((q) => q.id !== id));
+    }
     if (selectedQuery?.id === id) onQuerySelect(null);
     toast.success('查询已删除');
   };

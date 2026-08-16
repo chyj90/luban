@@ -16,17 +16,52 @@
 
 ## 截图
 
+### 应用中心
+
+统一管理所有应用，支持创建、切换和组织应用。
+
 <p align="center">
-  <img src="doc/images/代码编辑器.png" alt="代码编辑器" width="45%" />
-  <img src="doc/images/页面管理.png" alt="页面管理" width="45%" />
+  <img src="doc/images/应用中心.png" alt="应用中心" width="80%" />
 </p>
+
+### 开发助手
+
+内置 AI Agent 对话面板，支持自然语言驱动开发：建表、配数据源、生成页面、设计流程，全程 AI 陪伴。
+
 <p align="center">
-  <img src="doc/images/数据源管理.png" alt="数据源管理" width="45%" />
-  <img src="doc/images/Query管理.png" alt="Query 管理" width="45%" />
+  <img src="doc/images/开发助手.png" alt="开发助手" width="80%" />
 </p>
+
+### 页面设计
+
+所见即所得的可视化页面构建器，支持 AI 生成 HTML/CSS/JS 页面，实时预览，支持自定义代码编辑。
+
 <p align="center">
-  <img src="doc/images/AI辅助-主智能体.png" alt="AI 助手" width="45%" />
-  <img src="doc/images/AI辅助-数据辅助智能体.png" alt="AI 数据智能体" width="45%" />
+  <img src="doc/images/页面设计.png" alt="页面设计" width="80%" />
+</p>
+
+### 流程设计
+
+拖拽式流程设计器，支持审批流程、条件分支、并行节点，内置 ProcessEngine 状态机驱动流程运转。
+
+<p align="center">
+  <img src="doc/images/流程设计.png" alt="流程设计" width="80%" />
+</p>
+
+### 数据连接
+
+管理数据库连接和 API 数据源，支持 MySQL 直连查询，为 Agent 提供数据基础。
+
+<p align="center">
+  <img src="doc/images/数据连接.png" alt="数据连接" width="80%" />
+</p>
+
+### 我的工作
+
+个人工作台，查看待办审批、流程实例、任务进度。
+
+<p align="center">
+  <img src="doc/images/我的工作.png" alt="我的工作" width="80%" />
 </p>
 
 ---

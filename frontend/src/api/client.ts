@@ -33,8 +33,14 @@ axiosInstance.interceptors.response.use(
     if (error.response?.status === 401) {
       useAuthStore.getState().logout();
     }
-    return Promise.reject(error);
-  }
+    const backendMsg = error.response?.data?.message;
+    const enhanced = new Error(
+      backendMsg
+        ? `${backendMsg} [HTTP ${error.response?.status}]`
+        : `请求失败: ${error.message}`,
+    );
+    return Promise.reject(enhanced);
+  },
 );
 
 export async function get<T>(url: string, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {

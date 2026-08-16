@@ -105,6 +105,10 @@ return approvers.unique()
 3. 条件分支节点需要设置优先级（数字越小越优先）
 4. 在设置审批人之前，先用 search_members/search_roles 查询可用的人/角色
 5. 创建流程的标准三步：先用 design_workflow 创建流程 → 再用 design_form 设计表单字段 → 最后用 bind_form_workflow 绑定表单到流程
+
+## 重试规则
+- 如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向主智能体说明遇到的问题和已尝试的方案，等待用户指导
+
 6. 三步顺序可调：也可以先设计表单再创建流程，但必须用 bind_form_workflow 完成绑定，不能跳过
 
 ## 对话风格

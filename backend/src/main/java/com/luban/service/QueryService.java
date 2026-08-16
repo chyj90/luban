@@ -7,6 +7,8 @@ import com.luban.dto.UpdateQueryRequest;
 import com.luban.entity.Datasource;
 import com.luban.entity.Query;
 import com.luban.entity.User;
+import com.luban.entity.Application;
+import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -28,19 +30,38 @@ import java.util.regex.Pattern;
 
 import ognl.Ognl;
 import ognl.OgnlContext;
+import ognl.MemberAccess;
+
+import java.lang.reflect.Member;
+
+import com.luban.util.AgentLogger;
 
 @Service
 public class QueryService {
 
+    @SuppressWarnings("rawtypes")
+    private static final MemberAccess ALLOW_ALL = new MemberAccess() {
+        public Object setup(Map context, Object target, Member member, String propertyName) {
+            return null;
+        }
+        public void restore(Map context, Object target, Member member, String propertyName, Object state) {}
+        public boolean isAccessible(Map context, Object target, Member member, String propertyName) {
+            return true;
+        }
+    };
+
     private final QueryRepository queryRepository;
     private final DatasourceRepository datasourceRepository;
+    private final ApplicationRepository applicationRepository;
     private final ObjectMapper objectMapper;
 
     public QueryService(QueryRepository queryRepository,
                         DatasourceRepository datasourceRepository,
+                        ApplicationRepository applicationRepository,
                         ObjectMapper objectMapper) {
         this.queryRepository = queryRepository;
         this.datasourceRepository = datasourceRepository;
+        this.applicationRepository = applicationRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -53,6 +74,7 @@ public class QueryService {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     public Map<String, Object> create(CreateQueryRequest request) {
         Query query = new Query();
         query.setApplicationId(request.getApplicationId());
@@ -60,8 +82,79 @@ public class QueryService {
         query.setName(request.getName());
         query.setBody(request.getBody());
         query.setParams(toJson(request.getParams()));
+
+        validateSqlSyntax(request.getDatasourceId(), request.getBody(), request.getParams());
+
         query = queryRepository.save(query);
         return buildQueryMap(query);
+    }
+
+    private void validateSqlSyntax(Long datasourceId, String body, Map<String, Object> paramsDef) {
+        if (body == null || body.isBlank()) return;
+
+        Datasource ds = datasourceRepository.findById(datasourceId)
+                .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
+        if (!"MySQL".equals(ds.getType()) && !"PostgreSQL".equals(ds.getType())) return;
+
+        Map<String, Object> validationParams = buildValidationParams(paramsDef);
+        Map<String, Object> authParams = new HashMap<>();
+        authParams.put("userId", 0);
+        authParams.put("userName", "validation");
+        authParams.put("userEmail", "validation@local");
+
+        String resolved = resolveTemplate(body, validationParams, authParams);
+        String upperSql = resolved.trim().toUpperCase();
+
+        boolean isDdl = upperSql.startsWith("CREATE") || upperSql.startsWith("ALTER")
+                || upperSql.startsWith("DROP") || upperSql.startsWith("TRUNCATE")
+                || upperSql.startsWith("RENAME");
+        if (isDdl) return;
+
+        Map<String, Object> config = fromJsonMap(ds.getConfig());
+        String url = buildJdbcUrl(ds.getType(), config);
+
+        try (Connection conn = DriverManager.getConnection(url,
+                String.valueOf(config.get("username")),
+                String.valueOf(config.get("password")));
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("EXPLAIN " + resolved);
+            try (ResultSet rs = stmt.getResultSet()) {
+                while (rs.next()) { /* consume result */ }
+            }
+        } catch (Exception e) {
+            throw new IllegalArgumentException("SQL 校验失败: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> buildValidationParams(Map<String, Object> paramsDef) {
+        Map<String, Object> result = new HashMap<>();
+        if (paramsDef == null) return result;
+        for (Map.Entry<String, Object> entry : paramsDef.entrySet()) {
+            String name = entry.getKey();
+            Object def = entry.getValue();
+            if (def instanceof Map) {
+                Map<String, Object> defMap = (Map<String, Object>) def;
+                if (defMap.containsKey("default")) {
+                    result.put(name, defMap.get("default"));
+                } else {
+                    result.put(name, getDummyValueForType(String.valueOf(defMap.getOrDefault("type", "string"))));
+                }
+            } else {
+                result.put(name, def);
+            }
+        }
+        return result;
+    }
+
+    private Object getDummyValueForType(String type) {
+        return switch (type.toLowerCase()) {
+            case "integer", "int", "number" -> 1;
+            case "boolean" -> true;
+            case "float", "double" -> 1.0;
+            case "date", "datetime" -> "2024-01-01";
+            default -> "x";
+        };
     }
 
     public Map<String, Object> update(Long id, UpdateQueryRequest request) {
@@ -90,6 +183,12 @@ public class QueryService {
         if (defaultParams != null) mergedParams.putAll(defaultParams);
         if (request.getParams() != null) mergedParams.putAll(request.getParams());
 
+        for (Map.Entry<String, Object> entry : mergedParams.entrySet()) {
+            if (entry.getValue() instanceof Map) {
+                entry.setValue(null);
+            }
+        }
+
         Map<String, Object> authParams = new HashMap<>();
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof User user) {
@@ -106,6 +205,25 @@ public class QueryService {
             case "REST_API" -> runRestApiQuery(config, finalBody, mergedParams);
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
         };
+    }
+
+    public RunQueryResponse executeSql(Long datasourceId, String sql) {
+        Datasource ds = datasourceRepository.findById(datasourceId)
+                .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof User user)) {
+            throw new IllegalArgumentException("未登录或登录已过期");
+        }
+
+        Application app = applicationRepository.findById(ds.getApplicationId())
+                .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
+        if (!app.getCreatedBy().equals(user.getId())) {
+            throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+        }
+
+        Map<String, Object> config = fromJsonMap(ds.getConfig());
+        return runJdbcQuery(ds.getType(), config, sql);
     }
 
     private RunQueryResponse runJdbcQuery(String type, Map<String, Object> config, String sql) {
@@ -367,11 +485,19 @@ public class QueryService {
 
     private boolean evaluateCondition(String condition, Map<String, Object> params) {
         try {
-            OgnlContext ctx = new OgnlContext(null, null, null);
+            OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
+            ctx.setRoot(params);
             ctx.setValues(params);
             Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, params);
-            return result instanceof Boolean ? (Boolean) result : false;
+            boolean boolResult = result instanceof Boolean ? (Boolean) result : false;
+            AgentLogger.bug("bug-if-tag.log",
+                String.format("OGNL条件求值: [%s] → %s | params=%s",
+                    condition, boolResult, params));
+            return boolResult;
         } catch (Exception e) {
+            AgentLogger.bug("bug-if-tag.log",
+                String.format("OGNL条件求值异常: [%s] | 错误: %s | params=%s",
+                    condition, e.getMessage(), params));
             return false;
         }
     }
@@ -440,17 +566,48 @@ public class QueryService {
     }
 
     private String resolveVariables(String body, Map<String, Object> params) {
-        Pattern pattern = Pattern.compile("\\{\\{\\s*this\\.params\\.(\\w+)\\s*\\}\\}");
-        Matcher matcher = pattern.matcher(body);
+        // 第一遍：替换简单引用 {{ this.params.xxx }}
+        Pattern simplePattern = Pattern.compile("\\{\\{\\s*this\\.params\\.(\\w+)\\s*\\}\\}");
+        Matcher simpleMatcher = simplePattern.matcher(body);
         StringBuilder sb = new StringBuilder();
-        while (matcher.find()) {
-            String key = matcher.group(1);
+        while (simpleMatcher.find()) {
+            String key = simpleMatcher.group(1);
             Object value = params.get(key);
             String replacement = value != null ? formatSqlValue(value) : "NULL";
-            matcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+            simpleMatcher.appendReplacement(sb, Matcher.quoteReplacement(replacement));
         }
-        matcher.appendTail(sb);
-        return sb.toString();
+        simpleMatcher.appendTail(sb);
+        String afterSimple = sb.toString();
+
+        // 第二遍：处理表达式 {{ ... }}（如 {{ (this.params.pageNum - 1) * this.params.pageSize }}）
+        Pattern exprPattern = Pattern.compile("\\{\\{\\s*(.+?)\\s*\\}\\}");
+        Matcher exprMatcher = exprPattern.matcher(afterSimple);
+        StringBuilder sb2 = new StringBuilder();
+        while (exprMatcher.find()) {
+            String expr = exprMatcher.group(1).trim();
+            String replacement = evaluateOgnlExpression(expr, params);
+            exprMatcher.appendReplacement(sb2, Matcher.quoteReplacement(replacement));
+        }
+        exprMatcher.appendTail(sb2);
+        return sb2.toString();
+    }
+
+    private String evaluateOgnlExpression(String expr, Map<String, Object> params) {
+        try {
+            Map<String, Object> wrapper = new HashMap<>();
+            wrapper.put("params", params);
+            OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
+            ctx.setRoot(wrapper);
+            Object result = Ognl.getValue(Ognl.parseExpression(expr), ctx, wrapper);
+            String formatted = result != null ? formatSqlValue(result) : "NULL";
+            AgentLogger.bug("bug-if-tag.log",
+                String.format("OGNL表达式求值: [%s] → %s", expr, formatted));
+            return formatted;
+        } catch (Exception e) {
+            AgentLogger.bug("bug-if-tag.log",
+                String.format("OGNL表达式求值失败: [%s] | 错误: %s", expr, e.getMessage()));
+            return "NULL";
+        }
     }
 
     private String formatSqlValue(Object value) {

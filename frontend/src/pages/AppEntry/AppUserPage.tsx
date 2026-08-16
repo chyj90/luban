@@ -199,7 +199,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
             ref={iframeRef}
             title="应用页面"
             className="appuser-iframe"
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
           />
         ) : (
           <div className="appuser-empty">

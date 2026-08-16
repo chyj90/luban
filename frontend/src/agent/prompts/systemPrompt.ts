@@ -1,9 +1,9 @@
-import { getCodePageSkillSummary } from '../tools/codePageTools';
-import { getPageSkillSummary } from '../tools/pageTools';
-import { getDelegateQuerySkillSummary } from '../tools/findQueryTool';
-import { getFindWorkflowSkillSummary } from '../tools/findWorkflowTool';
-import { getFindAnalysisSkillSummary } from '../tools/findAnalysisTool';
-import { getPlanPromptFragment } from '../tools/requirementTools';
+import { getCodePageSkillSummary } from '../registry/skills/promptFragments';
+import { getPageSkillSummary } from '../registry/skills/promptFragments';
+import { getDelegateQuerySkillSummary } from '../registry/skills/promptFragments';
+import { getFindWorkflowSkillSummary } from '../registry/skills/promptFragments';
+import { getFindAnalysisSkillSummary } from '../registry/skills/promptFragments';
+import { getPlanPromptFragment } from '../registry/skills/promptFragments';
 
 export function buildInteliSystemPrompt(
   applicationId: number,
@@ -71,7 +71,7 @@ ${getBehaviorRules()}
 - 如果 DBA 汇报某字段不可用但你确实需要，告知用户并等待确认
 
 ## 流程设计助手交互规则
-- 调用 find_workflow 后，流程设计助手会负责处理所有流程相关任务，你只需等待其汇报结果
+- 调用 delegate_workflow 后，流程设计助手会负责处理所有流程相关任务，你只需等待其汇报结果
 - 支持委派：表单设计、流程设计、组织查询、审批管理、流程运维（冻结/解冻/取消/强制终止/强制撤回/修改处理人）、代码校验、复制预览
 - 不要试图直接操作流程相关的 API 或工具，全部委派给流程设计助手
 - 流程设计助手汇报完成后，你只需确认完成并告知用户
@@ -85,14 +85,15 @@ function getBehaviorRules(): string {
 - 删除操作前必须明确告知用户并等待确认
 - 每次操作后报告执行结果
 - 操作失败时分析原因并提供替代方案
-- 回答使用中文
+- 回答使用中文，思考过程也必须使用中文，禁止英文思考
 - 修改现有页面时，必须先调用 get_code_page 获取完整代码，增量修改
 - 如果任务已完成（查询已创建、页面已更新），直接汇报结果，不要继续调用工具
 - 如果工具返回 Network Error 等网络错误，不要重试，直接告知用户并等待用户指导
 - 如果委派给子智能体的任务返回失败，子智能体内部已经尝试了多次，不要再重试，直接将子智能体的反馈告知用户
 - **决策后立即执行，不要反复推敲同一结论**：分析完成后，立刻调用工具，不要在思考中重复论证同一个决定
 - **每次回复只包含必要信息**：不要重复已确认的内容，不要反复解释已经说过的逻辑
-- 自我检查：如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向用户说明遇到的问题和已尝试的方案，等待用户指导`;
+- 自我检查：如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向用户说明遇到的问题和已尝试的方案，等待用户指导
+- **禁止过度思考**：思考过程必须简短（不超过 3 句话），做出决定后立即调用工具。同一问题推敲不超过 2 次，禁止反复权衡。禁止出现"Actually, let me reconsider..."、"Let me think about this again..."等英文循环推理`;
 }
 
 function getDesignSpec(): string {

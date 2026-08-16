@@ -385,7 +385,21 @@ export default function WorkflowDesigner({
         try {
           if (def.nodes) {
             const parsed = JSON.parse(def.nodes);
-            setNodes(parsed);
+            let maxCounter = 0;
+            parsed.forEach((node: any) => {
+              const match = node.id?.match(/_(\d+)$/);
+              if (match) {
+                maxCounter = Math.max(maxCounter, parseInt(match[1], 10));
+              }
+            });
+            nodeIdCounter.current = maxCounter;
+            const safeNodes = parsed.map((node: any, i: number) => ({
+              ...node,
+              position: node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
+                ? node.position
+                : { x: 300, y: 100 + i * 120 },
+            }));
+            setNodes(safeNodes);
           }
           if (def.edges) {
             const parsed = JSON.parse(def.edges);
