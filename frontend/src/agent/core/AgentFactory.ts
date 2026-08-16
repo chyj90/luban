@@ -5,7 +5,7 @@ import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { createInteliTools } from '../tools';
 import { formatUnfinishedPlansForPrompt } from './planContext';
 import { runAgentLoop } from './agentLoop';
-import { planSkill } from '../skills';
+import { getPlanPromptFragment } from '../tools/requirementTools';
 import type { ChatRouter } from './chatRouter';
 
 export interface AgentFactoryOptions {
@@ -35,11 +35,13 @@ export interface AgentFactoryOptions {
   agentName?: string;
   agentIcon?: string;
   isDelegated?: boolean;
+  initialMessages?: Message[];
 }
 
 export type AgentExecutor = {
   run: (userMessage: string) => Promise<void>;
   cancel: () => void;
+  getMessages: () => Message[];
 };
 
 export async function createAgent(options: AgentFactoryOptions): Promise<AgentExecutor> {
@@ -51,18 +53,18 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     addMessage, updateMessage, removeMessage, setStatus, setStreaming, setError,
     addPlan, updatePlan, updateStep,
     overrideSystemPrompt, overrideTools, chatRouter,
-    agentId, agentName, agentIcon, isDelegated,
+    agentId, agentName, agentIcon, isDelegated, initialMessages,
   } = options;
 
   let abortController: AbortController | null = null;
-  const conversationMessages: Message[] = [];
+  const conversationMessages: Message[] = initialMessages ? [...initialMessages] : [];
 
   const isMainAgent = options.agentType !== 'data-assistant';
   const systemPrompt = overrideSystemPrompt || buildInteliSystemPrompt(
     Number(applicationId), currentPageId, currentPageName, allPages,
   );
   const planContext = isMainAgent ? formatUnfinishedPlansForPrompt() : '';
-  const skillPrompts = isMainAgent ? planSkill.getPromptFragment() : '';
+  const skillPrompts = isMainAgent ? getPlanPromptFragment() : '';
   const finalSystemPrompt = [
     systemPrompt,
     skillPrompts,
@@ -243,7 +245,12 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               payload: { phase: 'agent', inputTokens: input, outputTokens: output, totalTokens: input + output },
             });
           },
-          throwOnStuck: !!isDelegated,
+          onApiMessages: (messages) => {
+            dispatch({
+              type: 'DEBUG_CHAT_LOG',
+              payload: messages,
+            });
+          },
         });
 
         setStatus('completed');
@@ -257,10 +264,6 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           console.log(`[AgentFactory:${name}] run() 被取消 | ${Date.now() - runStart}ms`);
           return;
         }
-        if (err.message?.startsWith('__STUCK__')) {
-          console.log(`[AgentFactory:${name}] run() 卡住，向上传播 | ${err.message}`);
-          throw err;
-        }
         console.log(`[AgentFactory:${name}] run() 错误 | ${err.message}`);
         setError(err.message);
         setStreaming(false);
@@ -271,5 +274,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     cancel(): void {
       abortController?.abort();
     },
+
+    getMessages: () => [...conversationMessages],
   };
 }

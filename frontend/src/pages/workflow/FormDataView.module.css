@@ -1,0 +1,38 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.row {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.label {
+  width: 120px;
+  padding: 12px 16px;
+  color: #6b7280;
+  font-size: 13px;
+  vertical-align: top;
+  background: #fafafa;
+  border-right: 1px solid #f0f0f0;
+  white-space: nowrap;
+}
+
+.value {
+  padding: 12px 16px;
+  color: #1f2937;
+  vertical-align: top;
+  word-break: break-all;
+}
+
+.empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: #9ca3af;
+  font-size: 14px;
+}

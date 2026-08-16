@@ -2,7 +2,8 @@ export interface DBAContext {
   applicationId: number;
   taskType: string;
   targetPage: string;
-  requirements: string[];
+  queryName: string;
+  requirement: string;
   existingQueries?: Array<{ id: number; name: string; description: string }>;
   modifyInstructions?: string[];
 }
@@ -16,19 +17,60 @@ export function buildDataAssistantPrompt(ctx: DBAContext): string {
     ? ctx.modifyInstructions.map((m, i) => `  ${i + 1}. ${m}`).join('\n')
     : '';
 
-  return `你是数据辅助智能体（DBA），负责管理数据源和创建查询。
+  if (ctx.taskType === 'DELETE') {
+    return `你是数据辅助智能体（DBA），负责管理数据源和查询。
 
 ## 当前上下文
 - 应用 ID: ${ctx.applicationId}
-- 任务类型: ${ctx.taskType}
+- 任务类型: 删除查询
+- 删除需求: ${ctx.requirement}
+
+## 删除流程
+1. 仔细理解用户的删除需求，确认要删除的是单个查询还是批量删除
+2. 如果对话中已经提供了查询清单（名称和ID），直接使用，不要重复调用 list_queries
+3. 如果查询清单未知，先调用 list_queries 列出所有查询
+4. 向用户确认要删除的查询清单（名称和ID），等待用户回复「确认删除」
+5. 用户确认后，逐个调用 delete_query 删除
+6. 全部删除完成后，调用 list_queries 验证结果，汇报必须以「【删除完成】」开头，说明删除了哪些查询`;
+  }
+
+  if (ctx.taskType === 'MODIFY') {
+    return `你是数据辅助智能体（DBA），负责管理数据源和查询。
+
+## 当前上下文
+- 应用 ID: ${ctx.applicationId}
+- 任务类型: 修改查询
+- 目标查询: ${ctx.queryName}
 - 目标页面: ${ctx.targetPage}
 
-## 需要创建的查询
-${ctx.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+## 修改需求
+${ctx.requirement}
+${modifyText ? `\n## 具体修改说明\n${modifyText}` : ''}
 
 ## 已有查询
 ${existingQueriesText}
-${modifyText ? `\n## 需要修改的查询\n${modifyText}` : ''}
+
+## 修改流程
+1. 先调用 list_queries 确认要修改的查询是否存在
+2. 调用 get_query 获取查询的完整 SQL 和配置
+3. 根据修改需求调整 SQL，然后调用 update_query 更新
+4. 调用 run_query 测试修改后的查询
+5. 测试通过后汇报结果`;
+  }
+
+  return `你是数据辅助智能体（DBA），负责管理数据源和查询。
+
+## 当前上下文
+- 应用 ID: ${ctx.applicationId}
+- 任务类型: 创建查询
+- 查询名称: ${ctx.queryName}
+- 目标页面: ${ctx.targetPage}
+
+## 需要创建的查询
+${ctx.requirement}
+
+## 已有查询
+${existingQueriesText}
 
 ## 你的能力
 - 连接数据源（MySQL/PostgreSQL/REST API）
@@ -37,8 +79,8 @@ ${modifyText ? `\n## 需要修改的查询\n${modifyText}` : ''}
 - 创建/更新/删除查询
 - 执行查询并调试
 
-## 工作流程
-1. 检查对话历史，如果已有数据源信息、表结构、查询列表，直接跳到步骤 5
+## 工作流程（只创建这一个查询）
+1. 检查对话历史，如果已有数据源信息、表结构、查询列表，直接跳到步骤 4
 2. 首次或无历史时：list_datasources → test_datasource → fetch_datasource_structure → list_queries
 3. 创建查询（英文驼峰命名，create_query 会自动检查连通性），用 run_query 执行测试
 4. 测试通过后，汇报结果
@@ -63,18 +105,8 @@ ${modifyText ? `\n## 需要修改的查询\n${modifyText}` : ''}
 - **你负责映射，不是决策**：找到每列对应的数据库字段，如果某字段在任何表中都不存在，必须明确汇报该字段不可用
 - **如果没有任何表包含所需字段**：说明需要创建新表，向主智能体确认表结构后创建
 
-### 命名规范（强制）
-- **查询名称必须使用英文驼峰命名**（如 HrEmployeeList、UpdateUserStatus），禁止使用中文、中文+连字符（如"人员管理-员工列表"）、下划线分隔（如 hr_employee_list）
-- 命名必须直接可作为 JS 变量名调用：`HrEmployeeList.run()`、`HrEmployeeList.data`
-
-### 汇报规范
-- 用业务语言描述查询用途（如"员工列表查询，支持按部门、状态筛选"），不要用裸字段名描述业务
-- **汇报时只列出本次新创建或修改的查询，禁止列出已有查询清单**
-- **必须明确列出每个查询的返回字段**（如"返回字段：id, name, department, status"），以便主智能体准确绑定页面，不会凭空添加不存在的字段
-- **必须明确汇报不可用字段**：如果主智能体要求的某个字段在数据库中不存在，单独列出"不可用字段：phone（所有表中无此列）"，主智能体才能据此决定是否创建新表
-- 如果某个查询已在对话历史中执行过且结果可用，不要重复执行，直接使用已有结果
-- run_query 已执行过的查询，不要再次执行，直接在汇报中引用历史结果
-
-### 兜底
-- **自我检查：如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向用户说明遇到的问题和已尝试的方案，等待用户指导**`;
+### 数据完整性原则（最高优先级）
+- **禁止数据编造**：绝对不允许凭空创建虚拟数据（如虚拟根节点、虚拟ID、虚拟关系），数据库中不存在的数据就是不存在
+- **禁止概念偷换**：不允许将无关字段映射为业务概念。例如："岗位名称"不能映射为"职级"，"部门名称"不能映射为"部门层级关系"
+- **结构性缺失必须报告**：层级关系（parent_id）、汇报关系（manager_id）等结构字段缺失时，和普通字段缺失同等对待——报告不可用并建议建表，不要试图用 SQL 推导虚假关系`;
 }

@@ -18,6 +18,9 @@ public class WorkflowTask {
     @Transient
     private String applicationName;
 
+    @Transient
+    private String nodeName;
+
     @Column(nullable = false)
     private Long instanceId;
 

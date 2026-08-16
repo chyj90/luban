@@ -49,6 +49,7 @@ export interface WorkflowInstance {
   formData: string;
   status: 'RUNNING' | 'COMPLETED' | 'REJECTED' | 'CANCELLED' | 'FROZEN';
   initiatorId: number;
+  initiatorName?: string;
   currentNodes: string;
   deadline: string;
   startedAt: string;
@@ -63,6 +64,7 @@ export interface WorkflowTask {
   applicationId: number;
   applicationName?: string;
   nodeId: string;
+  nodeName?: string;
   assigneeId: number;
   assigneeType: 'NORMAL' | 'TRANSFER' | 'DELEGATE' | 'ADD_SIGN';
   originalAssigneeId: number | null;
@@ -88,6 +90,7 @@ export interface WorkflowHistory {
   taskId: number | null;
   nodeId: string;
   operatorId: number;
+  operatorName?: string;
   action: string;
   fromNodeId: string;
   toNodeId: string;

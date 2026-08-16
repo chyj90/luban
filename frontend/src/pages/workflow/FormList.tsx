@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { FormDefinition } from '../../types/workflow';
 import { formApi } from '../../api/workflow';
+import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './FormList.module.css';
 
@@ -36,7 +37,13 @@ export default function FormList({ embedded, appId: propAppId, onNavigate }: For
   }, [appId]);
 
   const handleDelete = async (id: number, name: string) => {
-    if (!window.confirm(`确定要删除表单「${name}」吗？`)) return;
+    const confirmed = await confirm({
+      title: '删除表单',
+      message: `确定要删除表单「${name}」吗？`,
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     await formApi.delete(id);
     setForms((prev) => prev.filter((f) => f.id !== id));
   };

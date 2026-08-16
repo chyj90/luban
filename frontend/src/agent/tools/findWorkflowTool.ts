@@ -2,6 +2,7 @@ import type { ToolDefinition, ToolContext } from '@/types/agent';
 import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
 import { createWorkflowTools } from './workflowTools';
 import type { ChatRouter } from '../core/chatRouter';
+import { getAgentMemory, setAgentMemory } from './agentMemory';
 
 export interface FindWorkflowArgs {
   task_type: string;
@@ -32,8 +33,8 @@ export function createFindWorkflowTool(context: ToolContext, chatRouter: ChatRou
       properties: {
         task_type: {
           type: 'string',
-          enum: ['design_form', 'design_workflow', 'query_org', 'approval_task', 'general'],
-          description: '任务类型：design_form=设计表单，design_workflow=设计流程，query_org=查询组织/成员/角色，approval_task=审批任务处理，general=通用流程问题',
+          enum: ['design_form', 'design_workflow', 'query_org', 'approval_task', 'process_ops', 'lint', 'copy_preview', 'general'],
+          description: '任务类型：design_form=设计表单，design_workflow=设计流程，query_org=查询组织/成员/角色，approval_task=审批任务处理（通过/驳回/加签/委派/驳回至节点/逐级驳回），process_ops=流程运维（冻结/解冻/取消/强制终止/强制撤回/修改处理人），lint=代码校验（表单代码/字段Schema/流程定义/条件表达式），copy_preview=复制/预览/验证/版本，general=通用流程问题',
         },
         target_page: {
           type: 'string',
@@ -72,16 +73,18 @@ export function createFindWorkflowTool(context: ToolContext, chatRouter: ChatRou
 
         console.log(`[find_workflow] 即将委派 workflow-assistant | 消息长度: ${userMessage.length}`);
         const routeStart = Date.now();
-        await chatRouter.routeTo('workflow-assistant', userMessage, `workflow-${Date.now()}`, {
+        const executor = await chatRouter.routeTo('workflow-assistant', userMessage, `workflow-${Date.now()}`, {
           systemPrompt: WORKFLOW_AGENT_PROMPT,
           tools: workflowTools,
           isDelegated: true,
+          initialMessages: getAgentMemory(context.applicationId, 'workflow-assistant'),
           agentContext: {
             taskType: typedArgs.task_type,
             requirements: typedArgs.requirements,
             applicationId: typedArgs.applicationId || context.applicationId,
           },
         });
+        setAgentMemory(context.applicationId, 'workflow-assistant', executor.getMessages());
         console.log(`[find_workflow] workflow-assistant 委派完成 | ${Date.now() - routeStart}ms`);
 
         const result: FindWorkflowResult = {
@@ -117,7 +120,15 @@ export function createFindWorkflowTool(context: ToolContext, chatRouter: ChatRou
 
 export function getFindWorkflowSkillSummary(): string {
   return `## 流程管理
-- 你**不直接**操作流程、表单、组织架构
+- 你**不直接**操作流程、表单、组织架构，全部委派给流程设计助手
 - 任何流程相关的需求，调用 find_workflow 工具，用自然语言描述需求
-- 包括：设计表单、设计审批流程、查询成员/部门/角色、处理审批任务等`;
+- 支持的任务类型：
+  - design_form：设计表单
+  - design_workflow：设计审批流程
+  - query_org：查询成员/部门/角色
+  - approval_task：处理审批（通过/驳回/加签/委派/驳回至节点/逐级驳回）
+  - process_ops：流程运维（冻结/解冻/取消/强制终止/强制撤回/修改处理人）
+  - lint：代码校验（表单代码/字段Schema/流程定义/条件表达式）
+  - copy_preview：复制/预览/验证/版本
+  - general：通用流程问题`;
 }

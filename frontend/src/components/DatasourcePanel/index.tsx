@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { toast } from '@/stores/toastStore';
+import { confirm } from '@/stores/confirmStore';
 import type { Datasource, DatasourceType, DatasourceStructure } from '@/types/datasource';
 import './DatasourcePanel.css';
 
@@ -133,7 +134,13 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此数据源？')) return;
+    const confirmed = await confirm({
+      title: '删除数据源',
+      message: '确定删除此数据源？',
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     await deleteDatasource(id);
     setDatasources(datasources.filter((d) => d.id !== id));
     if (selectedDsId === id) { setSelectedDsId(null); setStructure(null); }

@@ -117,6 +117,9 @@ export const taskApi = {
   get: (id: number) =>
     api.get<WorkflowTask>(`/tasks/${id}`).then(r => r.data),
 
+  getByInstance: (instanceId: number) =>
+    api.get<WorkflowTask>(`/tasks/by-instance/${instanceId}`).then(r => r.data),
+
   approve: (id: number, comment: string) =>
     api.put<WorkflowTask>(`/tasks/${id}/approve`, { comment }).then(r => r.data),
 

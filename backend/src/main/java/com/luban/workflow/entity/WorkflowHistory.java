@@ -26,6 +26,9 @@ public class WorkflowHistory {
     @Column(nullable = false)
     private Long operatorId;
 
+    @Transient
+    private String operatorName;
+
     @Column(nullable = false, length = 30)
     private String action;
 

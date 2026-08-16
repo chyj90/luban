@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { WorkflowInstance } from '../../types/workflow';
 import { instanceApi } from '../../api/workflow';
+import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './MyInstances.module.css';
 
@@ -105,7 +106,13 @@ export default function MyInstances({ embedded, onNavigate }: MyInstancesProps =
                           <button
                             className={styles.actionBtnDanger}
                             onClick={async () => {
-                              if (!window.confirm('确定要撤销该流程吗？')) return;
+                              const confirmed = await confirm({
+                                title: '撤销流程',
+                                message: '确定要撤销该流程吗？',
+                                confirmText: '撤销',
+                                variant: 'danger',
+                              });
+                              if (!confirmed) return;
                               await instanceApi.cancel(inst.id, 0, '');
                               setInstances((prev) =>
                                 prev.map((i) =>

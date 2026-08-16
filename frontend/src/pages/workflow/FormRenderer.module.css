@@ -1,5 +1,5 @@
 .renderer {
-  max-width: 680px;
+  max-width: 820px;
   margin: 0 auto;
 }
 
@@ -219,7 +219,8 @@
 }
 
 .excelTableWrap {
-  overflow-x: auto;
+  max-height: 320px;
+  overflow: auto;
 }
 
 .excelTable {

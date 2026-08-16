@@ -26,7 +26,7 @@ export default function MyTasks({ embedded, onNavigate }: MyTasksProps = {}) {
 
   useEffect(() => {
     setLoading(true);
-    taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'COMPLETED' })
+    taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'completed' })
       .then(setTasks)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -88,7 +88,7 @@ export default function MyTasks({ embedded, onNavigate }: MyTasksProps = {}) {
                 onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId, appId: task.applicationId })}
               >
                 <div className={styles.cardHeader}>
-                  <span className={styles.cardTitle}>{task.nodeId}</span>
+                  <span className={styles.cardTitle}>{task.nodeName || task.nodeId}</span>
                   {statusBadge(task.status)}
                 </div>
                 <div className={styles.cardMeta}>

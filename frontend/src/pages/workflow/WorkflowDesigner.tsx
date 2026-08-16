@@ -1,5 +1,5 @@
 import { useCallback, useState, useRef, DragEvent, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useParams, useNavigate } from 'react-router-dom';
 import * as dagre from 'dagre';
 import {
   ReactFlow,
@@ -18,8 +18,10 @@ import '@xyflow/react/dist/style.css';
 import type { WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { workflowApi, formApi, bindingApi, instanceApi } from '../../api/workflow';
 import { toast } from '@/stores/toastStore';
+import { isImpersonating } from '../../utils/impersonation';
 import ApproverSelector from './ApproverSelector';
 import Select from './Select';
+import * as XLSX from 'xlsx';
 import styles from './WorkflowDesigner.module.css';
 
 const initialNodes: Node[] = [
@@ -117,7 +119,7 @@ export default function WorkflowDesigner({
   edgesConfig: initialEdgesConfig,
   onChange,
   embedded = false,
-  processId,
+  processId: propProcessId,
   formMode: propFormMode = false,
   formId,
   onBack,
@@ -134,11 +136,14 @@ export default function WorkflowDesigner({
   appId?: number;
 }) {
   const [searchParams] = useSearchParams();
+  const params = useParams();
+  const effectiveAppId = appId || (params.appId ? Number(params.appId) : undefined);
+  const processId = propProcessId || (params.id && params.id !== 'new' ? Number(params.id) : undefined) || (searchParams.get('processId') ? Number(searchParams.get('processId')) : undefined);
   const formMode = propFormMode || searchParams.get('formMode') === 'true';
   const startMode = !propFormMode && searchParams.get('mode') === 'start';
   const resolvedFormId = formId || (searchParams.get('formId') ? Number(searchParams.get('formId')) : undefined);
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(processId ? [] : initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(processId ? [] : initialEdges);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedNodeConfig, setSelectedNodeConfig] = useState<Record<string, unknown>>({});
   const [workflowName, setWorkflowName] = useState('');
@@ -154,6 +159,7 @@ export default function WorkflowDesigner({
   const [viewportZoom, setViewportZoom] = useState(1);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
+  const [canvasReady, setCanvasReady] = useState(!processId);
 
   const [formName, setFormName] = useState('');
   const [formDescription, setFormDescription] = useState('');
@@ -176,13 +182,18 @@ export default function WorkflowDesigner({
     label: string;
     type: string;
     required: boolean;
+    colSpan: number;
+    computedFrom: string;
     options: Array<{ label: string; value: string }>;
     columns: Array<{ key: string; label: string; type: string }>;
   }>>([]);
   const [startFormData, setStartFormData] = useState<Record<string, string>>({});
+  const [excelParsedData, setExcelParsedData] = useState<Record<string, Array<Record<string, string>>>>({});
   const [startFormLoading, setStartFormLoading] = useState(false);
   const [startFormError, setStartFormError] = useState<string | null>(null);
   const [startSubmitting, setStartSubmitting] = useState(false);
+  const [startSubmitted, setStartSubmitted] = useState(false);
+  const navigate = useNavigate();
   const [startWorkflowName, setStartWorkflowName] = useState('');
 
   const historyRef = useRef<Array<{ nodes: Node[]; edges: Edge[] }>>([]);
@@ -215,46 +226,61 @@ export default function WorkflowDesigner({
     if (!startMode || !processId) return;
     setStartFormLoading(true);
     setStartFormError(null);
-    Promise.all([
-      workflowApi.getDefinition(processId),
-      bindingApi.list({ workflowId: processId }),
-    ]).then(([def, bindings]) => {
-      setStartWorkflowName(def.name || '未命名流程');
-      const binding = bindings.find(b => b.workflowId === processId);
-      if (!binding) {
-        setStartFormError('该流程未关联表单');
-        setStartFormLoading(false);
-        return;
+
+    const parseFormFields = (fieldsJson: string | null | undefined) => {
+      try {
+        const fields = fieldsJson ? JSON.parse(fieldsJson) : [];
+        if (Array.isArray(fields) && fields.length > 0) {
+          setStartFormFields(fields.map((f: any) => ({
+            key: f.key || f.name || '',
+            label: f.label || f.name || '',
+            type: f.type || 'text',
+            required: f.required || false,
+            colSpan: f.colSpan || 1,
+            computedFrom: f.computedFrom || '',
+            options: f.options || [],
+            columns: f.columns || [],
+          })));
+          const initial: Record<string, string> = {};
+          fields.forEach((f: any) => {
+            initial[f.key || f.name || ''] = '';
+          });
+          setStartFormData(initial);
+          return true;
+        }
+      } catch {
+        // parse failed, fall through
       }
-      return formApi.get(binding.formId).then((form) => {
-        try {
-          const fields = form.fields ? JSON.parse(form.fields) : [];
-          if (Array.isArray(fields) && fields.length > 0) {
-            setStartFormFields(fields.map((f: any) => ({
-              key: f.key || f.name || '',
-              label: f.label || f.name || '',
-              type: f.type || 'text',
-              required: f.required || false,
-              options: f.options || [],
-              columns: f.columns || [],
-            })));
-            const initial: Record<string, string> = {};
-            fields.forEach((f: any) => {
-              initial[f.key || f.name || ''] = '';
-            });
-            setStartFormData(initial);
-          } else {
+      return false;
+    };
+
+    workflowApi.getDefinition(processId).then((def) => {
+      setStartWorkflowName(def.name || '未命名流程');
+
+      const effectiveId = def.publishedVersionId || processId;
+
+      bindingApi.list({ workflowId: effectiveId }).then((bindings) => {
+        const binding = bindings.find(b => b.workflowId === effectiveId);
+        if (!binding) {
+          setStartFormError('该流程未关联表单');
+          setStartFormLoading(false);
+          return;
+        }
+        return formApi.get(binding.formId).then((form) => {
+          if (!parseFormFields(form.fields)) {
             setStartFormFields([]);
           }
-        } catch {
-          setStartFormFields([]);
-        }
+          setStartFormLoading(false);
+        }).catch(() => {
+          setStartFormError('加载表单失败');
+          setStartFormLoading(false);
+        });
       }).catch(() => {
-        setStartFormError('加载表单失败');
+        setStartFormError('加载绑定信息失败');
+        setStartFormLoading(false);
       });
     }).catch(() => {
       setStartFormError('加载流程信息失败');
-    }).finally(() => {
       setStartFormLoading(false);
     });
   }, [startMode, processId]);
@@ -367,9 +393,11 @@ export default function WorkflowDesigner({
           }
         } catch { /* ignore parse errors */ }
         initRef.current = false;
+        setCanvasReady(true);
       }).catch(() => {
         toast.error('加载流程数据失败');
         initRef.current = false;
+        setCanvasReady(true);
       });
     } else {
       initRef.current = false;
@@ -519,6 +547,14 @@ export default function WorkflowDesigner({
     setPublishing(true);
     setShowPublishDialog(false);
     try {
+      const data = {
+        name: workflowName.trim(),
+        description: workflowDescription.trim(),
+        applicationId: appId,
+        nodes: JSON.stringify(nodes),
+        edges: JSON.stringify(edges),
+      };
+      await workflowApi.updateDefinition(processId, data as any);
       await workflowApi.publishDefinition(processId);
       toast.success('发布成功');
       if (!embedded) {
@@ -530,7 +566,7 @@ export default function WorkflowDesigner({
     } finally {
       setPublishing(false);
     }
-  }, [processId, embedded]);
+  }, [processId, embedded, workflowName, workflowDescription, appId, nodes, edges]);
 
   const handleTest = useCallback(async () => {
     if (!processId) {
@@ -562,20 +598,26 @@ export default function WorkflowDesigner({
     }
     setStartSubmitting(true);
     try {
-      const formData = JSON.stringify(startFormData);
+      const merged: Record<string, unknown> = { ...startFormData };
+      Object.entries(excelParsedData).forEach(([key, rows]) => {
+        if (rows.length > 0) merged[key] = rows;
+      });
+      const formData = JSON.stringify(merged);
       await instanceApi.start({
         definitionId: processId,
         formData,
-        isTest: false,
+        isTest: isImpersonating(),
       });
-      toast.success('流程已发起，请前往「我的工作」查看');
+      setStartSubmitted(true);
+      toast.success('流程已发起');
+      setTimeout(() => navigate(effectiveAppId ? `/apps/${effectiveAppId}` : '/work'), 1500);
     } catch (e: any) {
       const msg = e?.response?.data?.message || e?.message || '发起失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发起失败');
     } finally {
       setStartSubmitting(false);
     }
-  }, [processId, startFormFields, startFormData]);
+  }, [processId, startFormFields, startFormData, excelParsedData]);
 
   const GATEWAY_TYPES = new Set(['condition', 'parallel']);
 
@@ -883,21 +925,28 @@ export default function WorkflowDesigner({
                           placeholder={`请输入${field.label || field.key}`}
                           style={{ resize: 'vertical' }}
                         />
-                      ) : field.type === 'select' || field.type === 'multi_select' || field.type === 'radio' ? (
-                        field.type === 'radio' ? (
-                          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                            {field.options.map((opt, oi) => (
-                              <label key={oi} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <input type="radio" disabled name={`field_${i}`} />
-                                {opt.label || opt.value}
-                              </label>
-                            ))}
-                          </div>
-                        ) : (
-                          <select disabled className={styles.configInput} multiple={field.type === 'multi_select'}>
-                            {field.options.map((opt, oi) => <option key={oi}>{opt.label || opt.value}</option>)}
-                          </select>
-                        )
+                      ) : field.type === 'select' ? (
+                        <select disabled className={styles.configInput}>
+                          {field.options.map((opt, oi) => <option key={oi}>{opt.label || opt.value}</option>)}
+                        </select>
+                      ) : field.type === 'multi_select' ? (
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          {field.options.map((opt, oi) => (
+                            <label key={oi} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input type="checkbox" disabled />
+                              {opt.label || opt.value}
+                            </label>
+                          ))}
+                        </div>
+                      ) : field.type === 'radio' ? (
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          {field.options.map((opt, oi) => (
+                            <label key={oi} style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <input type="radio" disabled name={`field_${i}`} />
+                              {opt.label || opt.value}
+                            </label>
+                          ))}
+                        </div>
                       ) : field.type === 'checkbox' ? (
                         <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
                           <input type="checkbox" disabled />
@@ -914,9 +963,31 @@ export default function WorkflowDesigner({
                       ) : field.type === 'number' ? (
                         <input type="number" disabled className={styles.configInput} placeholder={`请输入${field.label || field.key}`} />
                       ) : field.type === 'file' || field.type === 'excel' ? (
-                        <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: '16px 12px', textAlign: 'center', color: '#8c9cab', fontSize: 13 }}>
-                          {field.type === 'excel' ? '点击上传 Excel 文件' : '点击上传文件'}
-                        </div>
+                        <>
+                          <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: '16px 12px', textAlign: 'center', color: '#8c9cab', fontSize: 13 }}>
+                            {field.type === 'excel' ? '点击上传 Excel 文件' : '点击上传文件'}
+                          </div>
+                          {field.type === 'excel' && field.columns && field.columns.length > 0 && (
+                            <div style={{ marginTop: 8, border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'hidden' }}>
+                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                                <thead>
+                                  <tr style={{ background: '#fafafa' }}>
+                                    {field.columns.map((col, ci) => (
+                                      <th key={ci} style={{ padding: '8px 12px', borderBottom: '1px solid #e8e8e8', textAlign: 'left', fontWeight: 500 }}>{col.label}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  <tr>
+                                    {field.columns.map((col, ci) => (
+                                      <td key={ci} style={{ padding: '8px 12px', color: '#ccc' }}>—</td>
+                                    ))}
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
                       ) : field.type === 'member' || field.type === 'department' ? (
                         <input disabled className={styles.configInput} placeholder={field.type === 'member' ? '选择人员' : '选择部门'} />
                       ) : field.type === 'detail_table' ? (
@@ -1235,11 +1306,117 @@ export default function WorkflowDesigner({
   }
 
   if (startMode) {
-    const renderField = (field: { key: string; label: string; type: string; required: boolean; options: Array<{ label: string; value: string }> }) => {
+    const renderField = (field: typeof startFormFields[0]) => {
       const val = startFormData[field.key] || '';
-      const onChange = (v: string) => setStartFormData(prev => ({ ...prev, [field.key]: v }));
+      const onChange = (v: string) => {
+        setStartFormData(prev => ({ ...prev, [field.key]: v }));
+      };
 
-      if (field.type === 'select' || field.type === 'radio') {
+      if (field.type === 'computed') {
+        try {
+          const ctx: Record<string, number> = {};
+          startFormFields.forEach(f => {
+            if (f.type === 'number' || f.type === 'computed') {
+              ctx[f.key] = Number(startFormData[f.key]) || 0;
+            }
+          });
+          const expr = field.computedFrom.replace(/\b([a-zA-Z_]\w*)\b/g, (m: string) => {
+            return ctx[m] !== undefined ? String(ctx[m]) : '0';
+          });
+          const result = Function(`"use strict"; return (${expr})`)();
+          if (String(result) !== val) {
+            setTimeout(() => onChange(String(result)), 0);
+          }
+        } catch { /* ignore parse errors */ }
+        return (
+          <input
+            className={styles.configInput}
+            type="text"
+            value={val}
+            readOnly
+            style={{ width: '100%', background: '#f5f5f5', cursor: 'not-allowed' }}
+          />
+        );
+      }
+
+      if (field.type === 'excel') {
+        const rows = excelParsedData[field.key] || [];
+        return (
+          <div>
+            <label style={{ display: 'block', cursor: 'pointer' }}>
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  onChange(file.name);
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    try {
+                      const wb = XLSX.read(ev.target?.result, { type: 'array' });
+                      const ws = wb.Sheets[wb.SheetNames[0]];
+                      const data = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { header: 1, defval: '' });
+                      if (data.length > 0) {
+                        const rawHeaders = (data[0] as string[]).map(h => String(h).trim()).filter(h => h !== '');
+                        const headerMap: Record<string, string> = {};
+                        rawHeaders.forEach(h => {
+                          const col = field.columns?.find(c => c.key === h || c.label === h);
+                          headerMap[h] = col ? col.key : h;
+                        });
+                        const parsed = data.slice(1)
+                          .filter((row: any) => row.some((cell: unknown) => cell !== '' && cell !== null && cell !== undefined))
+                          .map((row: any) => {
+                            const obj: Record<string, string> = {};
+                            rawHeaders.forEach((h, i) => { obj[headerMap[h]] = String(row[i] ?? ''); });
+                            return obj;
+                          });
+                        setExcelParsedData(prev => ({ ...prev, [field.key]: parsed }));
+                      }
+                    } catch { /* ignore parse errors */ }
+                  };
+                  reader.readAsArrayBuffer(file);
+                }}
+                style={{ display: 'none' }}
+              />
+              <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: '16px 12px', textAlign: 'center', color: '#8c9cab', fontSize: 13 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: 'middle' }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                {val ? val : '点击上传 Excel 文件'}
+              </div>
+            </label>
+            {field.columns && field.columns.length > 0 && (
+              <div style={{ marginTop: 8, border: '1px solid #e8e8e8', borderRadius: 4, overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: '#fafafa' }}>
+                      {field.columns.map((col, ci) => (
+                        <th key={ci} style={{ padding: '8px 12px', borderBottom: '1px solid #e8e8e8', textAlign: 'left', fontWeight: 500 }}>{col.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.length > 0 ? rows.map((row, ri) => (
+                      <tr key={ri}>
+                        {field.columns.map((col, ci) => (
+                          <td key={ci} style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>{row[col.key] ?? '—'}</td>
+                        ))}
+                      </tr>
+                    )) : (
+                      <tr>
+                        {field.columns.map((col, ci) => (
+                          <td key={ci} style={{ padding: '8px 12px', color: '#ccc' }}>—</td>
+                        ))}
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (field.type === 'select') {
         return (
           <select
             className={styles.configInput}
@@ -1254,7 +1431,25 @@ export default function WorkflowDesigner({
           </select>
         );
       }
-      if (field.type === 'checkbox') {
+      if (field.type === 'radio') {
+        return (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {field.options.map((opt, i) => (
+              <label key={i} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="radio"
+                  name={field.key}
+                  value={opt.value}
+                  checked={val === opt.value}
+                  onChange={e => onChange(e.target.value)}
+                />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        );
+      }
+      if (field.type === 'multi_select') {
         return (
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             {field.options.map((opt, i) => {
@@ -1277,6 +1472,18 @@ export default function WorkflowDesigner({
               );
             })}
           </div>
+        );
+      }
+      if (field.type === 'checkbox') {
+        return (
+          <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={val === 'true'}
+              onChange={e => onChange(e.target.checked ? 'true' : 'false')}
+            />
+            {field.label}
+          </label>
         );
       }
       if (field.type === 'textarea') {
@@ -1312,6 +1519,93 @@ export default function WorkflowDesigner({
           />
         );
       }
+      if (field.type === 'datetime') {
+        return (
+          <input
+            className={styles.configInput}
+            type="datetime-local"
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        );
+      }
+      if (field.type === 'file') {
+        return (
+          <label style={{ display: 'block', cursor: 'pointer' }}>
+            <input
+              type="file"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) onChange(file.name);
+              }}
+              style={{ display: 'none' }}
+            />
+            <div style={{ border: '1px dashed #d9d9d9', borderRadius: 6, padding: '16px 12px', textAlign: 'center', color: '#8c9cab', fontSize: 13 }}>
+              {val ? val : '点击上传文件'}
+            </div>
+          </label>
+        );
+      }
+      if (field.type === 'switch') {
+        return (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+            <div style={{ width: 44, height: 22, borderRadius: 11, background: val === 'true' ? '#1677ff' : '#d9d9d9', position: 'relative', transition: 'background 0.2s' }}>
+              <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, left: val === 'true' ? 24 : 2, transition: 'left 0.2s' }} />
+            </div>
+            <input
+              type="checkbox"
+              checked={val === 'true'}
+              onChange={e => onChange(e.target.checked ? 'true' : 'false')}
+              style={{ display: 'none' }}
+            />
+          </label>
+        );
+      }
+      if (field.type === 'detail_table') {
+        return (
+          <div style={{ border: '1px solid #e8edf3', borderRadius: 6, overflow: 'hidden' }}>
+            {field.columns && field.columns.length > 0 && (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: '#fafafa' }}>
+                    {field.columns.map((col, ci) => (
+                      <th key={ci} style={{ padding: '6px 10px', borderBottom: '1px solid #e8edf3', textAlign: 'left', color: '#8c9cab' }}>{col.label || col.key}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colSpan={field.columns.length || 1} style={{ padding: 16, textAlign: 'center', color: '#bfbfbf' }}>暂无数据</td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      }
+      if (field.type === 'member') {
+        return (
+          <input
+            className={styles.configInput}
+            placeholder="选择人员"
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        );
+      }
+      if (field.type === 'department') {
+        return (
+          <input
+            className={styles.configInput}
+            placeholder="选择部门"
+            value={val}
+            onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        );
+      }
       return (
         <input
           className={styles.configInput}
@@ -1341,49 +1635,74 @@ export default function WorkflowDesigner({
             {startFormError && !startFormLoading && (
               <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
                 <p>{startFormError}</p>
-                <button className={styles.toolbarBtn} onClick={() => window.history.back()} style={{ marginTop: 16 }}>
+                <button className={styles.toolbarBtn} onClick={() => window.history.back()} style={{ margin: '16px auto 0' }}>
                   返回
                 </button>
               </div>
             )}
             {!startFormLoading && !startFormError && startFormFields.length === 0 && (
               <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
-                <p>该流程没有表单字段</p>
-                <button
-                  className={styles.toolbarBtnPrimary}
-                  onClick={handleSubmitStartForm}
-                  disabled={startSubmitting}
-                  style={{ marginTop: 16 }}
-                >
-                  {startSubmitting ? '提交中...' : '直接发起'}
-                </button>
+                {startSubmitted ? (
+                  <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
+                    <p style={{ color: '#52c41a', fontSize: 16, fontWeight: 500, margin: '0 0 12px' }}>流程已发起</p>
+                    <button className={styles.toolbarBtn} onClick={() => navigate(effectiveAppId ? `/apps/${effectiveAppId}` : '/work')} style={{ background: '#e6f7ff', border: '1px solid #91d5ff', color: '#1890ff', margin: '0 auto' }}>前往发起流程</button>
+                  </div>
+                ) : (
+                  <>
+                    <p style={{ margin: '0 0 16px' }}>该流程没有表单字段</p>
+                    <button
+                      className={styles.toolbarBtnPrimary}
+                      onClick={handleSubmitStartForm}
+                      disabled={startSubmitting}
+                      style={{ margin: '16px auto 0' }}
+                    >
+                      {startSubmitting ? '提交中...' : '直接发起'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
             {!startFormLoading && !startFormError && startFormFields.length > 0 && (
               <div style={{ background: '#fff', borderRadius: 8, padding: 24, boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
-                <h2 style={{ margin: '0 0 24px', fontSize: 18, fontWeight: 600 }}>{startWorkflowName}</h2>
-                {startFormFields.map((field) => (
-                  <div key={field.key} style={{ marginBottom: 16 }}>
-                    <label style={{ display: 'block', marginBottom: 6, fontSize: 13, fontWeight: 500, color: '#333' }}>
-                      {field.label}
-                      {field.required && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>}
-                    </label>
-                    {renderField(field)}
+                {startSubmitted ? (
+                  <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                    <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '20px 24px', textAlign: 'center' }}>
+                      <p style={{ color: '#52c41a', fontSize: 16, fontWeight: 500, margin: '0 0 12px' }}>流程已发起</p>
+                      <button className={styles.toolbarBtn} onClick={() => navigate(effectiveAppId ? `/apps/${effectiveAppId}` : '/work')} style={{ background: '#e6f7ff', border: '1px solid #91d5ff', color: '#1890ff', margin: '0 auto' }}>前往发起流程</button>
+                    </div>
                   </div>
-                ))}
-                <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
-                  <button
-                    className={styles.toolbarBtnPrimary}
-                    onClick={handleSubmitStartForm}
-                    disabled={startSubmitting}
-                    style={{ flex: 1 }}
-                  >
-                    {startSubmitting ? '提交中...' : '提交'}
-                  </button>
-                  <button className={styles.toolbarBtn} onClick={() => window.history.back()}>
-                    取消
-                  </button>
-                </div>
+                ) : (
+                  <>
+                    <h2 style={{ margin: '0 0 24px', fontSize: 18, fontWeight: 600 }}>{startWorkflowName}</h2>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {groupFormFieldsIntoRows(startFormFields).map((row, ri) => (
+                        <div key={ri} style={{ display: 'flex', gap: 12 }}>
+                          {row.map((field) => (
+                            <div key={field.key} style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: field.colSpan || 4 }}>
+                              <label style={{ fontSize: 13, fontWeight: 500, color: '#1f1f1f' }}>
+                                {field.label}
+                                {field.required && <span style={{ color: '#ff4d4f', marginLeft: 4 }}>*</span>}
+                              </label>
+                              {renderField(field)}
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
+                      <button
+                        className={styles.toolbarBtnPrimary}
+                        onClick={handleSubmitStartForm}
+                        disabled={startSubmitting}
+                      >
+                        {startSubmitting ? '提交中...' : '提交'}
+                      </button>
+                      <button className={styles.toolbarBtn} onClick={() => window.history.back()}>
+                        取消
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -1436,6 +1755,7 @@ export default function WorkflowDesigner({
         </div>
 
         <div className={styles.canvas} ref={reactFlowWrapper}>
+          {canvasReady && (
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -1450,7 +1770,7 @@ export default function WorkflowDesigner({
             onNodeDragStop={onNodeDragStop}
             onMoveEnd={onViewportChange}
             nodeTypes={nodeTypes}
-            defaultViewport={{ zoom: 1, x: 0, y: 0 }}
+            fitView
             snapToGrid
             snapGrid={[8, 8]}
             defaultEdgeOptions={{
@@ -1467,6 +1787,7 @@ export default function WorkflowDesigner({
             <Controls />
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
           </ReactFlow>
+          )}
         </div>
 
         <div className={styles.rightPanel}>

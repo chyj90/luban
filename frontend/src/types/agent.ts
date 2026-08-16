@@ -41,6 +41,15 @@ export interface ToolDefinition {
 
 export type ToolCategory = 'page' | 'code' | 'datasource' | 'query' | 'observation' | 'deploy' | 'plan';
 
+export interface WorkflowNavigateView {
+  view: string;
+  processId?: number;
+  formMode?: boolean;
+  formId?: number;
+  appId?: number;
+  instanceId?: number;
+}
+
 export interface ToolContext {
   applicationId: number;
   pageId: number;
@@ -49,6 +58,7 @@ export interface ToolContext {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onWorkflowNavigate?: (view: WorkflowNavigateView) => void;
 }
 
 export interface ToolExecuteResult {
@@ -108,9 +118,12 @@ export type AgentEventType =
   | 'SESSION_COMPLETE'
   | 'SESSION_ERROR'
   | 'SESSION_CANCELLED'
-  | 'FIND_QUERY_START'
-  | 'FIND_QUERY_COMPLETE'
+  | 'DELEGATE_QUERY_START'
+  | 'DELEGATE_QUERY_COMPLETE'
+  | 'FIND_WORKFLOW_START'
+  | 'FIND_WORKFLOW_COMPLETE'
   | 'TOKEN_USAGE'
+  | 'DEBUG_CHAT_LOG'
   | 'ERROR';
 
 export interface AgentState {

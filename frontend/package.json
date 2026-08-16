@@ -21,6 +21,7 @@
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   },

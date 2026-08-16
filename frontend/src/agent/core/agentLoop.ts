@@ -23,7 +23,7 @@ export interface AgentLoopOptions {
   onToolResult: (name: string, result: ToolExecuteResult, messageId: string, toolCallId: string) => void;
   onError: (error: string) => void;
   onTokenUsage: (input: number, output: number) => void;
-  throwOnStuck?: boolean;
+  onApiMessages?: (messages: LLMMessage[]) => void;
 }
 
 export interface AgentLoopResult {
@@ -38,7 +38,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     conversationMessages: initialMessages,
     onStatusChange, onStreamingContent, onClearStreaming,
     onAddMessage, onPlanCreate, onPlanConfirm, onStepUpdate,
-    onToolCall, onToolResult, onError, onTokenUsage, throwOnStuck,
+    onToolCall, onToolResult, onError, onTokenUsage, onApiMessages,
   } = options;
 
   const conversationMessages = [...initialMessages];
@@ -48,13 +48,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     parameters: t.parameters,
   })));
 
-  let sameProblemCount = 0;
-  const MAX_SAME_PROBLEM = 2;
-  let lastRoundTools: Set<string> = new Set();
-  let _stopRequested = false;
-  let _stuckForcedStop = false;
-
-  console.log(`[AgentLoop] 开始 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
+  console.log(`[AgentLoop] 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) throw new Error('Cancelled');
@@ -63,6 +57,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
     onStatusChange('executing');
     const apiMessages = buildAPIMessages(conversationMessages);
+    onApiMessages?.(apiMessages);
     console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
 
     try {
@@ -95,20 +90,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       const toolCalls = toolCallsAccumulated;
 
       if (toolCalls.length > 0) {
-        if (_stuckForcedStop) {
-          console.log('[AgentLoop] 强制停止：系统已提醒卡住，但 LLM 仍尝试调用工具，直接退出');
-          const finalMsg: Message = {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: '我在同一个问题上尝试了多次但没有进展，需要您的帮助。请告诉我下一步该如何处理？',
-            timestamp: Date.now(),
-          };
-          conversationMessages.push(finalMsg);
-          onAddMessage(finalMsg);
-          onStatusChange('completed');
-          return { response: finalMsg.content, conversationMessages };
-        }
-
         console.log(`[AgentLoop] LLM 返回 ${toolCalls.length} 个 tool call: [${toolCalls.map((tc) => tc.function.name).join(', ')}]`);
 
         const assistantMsg: Message = {
@@ -163,15 +144,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           onToolResult(toolName, toolResult, assistantMsg.id, toolCall.id);
 
           if (toolResult._pause) {
-            for (const { toolCallId: tcid, result: r } of allToolResults) {
-              conversationMessages.push({
-                id: crypto.randomUUID(),
-                role: 'tool',
-                content: JSON.stringify(r),
-                toolCallId: tcid,
-                timestamp: Date.now(),
-              });
-            }
             conversationMessages.push({
               id: crypto.randomUUID(),
               role: 'tool',
@@ -210,40 +182,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           });
         }
 
-        const thisRoundTools = new Set(allToolResults.map((r) => r.toolName));
-        const hasOverlap = lastRoundTools.size > 0 && [...thisRoundTools].some((t) => lastRoundTools.has(t));
-
-        if (hasOverlap) {
-          sameProblemCount++;
-          console.log(`[AgentLoop] 相同问题计数: ${sameProblemCount}/${MAX_SAME_PROBLEM} | 工具重叠: [${[...thisRoundTools].join(', ')}]`);
-          if (sameProblemCount >= MAX_SAME_PROBLEM && !_stopRequested) {
-            _stopRequested = true;
-            const reminderMsg = {
-              role: 'system' as const,
-              content: '你似乎卡在同一个问题上（连续3轮使用相同工具），请回顾之前的尝试。如果没有进展，请停止并向用户说明情况，等待用户指导。',
-            };
-            conversationMessages.push({
-              id: crypto.randomUUID(),
-              role: 'system',
-              content: reminderMsg.content,
-              timestamp: Date.now(),
-            });
-            console.log('[AgentLoop] 注入系统提醒：疑似卡在同一问题');
-            if (throwOnStuck) {
-              throw new Error('__STUCK__: 同一问题尝试多次无进展');
-            }
-            _stuckForcedStop = true;
-            sameProblemCount = 0;
-          }
-        } else {
-          sameProblemCount = 0;
-        }
-        lastRoundTools = thisRoundTools;
-
         const hasNoRetryFailure = allToolResults.some((r) => !r.result.success && r.result._noRetry);
-        if (hasNoRetryFailure && !_stopRequested) {
-          _stopRequested = true;
-          _stuckForcedStop = true;
+        if (hasNoRetryFailure) {
           const noRetryMsg = {
             role: 'system' as const,
             content: '子智能体已尝试多次失败，不要再重试，直接将子智能体的反馈告知用户，等待用户指导。',
@@ -257,8 +197,6 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           console.log('[AgentLoop] 注入系统提醒：子智能体失败，不可重试');
         }
       } else {
-        sameProblemCount = 0;
-        lastRoundTools = new Set();
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',

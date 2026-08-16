@@ -1,47 +1,50 @@
 import type { ToolDefinition, ToolContext } from '@/types/agent';
-import { listQueries } from '@/api';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
 import { createDataAssistantTools } from './dbaTools';
 import type { ChatRouter } from '../core/chatRouter';
+import { getAgentMemory, setAgentMemory } from './agentMemory';
 
-export interface FindQueryArgs {
+export interface DelegateQueryArgs {
   task_type: string;
   target_page: string;
-  requirements: string[];
+  query_name: string;
+  requirement: string;
   existing_queries?: Array<{ id: number; name: string; description: string }>;
   modify_instructions?: string[];
 }
 
-export interface FindQueryResult {
+export interface DelegateQueryResult {
   success: boolean;
   message: string;
-  queries?: Array<{ id: number; name: string; description: string }>;
+  _noRetry?: boolean;
 }
 
-export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter): ToolDefinition {
+export function createDelegateQueryTool(context: ToolContext, chatRouter: ChatRouter): ToolDefinition {
   return {
-    name: 'find_query',
-    description: `向数据辅助智能体请求创建或修改查询。
-使用时机：任何需要查询数据的需求（用户列表、搜索、筛选、统计等）。
-主智能体定义页面需要的字段，DBA 在数据库中查找对应列并创建查询，汇报可用/不可用字段。
-返回的 queries 列表可直接用于页面绑定（如 {{ QueryName.data }}）。`,
+    name: 'delegate_query',
+    description: `向数据辅助智能体委派单个查询的创建、修改或删除任务。
+每次调用只处理一个查询，不要批量传入。
+数据辅助智能体会自行验证结果并汇报。`,
     category: 'query',
     parameters: {
       type: 'object',
       properties: {
         task_type: {
           type: 'string',
-          enum: ['A应用', 'B单页面', 'C2数据调整', 'C3模块调整'],
-          description: '任务类型：A应用=完整应用多页面，B单页面=单个页面，C2数据调整=修改查询条件，C3模块调整=UI+数据联动',
+          enum: ['CREATE', 'MODIFY', 'DELETE'],
+          description: '任务类型',
         },
         target_page: {
           type: 'string',
-          description: '目标页面名称',
+          description: '目标页面名称（DELETE 时可为空字符串）',
         },
-        requirements: {
-          type: 'array',
-          items: { type: 'string' },
-          description: '数据需求列表，用业务语言描述，明确列出页面需要的字段。例如："员工列表，需要字段：姓名、部门、职位、手机号、入职日期、状态"',
+        query_name: {
+          type: 'string',
+          description: '查询名称，英文驼峰命名（DELETE 时不填）',
+        },
+        requirement: {
+          type: 'string',
+          description: 'CREATE：需要的字段列表。MODIFY：修改说明。DELETE：删除需求描述，如"删除所有查询"或"删除查询 xxx"',
         },
         existing_queries: {
           type: 'array',
@@ -53,96 +56,102 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
               description: { type: 'string' },
             },
           },
-          description: '当前应用已有的查询列表（C2/C3 时必填，用于 DBA 判断是修改还是新增）',
+          description: '当前应用已有的查询列表（MODIFY 时使用）',
         },
         modify_instructions: {
           type: 'array',
           items: { type: 'string' },
-          description: '需要修改哪些查询、怎么改（C2 时必填）',
+          description: '修改查询的具体说明（MODIFY 时使用）',
         },
       },
-      required: ['task_type', 'target_page', 'requirements'],
+      required: ['task_type', 'requirement'],
     },
     async execute(args) {
-      const typedArgs = args as unknown as FindQueryArgs;
+      const typedArgs = args as unknown as DelegateQueryArgs;
       const execStart = Date.now();
 
-      console.log(`[find_query] 开始执行 | taskType=${typedArgs.task_type} | targetPage=${typedArgs.target_page} | requirements=${typedArgs.requirements.length}条`);
+      console.log(`[delegate_query] 开始 | taskType=${typedArgs.task_type} | queryName=${typedArgs.query_name}`);
 
       context.dispatch({
-        type: 'FIND_QUERY_START',
+        type: 'DELEGATE_QUERY_START',
         payload: {
           taskType: typedArgs.task_type,
           targetPage: typedArgs.target_page,
-          requirements: typedArgs.requirements,
+          queryName: typedArgs.query_name,
+          requirement: typedArgs.requirement,
         },
       });
-      console.log('[find_query] 已 dispatch FIND_QUERY_START');
 
       try {
         const dbaPrompt = buildDataAssistantPrompt({
           applicationId: context.applicationId,
           taskType: typedArgs.task_type,
           targetPage: typedArgs.target_page,
-          requirements: typedArgs.requirements,
+          queryName: typedArgs.query_name,
+          requirement: typedArgs.requirement,
           existingQueries: typedArgs.existing_queries,
           modifyInstructions: typedArgs.modify_instructions,
         });
 
         const dbaTools = createDataAssistantTools(context);
 
-        const userMessage = `请为「${typedArgs.target_page}」创建以下查询：\n${typedArgs.requirements.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')}${typedArgs.modify_instructions?.length ? `\n\n需要修改的查询：\n${typedArgs.modify_instructions.map((m: string, i: number) => `${i + 1}. ${m}`).join('\n')}` : ''}`;
+        let userMessage: string;
+        if (typedArgs.task_type === 'DELETE') {
+          userMessage = typedArgs.requirement;
+        } else if (typedArgs.task_type === 'MODIFY') {
+          userMessage = `请修改查询「${typedArgs.query_name}」：\n${typedArgs.requirement}${typedArgs.modify_instructions?.length ? `\n\n具体修改说明：\n${typedArgs.modify_instructions.map((m: string, i: number) => `${i + 1}. ${m}`).join('\n')}` : ''}`;
+        } else {
+          userMessage = `请为「${typedArgs.target_page}」创建查询「${typedArgs.query_name}」：\n${typedArgs.requirement}`;
+        }
 
-        console.log(`[find_query] 即将委派 data-assistant | 消息长度: ${userMessage.length}`);
+        console.log(`[delegate_query] 委派 data-assistant | 消息长度: ${userMessage.length}`);
         const routeStart = Date.now();
-        await chatRouter.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
-      systemPrompt: dbaPrompt,
-      tools: dbaTools,
-      isDelegated: true,
-      agentContext: {
+        const executor = await chatRouter.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
+          systemPrompt: dbaPrompt,
+          tools: dbaTools,
+          isDelegated: true,
+          initialMessages: getAgentMemory(context.applicationId, 'data-assistant'),
+          agentContext: {
             taskType: typedArgs.task_type,
             targetPage: typedArgs.target_page,
-            requirements: typedArgs.requirements,
+            queryName: typedArgs.query_name,
+            requirement: typedArgs.requirement,
             existingQueries: typedArgs.existing_queries,
             modifyInstructions: typedArgs.modify_instructions,
           },
         });
-        console.log(`[find_query] data-assistant 委派完成 | ${Date.now() - routeStart}ms`);
+        setAgentMemory(context.applicationId, 'data-assistant', executor.getMessages());
+        console.log(`[delegate_query] data-assistant 完成 | ${Date.now() - routeStart}ms`);
 
-        const allQueries = await listQueries(context.applicationId);
-        const queries = allQueries.data.map((q) => ({
-          id: q.id,
-          name: q.name,
-          description: q.body?.substring(0, 50) || '',
-        }));
+        const messages = executor.getMessages();
+        const dbaResponse = messages
+          .filter((m) => m.role === 'assistant')
+          .map((m) => m.content)
+          .join('\n\n')
+          .trim();
 
-        if (queries.length > 0) {
-          context.onQuerySelect?.(queries[0]);
-        }
-
-        const result: FindQueryResult = {
+        const result: DelegateQueryResult = {
           success: true,
-          message: `数据辅助智能体已创建 ${queries.length} 个查询`,
-          queries,
+          message: dbaResponse,
         };
 
         context.dispatch({
-          type: 'FIND_QUERY_COMPLETE',
+          type: 'DELEGATE_QUERY_COMPLETE',
           payload: result,
         });
-        console.log(`[find_query] 已 dispatch FIND_QUERY_COMPLETE | queries=${queries.length} | 总耗时 ${Date.now() - execStart}ms`);
+        console.log(`[delegate_query] 完成 | 总耗时 ${Date.now() - execStart}ms`);
 
         return result;
       } catch (e) {
-        const errorResult: FindQueryResult = {
+        const errorResult: DelegateQueryResult = {
           success: false,
           message: `数据辅助智能体执行失败: ${(e as Error).message}`,
           _noRetry: true,
         };
 
-        console.log(`[find_query] 执行失败 | ${(e as Error).message}`);
+        console.log(`[delegate_query] 失败 | ${(e as Error).message}`);
         context.dispatch({
-          type: 'FIND_QUERY_COMPLETE',
+          type: 'DELEGATE_QUERY_COMPLETE',
           payload: errorResult,
         });
 
@@ -152,9 +161,10 @@ export function createFindQueryTool(context: ToolContext, chatRouter: ChatRouter
   };
 }
 
-export function getFindQuerySkillSummary(): string {
-  return `## 查询管理
-- 你**不知道**数据库结构和表名，**不能**创建查询
-- 任何需要数据的需求，调用 find_query 工具，在 requirements 中明确列出页面需要的字段
-- 样式调整不需要调用 find_query`;
+export function getDelegateQuerySkillSummary(): string {
+  return `## 数据操作
+- 你**不知道**数据库结构，**不能**直接操作查询
+- 所有数据相关操作委派给数据辅助智能体（DBA）
+- 仔细阅读 DBA 的回复：如果 DBA 请求确认，转达给用户；如果 DBA 汇报完成，继续下一步
+- DELETE 时：query_name 不填，只用 requirement 描述删除需求，如"删除所有查询"或"删除查询 xxx"`;
 }

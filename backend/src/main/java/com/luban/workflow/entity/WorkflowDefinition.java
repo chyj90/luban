@@ -42,9 +42,6 @@ public class WorkflowDefinition {
     @Column
     private Long publishedVersionId;
 
-    @Column(columnDefinition = "TEXT")
-    private String formSnapshot;
-
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

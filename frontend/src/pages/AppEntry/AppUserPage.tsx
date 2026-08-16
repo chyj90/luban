@@ -49,7 +49,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
     Promise.allSettled([
       listPages(app.id),
       listQueries(app.id),
-      workflowApi.listDefinitions({ applicationId: app.id, status: 'PUBLISHED' }),
+      workflowApi.listDefinitions({ applicationId: app.id, status: isImpersonating() ? 'DRAFT' : 'PUBLISHED' }),
     ]).then((results) => {
       const [pagesResult, queriesResult, wfResult] = results;
 

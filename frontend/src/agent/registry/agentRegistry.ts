@@ -2,9 +2,11 @@ import type { ToolDefinition, ToolContext } from '@/types/agent';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
 import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
+import { ANALYSIS_AGENT_PROMPT } from '../prompts/analysisAgent';
 import { createInteliTools } from '../tools';
 import { createDataAssistantTools } from '../tools/dbaTools';
 import { createWorkflowTools } from '../tools/workflowTools';
+import { getRequirementTools } from '../tools/requirementTools';
 
 export interface AgentContext {
   applicationId: number;
@@ -64,6 +66,15 @@ export const AGENTS: AgentDefinition[] = [
     isDefault: false,
     buildSystemPrompt: () => WORKFLOW_AGENT_PROMPT,
     buildTools: (ctx) => createWorkflowTools(ctx),
+  },
+  {
+    id: 'analysis-assistant',
+    name: '需求分析助手',
+    icon: '',
+    description: '需求分析助手，负责从业务视角分析用户需求，不涉及技术实现',
+    isDefault: false,
+    buildSystemPrompt: () => ANALYSIS_AGENT_PROMPT,
+    buildTools: () => getRequirementTools(),
   },
 ];
 

@@ -22,7 +22,7 @@ public class TaskController {
             @RequestParam(required = false, defaultValue = "pending") String status,
             @RequestParam(required = false) Long applicationId,
             @RequestParam(required = false) Boolean isTest) {
-        return "completed".equals(status)
+        return "completed".equalsIgnoreCase(status)
                 ? processService.getCompletedTasks(user.getId(), applicationId, isTest)
                 : processService.getPendingTasks(user.getId(), applicationId, isTest);
     }
@@ -30,6 +30,11 @@ public class TaskController {
     @GetMapping("/{id}")
     public WorkflowTask get(@PathVariable Long id) {
         return processService.getTask(id);
+    }
+
+    @GetMapping("/by-instance/{instanceId}")
+    public WorkflowTask getByInstance(@PathVariable Long instanceId, @AuthenticationPrincipal User user) {
+        return processService.getMyTaskForInstance(instanceId, user.getId());
     }
 
     @PutMapping("/{id}/approve")

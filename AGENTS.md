@@ -471,16 +471,13 @@ backend/src/main/java/com/luban/
 - **Repository**：继承 `JpaRepository<Entity, ID>`，不写自定义 SQL 除非必要
 - **Entity**：使用 `@Entity` + `@Table` 注解，字段映射数据库列
 
-### 13.3 API 响应格式
+### 13.4 数据冗余原则
 
-所有 API 返回统一格式：
-```json
-{
-  "success": true,
-  "data": {},
-  "message": "操作成功"
-}
-```
+**禁止冗余存储可关联查询的数据。** 凡是能通过关联查询（JOIN / 外键 / JSON 解析）获得的数据，不要在实体类或数据库表中添加冗余字段。
+
+- 示例：任务的 `nodeName` 存储在流程定义的 `nodes` JSON 中，不要为 `WorkflowTask` 添加 `nodeName` 列，而应在查询时通过 `instanceId` → `definitionId` → 解析 `nodes` JSON 获取
+- 理由：冗余字段会导致数据不一致（源头数据更新后冗余字段仍是旧值），增加维护成本和 bug 风险
+- 如需在接口返回中携带关联数据，使用 `@Transient` 字段 + 查询后 populate 模式，不在数据库层面持久化
 
 ---
 

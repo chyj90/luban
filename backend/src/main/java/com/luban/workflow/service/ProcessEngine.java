@@ -1,9 +1,12 @@
 package com.luban.workflow.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
+import com.luban.workflow.entity.FormWorkflowBinding;
+import com.luban.util.AgentLogger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,10 +28,12 @@ public class ProcessEngine {
     private final WorkflowHistoryRepository workflowHistoryRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final FormDefinitionRepository formDefinitionRepository;
+    private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     // ============================================================
     // 内部数据结构
@@ -78,7 +83,23 @@ public class ProcessEngine {
         instance.setWorkflowVersion(definition.getVersion());
         instance.setDefinitionVersion(definition.getVersion());
         instance.setIsTest(isTest);
-        instance.setFormId(null);
+
+        Long bindingWorkflowId = "DRAFT".equals(definition.getStatus())
+                ? definition.getPublishedVersionId() : definition.getId();
+        List<FormWorkflowBinding> bindings = formWorkflowBindingRepository.findByWorkflowId(bindingWorkflowId);
+        AgentLogger.bug("bug-formId-zero.log",
+            String.format("startProcess defId=%d, defVersion=%d, publishedVersionId=%d, bindingWorkflowId=%d, bindingsCount=%d, bindings=%s",
+                definition.getId(), definition.getVersion(), definition.getPublishedVersionId(),
+                bindingWorkflowId, bindings.size(), bindings));
+        if (!bindings.isEmpty()) {
+            instance.setFormId(bindings.get(0).getFormId());
+            AgentLogger.bug("bug-formId-zero.log",
+                String.format("formId set from binding: %d", bindings.get(0).getFormId()));
+        } else {
+            instance.setFormId(0L);
+            AgentLogger.bug("bug-formId-zero.log", "WARN: no binding found, formId set to 0");
+        }
+
         instance.setStatus("RUNNING");
         instance.setFormData(formDataJson);
         instance.setInitiatorId(initiatorId);
@@ -132,17 +153,39 @@ public class ProcessEngine {
         if ("all_pass".equals(task.getCollaborationMode()) || "ratio_pass".equals(task.getCollaborationMode())) {
             Set<Long> completed = parseIdSet(task.getCompletedAssigneeIds());
             completed.add(operatorId);
-            task.setCompletedAssigneeIds(objectMapper.valueToTree(new ArrayList<>(completed)).toString());
+            String completedJson = objectMapper.valueToTree(new ArrayList<>(completed)).toString();
+            task.setCompletedAssigneeIds(completedJson);
 
             Set<Long> allAssignees = parseIdSet(task.getAllAssigneeIds());
             if ("all_pass".equals(task.getCollaborationMode())) {
+                List<WorkflowTask> siblings = workflowTaskRepository.findByInstanceIdAndNodeId(instance.getId(), task.getNodeId());
                 if (completed.size() < allAssignees.size()) {
                     task.setStatus("PROCESSING");
-                    workflowTaskRepository.save(task);
+                    for (WorkflowTask s : siblings) {
+                        if (!s.getId().equals(task.getId())) {
+                            s.setCompletedAssigneeIds(completedJson);
+                        }
+                    }
+                    workflowTaskRepository.saveAll(siblings);
                     recordHistory(instance.getId(), task.getId(), task.getNodeId(), action,
                             operatorId, comment, null, null, null);
                     return task;
                 }
+                // 所有人都完成了，同步所有兄弟任务为 COMPLETED
+                WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
+                        .orElseThrow(() -> new RuntimeException("流程定义不存在"));
+                for (WorkflowTask s : siblings) {
+                    s.setCompletedAssigneeIds(completedJson);
+                    s.setStatus("COMPLETED");
+                    s.setAction(action);
+                    s.setCompletedAt(LocalDateTime.now());
+                }
+                workflowTaskRepository.saveAll(siblings);
+                recordHistory(instance.getId(), task.getId(), task.getNodeId(), action,
+                        operatorId, comment, null, null, null);
+                createTasksForNextNodes(definition, instance, task.getNodeId(), instance.getFormData());
+                checkAndCompleteInstance(instance);
+                return task;
             }
             if ("ratio_pass".equals(task.getCollaborationMode())) {
                 WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
@@ -1006,7 +1049,8 @@ public class ProcessEngine {
         switch (approverType) {
             case "member": {
                 @SuppressWarnings("unchecked")
-                List<Object> ids = (List<Object>) config.getOrDefault("memberIds", Collections.emptyList());
+                List<Object> ids = (List<Object>) config.getOrDefault("approverIds",
+                        config.getOrDefault("memberIds", Collections.emptyList()));
                 return ids.stream().map(id -> Long.valueOf(id.toString())).collect(Collectors.toList());
             }
             case "role": {
@@ -1210,10 +1254,38 @@ public class ProcessEngine {
     private List<NodeDef> parseNodes(String nodesJson) {
         try {
             if (nodesJson == null || nodesJson.isEmpty()) return Collections.emptyList();
-            return objectMapper.readValue(nodesJson, new TypeReference<List<NodeDef>>() {});
+            List<Map<String, Object>> rawNodes = objectMapper.readValue(nodesJson,
+                    new TypeReference<List<Map<String, Object>>>() {});
+            List<NodeDef> result = rawNodes.stream().map(raw -> {
+                NodeDef node = new NodeDef();
+                node.nodeId = (String) raw.getOrDefault("id", raw.get("nodeId"));
+                node.position = castMap(raw.get("position"));
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) raw.get("data");
+                if (data != null) {
+                    node.nodeType = (String) data.getOrDefault("nodeType", raw.get("type"));
+                    node.nodeName = (String) data.get("label");
+                    node.config = castMap(data.get("config"));
+                }
+                if (node.nodeType == null) {
+                    node.nodeType = (String) raw.get("type");
+                }
+                if (node.config == null) {
+                    node.config = castMap(raw.get("config"));
+                }
+                return node;
+            }).collect(Collectors.toList());
+
+            return result;
         } catch (Exception e) {
+            log.warn("Failed to parse nodes: {}", e.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castMap(Object obj) {
+        return obj instanceof Map ? (Map<String, Object>) obj : null;
     }
 
     private List<EdgeDef> parseEdges(String edgesJson) {

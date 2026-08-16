@@ -3,6 +3,7 @@ package com.luban.workflow.service;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.repository.ApplicationRepository;
+import com.luban.util.AgentLogger;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -21,11 +22,10 @@ public class ProcessService {
     private final WorkflowInstanceRepository workflowInstanceRepository;
     private final WorkflowTaskRepository workflowTaskRepository;
     private final WorkflowHistoryRepository workflowHistoryRepository;
-    private final FormDefinitionRepository formDefinitionRepository;
-    private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
     private final DepartmentRepository departmentRepository;
+    private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final ProcessEngine processEngine;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -72,10 +72,29 @@ public class ProcessService {
         }
         validateNodeConfig(draft.getNodes());
 
+        Long oldPublishedId = draft.getPublishedVersionId();
+        if (oldPublishedId != null) {
+            workflowDefinitionRepository.findById(oldPublishedId)
+                    .ifPresent(prev -> {
+                        prev.setStatus("ARCHIVED");
+                        workflowDefinitionRepository.save(prev);
+                    });
+        }
+
         int publishedVersion = draft.getVersion();
         draft.setStatus("PUBLISHED");
-        draft.setFormSnapshot(snapshotForm(draft.getId()));
+        draft.setPublishedVersionId(null);
         draft = workflowDefinitionRepository.save(draft);
+
+        List<FormWorkflowBinding> bindings = new ArrayList<>();
+        bindings.addAll(formWorkflowBindingRepository.findByWorkflowId(id));
+        if (oldPublishedId != null) {
+            bindings.addAll(formWorkflowBindingRepository.findByWorkflowId(oldPublishedId));
+        }
+        for (FormWorkflowBinding binding : bindings) {
+            binding.setWorkflowId(draft.getId());
+            formWorkflowBindingRepository.save(binding);
+        }
 
         WorkflowDefinition newDraft = new WorkflowDefinition();
         newDraft.setName(draft.getName());
@@ -94,31 +113,19 @@ public class ProcessService {
         return draft;
     }
 
-    private String snapshotForm(Long workflowId) {
-        List<FormWorkflowBinding> bindings = formWorkflowBindingRepository.findByWorkflowId(workflowId);
-        if (bindings.isEmpty()) return null;
-        Long formId = bindings.get(0).getFormId();
-        return formDefinitionRepository.findById(formId)
-                .map(form -> {
-                    try {
-                        Map<String, Object> snapshot = new LinkedHashMap<>();
-                        snapshot.put("id", form.getId());
-                        snapshot.put("name", form.getName());
-                        snapshot.put("fields", form.getFields());
-                        return objectMapper.writeValueAsString(snapshot);
-                    } catch (Exception e) {
-                        log.warn("表单快照创建失败: workflowId={}, formId={}", workflowId, formId, e);
-                        return null;
-                    }
-                })
-                .orElse(null);
-    }
-
     private void populateAppNames(List<WorkflowInstance> instances) {
         if (instances == null || instances.isEmpty()) return;
         for (WorkflowInstance inst : instances) {
             applicationRepository.findById(inst.getApplicationId())
                     .ifPresent(app -> inst.setApplicationName(app.getName()));
+        }
+    }
+
+    private void populateInitiatorNames(List<WorkflowInstance> instances) {
+        if (instances == null || instances.isEmpty()) return;
+        for (WorkflowInstance inst : instances) {
+            memberRepository.findById(inst.getInitiatorId())
+                    .ifPresent(member -> inst.setInitiatorName(member.getName()));
         }
     }
 
@@ -130,6 +137,36 @@ public class ProcessService {
         }
     }
 
+    private void populateTaskNodeNames(List<WorkflowTask> tasks) {
+        if (tasks == null || tasks.isEmpty()) return;
+        for (WorkflowTask task : tasks) {
+            try {
+                WorkflowInstance instance = workflowInstanceRepository.findById(task.getInstanceId()).orElse(null);
+                if (instance == null) continue;
+                WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId()).orElse(null);
+                if (definition == null) continue;
+                List<Map<String, Object>> nodes = objectMapper.readValue(
+                        definition.getNodes(),
+                        new TypeReference<List<Map<String, Object>>>() {});
+                for (Map<String, Object> node : nodes) {
+                    if (task.getNodeId().equals(node.get("id"))) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> data = (Map<String, Object>) node.get("data");
+                        if (data != null) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> config = (Map<String, Object>) data.get("config");
+                            if (config != null) {
+                                task.setNodeName((String) config.get("nodeName"));
+                            }
+                        }
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     @Transactional
     public WorkflowDefinition unpublishDefinition(Long id) {
         WorkflowDefinition definition = getDefinition(id);
@@ -138,10 +175,12 @@ public class ProcessService {
         }
 
         WorkflowDefinition draft = getDraftForPublished(definition);
-        draft.setPublishedVersionId(null);
-        workflowDefinitionRepository.save(draft);
+        if (draft != null) {
+            draft.setPublishedVersionId(null);
+            workflowDefinitionRepository.save(draft);
+        }
 
-        definition.setStatus("ARCHIVED");
+        definition.setStatus("DRAFT");
         return workflowDefinitionRepository.save(definition);
     }
 
@@ -151,7 +190,7 @@ public class ProcessService {
         return drafts.stream()
                 .filter(d -> published.getId().equals(d.getPublishedVersionId()))
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("找不到已发布流程对应的草稿版本"));
+                .orElse(null);
     }
 
     @Transactional
@@ -202,23 +241,41 @@ public class ProcessService {
     }
 
     public List<WorkflowInstance> listInstancesByApp(Long applicationId) {
-        return workflowInstanceRepository.findByWorkflowIdIn(
+        List<WorkflowInstance> instances = workflowInstanceRepository.findByWorkflowIdIn(
                 workflowDefinitionRepository.findByApplicationId(applicationId)
                         .stream().map(WorkflowDefinition::getId).toList());
+        populateInitiatorNames(instances);
+        return instances;
     }
 
     public WorkflowInstance getInstance(Long id) {
-        return workflowInstanceRepository.findById(id)
+        WorkflowInstance instance = workflowInstanceRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + id));
+        populateInitiatorNames(List.of(instance));
+        AgentLogger.bug("bug-formId-zero.log",
+            String.format("getInstance id=%d, workflowId=%d, formId=%d, formData=%s",
+                id, instance.getWorkflowId(), instance.getFormId(), instance.getFormData()));
+        return instance;
     }
 
     public List<WorkflowHistory> getInstanceHistory(Long instanceId) {
-        return workflowHistoryRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
+        List<WorkflowHistory> histories = workflowHistoryRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
+        populateHistoryOperatorNames(histories);
+        return histories;
+    }
+
+    private void populateHistoryOperatorNames(List<WorkflowHistory> histories) {
+        if (histories == null || histories.isEmpty()) return;
+        for (WorkflowHistory h : histories) {
+            memberRepository.findById(h.getOperatorId())
+                    .ifPresent(member -> h.setOperatorName(member.getName()));
+        }
     }
 
     public List<WorkflowTask> getPendingTasks(Long userId) {
         List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeIdAndStatus(userId, "PENDING");
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
@@ -230,6 +287,7 @@ public class ProcessService {
             tasks = getPendingTasks(userId);
         }
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
@@ -245,12 +303,14 @@ public class ProcessService {
             tasks = getPendingTasks(userId, applicationId);
         }
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
     public List<WorkflowTask> getCompletedTasks(Long userId) {
         List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeId(userId);
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
@@ -262,6 +322,7 @@ public class ProcessService {
             tasks = getCompletedTasks(userId);
         }
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
@@ -269,14 +330,15 @@ public class ProcessService {
         List<WorkflowTask> tasks;
         if (isTest != null) {
             if (applicationId != null) {
-                tasks = workflowTaskRepository.findByAssigneeIdAndApplicationIdAndIsTest(userId, applicationId, isTest);
+                tasks = workflowTaskRepository.findCompletedByAssigneeIdAndApplicationIdAndIsTest(userId, applicationId, isTest);
             } else {
-                tasks = workflowTaskRepository.findByAssigneeIdAndIsTest(userId, isTest);
+                tasks = workflowTaskRepository.findCompletedByAssigneeIdAndIsTest(userId, isTest);
             }
         } else {
             tasks = getCompletedTasks(userId, applicationId);
         }
         populateTaskAppNames(tasks);
+        populateTaskNodeNames(tasks);
         return tasks;
     }
 
@@ -383,6 +445,11 @@ public class ProcessService {
 
     public WorkflowTask getTask(Long taskId) {
         return processEngine.getTask(taskId);
+    }
+
+    public WorkflowTask getMyTaskForInstance(Long instanceId, Long userId) {
+        List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeIdAndInstanceId(userId, instanceId);
+        return tasks.stream().filter(t -> "PENDING".equals(t.getStatus())).findFirst().orElse(null);
     }
 
     public Map<String, Object> validateWorkflow(Long definitionId) {

@@ -336,6 +336,7 @@ export function AppEditorPage() {
               onQueriesChange={() => {
                 listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
               }}
+              onWorkflowNavigate={handleWorkflowNavigate}
             />
           </div>
         </>

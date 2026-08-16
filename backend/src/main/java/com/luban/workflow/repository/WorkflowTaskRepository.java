@@ -14,6 +14,7 @@ public interface WorkflowTaskRepository extends JpaRepository<WorkflowTask, Long
     List<WorkflowTask> findByAssigneeIdAndApplicationId(Long assigneeId, Long applicationId);
     List<WorkflowTask> findByAssigneeIdAndStatusAndApplicationId(Long assigneeId, String status, Long applicationId);
     List<WorkflowTask> findByInstanceIdAndNodeId(Long instanceId, String nodeId);
+    List<WorkflowTask> findByAssigneeIdAndInstanceId(Long assigneeId, Long instanceId);
     List<WorkflowTask> findByStatusAndDeadlineBefore(String status, LocalDateTime deadline);
     long countByAssigneeIdAndStatus(Long assigneeId, String status);
 
@@ -28,4 +29,10 @@ public interface WorkflowTaskRepository extends JpaRepository<WorkflowTask, Long
 
     @Query("SELECT t FROM WorkflowTask t WHERE t.assigneeId = :assigneeId AND t.applicationId = :applicationId AND t.instanceId IN (SELECT i.id FROM WorkflowInstance i WHERE i.isTest = :isTest)")
     List<WorkflowTask> findByAssigneeIdAndApplicationIdAndIsTest(@Param("assigneeId") Long assigneeId, @Param("applicationId") Long applicationId, @Param("isTest") Boolean isTest);
+
+    @Query("SELECT t FROM WorkflowTask t WHERE t.assigneeId = :assigneeId AND t.status <> 'PENDING' AND t.instanceId IN (SELECT i.id FROM WorkflowInstance i WHERE i.isTest = :isTest)")
+    List<WorkflowTask> findCompletedByAssigneeIdAndIsTest(@Param("assigneeId") Long assigneeId, @Param("isTest") Boolean isTest);
+
+    @Query("SELECT t FROM WorkflowTask t WHERE t.assigneeId = :assigneeId AND t.status <> 'PENDING' AND t.applicationId = :applicationId AND t.instanceId IN (SELECT i.id FROM WorkflowInstance i WHERE i.isTest = :isTest)")
+    List<WorkflowTask> findCompletedByAssigneeIdAndApplicationIdAndIsTest(@Param("assigneeId") Long assigneeId, @Param("applicationId") Long applicationId, @Param("isTest") Boolean isTest);
 }

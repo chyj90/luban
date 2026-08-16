@@ -187,16 +187,6 @@
   color: #a0aec0;
 }
 
-.apphub-card-tag-unpublished {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #fff7e6;
-  color: #fa8c16;
-  margin-left: 8px;
-  font-weight: 500;
-}
-
 .apphub-card-actions {
   display: flex;
   gap: 6px;

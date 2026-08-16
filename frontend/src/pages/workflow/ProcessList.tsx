@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { WorkflowDefinition, FormWorkflowBinding } from '../../types/workflow';
 import { workflowApi, formApi, bindingApi } from '../../api/workflow';
+import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './ProcessList.module.css';
 
@@ -45,7 +46,17 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
 
   const filtered = definitions.filter((d) =>
     !search || d.name.toLowerCase().includes(search.toLowerCase())
-  );
+  // 过滤掉已发布流程自动生成的草稿（publishedVersionId 不为空说明是发布后自动创建的草稿）
+  ).filter((d) => !(d.status === 'DRAFT' && d.publishedVersionId != null))
+    .filter((d) => d.status !== 'ARCHIVED');
+
+  const getEditId = (def: typeof definitions[0]) => {
+    if (def.status === 'PUBLISHED') {
+      const draft = definitions.find(d => d.status === 'DRAFT' && d.publishedVersionId === def.id);
+      if (draft) return draft.id;
+    }
+    return def.id;
+  };
 
   const statusBadge = (status: string) => {
     switch (status) {
@@ -229,19 +240,20 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
                     <td className={styles.cellActions}>
                       <button
                         className={styles.actionBtn}
-                        onClick={() => goTo({ view: 'designer', processId: def.id })}
+                        onClick={() => goTo({ view: 'designer', processId: getEditId(def) })}
                       >
                         {def.status === 'DRAFT' ? '编辑' : '查看'}
                       </button>
                       {def.status === 'DRAFT' && (
                         <button
                           className={styles.actionBtnPrimary}
-                          onClick={() => {
-                            if (!window.confirm(
-                              `确认发布流程「${def.name}」？\n\n` +
-                              `版本: v${def.version}\n` +
-                              `发布后，所有用户将可使用此版本发起流程。`
-                            )) return;
+                          onClick={async () => {
+                            const confirmed = await confirm({
+                              title: '发布流程',
+                              message: `确认发布流程「${def.name}」？\n\n版本: v${def.version}\n发布后，所有用户将可使用此版本发起流程。`,
+                              confirmText: '发布',
+                            });
+                            if (!confirmed) return;
                             workflowApi.publishDefinition(def.id).then(() => {
                               setDefinitions((prev) =>
                                 prev.map((d) =>
@@ -272,8 +284,14 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
                       )}
                       <button
                         className={styles.actionBtnDanger}
-                        onClick={() => {
-                          if (confirm('确认删除该流程？')) {
+                        onClick={async () => {
+                          const confirmed = await confirm({
+                            title: '删除流程',
+                            message: '确认删除该流程？',
+                            confirmText: '删除',
+                            variant: 'danger',
+                          });
+                          if (confirmed) {
                             workflowApi.deleteDefinition(def.id).then(() => {
                               setDefinitions((prev) => prev.filter((d) => d.id !== def.id));
                             });

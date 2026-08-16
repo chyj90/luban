@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLoadingStore } from '../../stores/loadingStore';
+import { useImpersonationStore } from '../../stores/impersonationStore';
 import type { WorkflowTask, WorkflowInstance, WorkflowDefinition } from '../../types/workflow';
 import { taskApi, instanceApi } from '../../api/workflow';
 import { isImpersonating } from '../../utils/impersonation';
+import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './MyWorkflow.module.css';
 
@@ -24,12 +26,21 @@ const BASE_TABS: { key: TabKey; label: string }[] = [
 
 export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: MyWorkflowProps = {}) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const setGlobalLoading = useLoadingStore((s) => s.setLoading);
   const hasStartTab = !!workflows;
-  const [tab, setTab] = useState<TabKey>(hasStartTab ? 'start' : 'initiated');
+  const defaultTab: TabKey = hasStartTab ? 'start' : 'initiated';
+  const tabFromUrl = searchParams.get('tab') as TabKey | null;
+  const tab: TabKey = tabFromUrl && ['start', 'initiated', 'pending', 'processed'].includes(tabFromUrl) ? tabFromUrl : defaultTab;
+  const setTab = (t: TabKey) => {
+    setSearchParams({ tab: t }, { replace: true });
+  };
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const showTest = embedded ? isImpersonating() : false;
+  const impersonationVersion = useImpersonationStore((s) => s.version);
 
   useEffect(() => {
     setGlobalLoading(loading);
@@ -50,17 +61,17 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
     }
     setLoading(true);
     if (tab === 'initiated') {
-      instanceApi.list({ isTest: isImpersonating() ? true : false })
+      instanceApi.list({ isTest: showTest })
         .then(setInstances)
         .catch(console.error)
         .finally(() => setLoading(false));
     } else {
-      taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'COMPLETED', isTest: isImpersonating() ? true : false })
+      taskApi.list({ status: tab === 'pending' ? 'PENDING' : 'completed', isTest: showTest })
         .then(setTasks)
         .catch(console.error)
         .finally(() => setLoading(false));
     }
-  }, [tab]);
+  }, [tab, showTest, impersonationVersion]);
 
   const statusBadge = (status: string) => {
     const map: Record<string, { label: string; className: string }> = {
@@ -125,7 +136,7 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                     className={styles.startCardBtn}
                     onClick={() => {
                       const targetAppId = appId || wf.applicationId;
-                      navigate(`/workflow/designer?processId=${wf.id}&mode=start&appId=${targetAppId}`);
+                      navigate(`/apps/${targetAppId}/designer?processId=${wf.id}&mode=start`);
                     }}
                   >
                     发起
@@ -160,7 +171,8 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>流程名称</th>
+                    <th className={styles.cellCenter}>流程名称</th>
+                    <th className={styles.cellId}>实例ID</th>
                     <th className={styles.cellCenter}>应用</th>
                     <th className={styles.cellCenter}>当前节点</th>
                     <th className={styles.cellCenter}>状态</th>
@@ -171,8 +183,11 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                 <tbody>
                   {instances.map((inst) => (
                     <tr key={inst.id} className={inst.isTest ? styles.testRow : undefined}>
-                      <td>
+                      <td className={styles.cellCenter}>
                         <span className={styles.instanceName}>流程 #{inst.workflowId}</span>
+                      </td>
+                      <td className={styles.cellId}>
+                        <code className={styles.idCode}>#{inst.id}</code>
                       </td>
                       <td className={styles.cellCenter}>
                         <span
@@ -199,7 +214,13 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                             className={styles.actionBtnDanger}
                             onClick={async (e) => {
                               e.stopPropagation();
-                              if (!window.confirm('确定要撤销该流程吗？')) return;
+                              const confirmed = await confirm({
+                                title: '撤销流程',
+                                message: '确定要撤销该流程吗？',
+                                confirmText: '撤销',
+                                variant: 'danger',
+                              });
+                              if (!confirmed) return;
                               await instanceApi.cancel(inst.id);
                               setInstances((prev) =>
                                 prev.map((i) =>
@@ -237,7 +258,8 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>任务节点</th>
+                    <th className={styles.cellCenter}>任务节点</th>
+                    <th className={styles.cellId}>实例ID</th>
                     <th className={styles.cellCenter}>应用</th>
                     <th className={styles.cellCenter}>类型</th>
                     <th className={styles.cellCenter}>状态</th>
@@ -249,8 +271,11 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                 <tbody>
                   {tasks.map((task) => (
                     <tr key={task.id}>
-                      <td>
-                        <span className={styles.instanceName}>{task.nodeId}</span>
+                      <td className={styles.cellCenter}>
+                        <span className={styles.instanceName}>{task.nodeName || task.nodeId}</span>
+                      </td>
+                      <td className={styles.cellId}>
+                        <code className={styles.idCode}>#{task.instanceId}</code>
                       </td>
                       <td className={styles.cellCenter}>
                         <span

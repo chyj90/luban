@@ -497,6 +497,53 @@
   stroke: #ff4d4f;
 }
 
+/* Debug Menu */
+.ap-debug-wrap {
+  position: relative;
+}
+
+.ap-debug-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  min-width: 240px;
+  overflow: hidden;
+}
+
+.ap-debug-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: #333;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ap-debug-item svg {
+  flex-shrink: 0;
+  color: #8c9cab;
+}
+
+.ap-debug-item:hover {
+  background: #f5f5f5;
+}
+
+.ap-debug-item + .ap-debug-item {
+  border-top: 1px solid #f0f0f0;
+}
+
 /* Tabs */
 .ap-tabs {
   display: flex;

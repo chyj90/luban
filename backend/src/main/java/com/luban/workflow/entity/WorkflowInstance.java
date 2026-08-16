@@ -18,6 +18,9 @@ public class WorkflowInstance {
     @Transient
     private String applicationName;
 
+    @Transient
+    private String initiatorName;
+
     @Column(nullable = false)
     private Long workflowId;
 

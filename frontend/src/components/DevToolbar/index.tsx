@@ -26,7 +26,7 @@ export function DevToolbar({ appId, onTestUserChange }: DevToolbarProps) {
   const bump = useImpersonationStore((s) => s.bump);
 
   useEffect(() => {
-    workflowApi.listDefinitions({ applicationId: appId }).then(defs => {
+    workflowApi.listDefinitions({ applicationId: appId, status: 'DRAFT' }).then(defs => {
       setDefinitions(defs);
     });
     get<TestUser[]>(`/applications/${appId}/impersonatable-users`).then(res => {

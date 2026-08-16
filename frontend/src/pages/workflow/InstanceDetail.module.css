@@ -1,4 +1,6 @@
 .page {
+  max-width: 980px;
+  margin: 0 auto;
   padding: 40px 16px;
 }
 
@@ -54,23 +56,21 @@
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   border: 1px solid #e5e7eb;
-  padding: 20px 24px;
+  padding: 16px 24px;
   margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
 }
 
 .infoRow {
   display: flex;
   align-items: center;
-  padding: 10px 0;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.infoRow:last-child {
-  border-bottom: none;
+  gap: 8px;
 }
 
 .infoLabel {
-  width: 100px;
   font-size: 13px;
   color: #6b7280;
   flex-shrink: 0;
@@ -137,7 +137,243 @@
   font-size: 16px;
   font-weight: 600;
   color: #111827;
+  margin: 0 0 4px;
+}
+
+.sectionDesc {
+  font-size: 13px;
+  color: #6b7280;
   margin: 0 0 16px;
+}
+
+/* Form Data */
+.formDataCard {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+  padding: 24px;
+}
+
+/* Approval Bar */
+.approvalBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: linear-gradient(135deg, #1677ff 0%, #0958d9 100%);
+  box-shadow: 0 2px 12px rgba(22, 119, 255, 0.3);
+}
+
+.approvalBarInner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 8px 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  box-sizing: border-box;
+}
+
+.approvalBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.approvalBarRight {
+  display: flex;
+  gap: 10px;
+}
+
+.approveBtnSm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 18px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  backdrop-filter: blur(4px);
+}
+
+.approveBtnSm:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.rejectBtnSm {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 18px;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.rejectBtnSm:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Overlay & Dialog */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dialog {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+  width: 440px;
+  max-width: 90vw;
+  padding: 0;
+  animation: slideUp 0.2s ease;
+  overflow: hidden;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.dialogHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 24px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.dialogBody {
+  padding: 12px 24px 20px;
+}
+
+.dialogHint {
+  font-size: 14px;
+  color: #5a6a7e;
+  margin: 0 0 14px;
+  line-height: 1.6;
+}
+
+.dialogTextarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid #e8edf3;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  background: #fafbfc;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  line-height: 1.6;
+}
+
+.dialogTextarea:focus {
+  border-color: #1677ff;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.08);
+}
+
+.dialogFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 24px 20px;
+}
+
+.dialogCancel {
+  padding: 8px 20px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #5a6a7e;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dialogCancel:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.dialogApprove {
+  padding: 8px 24px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #1677ff 0%, #4096ff 100%);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(22, 119, 255, 0.25);
+}
+
+.dialogApprove:hover {
+  box-shadow: 0 4px 14px rgba(22, 119, 255, 0.35);
+}
+
+.dialogApprove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dialogReject {
+  padding: 8px 24px;
+  border: none;
+  border-radius: 8px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.25);
+}
+
+.dialogReject:hover {
+  background: #dc2626;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);
+}
+
+.dialogReject:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Timeline */

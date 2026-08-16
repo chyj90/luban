@@ -26,24 +26,30 @@ public class TestDataService {
 
     @Transactional
     public void ensureGlobalOrgData() {
-        if (memberRepository.count() > 0) {
-            return;
+        List<Member> existing = memberRepository.findAll();
+        if (!existing.isEmpty()) {
+            boolean allExist = List.of("周九", "张三", "李四", "赵六", "王五", "孙七", "钱八").stream()
+                    .allMatch(name -> existing.stream().anyMatch(m -> name.equals(m.getName())));
+            if (allExist) {
+                return;
+            }
+            log.info("检测到成员数据不完整，补齐缺失成员...");
         }
 
         log.info("初始化全局测试组织数据（部门、成员）...");
 
-        Department deptExecutive = createDepartment("总经办", null, null);
-        Department deptTech = createDepartment("技术部", null, null);
-        Department deptFinance = createDepartment("财务部", null, null);
-        Department deptHr = createDepartment("人事部", null, null);
+        Department deptExecutive = getOrCreateDepartment("总经办");
+        Department deptTech = getOrCreateDepartment("技术部");
+        Department deptFinance = getOrCreateDepartment("财务部");
+        Department deptHr = getOrCreateDepartment("人事部");
 
-        Member zhou = createMember("周九", "zhou@luban.local", "13800007777", deptExecutive.getId(), "CEO", "E001", null);
-        Member zhang = createMember("张三", "zhang@luban.local", "13800001111", deptTech.getId(), "技术总监", "T001", zhou.getId());
-        Member li = createMember("李四", "li@luban.local", "13800002222", deptFinance.getId(), "财务经理", "F001", zhou.getId());
-        Member zhao = createMember("赵六", "zhao@luban.local", "13800004444", deptHr.getId(), "HR 总监", "H001", zhou.getId());
-        Member wang = createMember("王五", "wang@luban.local", "13800003333", deptTech.getId(), "高级工程师", "T002", zhang.getId());
-        Member sun = createMember("孙七", "sun@luban.local", "13800005555", deptFinance.getId(), "会计", "F002", li.getId());
-        Member qian = createMember("钱八", "qian@luban.local", "13800006666", deptHr.getId(), "HR 专员", "H002", zhao.getId());
+        Member zhou = getOrCreateMember("周九", "zhou@luban.local", "13800007777", deptExecutive.getId(), "CEO", "E001", null);
+        Member zhang = getOrCreateMember("张三", "zhang@luban.local", "13800001111", deptTech.getId(), "技术总监", "T001", zhou.getId());
+        Member li = getOrCreateMember("李四", "li@luban.local", "13800002222", deptFinance.getId(), "财务经理", "F001", zhou.getId());
+        Member zhao = getOrCreateMember("赵六", "zhao@luban.local", "13800004444", deptHr.getId(), "HR 总监", "H001", zhou.getId());
+        getOrCreateMember("王五", "wang@luban.local", "13800003333", deptTech.getId(), "高级工程师", "T002", zhang.getId());
+        getOrCreateMember("孙七", "sun@luban.local", "13800005555", deptFinance.getId(), "会计", "F002", li.getId());
+        getOrCreateMember("钱八", "qian@luban.local", "13800006666", deptHr.getId(), "HR 专员", "H002", zhao.getId());
 
         deptExecutive.setManagerId(zhou.getId());
         deptTech.setManagerId(zhang.getId());
@@ -65,11 +71,8 @@ public class TestDataService {
 
         log.info("初始化应用 {} 的测试角色数据...", applicationId);
 
+        ensureGlobalOrgData();
         List<Member> members = memberRepository.findAll();
-        if (members.isEmpty()) {
-            ensureGlobalOrgData();
-            members = memberRepository.findAll();
-        }
 
         Member li = findMember(members, "李四");
         Member sun = findMember(members, "孙七");
@@ -99,6 +102,21 @@ public class TestDataService {
                 .filter(m -> name.equals(m.getName()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("测试成员不存在: " + name));
+    }
+
+    private Department getOrCreateDepartment(String name) {
+        return departmentRepository.findAll().stream()
+                .filter(d -> name.equals(d.getName()))
+                .findFirst()
+                .orElseGet(() -> createDepartment(name, null, null));
+    }
+
+    private Member getOrCreateMember(String name, String email, String mobile,
+                                      Long departmentId, String position, String employeeNo, Long leaderId) {
+        return memberRepository.findAll().stream()
+                .filter(m -> name.equals(m.getName()))
+                .findFirst()
+                .orElseGet(() -> createMember(name, email, mobile, departmentId, position, employeeNo, leaderId));
     }
 
     private Department createDepartment(String name, String path, String externalId) {

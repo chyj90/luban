@@ -2,9 +2,10 @@ import type { ToolDefinition, ToolContext, ToolExecuteResult } from '@/types/age
 import { createPageTools } from './pageTools';
 import { createCodePageTools } from './codePageTools';
 import { createObservationTools } from './observationTools';
-import { createFindQueryTool } from './findQueryTool';
+import { createDelegateQueryTool } from './findQueryTool';
 import { createFindWorkflowTool } from './findWorkflowTool';
-import { planSkill } from '../skills';
+import { createFindAnalysisTool } from './findAnalysisTool';
+import { getRequirementTools } from './requirementTools';
 import type { ChatRouter } from '../core/chatRouter';
 
 export type { ToolDefinition, ToolContext, ToolExecuteResult };
@@ -14,9 +15,10 @@ export function createInteliTools(context: ToolContext, chatRouter?: ChatRouter)
     ...createPageTools(context),
     ...createCodePageTools(context),
     ...createObservationTools(context),
-    ...planSkill.getTools(),
+    ...getRequirementTools(),
     ...(chatRouter ? [
-      createFindQueryTool(context, chatRouter),
+      createFindAnalysisTool(context, chatRouter),
+      createDelegateQueryTool(context, chatRouter),
       createFindWorkflowTool(context, chatRouter),
     ] : []),
   ];

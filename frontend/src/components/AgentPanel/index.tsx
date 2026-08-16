@@ -8,7 +8,7 @@ import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { getSubPlans } from '@/agent/core/planContext';
-import { upsertPlanMessage } from '@/agent/skills/planSkill';
+import { upsertPlanMessage } from '@/agent/tools/requirementTools';
 import { listPages } from '@/api';
 import type { ProviderType, Plan } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
@@ -71,6 +71,7 @@ interface AgentPanelProps {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 }
 
 type TabView = 'chat' | 'plan' | 'settings';
@@ -116,7 +117,7 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
             </div>
           </details>
         )}
-        {msg.role === 'assistant' || msg.role === 'plan' ? (
+        {msg.toolCalls && msg.toolCalls.length > 0 ? null : msg.role === 'assistant' || msg.role === 'plan' ? (
           <ReactMarkdown>{msg.content}</ReactMarkdown>
         ) : (
           <div className="ap-message-text">{msg.content}</div>
@@ -220,7 +221,7 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   return lines.join('\n');
 }
 
-export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange }: AgentPanelProps) {
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onWorkflowNavigate }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<TabView>('chat');
@@ -233,10 +234,35 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const [mentionIndex, setMentionIndex] = useState(0);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [tokenUsage, setTokenUsage] = useState<{ inputTokens: number; outputTokens: number; totalTokens: number } | null>(null);
+  const [showDebugMenu, setShowDebugMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isUserAtBottomRef = useRef(true);
+  const lastScrollTimeRef = useRef(0);
   const chatRouterRef = useRef<ChatRouter | null>(null);
+  const lastApiMessagesRef = useRef<any[]>([]);
+
+  const getDebugLogKey = () => `debug_chat_log_${appId}`;
+
+  const loadDebugLog = () => {
+    try {
+      const stored = localStorage.getItem(getDebugLogKey());
+      if (stored) {
+        lastApiMessagesRef.current = JSON.parse(stored);
+      }
+    } catch {
+      // ignore parse error
+    }
+  };
+
+  const saveDebugLog = (messages: any[]) => {
+    lastApiMessagesRef.current = messages;
+    try {
+      localStorage.setItem(getDebugLogKey(), JSON.stringify(messages));
+    } catch {
+      // ignore storage full
+    }
+  };
 
   const {
     messages,
@@ -277,21 +303,31 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   }, [appId]);
 
   useEffect(() => {
+    loadDebugLog();
+  }, [appId]);
+
+  useEffect(() => {
     if (isUserAtBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      const now = Date.now();
+      if (now - lastScrollTimeRef.current < 100) return;
+      lastScrollTimeRef.current = now;
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      });
     }
   }, [messages]);
 
   const dispatchEvent = (event: { type: string; payload: unknown }) => {
     console.log(`[AgentPanel] dispatch 收到事件: ${event.type}`);
     switch (event.type) {
-      case 'FIND_QUERY_START': {
-        const payload = event.payload as { taskType: string; targetPage: string; requirements: string[] };
-        console.log(`[AgentPanel] FIND_QUERY_START | targetPage=${payload.targetPage} | requirements=${payload.requirements?.length}条`);
+      case 'DELEGATE_QUERY_START': {
+        const payload = event.payload as { taskType: string; targetPage: string; queryName: string; requirement: string };
+        console.log(`[AgentPanel] DELEGATE_QUERY_START | queryName=${payload.queryName} | targetPage=${payload.targetPage}`);
+        const displayName = payload.queryName || '查询';
         addMessage({
           id: crypto.randomUUID(),
           role: 'system',
-          content: `数据辅助智能体正在为「${payload.targetPage}」创建查询...`,
+          content: payload.queryName ? `数据辅助智能体正在处理查询「${payload.queryName}」...` : '数据辅助智能体正在处理查询任务...',
           timestamp: Date.now(),
           agentId: 'data-assistant',
           agentName: '数据辅助智能体',
@@ -299,9 +335,38 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         });
         break;
       }
-      case 'FIND_QUERY_COMPLETE': {
-        const payload = event.payload as { success: boolean; message: string; queries?: Array<{ id: number; name: string }> };
-        console.log(`[AgentPanel] FIND_QUERY_COMPLETE | success=${payload.success} | queries=${payload.queries?.length || 0}`);
+      case 'DELEGATE_QUERY_COMPLETE': {
+        const payload = event.payload as { success: boolean; message: string; query?: { id: number; name: string } };
+        console.log(`[AgentPanel] DELEGATE_QUERY_COMPLETE | success=${payload.success} | query=${payload.query?.name || 'none'}`);
+        if (!payload.success) {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: payload.message,
+            timestamp: Date.now(),
+          });
+        } else {
+          onQueriesChange?.();
+        }
+        break;
+      }
+      case 'FIND_WORKFLOW_START': {
+        const payload = event.payload as { taskType: string; requirements: string[] };
+        console.log(`[AgentPanel] FIND_WORKFLOW_START | taskType=${payload.taskType} | requirements=${payload.requirements?.length}条`);
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `流程设计助手正在处理${payload.taskType === 'design_form' ? '表单' : payload.taskType === 'design_workflow' ? '流程' : ''}设计...`,
+          timestamp: Date.now(),
+          agentId: 'workflow-assistant',
+          agentName: '流程设计助手',
+          agentIcon: '',
+        });
+        break;
+      }
+      case 'FIND_WORKFLOW_COMPLETE': {
+        const payload = event.payload as { success: boolean; message: string };
+        console.log(`[AgentPanel] FIND_WORKFLOW_COMPLETE | success=${payload.success}`);
         if (!payload.success) {
           addMessage({
             id: crypto.randomUUID(),
@@ -319,6 +384,10 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           outputTokens: payload.outputTokens,
           totalTokens: payload.totalTokens,
         });
+        break;
+      }
+      case 'DEBUG_CHAT_LOG': {
+        saveDebugLog(event.payload as any[]);
         break;
       }
     }
@@ -339,7 +408,8 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onPageChange,
     onQuerySelect,
     onQueriesChange,
-  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange]);
+    onWorkflowNavigate,
+  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onWorkflowNavigate]);
 
   const runAgent = async (userMessage: string) => {
     const config = activeConfig || configs[0];
@@ -368,6 +438,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       onPageChange,
       onQuerySelect,
       onQueriesChange,
+      onWorkflowNavigate,
     };
 
     if (!chatRouterRef.current) {
@@ -393,6 +464,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const handleSend = async () => {
     if (!input.trim()) return;
 
+    setError(null);
     const userMsg = input;
     setInput('');
 
@@ -558,6 +630,13 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     })();
   }, []);
 
+  useEffect(() => {
+    if (!showDebugMenu) return;
+    const handler = () => setShowDebugMenu(false);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showDebugMenu]);
+
   const handleSaveConfig = async (provider: ProviderType, baseUrl: string, model: string, apiKey: string) => {
     const store = useLLMStore.getState();
     await store.setApiKey(provider, apiKey);
@@ -667,29 +746,117 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           <span className="ap-title">AI Agent</span>
         </div>
         <div className="ap-header-right">
-          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); chatRouterRef.current = null; }} title="清空对话和计划">
+          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>
           </button>
-          <button className="ap-clear-btn" onClick={() => {
-            const text = formatExport(messages);
-            navigator.clipboard.writeText(text).then(() => {
-              toast.success('已复制到剪贴板');
-            }).catch(() => {
-              const blob = new Blob([text], { type: 'text/markdown' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `agent-session-${Date.now()}.md`;
-              a.click();
-              URL.revokeObjectURL(url);
-            });
-          }} title="导出会话记录">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
-            </svg>
-          </button>
+          <div className="ap-debug-wrap">
+            <button
+              className="ap-clear-btn"
+              onClick={(e) => { e.stopPropagation(); setShowDebugMenu(!showDebugMenu); }}
+              title="调试工具"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+            </button>
+            {showDebugMenu && (
+              <div className="ap-debug-menu" onClick={(e) => e.stopPropagation()}>
+                <button className="ap-debug-item" onClick={() => {
+                  setShowDebugMenu(false);
+                  const text = formatExport(messages);
+                  navigator.clipboard.writeText(text).then(() => {
+                    toast.success('会话记录已复制到剪贴板');
+                  }).catch(() => {
+                    const blob = new Blob([text], { type: 'text/markdown' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `agent-session-${Date.now()}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
+                    <rect x="8" y="2" width="8" height="4" rx="1" />
+                  </svg>
+                  复制会话记录 (Markdown)
+                </button>
+                <button className="ap-debug-item" onClick={() => {
+                  setShowDebugMenu(false);
+                  const apiMessages = lastApiMessagesRef.current;
+                  if (!apiMessages || apiMessages.length === 0) {
+                    toast.error('暂无可复制的调试日志，请先发送消息');
+                    return;
+                  }
+                  const text = JSON.stringify(apiMessages, null, 2);
+                  navigator.clipboard.writeText(text).then(() => {
+                    toast.success('API 调试日志已复制到剪贴板');
+                  }).catch(() => {
+                    const blob = new Blob([text], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `api-debug-${Date.now()}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" />
+                    <line x1="13" y1="19" x2="19" y2="13" />
+                    <line x1="16" y1="16" x2="20" y2="20" />
+                    <line x1="19" y1="21" x2="21" y2="19" />
+                    <polyline points="14.5 6.5 18 3 21 3 21 6 17.5 9.5" />
+                    <line x1="5" y1="14" x2="9" y2="18" />
+                  </svg>
+                  复制 API 调试日志 (JSON)
+                </button>
+                <button className="ap-debug-item" onClick={() => {
+                  setShowDebugMenu(false);
+                  const md = formatExport(messages);
+                  const apiMessages = lastApiMessagesRef.current;
+                  const parts: string[] = [];
+                  parts.push(`# AI Agent 调试日志`);
+                  parts.push(`# 导出时间: ${new Date().toLocaleString()}`);
+                  parts.push('');
+                  parts.push('## 一、会话记录 (Markdown)');
+                  parts.push('');
+                  parts.push(md);
+                  if (apiMessages && apiMessages.length > 0) {
+                    parts.push('');
+                    parts.push('---');
+                    parts.push('');
+                    parts.push('## 二、API 请求消息 (JSON)');
+                    parts.push('');
+                    parts.push('```json');
+                    parts.push(JSON.stringify(apiMessages, null, 2));
+                    parts.push('```');
+                  }
+                  const text = parts.join('\n');
+                  navigator.clipboard.writeText(text).then(() => {
+                    toast.success('全部调试信息已复制到剪贴板');
+                  }).catch(() => {
+                    const blob = new Blob([text], { type: 'text/plain' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `debug-all-${Date.now()}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  });
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                  </svg>
+                  复制全部 (会话记录 + API 日志)
+                </button>
+              </div>
+            )}
+          </div>
           <div className="ap-tabs">
             <button
               className={`ap-tab ${activeTab === 'chat' ? 'active' : ''}`}

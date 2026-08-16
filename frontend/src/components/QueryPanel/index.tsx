@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { listQueries, createQuery, deleteQuery } from '@/api';
 import { listDatasources } from '@/api/datasource';
 import { toast } from '@/stores/toastStore';
+import { confirm } from '@/stores/confirmStore';
 import type { Query } from '@/types/query';
 import type { Datasource } from '@/types/datasource';
 import './QueryPanel.css';
@@ -58,7 +59,13 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect }: Quer
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此查询？')) return;
+    const confirmed = await confirm({
+      title: '删除查询',
+      message: '确定删除此查询？',
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     await deleteQuery(id);
     setQueries(queries.filter((q) => q.id !== id));
     if (selectedQuery?.id === id) onQuerySelect(null);

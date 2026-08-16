@@ -83,19 +83,30 @@ public class ApplicationService {
         defaultCodePage.setPageId(defaultPage.getId());
         defaultCodePage.setHtml("""
                 <div id="app">
-                  <div class="card">
-                    <div class="avatar">🏗️</div>
-                    <h1 class="title">Hello, 鲁班!</h1>
-                    <p class="subtitle">欢迎使用 Inteli 应用构建器</p>
-                    <div class="counter">
-                      <button class="btn btn-minus" id="btn-minus">−</button>
-                      <span class="count" id="count">0</span>
-                      <button class="btn btn-plus" id="btn-plus">+</button>
+                  <div class="welcome">
+                    <div class="brand">LUBAN</div>
+                    <h1>欢迎使用鲁班</h1>
+                    <p class="desc">低代码应用构建平台，通过自然语言对话快速搭建页面、管理数据、设计流程</p>
+                    <div class="features">
+                      <div class="feature">
+                        <div class="feature-icon">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                        </div>
+                        <span>页面构建</span>
+                      </div>
+                      <div class="feature">
+                        <div class="feature-icon">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/></svg>
+                        </div>
+                        <span>数据管理</span>
+                      </div>
+                      <div class="feature">
+                        <div class="feature-icon">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        </div>
+                        <span>流程设计</span>
+                      </div>
                     </div>
-                    <p class="hint">点击上方按钮试试</p>
-                  </div>
-                  <div class="footer">
-                    <span>拖拽组件或直接编写代码来构建你的页面</span>
                   </div>
                 </div>""");
         defaultCodePage.setCss("""
@@ -107,157 +118,87 @@ public class ApplicationService {
 
                 body {
                   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-                  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                  background: #f7f8fa;
                   min-height: 100vh;
                   display: flex;
-                  flex-direction: column;
                   align-items: center;
                   justify-content: center;
                 }
 
                 #app {
+                  width: 100%;
+                  max-width: 520px;
+                  padding: 24px;
+                }
+
+                .welcome {
+                  text-align: center;
+                  padding: 56px 40px;
+                  background: #fff;
+                  border-radius: 12px;
+                  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+                }
+
+                .brand {
+                  font-size: 12px;
+                  font-weight: 700;
+                  letter-spacing: 5px;
+                  color: #1677ff;
+                  margin-bottom: 28px;
+                }
+
+                .welcome h1 {
+                  font-size: 26px;
+                  font-weight: 600;
+                  color: #1e293b;
+                  margin-bottom: 10px;
+                  letter-spacing: -0.5px;
+                }
+
+                .desc {
+                  font-size: 14px;
+                  color: #64748b;
+                  line-height: 1.7;
+                  margin-bottom: 36px;
+                  max-width: 360px;
+                  margin-left: auto;
+                  margin-right: auto;
+                }
+
+                .features {
+                  display: flex;
+                  justify-content: center;
+                  gap: 32px;
+                }
+
+                .feature {
                   display: flex;
                   flex-direction: column;
                   align-items: center;
-                  gap: 24px;
+                  gap: 8px;
+                  color: #94a3b8;
+                  font-size: 12px;
+                  font-weight: 500;
                 }
 
-                .card {
-                  background: #ffffff;
-                  border-radius: 16px;
-                  padding: 48px 40px;
-                  text-align: center;
-                  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
-                  min-width: 320px;
-                  transition: transform 0.2s ease;
-                }
-
-                .card:hover {
-                  transform: translateY(-2px);
-                }
-
-                .avatar {
-                  font-size: 48px;
-                  margin-bottom: 16px;
-                }
-
-                .title {
-                  font-size: 28px;
-                  font-weight: 700;
-                  color: #1e293b;
-                  margin-bottom: 8px;
-                }
-
-                .subtitle {
-                  font-size: 14px;
-                  color: #64748b;
-                  margin-bottom: 32px;
-                }
-
-                .counter {
+                .feature-icon {
                   display: flex;
                   align-items: center;
                   justify-content: center;
-                  gap: 16px;
-                  margin-bottom: 16px;
-                }
-
-                .btn {
                   width: 44px;
                   height: 44px;
-                  border: none;
-                  border-radius: 12px;
-                  font-size: 22px;
-                  font-weight: 600;
-                  cursor: pointer;
-                  transition: all 0.15s ease;
-                  display: flex;
-                  align-items: center;
-                  justify-content: center;
+                  border-radius: 10px;
+                  background: #f1f5f9;
+                  color: #64748b;
+                  transition: background 0.2s, color 0.2s;
                 }
 
-                .btn-minus {
-                  background: #fee2e2;
-                  color: #dc2626;
-                }
-
-                .btn-minus:hover {
-                  background: #fecaca;
-                  transform: scale(1.05);
-                }
-
-                .btn-plus {
-                  background: #dcfce7;
-                  color: #16a34a;
-                }
-
-                .btn-plus:hover {
-                  background: #bbf7d0;
-                  transform: scale(1.05);
-                }
-
-                .count {
-                  font-size: 36px;
-                  font-weight: 700;
-                  color: #1e293b;
-                  min-width: 48px;
-                  transition: color 0.2s ease;
-                }
-
-                .count.negative {
-                  color: #dc2626;
-                }
-
-                .count.positive {
-                  color: #16a34a;
-                }
-
-                .hint {
-                  font-size: 12px;
-                  color: #94a3b8;
-                }
-
-                .footer {
-                  color: rgba(255, 255, 255, 0.8);
-                  font-size: 13px;
+                .feature:hover .feature-icon {
+                  background: #e6f4ff;
+                  color: #1677ff;
                 }""");
         defaultCodePage.setJs("""
-                console.log("Hello, 鲁班!");
-
-                document.addEventListener("DOMContentLoaded", () => {
-                  const countEl = document.getElementById("count");
-                  const btnMinus = document.getElementById("btn-minus");
-                  const btnPlus = document.getElementById("btn-plus");
-                  const title = document.querySelector(".title");
-
-                  let count = 0;
-
-                  function updateCount() {
-                    countEl.textContent = count;
-                    countEl.classList.remove("negative", "positive");
-                    if (count < 0) countEl.classList.add("negative");
-                    else if (count > 0) countEl.classList.add("positive");
-                  }
-
-                  btnMinus.addEventListener("click", () => {
-                    count--;
-                    updateCount();
-                  });
-
-                  btnPlus.addEventListener("click", () => {
-                    count++;
-                    updateCount();
-                  });
-
-                  title.addEventListener("click", () => {
-                    title.textContent = "👋 Hello, Inteli!";
-                    title.style.color = "#7c3aed";
-                    setTimeout(() => {
-                      title.textContent = "Hello, 鲁班!";
-                      title.style.color = "#1e293b";
-                    }, 1500);
-                });
-              });""");
+                console.log("Luban Platform - Default Page");""");
         defaultCodePage.setLibraries("[]");
         defaultCodePage.setQueryIds("[]");
         codePageRepository.save(defaultCodePage);

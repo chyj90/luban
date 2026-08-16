@@ -1,9 +1,9 @@
-import type { ToolDefinition } from '@/types/agent';
+import type { ToolDefinition, Message } from '@/types/agent';
 import { createAgent } from './AgentFactory';
 import type { AgentExecutor, AgentFactoryOptions } from './AgentFactory';
 import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMentions } from '../registry/agentRegistry';
 import type { AgentDefinition } from '../registry/agentRegistry';
-import { createFindQueryTool } from '../tools/findQueryTool';
+import { createDelegateQueryTool } from '../tools/findQueryTool';
 
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
@@ -13,6 +13,7 @@ export type RouterSessionOptions = Pick<
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
 export type RouterCallbacks = {
@@ -30,6 +31,7 @@ export type RouterCallbacks = {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
 export interface RouteRequest {
@@ -130,6 +132,7 @@ export class ChatRouter {
       tools?: ToolDefinition[];
       agentContext?: Record<string, unknown>;
       isDelegated?: boolean;
+      initialMessages?: Message[];
     },
   ): Promise<AgentExecutor> {
     const agentDef = getAgentById(agentId);
@@ -172,6 +175,7 @@ export class ChatRouter {
       systemPrompt?: string;
       tools?: ToolDefinition[];
       agentContext?: Record<string, unknown>;
+      initialMessages?: Message[];
     },
   ): Promise<AgentExecutor> {
     const toolContext = {
@@ -182,11 +186,12 @@ export class ChatRouter {
       onPageChange: this.callbacks.onPageChange || this.sessionOptions.onPageChange,
       onQuerySelect: this.callbacks.onQuerySelect || this.sessionOptions.onQuerySelect,
       onQueriesChange: this.callbacks.onQueriesChange || this.sessionOptions.onQueriesChange,
+      onWorkflowNavigate: this.callbacks.onWorkflowNavigate || this.sessionOptions.onWorkflowNavigate,
     };
 
     const tools = overrides?.tools || agentDef.buildTools(toolContext);
     const finalTools = agentDef.id === 'main-agent'
-      ? [...tools, createFindQueryTool(toolContext, this)]
+      ? [...tools, createDelegateQueryTool(toolContext, this)]
       : tools;
     const systemPrompt = overrides?.systemPrompt || agentDef.buildSystemPrompt({
       applicationId: Number(this.sessionOptions.applicationId),
@@ -217,6 +222,7 @@ export class ChatRouter {
       agentName: agentDef.name,
       agentIcon: agentDef.icon,
       isDelegated: overrides?.isDelegated || false,
+      initialMessages: overrides?.initialMessages,
     });
   }
 }

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApplicationStore } from '@/stores/applicationStore';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/stores/toastStore';
+import { confirm } from '@/stores/confirmStore';
 import { useLoadingStore } from '@/stores/loadingStore';
 import type { Application } from '@/types/application';
 import './AppHubPage.css';
@@ -36,9 +37,15 @@ export function AppHubPage() {
     navigate(`/apps/${app.id}`);
   };
 
-  const handleDeleteApp = (e: React.MouseEvent, appId: number, appName: string) => {
+  const handleDeleteApp = async (e: React.MouseEvent, appId: number, appName: string) => {
     e.stopPropagation();
-    if (window.confirm(`确定要删除应用「${appName}」吗？此操作不可撤销。`)) {
+    const confirmed = await confirm({
+      title: '删除应用',
+      message: `确定要删除应用「${appName}」吗？此操作不可撤销，所有页面和数据将被永久删除。`,
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (confirmed) {
       removeApplication(appId);
       toast.success(`应用「${appName}」已删除`);
     }
@@ -84,9 +91,6 @@ export function AppHubPage() {
         <div className="apphub-card-name">{app.name}</div>
         <div className="apphub-card-meta">
           {app.slug && <span className="apphub-card-slug">{app.slug}</span>}
-          {isOwner && (app.publishedWorkflowCount ?? 0) === 0 && (
-            <span className="apphub-card-tag-unpublished">未发布</span>
-          )}
         </div>
       </div>
       {!isOwner && (

@@ -39,7 +39,6 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
           name: { type: 'string', description: '流程名称' },
           description: { type: 'string', description: '流程描述' },
           applicationId: { type: 'number', description: '应用 ID' },
-          formId: { type: 'number', description: '关联的表单 ID' },
           nodes: {
             type: 'array',
             description: '节点配置列表',
@@ -95,6 +94,9 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
           nodes: JSON.stringify(nodes || []),
           edges: JSON.stringify(edges || []),
         });
+        if (context.onWorkflowNavigate) {
+          context.onWorkflowNavigate({ view: 'designer', processId: result.id });
+        }
         return { success: true, data: result };
       },
     },
@@ -156,6 +158,9 @@ export function createWorkflowTools(context: ToolContext): ToolDefinition[] {
           applicationId,
           fields: JSON.stringify(fields),
         });
+        if (context.onWorkflowNavigate) {
+          context.onWorkflowNavigate({ view: 'designer', formMode: true, formId: result.id });
+        }
         return { success: true, data: result };
       },
     },

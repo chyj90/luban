@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { DatasourcePanel } from '@/components/DatasourcePanel';
 import { QueryPanel } from '@/components/QueryPanel';
 import { createCodePage, deletePage, renamePage } from '@/api';
+import { confirm } from '@/stores/confirmStore';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
 import type { WorkflowView } from '@/pages/AppEditor/AppEditorPage';
@@ -63,7 +64,13 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
   const handleDeletePage = async (e: React.MouseEvent, page: Page) => {
     e.stopPropagation();
     setMenuOpen(null);
-    if (!confirm(`确定删除页面「${page.name}」？此操作不可撤销。`)) return;
+    const confirmed = await confirm({
+      title: '删除页面',
+      message: `确定删除页面「${page.name}」？此操作不可撤销。`,
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
     try {
       await deletePage(page.id);
       onPagesChange();

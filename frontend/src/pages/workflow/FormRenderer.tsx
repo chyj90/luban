@@ -7,6 +7,7 @@ interface FormRendererProps {
   formId: number;
   mode?: 'view' | 'edit' | 'submit';
   initialData?: Record<string, unknown>;
+  hideHeader?: boolean;
   onSubmit?: (data: Record<string, unknown>) => void;
   onCancel?: () => void;
 }
@@ -15,6 +16,7 @@ export default function FormRenderer({
   formId,
   mode = 'edit',
   initialData = {},
+  hideHeader = false,
   onSubmit,
   onCancel,
 }: FormRendererProps) {
@@ -48,14 +50,36 @@ export default function FormRenderer({
 
   const schema = parseFieldsSchema(form.fields);
 
+  const renderExcelRows = (field: FieldSchema, data: Record<string, unknown>) => {
+    const rows = data[field.key] as Array<Record<string, unknown>> | undefined;
+    if (!rows || rows.length === 0) {
+      return (
+        <tr>
+          {field.columns.map((col) => (
+            <td key={col.key} className={styles.excelPlaceholder}>&mdash;</td>
+          ))}
+        </tr>
+      );
+    }
+    return rows.map((row, ri) => (
+      <tr key={ri}>
+        {field.columns.map((col) => (
+          <td key={col.key}>{String(row[col.key] ?? '')}</td>
+        ))}
+      </tr>
+    ));
+  };
+
   return (
     <div className={styles.renderer}>
-      <div className={styles.formHeader}>
-        <h2 className={styles.formTitle}>{form.name}</h2>
-        {form.description && (
-          <p className={styles.formDesc}>{form.description}</p>
-        )}
-      </div>
+      {!hideHeader && (
+        <div className={styles.formHeader}>
+          <h2 className={styles.formTitle}>{form.name}</h2>
+          {form.description && (
+            <p className={styles.formDesc}>{form.description}</p>
+          )}
+        </div>
+      )}
 
       <div className={styles.formBody}>
         {groupFieldsIntoRows(schema).map((row, ri) => (
@@ -154,7 +178,11 @@ export default function FormRenderer({
               <div className={styles.computedField}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, flexShrink: 0, color: '#8b8b8b' }}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                 <span className={styles.computedLabel}>计算字段</span>
-                <span className={styles.computedFormula}>{field.computedFrom || '(无公式)'}</span>
+                <span className={styles.computedFormula}>
+                  {mode === 'view' && formData[field.key] != null
+                    ? String(formData[field.key])
+                    : field.computedFrom || '(无公式)'}
+                </span>
               </div>
             )}
 
@@ -175,11 +203,7 @@ export default function FormRenderer({
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {field.columns.map((col) => (
-                            <td key={col.key} className={styles.excelPlaceholder}>&mdash;</td>
-                          ))}
-                        </tr>
+                        {renderExcelRows(field, formData)}
                       </tbody>
                     </table>
                   </div>
@@ -200,13 +224,7 @@ export default function FormRenderer({
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          {field.columns.map((col) => (
-                            <td key={col.key} className={styles.excelPlaceholder}>
-                              {col.type === 'number' ? '0' : '—'}
-                            </td>
-                          ))}
-                        </tr>
+                        {renderExcelRows(field, formData)}
                       </tbody>
                     </table>
                   </div>
