@@ -8,6 +8,7 @@ public interface WorkflowDefinitionRepository extends JpaRepository<WorkflowDefi
     List<WorkflowDefinition> findByApplicationId(Long applicationId);
     List<WorkflowDefinition> findByApplicationIdAndStatus(Long applicationId, String status);
     List<WorkflowDefinition> findByNameAndApplicationIdOrderByVersionDesc(String name, Long applicationId);
+    List<WorkflowDefinition> findByScope(String scope);
     boolean existsByApplicationIdAndStatus(Long applicationId, String status);
     long countByApplicationId(Long applicationId);
     long countByApplicationIdAndStatus(Long applicationId, String status);

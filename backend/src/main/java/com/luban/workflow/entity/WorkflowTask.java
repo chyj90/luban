@@ -24,7 +24,7 @@ public class WorkflowTask {
     @Column(nullable = false)
     private Long instanceId;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private Long applicationId;
 
     @Column(nullable = false, length = 50)

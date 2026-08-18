@@ -24,8 +24,11 @@ public class Role {
     @Column(length = 500)
     private String description;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private Long applicationId;
+
+    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'APP'")
+    private String scope;
 
     @Column(columnDefinition = "JSON")
     private String memberIds;

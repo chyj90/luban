@@ -24,7 +24,7 @@ public class WorkflowInstance {
     @Column(nullable = false)
     private Long workflowId;
 
-    @Column(nullable = false)
+    @Column(nullable = true)
     private Long applicationId;
 
     @Column(nullable = false)

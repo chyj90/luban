@@ -4,6 +4,7 @@ import { useLoadingStore } from '../../stores/loadingStore';
 import { useImpersonationStore } from '../../stores/impersonationStore';
 import type { WorkflowTask, WorkflowInstance, WorkflowDefinition } from '../../types/workflow';
 import { taskApi, instanceApi } from '../../api/workflow';
+import { listPendingApprovals } from '../../api/tool';
 import { isImpersonating } from '../../utils/impersonation';
 import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
@@ -38,6 +39,7 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
 
   const showTest = embedded ? isImpersonating() : false;
   const impersonationVersion = useImpersonationStore((s) => s.version);
@@ -73,6 +75,14 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
     }
   }, [tab, showTest, impersonationVersion]);
 
+  useEffect(() => {
+    if (!embedded) {
+      listPendingApprovals()
+        .then((res) => setPendingApprovalCount((res.data as unknown[]).length))
+        .catch(() => setPendingApprovalCount(0));
+    }
+  }, [embedded, impersonationVersion]);
+
   const statusBadge = (status: string) => {
     const map: Record<string, { label: string; className: string }> = {
       PENDING: { label: '待审批', className: styles.tagPending },
@@ -100,7 +110,7 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
           <div className={styles.header}>
             <div>
               <h1 className={styles.title}>我的工作</h1>
-              <p className={styles.subtitle}>查看我发起的流程和待处理的任务</p>
+              <p className={styles.subtitle}>查看我发起的流程、待处理的任务和平台审核</p>
             </div>
           </div>
           <hr className={styles.divider} />
@@ -115,9 +125,28 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
             onClick={() => setTab(t.key)}
           >
             {t.label}
+            {t.key === 'pending' && pendingApprovalCount > 0 && !embedded && (
+              <span className={styles.tagPending} style={{ marginLeft: 6, fontSize: 11 }}>
+                {pendingApprovalCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {tab === 'pending' && pendingApprovalCount > 0 && !embedded && (
+        <div className={styles.testBanner} style={{ background: '#e6f4ff', borderColor: '#91caff' }}>
+          <span className={styles.testBannerDot} style={{ background: '#1677ff' }} />
+          您有 {pendingApprovalCount} 条待处理的平台审核
+          <button
+            className={styles.actionBtn}
+            style={{ marginLeft: 12 }}
+            onClick={() => navigate('/work/approvals')}
+          >
+            去处理
+          </button>
+        </div>
+      )}
 
       {loading ? null : isStartTab ? (
         workflows!.length > 0 ? (

@@ -1,0 +1,242 @@
+.perm-approval {
+  padding: 24px 32px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.perm-approval-loading {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+}
+
+.perm-approval-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 24px;
+}
+
+.perm-approval-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: #999;
+  gap: 12px;
+}
+
+.perm-approval-empty p {
+  font-size: 14px;
+  margin: 0;
+}
+
+.perm-approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.perm-approval-card {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.perm-approval-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.perm-approval-card-applicant {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.perm-approval-card-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: #e6f4ff;
+  color: #1677ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.perm-approval-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a2e;
+}
+
+.perm-approval-card-node {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.perm-approval-card-time {
+  font-size: 12px;
+  color: #999;
+}
+
+.perm-approval-card-body {
+  padding: 12px 0;
+  border-top: 1px solid #f0f0f0;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 12px;
+}
+
+.perm-approval-card-subject {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.perm-approval-card-subject strong {
+  color: #1677ff;
+}
+
+.perm-approval-card-reason {
+  font-size: 13px;
+  color: #666;
+}
+
+.perm-approval-card-label {
+  color: #999;
+}
+
+.perm-approval-card-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.perm-approval-card-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.perm-approval-card-btn.approve {
+  background: #52c41a;
+  color: #fff;
+}
+
+.perm-approval-card-btn.approve:hover {
+  background: #73d13d;
+}
+
+.perm-approval-card-btn.approve:disabled {
+  background: #b7eb8f;
+  cursor: not-allowed;
+}
+
+.perm-approval-card-btn.reject {
+  background: #ff4d4f;
+  color: #fff;
+}
+
+.perm-approval-card-btn.reject:hover {
+  background: #ff7875;
+}
+
+.perm-approval-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.perm-approval-form {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+}
+
+.perm-approval-form-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 20px;
+}
+
+.perm-approval-form-field {
+  margin-bottom: 20px;
+}
+
+.perm-approval-form-field label {
+  display: block;
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.perm-approval-form-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.perm-approval-form-field textarea:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.perm-approval-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.perm-approval-form-cancel {
+  padding: 8px 20px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.perm-approval-form-submit {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.perm-approval-form-submit:hover {
+  background: #ff7875;
+}

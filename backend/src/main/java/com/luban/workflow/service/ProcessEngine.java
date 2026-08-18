@@ -31,6 +31,7 @@ public class ProcessEngine {
     private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
+    private final DepartmentRepository departmentRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -1072,16 +1073,13 @@ public class ProcessEngine {
                         .collect(Collectors.toList());
             }
             case "department_head": {
-                String source = (String) config.getOrDefault("departmentSource", "initiator");
                 Member member = memberRepository.findById(initiatorId).orElse(null);
                 if (member != null && member.getDepartmentId() != null) {
-                    // 查找部门负责人
-                    return memberRepository.findByDepartmentId(member.getDepartmentId())
-                            .stream()
-                            .filter(m -> m.getLeaderId() == null)
-                            .map(Member::getId)
-                            .limit(1)
-                            .collect(Collectors.toList());
+                    Department dept = departmentRepository.findById(member.getDepartmentId())
+                            .orElse(null);
+                    if (dept != null && dept.getManagerId() != null) {
+                        return Collections.singletonList(dept.getManagerId());
+                    }
                 }
                 return Collections.emptyList();
             }

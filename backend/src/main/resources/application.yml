@@ -22,3 +22,11 @@ app:
   jwt:
     secret: luban-jwt-secret-key-change-in-production-256-bit
     expiration: 86400000
+
+luban:
+  mock-mes:
+    enabled: true
+  agent:
+    rate-limit:
+      max-requests: 30
+      window-minutes: 1

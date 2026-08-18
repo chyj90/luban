@@ -27,8 +27,11 @@ export function GlobalHeader() {
   }, [appId]);
 
   const isActive = (path: string) => {
-    if (path === '/apps') return location.pathname === '/apps';
+    if (path === '/apps') return location.pathname === '/apps' || location.pathname.startsWith('/apps/');
+    if (path === '/connect') return location.pathname.startsWith('/connect');
+    if (path === '/people') return location.pathname.startsWith('/people');
     if (path === '/work') return location.pathname.startsWith('/work');
+    if (path === '/agent-chat') return location.pathname === '/agent-chat';
     return false;
   };
 
@@ -72,16 +75,34 @@ export function GlobalHeader() {
             </div>
             <nav className="global-header-nav">
               <button
-                className={`global-header-nav-link ${isActive('/apps') ? 'active' : ''}`}
-                onClick={() => navigate('/apps')}
-              >
-                应用中心
-              </button>
-              <button
                 className={`global-header-nav-link ${isActive('/work') ? 'active' : ''}`}
                 onClick={() => navigate('/work')}
               >
-                我的工作
+                工作中心
+              </button>
+              <button
+                className={`global-header-nav-link ${isActive('/agent-chat') ? 'active' : ''}`}
+                onClick={() => navigate('/agent-chat')}
+              >
+                问数
+              </button>
+              <button
+                className={`global-header-nav-link ${isActive('/apps') ? 'active' : ''}`}
+                onClick={() => navigate('/apps')}
+              >
+                应用开发
+              </button>
+              <button
+                className={`global-header-nav-link ${isActive('/people') ? 'active' : ''}`}
+                onClick={() => navigate('/people')}
+              >
+                人员管理
+              </button>
+              <button
+                className={`global-header-nav-link ${isActive('/connect') ? 'active' : ''}`}
+                onClick={() => navigate('/connect')}
+              >
+                系统连接
               </button>
             </nav>
           </>

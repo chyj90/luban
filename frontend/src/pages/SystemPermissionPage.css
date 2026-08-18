@@ -1,0 +1,326 @@
+.sys-perm {
+  padding: 24px 32px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.sys-perm-loading {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+}
+
+.sys-perm-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 20px;
+}
+
+.sys-perm-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 2px solid #f0f0f0;
+}
+
+.sys-perm-tab {
+  padding: 10px 20px;
+  border: none;
+  background: none;
+  font-size: 14px;
+  color: #666;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: all 0.2s;
+}
+
+.sys-perm-tab.active {
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+  font-weight: 500;
+}
+
+.sys-perm-tab:hover {
+  color: #1677ff;
+}
+
+.sys-perm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.sys-perm-card {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.sys-perm-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.sys-perm-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0;
+}
+
+.sys-perm-card-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.sys-perm-card-status.none {
+  color: #999;
+  background: #f5f5f5;
+}
+
+.sys-perm-card-status.pending {
+  color: #fa8c16;
+  background: #fff7e6;
+}
+
+.sys-perm-card-status.approved {
+  color: #52c41a;
+  background: #f6ffed;
+}
+
+.sys-perm-card-status.rejected {
+  color: #ff4d4f;
+  background: #fff2f0;
+}
+
+.sys-perm-card-desc {
+  font-size: 13px;
+  color: #666;
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.sys-perm-card-code {
+  display: inline-block;
+  font-size: 12px;
+  color: #1677ff;
+  background: #e6f4ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
+  margin-bottom: 12px;
+}
+
+.sys-perm-card-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.sys-perm-card-btn {
+  padding: 6px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sys-perm-card-btn.primary {
+  background: #1677ff;
+  color: #fff;
+  border: none;
+}
+
+.sys-perm-card-btn.primary:hover {
+  background: #4096ff;
+}
+
+.sys-perm-card-reject-reason {
+  font-size: 12px;
+  color: #ff4d4f;
+  margin-bottom: 8px;
+}
+
+.sys-perm-card-approved-hint {
+  font-size: 13px;
+  color: #52c41a;
+}
+
+.sys-perm-card-pending-hint {
+  font-size: 13px;
+  color: #fa8c16;
+}
+
+.sys-perm-table-wrap {
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sys-perm-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.sys-perm-table th {
+  background: #fafafa;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.sys-perm-table td {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #333;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.sys-perm-table tr:last-child td {
+  border-bottom: none;
+}
+
+.sys-perm-table-name {
+  font-weight: 500;
+}
+
+.sys-perm-table-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.sys-perm-table-status.none {
+  color: #999;
+  background: #f5f5f5;
+}
+
+.sys-perm-table-status.pending {
+  color: #fa8c16;
+  background: #fff7e6;
+}
+
+.sys-perm-table-status.approved {
+  color: #52c41a;
+  background: #f6ffed;
+}
+
+.sys-perm-table-status.rejected {
+  color: #ff4d4f;
+  background: #fff2f0;
+}
+
+.sys-perm-empty {
+  text-align: center;
+  padding: 40px;
+  color: #999;
+}
+
+.sys-perm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sys-perm-form {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+}
+
+.sys-perm-form-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 20px;
+}
+
+.sys-perm-form-field {
+  margin-bottom: 16px;
+}
+
+.sys-perm-form-field label {
+  display: block;
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.sys-perm-form-field select,
+.sys-perm-form-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.sys-perm-form-field select {
+  background: #fff;
+  cursor: pointer;
+}
+
+.sys-perm-form-field textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.sys-perm-form-field select:focus,
+.sys-perm-form-field textarea:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.sys-perm-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.sys-perm-form-cancel {
+  padding: 8px 20px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sys-perm-form-submit {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sys-perm-form-submit:hover {
+  background: #4096ff;
+}

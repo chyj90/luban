@@ -1,0 +1,277 @@
+.system-list {
+  padding: 24px 32px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.system-list-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #999;
+  font-size: 14px;
+}
+
+.system-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.system-list-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0;
+}
+
+.system-list-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #1677ff;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.system-list-add-btn:hover {
+  background: #4096ff;
+}
+
+.system-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+}
+
+.system-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 20px;
+  transition: box-shadow 0.2s;
+}
+
+.system-card:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+.system-card-icon {
+  margin-bottom: 12px;
+}
+
+.system-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 4px;
+}
+
+.system-card-code {
+  display: inline-block;
+  font-size: 12px;
+  color: #1677ff;
+  background: #e6f4ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-family: monospace;
+}
+
+.system-card-desc {
+  font-size: 13px;
+  color: #666;
+  margin: 0 0 12px;
+  line-height: 1.5;
+  min-height: 20px;
+}
+
+.system-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-card-status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.system-card-status.enabled {
+  color: #52c41a;
+  background: #f6ffed;
+}
+
+.system-card-status.disabled {
+  color: #999;
+  background: #f5f5f5;
+}
+
+.system-card-actions {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.system-card:hover .system-card-actions {
+  opacity: 1;
+}
+
+.system-card-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.system-card-btn:hover {
+  color: #1677ff;
+  border-color: #1677ff;
+}
+
+.system-card-btn.danger:hover {
+  color: #ff4d4f;
+  border-color: #ff4d4f;
+}
+
+.system-card-key {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+}
+
+.system-card-key-label {
+  font-size: 12px;
+  color: #999;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.system-card-key-value {
+  font-size: 11px;
+  color: #333;
+  word-break: break-all;
+  font-family: monospace;
+  line-height: 1.6;
+}
+
+.system-form-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.system-form {
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+}
+
+.system-form-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin: 0 0 20px;
+}
+
+.system-form-field {
+  margin-bottom: 16px;
+}
+
+.system-form-label {
+  display: block;
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.system-form-input,
+.system-form-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.system-form-input:focus,
+.system-form-textarea:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.system-form-textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.system-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.system-form-cancel {
+  padding: 8px 20px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.system-form-cancel:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.system-form-submit {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.system-form-submit:hover {
+  background: #4096ff;
+}
