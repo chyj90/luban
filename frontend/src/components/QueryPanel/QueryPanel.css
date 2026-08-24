@@ -117,7 +117,7 @@
 }
 
 .qp-editor-btn:hover {
-  background: #f4f6f9;
+  background: transparent;
   border-color: #1677ff;
   color: #1677ff;
 }

@@ -11,7 +11,7 @@ interface FormPreviewProps {
   onBack?: () => void;
 }
 
-export default function FormPreview({ embedded, formId: propFormId, onBack }: FormPreviewProps = {}) {
+export default function FormPreview({ _embedded, formId: propFormId, onBack }: FormPreviewProps = {}) {
   const { id: paramId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const id = propFormId ?? (paramId ? Number(paramId) : undefined);

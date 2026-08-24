@@ -8,7 +8,7 @@ export interface DBAContext {
   modifyInstructions?: string[];
 }
 
-export function buildDataAssistantPrompt(ctx: DBAContext): string {
+export function buildDataAssistantPrompt(_ctx: DBAContext): string {
   const existingQueriesText = ctx.existingQueries?.length
     ? ctx.existingQueries.map((q) => `  - ${q.name} (ID:${q.id})：${q.description}`).join('\n')
     : '（无已有查询）';

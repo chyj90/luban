@@ -9,5 +9,7 @@ public interface ToolConceptRepository extends JpaRepository<ToolConcept, Long> 
     List<ToolConcept> findByConceptId(Long conceptId);
     List<ToolConcept> findByToolIdAndRelation(Long toolId, String relation);
     List<ToolConcept> findByConceptIdAndRelation(Long conceptId, String relation);
+    List<ToolConcept> findByConceptIdIn(List<Long> conceptIds);
+    void deleteByConceptIdIn(List<Long> conceptIds);
     void deleteByToolIdAndConceptIdAndRelation(Long toolId, Long conceptId, String relation);
 }

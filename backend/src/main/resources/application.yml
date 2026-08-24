@@ -17,6 +17,10 @@ spring:
         format_sql: true
   security:
     debug: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
 
 app:
   jwt:

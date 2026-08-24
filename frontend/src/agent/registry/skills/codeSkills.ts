@@ -27,7 +27,7 @@ const CODE_PAGE_DESCRIPTION = `创建一个新的代码页面，包含 HTML/CSS/
 - 页面跳转：window.__LUBAN__.navigateToPageByName('页面名称')`;
 
 export const codeSkills: Record<string, SkillFactory> = {
-  'code:create': (ctx) => ({
+  'code:create': (_ctx) => ({
     id: 'code:create',
     category: SkillCategory.CODE,
     name: 'create_code_page',
@@ -58,13 +58,13 @@ export const codeSkills: Record<string, SkillFactory> = {
         ctx.onPagesChange?.();
         ctx.onPageChange?.(res.data.id);
         return { success: true, message: `代码页面 "${args.name}" 创建成功`, data: res.data };
-      } catch (e) {
+      } catch {
         return { success: false, message: `创建代码页面失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'code:get': (ctx) => ({
+  'code:get': (_ctx) => ({
     id: 'code:get',
     category: SkillCategory.CODE,
     name: 'get_code_page',
@@ -79,13 +79,13 @@ export const codeSkills: Record<string, SkillFactory> = {
         const pageId = (args.pageId as number) || ctx.pageId;
         const res = await getCodePage(pageId);
         return { success: true, message: '获取页面代码成功', data: res.data };
-      } catch (e) {
+      } catch {
         return { success: false, message: `获取页面代码失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'code:update': (ctx) => ({
+  'code:update': (_ctx) => ({
     id: 'code:update',
     category: SkillCategory.CODE,
     name: 'update_code_page',
@@ -196,7 +196,7 @@ export const codeSkills: Record<string, SkillFactory> = {
         });
         ctx.onPageChange?.(pageId);
         return { success: true, message: '页面代码更新成功', data: res.data };
-      } catch (e) {
+      } catch {
         return { success: false, message: `更新代码失败: ${(e as Error).message}` };
       }
     },

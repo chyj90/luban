@@ -17,7 +17,7 @@ public class Concept {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 64)
+    @Column(nullable = false, length = 255)
     private String name;
 
     @Column(name = "parent_id")
@@ -26,7 +26,7 @@ public class Concept {
     @Column(name = "group_id")
     private Long groupId;
 
-    @Column(length = 256)
+    @Column(columnDefinition = "TEXT")
     private String description;
 
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -34,6 +34,15 @@ public class Concept {
 
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "embedding", columnDefinition = "BLOB")
+    private byte[] embedding;
+
+    @Column(name = "embedding_version", length = 32)
+    private String embeddingVersion;
+
+    @Transient
+    private Boolean mapped;
 
     @PrePersist
     protected void onCreate() {

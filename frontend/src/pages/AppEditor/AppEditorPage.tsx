@@ -24,7 +24,7 @@ import './AppEditorPage.css';
 
 type EditingFile = 'html' | 'css' | 'js';
 
-type SidebarTab = 'pages' | 'queries' | 'workflow' | 'datasources';
+type SidebarTab = 'pages' | 'queries' | 'workflow' | 'datasources' | 'apis';
 
 export type WorkflowView =
   | { view: 'processes'; appId?: number }
@@ -158,7 +158,7 @@ export function AppEditorPage() {
 
   if (loading || !appId) return null;
 
-  if (!currentPage && sidebarTab !== 'workflow') return null;
+  if (!currentPage && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources') return null;
 
   return (
     <div className="app-editor">
@@ -250,6 +250,10 @@ export function AppEditorPage() {
               <span className="app-editor-query-empty-text">暂无 Query</span>
               <span className="app-editor-query-empty-hint">点击左侧 + 创建查询</span>
             </div>
+          ) : sidebarTab === 'apis' || sidebarTab === 'datasources' ? (
+            <div className="app-editor-query-empty">
+              <span className="app-editor-query-empty-text">请在左侧面板管理{sidebarTab === 'apis' ? 'API' : '数据源'}</span>
+            </div>
           ) : editingFile ? (
             <div className="app-editor-code-panel">
               <div className="app-editor-code-header">
@@ -280,7 +284,7 @@ export function AppEditorPage() {
               <div className="app-editor-code-body">
                 <InteliEditor
                   activeFile={editingFile}
-                  codePage={currentPage.codePage}
+                  codePage={currentPage!.codePage}
                   onCodeChange={handleCodeChange}
                 />
               </div>
@@ -315,9 +319,9 @@ export function AppEditorPage() {
                 </button>
               </div>
               <InteliPreview
-                codePage={currentPage.codePage}
+                codePage={currentPage!.codePage}
                 queries={queries}
-                userInfo={user ? { id: user.id, name: user.name, email: user.email } : null}
+                userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}
               />
@@ -357,9 +361,9 @@ export function AppEditorPage() {
       {previewFullscreen && currentPage && (
         <div className="app-editor-fullscreen-overlay">
           <InteliPreview
-            codePage={currentPage.codePage}
+            codePage={currentPage!.codePage}
             queries={queries}
-            userInfo={user ? { id: user.id, name: user.name, email: user.email } : null}
+            userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
             allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
             onNavigate={handlePageChange}
           />

@@ -20,7 +20,7 @@ export const useApplicationStore = create<ApplicationState>((set) => ({
     try {
       const res = await listApplications();
       set({ applications: res.data });
-    } catch (e) {
+    } catch {
       set({ error: (e as Error).message });
     } finally {
       set({ loading: false });

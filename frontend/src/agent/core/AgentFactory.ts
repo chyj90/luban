@@ -47,11 +47,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
   const {
     providerType, model, baseUrl,
     currentPageId, currentPageName, allPages,
-    sessionId, dispatch,
+    sessionId: _sessionId, dispatch,
     applicationId,
     addMessage, updateMessage, removeMessage, setStatus, setStreaming, setError,
-    addPlan, updatePlan, updateStep,
-    overrideSystemPrompt, overrideTools, chatRouter,
+    addPlan, updatePlan: _updatePlan, updateStep,
+    overrideSystemPrompt, overrideTools, chatRouter: _chatRouter,
     agentId, agentName, agentIcon, isDelegated, initialMessages,
   } = options;
 
@@ -70,11 +70,6 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     planContext,
   ].filter(Boolean).join('\n\n');
 
-  const toolContext = {
-    applicationId: Number(applicationId),
-    pageId: currentPageId,
-    dispatch,
-  };
   const tools = overrideTools || [];
 
   const name = agentName || '主智能体';
@@ -82,7 +77,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   async function resolveApiKey(providerType: string): Promise<string> {
     const { vaultManager } = await import('./vaultManager');
-    const apiKey = await vaultManager.getApiKey(providerType as any);
+    const apiKey = await vaultManager.getApiKey(providerType as unknown);
     if (!apiKey) {
       throw new Error(`未配置 ${providerType} 的 API Key，请在设置中配置`);
     }
@@ -201,11 +196,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           onPlanCreate: (plan) => {
             addPlan(plan);
           },
-          onPlanConfirm: (planId, action) => {
+          onPlanConfirm: (_planId, _action) => {
             return true;
           },
           onStepUpdate: (planId, stepId, status, result) => {
-            updateStep(planId, stepId, { status: status as any, result });
+            updateStep(planId, stepId, { status: status as unknown, result });
           },
           onToolCall: (toolName, input, messageId, toolCallId) => {
             console.log(`[${name}] tool call: ${toolName}`, JSON.stringify(input, null, 2));
@@ -258,7 +253,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         conversationMessages.length = 0;
         conversationMessages.push(...result.conversationMessages);
         console.log(`[AgentFactory:${name}] run() 完成 | ${Date.now() - runStart}ms`);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (err.message === 'Cancelled' || err.name === 'AbortError') {
           console.log(`[AgentFactory:${name}] run() 被取消 | ${Date.now() - runStart}ms`);
           return;

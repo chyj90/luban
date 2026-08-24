@@ -22,7 +22,7 @@ interface BridgeResponse {
 
 interface UserInfo {
   id: number;
-  name: string;
+  account: string;
   email: string;
 }
 
@@ -75,7 +75,7 @@ export function useQueryBridge(
           queryName: msg.queryName,
           result: res.data,
         });
-      } catch (e) {
+      } catch {
         respond({
           type: 'QUERY_RESULT',
           id: msg.id,

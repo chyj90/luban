@@ -22,7 +22,7 @@ public class WorkflowInstanceController {
         Long definitionId = Long.valueOf(params.get("definitionId").toString());
         String formData = params.getOrDefault("formData", "{}").toString();
         boolean isTest = Boolean.parseBoolean(params.getOrDefault("isTest", "false").toString());
-        return processService.startProcess(definitionId, formData, user.getId(), user.getName(), isTest);
+        return processService.startProcess(definitionId, formData, user.getId(), user.getAccount(), isTest);
     }
 
     @GetMapping
@@ -44,19 +44,19 @@ public class WorkflowInstanceController {
 
     @PutMapping("/{id}/cancel")
     public ResponseEntity<Void> cancel(@PathVariable Long id, @AuthenticationPrincipal User user) {
-        processService.cancelProcess(id, user.getId(), user.getName());
+        processService.cancelProcess(id, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}/freeze")
     public ResponseEntity<Void> freeze(@PathVariable Long id, @AuthenticationPrincipal User user) {
-        processService.freezeProcess(id, user.getId(), user.getName());
+        processService.freezeProcess(id, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/{id}/unfreeze")
     public ResponseEntity<Void> unfreeze(@PathVariable Long id, @AuthenticationPrincipal User user) {
-        processService.unfreezeProcess(id, user.getId(), user.getName());
+        processService.unfreezeProcess(id, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
@@ -64,7 +64,7 @@ public class WorkflowInstanceController {
     public ResponseEntity<Void> rejectTo(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String targetNodeId = params.get("targetNodeId").toString();
         String comment = params.getOrDefault("comment", "").toString();
-        processService.rejectToNode(id, targetNodeId, comment, user.getId(), user.getName());
+        processService.rejectToNode(id, targetNodeId, comment, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
@@ -72,14 +72,14 @@ public class WorkflowInstanceController {
     public ResponseEntity<Void> forceJump(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String targetNodeId = params.get("targetNodeId").toString();
         String comment = params.getOrDefault("comment", "").toString();
-        processService.forceJump(id, targetNodeId, comment, user.getId(), user.getName());
+        processService.forceJump(id, targetNodeId, comment, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{id}/resubmit")
     public WorkflowInstance resubmit(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String formData = params.getOrDefault("formData", "{}").toString();
-        return processService.resubmitInstance(id, formData, user.getId(), user.getName());
+        return processService.resubmitInstance(id, formData, user.getId(), user.getAccount());
     }
 
     @GetMapping("/{id}/sub-processes")

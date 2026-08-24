@@ -8,9 +8,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.MessageDigest;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 public class AgentConfigService {
@@ -84,6 +91,49 @@ public class AgentConfigService {
         agentConfigRepository.save(config);
     }
 
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> testConnection(String modelEndpoint, String secretKey) {
+        try {
+            String url = modelEndpoint;
+            if (url.endsWith("/")) {
+                url = url.substring(0, url.length() - 1);
+            }
+            if (!url.endsWith("/v1")) {
+                url += "/v1";
+            }
+            url += "/models";
+
+            HttpClient client = HttpClient.newHttpClient();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer " + secretKey)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                return Map.of("success", false, "error", "HTTP " + response.statusCode() + ": " + response.body());
+            }
+
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, Object> body = mapper.readValue(response.body(), Map.class);
+            List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
+            List<Map<String, Object>> models = new ArrayList<>();
+            if (data != null) {
+                for (Map<String, Object> model : data) {
+                    models.add(Map.of(
+                            "id", model.getOrDefault("id", ""),
+                            "name", model.getOrDefault("id", "")
+                    ));
+                }
+            }
+            return Map.of("success", true, "models", models);
+        } catch (Exception e) {
+            return Map.of("success", false, "error", e.getMessage());
+        }
+    }
+
     private String encrypt(String plainText) {
         try {
             byte[] key = MessageDigest.getInstance("SHA-256").digest(AES_SECRET.getBytes("UTF-8"));
@@ -93,6 +143,18 @@ public class AgentConfigService {
             return Base64.getEncoder().encodeToString(cipher.doFinal(plainText.getBytes("UTF-8")));
         } catch (Exception e) {
             throw new RuntimeException("加密失败", e);
+        }
+    }
+
+    public String decrypt(String encryptedText) {
+        try {
+            byte[] key = MessageDigest.getInstance("SHA-256").digest(AES_SECRET.getBytes("UTF-8"));
+            SecretKeySpec secretKey = new SecretKeySpec(key, "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey);
+            return new String(cipher.doFinal(Base64.getDecoder().decode(encryptedText)), "UTF-8");
+        } catch (Exception e) {
+            throw new RuntimeException("解密失败", e);
         }
     }
 }

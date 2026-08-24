@@ -29,7 +29,7 @@
 }
 
 .ds-add-btn:hover {
-  background: #f4f6f9;
+  background: transparent;
   border-color: #1677ff;
   color: #1677ff;
 }
@@ -319,7 +319,9 @@ textarea.ds-input {
 }
 
 .ds-action-btn:hover {
-  background: #e8edf3;
+  background: transparent;
+  border-color: #1677ff;
+  color: #1677ff;
 }
 
 .ds-action-btn:disabled {
@@ -391,4 +393,49 @@ textarea.ds-input {
   border-radius: 2px;
   font-size: 9px;
   font-weight: 600;
+}
+
+/* KEY-granted datasources */
+.ds-section {
+  margin-bottom: 10px;
+}
+
+.ds-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  margin-bottom: 4px;
+}
+
+.ds-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8c9cab;
+  text-transform: uppercase;
+}
+
+.ds-section-count {
+  background: #e8edf3;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  color: #666;
+}
+
+.ds-card-key {
+  border-left: 3px solid #1677ff;
+}
+
+.ds-card-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ds-badge-key {
+  background: #e6f4ff;
+  color: #1677ff;
 }

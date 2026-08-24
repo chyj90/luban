@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.KeyPair;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Component
@@ -22,24 +24,27 @@ import java.time.LocalDateTime;
 public class PlatformSeedDataInitializer implements CommandLineRunner {
 
     private final RoleRepository roleRepository;
+    private final RoleUserRepository roleUserRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final ToolGroupRepository toolGroupRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final AgentConfigRepository agentConfigRepository;
-    private final ConceptRepository conceptRepository;
-    private final ConceptRelationRepository conceptRelationRepository;
-    private final ToolConceptRepository toolConceptRepository;
+    private final UserRepository userRepository;
+    private final MemberRepository memberRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final IndustryRepository industryRepository;
+    private final IndustryRelationRepository industryRelationRepository;
 
     @Override
     @Transactional
     public void run(String... args) {
         initPlatformRoles();
+        initTestUsers();
         initPlatformWorkflows();
         initSeedTables();
         initToolGroups();
         initDefaultAgentConfig();
-        initConcepts();
+        initIndustries();
     }
 
     private void initPlatformRoles() {
@@ -50,6 +55,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             createRoleIfNotExists("system_admin", "系统管理员", "PLATFORM", "负责某系统的管理");
             createRoleIfNotExists("developer", "外部开发者", "PLATFORM", "负责 API 开发集成");
             createRoleIfNotExists("user", "普通用户", "PLATFORM", "普通业务用户");
+            createRoleIfNotExists("flow_tester", "流程测试", "PLATFORM", "流程测试专用角色，不可删除");
 
             log.info("平台角色初始化完成");
         }
@@ -62,9 +68,79 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             role.setSlug(slug);
             role.setDescription(description);
             role.setScope(scope);
-            role.setMemberIds("[]");
+            role.setCreatedBy(null);
             roleRepository.save(role);
         }
+    }
+
+    private void initTestUsers() {
+        if (userRepository.count() > 1) {
+            return;
+        }
+
+        log.info("初始化流程测试用户...");
+
+        Role flowTester = roleRepository.findBySlug("flow_tester").orElse(null);
+        if (flowTester == null) {
+            flowTester = new Role();
+            flowTester.setName("流程测试");
+            flowTester.setSlug("flow_tester");
+            flowTester.setDescription("流程测试专用角色，不可删除");
+            flowTester.setScope("PLATFORM");
+            flowTester.setCreatedBy(null);
+            flowTester = roleRepository.save(flowTester);
+        }
+
+        String[][] testUsers = {
+                {"张三", "zhangsan", "zhangsan@luban.test", "13800000001", "测试工程师", "TEST001", "测试部门"},
+                {"李四", "lisi", "lisi@luban.test", "13800000002", "测试工程师", "TEST002", "测试部门"},
+                {"王五", "wangwu", "wangwu@luban.test", "13800000003", "测试主管", "TEST003", "测试部门"},
+                {"赵六", "zhaoliu", "zhaoliu@luban.test", "13800000004", "测试开发", "TEST004", "测试部门"},
+                {"孙七", "sunqi", "sunqi@luban.test", "13800000005", "测试经理", "TEST005", "测试部门"},
+        };
+
+        for (String[] u : testUsers) {
+            String name = u[0];
+            String account = u[1];
+            String email = u[2];
+            String mobile = u[3];
+            String position = u[4];
+            String employeeNo = u[5];
+            String deptName = u[6];
+
+            User user = userRepository.findByEmail(email).orElse(null);
+            if (user == null) {
+                user = new User();
+                user.setAccount(account);
+                user.setEmail(email);
+                user.setPassword(null);
+                userRepository.save(user);
+            }
+
+            Member member = memberRepository.findByUserId(user.getId()).orElse(null);
+            if (member == null) {
+                member = new Member();
+                member.setUserId(user.getId());
+                member.setName(name);
+                member.setEmail(email);
+                member.setMobile(mobile);
+                member.setPosition(position);
+                member.setEmployeeNo(employeeNo);
+                member.setDepartmentName(deptName);
+                member.setProvider("local");
+                member.setStatus("ACTIVE");
+                memberRepository.save(member);
+            }
+
+            if (roleUserRepository.findByRoleIdAndUserId(flowTester.getId(), user.getId()).isEmpty()) {
+                RoleUser ru = new RoleUser();
+                ru.setRoleId(flowTester.getId());
+                ru.setUserId(user.getId());
+                roleUserRepository.save(ru);
+            }
+        }
+
+        log.info("流程测试用户初始化完成");
     }
 
     private void initPlatformWorkflows() {
@@ -210,29 +286,6 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
 
             log.info("MES系统工具组初始化完成（3 个 HTTP 工具）");
         }
-
-        if (toolGroupRepository.findByCode("data_query").isEmpty()) {
-            log.info("初始化 数据查询 工具组...");
-
-            ToolGroup dataGroup = createToolGroup(
-                    "数据查询", "data_query",
-                    "企业数据查询，包含日产量查询和设备列表查询",
-                    "当用户询问产量统计、设备清单、生产报表相关问题时使用此系统",
-                    "database", 1);
-            Long dataGroupId = dataGroup.getId();
-
-            createToolIfNotExists(dataGroupId, "query_daily_output", "查询日产量",
-                    "SQL", "查询每日产量数据，按日期范围筛选",
-                    "{\"type\":\"object\",\"properties\":{\"startDate\":{\"type\":\"string\",\"description\":\"开始日期\"},\"endDate\":{\"type\":\"string\",\"description\":\"结束日期\"}}}",
-                    "{\"queryId\":null,\"datasourceId\":null,\"sql\":\"SELECT date, output, qualified, defect_rate FROM daily_output WHERE date BETWEEN '${startDate}' AND '${endDate}' ORDER BY date\",\"maxRows\":1000,\"readOnly\":true}");
-
-            createToolIfNotExists(dataGroupId, "query_device_list", "查询设备列表",
-                    "SQL", "查询设备清单，按状态筛选",
-                    "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\",\"description\":\"设备状态筛选：运行中/待机/维修中/停机\"}}}",
-                    "{\"queryId\":null,\"datasourceId\":null,\"sql\":\"SELECT device_id, device_name, device_type, status, workshop, last_maintenance FROM devices\",\"maxRows\":1000,\"readOnly\":true}");
-
-            log.info("数据查询工具组初始化完成（2 个 SQL 工具）");
-        }
     }
 
     private ToolGroup createToolGroup(String name, String code, String description, String systemPromptHint, String icon, int sortOrder) {
@@ -282,137 +335,43 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         }
     }
 
-    private void initConcepts() {
-        if (conceptRepository.count() > 0) {
+    private void initIndustries() {
+        if (industryRepository.count() > 0) {
             return;
         }
-        log.info("初始化概念本体层种子数据...");
+        log.info("初始化行业及关系清单...");
 
-        Concept hrEmployeeTotal = createConcept("员工总数", null, "企业全体员工的总人数");
-        Concept hrDeptCount = createConcept("部门人数", hrEmployeeTotal.getId(), "单个部门的员工人数");
-        Concept hrResignedCount = createConcept("离职人数", null, "统计周期内离职的员工人数");
-        Concept hrResignedRate = createConcept("离职比例", null, "离职人数占员工总数的比例");
-        Concept hrDeptList = createConcept("部门列表", null, "企业所有部门的清单");
+        Industry industry = new Industry();
+        industry.setName("industrial");
+        industry.setDisplayName("工业");
+        industry.setDescription("工业制造领域本体关系清单");
+        industry = industryRepository.save(industry);
 
-        createRelation(hrEmployeeTotal.getId(), hrDeptCount.getId(), "PARENT_OF", null, "员工总数包含各部门人数");
-        createRelation(hrResignedRate.getId(), hrResignedCount.getId(), "COMPUTED_FROM", "离职人数 / 员工总数", "离职比例由离职人数和员工总数计算");
-        createRelation(hrResignedRate.getId(), hrEmployeeTotal.getId(), "COMPUTED_FROM", "离职人数 / 员工总数", "离职比例由离职人数和员工总数计算");
+        String[][] relations = {
+                {"PARENT_OF", "概念层级包含（父→子）", "true", "false"},
+                {"PART_OF", "部分-整体（子→父）", "true", "false"},
+                {"KIND_OF", "继承关系（子类→父类）", "true", "false"},
+                {"COMPUTED_FROM", "由其他概念计算得出", "false", "false"},
+                {"DERIVED_FROM", "条件推导", "false", "false"},
+                {"EQUIVALENT_TO", "跨系统/跨域等价", "true", "true"},
+                {"PREREQUISITE_OF", "前置依赖", "true", "false"},
+                {"UPPER_STREAM_OF", "上下游传递", "true", "false"},
+                {"PRODUCES", "工具产出该概念的数据", "false", "false"},
+                {"CONSUMES", "工具需要该概念的数据作为输入", "false", "false"},
+        };
 
-        Concept mesMetric = createConcept("生产指标", null, "制造执行系统的核心生产指标");
-        Concept mesOEE = createConcept("OEE", mesMetric.getId(), "设备综合效率，Overall Equipment Effectiveness");
-        Concept mesAvailability = createConcept("可用率", null, "设备实际可用时间与计划生产时间的比率");
-        Concept mesPerformance = createConcept("性能率", null, "实际生产速度与理论生产速度的比率");
-        Concept mesQuality = createConcept("质量率", null, "良品数与总产出数的比率");
-        Concept mesYieldRate = createConcept("良品率", mesMetric.getId(), "良品数占总产出的比例");
-        Concept mesGoodCount = createConcept("良品数", null, "合格产品的数量");
-        Concept mesTotalOutput = createConcept("总产出", null, "生产线的总产出数量");
-        Concept mesCapacityUtil = createConcept("产能利用率", mesMetric.getId(), "实际产出与设计产能的比率");
-        Concept mesActualOutput = createConcept("实际产出", null, "统计周期内的实际产量");
-        Concept mesDesignCapacity = createConcept("设计产能", null, "生产线设计的理论最大产能");
-
-        createRelation(mesOEE.getId(), mesAvailability.getId(), "COMPUTED_FROM", "可用率 × 性能率 × 质量率", "OEE由可用率、性能率、质量率计算");
-        createRelation(mesOEE.getId(), mesPerformance.getId(), "COMPUTED_FROM", "可用率 × 性能率 × 质量率", "OEE由可用率、性能率、质量率计算");
-        createRelation(mesOEE.getId(), mesQuality.getId(), "COMPUTED_FROM", "可用率 × 性能率 × 质量率", "OEE由可用率、性能率、质量率计算");
-        createRelation(mesYieldRate.getId(), mesGoodCount.getId(), "COMPUTED_FROM", "良品数 / 总产出", "良品率由良品数和总产出计算");
-        createRelation(mesYieldRate.getId(), mesTotalOutput.getId(), "COMPUTED_FROM", "良品数 / 总产出", "良品率由良品数和总产出计算");
-        createRelation(mesCapacityUtil.getId(), mesActualOutput.getId(), "COMPUTED_FROM", "实际产出 / 设计产能", "产能利用率由实际产出和设计产能计算");
-        createRelation(mesCapacityUtil.getId(), mesDesignCapacity.getId(), "COMPUTED_FROM", "实际产出 / 设计产能", "产能利用率由实际产出和设计产能计算");
-
-        Concept schPlan = createConcept("排产计划", null, "智能排产生成的车间生产计划");
-        Concept schOrder = createConcept("订单信息", schPlan.getId(), "待排产的客户订单信息");
-        Concept schDeviceCap = createConcept("设备产能", schPlan.getId(), "各设备的可用产能信息");
-        Concept schMaterialStock = createConcept("物料库存", schPlan.getId(), "生产所需物料的库存信息");
-        Concept schKitRate = createConcept("物料齐套率", null, "已齐套订单数占总订单数的比例");
-        Concept schKitComplete = createConcept("已齐套订单数", null, "物料已齐套的订单数量");
-        Concept schTotalOrders = createConcept("总订单数", null, "待排产的总订单数量");
-
-        createRelation(schPlan.getId(), schOrder.getId(), "PREREQUISITE_OF", null, "排产需要订单信息");
-        createRelation(schPlan.getId(), schDeviceCap.getId(), "PREREQUISITE_OF", null, "排产需要设备产能数据");
-        createRelation(schPlan.getId(), schMaterialStock.getId(), "PREREQUISITE_OF", null, "排产需要物料库存数据");
-        createRelation(schKitRate.getId(), schKitComplete.getId(), "COMPUTED_FROM", "已齐套订单数 / 总订单数", "物料齐套率由已齐套订单数和总订单数计算");
-        createRelation(schKitRate.getId(), schTotalOrders.getId(), "COMPUTED_FROM", "已齐套订单数 / 总订单数", "物料齐套率由已齐套订单数和总订单数计算");
-
-        Concept procGroup = createConcept("工序", null, "生产工艺的工序集合");
-        Concept procA = createConcept("工序A:冲压", procGroup.getId(), "冲压成型工序");
-        Concept procB = createConcept("工序B:焊接", procGroup.getId(), "焊接组装工序");
-        Concept procC = createConcept("工序C:喷涂", procGroup.getId(), "表面喷涂工序");
-        Concept procAOutput = createConcept("工序A产出", null, "冲压工序的产出件");
-        Concept procBInput = createConcept("工序B投入", null, "焊接工序的投入件");
-        Concept procBOutput = createConcept("工序B产出", null, "焊接工序的产出件");
-        Concept procCInput = createConcept("工序C投入", null, "喷涂工序的投入件");
-
-        createRelation(procA.getId(), procAOutput.getId(), "UPPER_STREAM_OF", null, "工序A产出流向工序B");
-        createRelation(procAOutput.getId(), procBInput.getId(), "UPPER_STREAM_OF", null, "工序A产出即为工序B投入");
-        createRelation(procB.getId(), procBOutput.getId(), "UPPER_STREAM_OF", null, "工序B产出流向工序C");
-        createRelation(procBOutput.getId(), procCInput.getId(), "UPPER_STREAM_OF", null, "工序B产出即为工序C投入");
-
-        Concept factory = createConcept("工厂", null, "生产制造工厂");
-        Concept workshop = createConcept("车间", factory.getId(), "工厂下的生产车间");
-        Concept line = createConcept("产线", workshop.getId(), "车间内的生产线");
-        Concept device = createConcept("设备", line.getId(), "产线上的生产设备");
-        Concept deviceStatus = createConcept("设备状态", null, "设备的当前运行状态");
-
-        createRelation(device.getId(), deviceStatus.getId(), "DERIVED_FROM", null, "设备状态由设备运行数据推导");
-
-        Concept mesGoodCount2 = createConcept("MES.良品数", null, "MES系统中的良品数概念");
-        Concept qmsQualified = createConcept("QMS.合格品数", null, "QMS系统中的合格品数概念");
-
-        createRelation(mesGoodCount2.getId(), qmsQualified.getId(), "EQUIVALENT_TO", null, "MES良品数等同于QMS合格品数");
-
-        ToolDefinition deviceStatusTool = toolDefinitionRepository.findByName("query_device_status").orElse(null);
-        ToolDefinition prodStatsTool = toolDefinitionRepository.findByName("query_production_stats").orElse(null);
-        ToolDefinition dailyOutputTool = toolDefinitionRepository.findByName("query_daily_output").orElse(null);
-        ToolDefinition deviceListTool = toolDefinitionRepository.findByName("query_device_list").orElse(null);
-
-        if (deviceStatusTool != null) {
-            bindToolConcept(deviceStatusTool.getId(), deviceStatus.getId(), "PRODUCES");
-        }
-        if (prodStatsTool != null) {
-            bindToolConcept(prodStatsTool.getId(), mesTotalOutput.getId(), "PRODUCES");
-            bindToolConcept(prodStatsTool.getId(), mesGoodCount.getId(), "PRODUCES");
-        }
-        if (dailyOutputTool != null) {
-            bindToolConcept(dailyOutputTool.getId(), mesTotalOutput.getId(), "PRODUCES");
-            bindToolConcept(dailyOutputTool.getId(), mesGoodCount.getId(), "PRODUCES");
-        }
-        if (deviceListTool != null) {
-            bindToolConcept(deviceListTool.getId(), hrDeptList.getId(), "PRODUCES");
+        for (int i = 0; i < relations.length; i++) {
+            IndustryRelation rel = new IndustryRelation();
+            rel.setIndustryId(industry.getId());
+            rel.setRelationType(relations[i][0]);
+            rel.setDescription(relations[i][1]);
+            rel.setIsTransitive(Boolean.valueOf(relations[i][2]));
+            rel.setIsSymmetric(Boolean.valueOf(relations[i][3]));
+            rel.setSortOrder(i);
+            industryRelationRepository.save(rel);
         }
 
-        // 阈值语义：产能利用率 > 90% → 产能紧张
-        Concept mesCapacityStressed = createConcept("产能紧张", null, "产能利用率超过阈值，生产线处于高负荷状态");
-        createRelation(mesCapacityStressed.getId(), mesCapacityUtil.getId(), "DERIVED_FROM", ">90%", "产能紧张由产能利用率超过 90% 阈值推导");
-
-        log.info("概念本体层种子数据初始化完成：{} 个概念，{} 个关系，{} 个工具绑定",
-                conceptRepository.count(),
-                conceptRelationRepository.count(),
-                toolConceptRepository.count());
-    }
-
-    private Concept createConcept(String name, Long parentId, String description) {
-        Concept concept = new Concept();
-        concept.setName(name);
-        concept.setParentId(parentId);
-        concept.setDescription(description);
-        return conceptRepository.save(concept);
-    }
-
-    private ConceptRelation createRelation(Long sourceId, Long targetId, String relationType, String expression, String description) {
-        ConceptRelation relation = new ConceptRelation();
-        relation.setSourceConceptId(sourceId);
-        relation.setTargetConceptId(targetId);
-        relation.setRelationType(relationType);
-        relation.setExpression(expression);
-        relation.setDescription(description);
-        return conceptRelationRepository.save(relation);
-    }
-
-    private void bindToolConcept(Long toolId, Long conceptId, String relation) {
-        ToolConcept binding = new ToolConcept();
-        binding.setToolId(toolId);
-        binding.setConceptId(conceptId);
-        binding.setRelation(relation);
-        toolConceptRepository.save(binding);
+        log.info("行业及关系清单初始化完成：1 个行业，{} 个关系类型", relations.length);
     }
 
     private void generateKeyPair(ToolGroup group) {

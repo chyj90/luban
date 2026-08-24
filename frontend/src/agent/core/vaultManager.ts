@@ -232,7 +232,7 @@ class VaultManager {
   private async getStoredKey(): Promise<CryptoKey | null> {
     const db = await this.getDB();
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       const transaction = db.transaction(STORE_NAME, 'readonly');
       const store = transaction.objectStore(STORE_NAME);
       const request = store.get('vault_master_key');

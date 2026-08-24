@@ -96,7 +96,7 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['title', 'summary', 'items'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { title, summary, items } = args as any;
+      const { title, summary, items } = args as unknown;
       const store = useAgentStore.getState();
       const planId = generatePlanId();
       const plan = {
@@ -104,7 +104,7 @@ export const planSkills: Record<string, SkillFactory> = {
         agentId: 'main-agent',
         agentName: '主智能体',
         agentIcon: '',
-        steps: items.map((item: any, index: number) => ({
+        steps: items.map((item: unknown, index: number) => ({
           id: item.id || generateItemId(),
           description: item.description,
           status: 'pending' as const,
@@ -138,9 +138,9 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'action'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const typedArgs = args as any;
+      const typedArgs = args as unknown;
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: any) => p.id === typedArgs.plan_id);
+      const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
 
       switch (typedArgs.action) {
@@ -153,14 +153,14 @@ export const planSkills: Record<string, SkillFactory> = {
         }
         case 'remove': {
           if (typedArgs.step_index === undefined) return { success: false, message: 'remove 操作需要 step_index' };
-          const filtered = plan.steps.filter((_: any, i: number) => i !== typedArgs.step_index).map((s: any, i: number) => ({ ...s, order: i }));
+          const filtered = plan.steps.filter((_: unknown, i: number) => i !== typedArgs.step_index).map((s: unknown, i: number) => ({ ...s, order: i }));
           store.updatePlan(typedArgs.plan_id, { steps: filtered });
           upsertPlanMessage(typedArgs.plan_id);
           return { success: true, message: `已删除步骤 ${typedArgs.step_index}` };
         }
         case 'replace': {
           if (typedArgs.step_index === undefined || !typedArgs.new_description) return { success: false, message: 'replace 操作需要 step_index 和 new_description' };
-          const updated = plan.steps.map((s: any, i: number) => i === typedArgs.step_index ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name } : s);
+          const updated = plan.steps.map((s: unknown, i: number) => i === typedArgs.step_index ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name } : s);
           store.updatePlan(typedArgs.plan_id, { steps: updated });
           upsertPlanMessage(typedArgs.plan_id);
           return { success: true, message: `已替换步骤 ${typedArgs.step_index}` };
@@ -186,12 +186,12 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'item_id', 'status'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, item_id, status, result } = args as any;
+      const { plan_id, item_id, status, result } = args as unknown;
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: any) => p.id === plan_id);
+      const plan = store.plans.find((p: unknown) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
-      store.updateStep(plan_id, item_id, { status: statusMap[status] as any, result: result || undefined });
+      store.updateStep(plan_id, item_id, { status: statusMap[status] as unknown, result: result || undefined });
       upsertPlanMessage(plan_id);
       return { success: true, message: `步骤 ${item_id} 状态已更新为 ${status}` };
     },
@@ -211,7 +211,7 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'action'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, action } = args as any;
+      const { plan_id, action } = args as unknown;
       const store = useAgentStore.getState();
       if (action === 'confirm') { store.updatePlan(plan_id, { status: 'confirmed' }); upsertPlanMessage(plan_id); return { success: true, message: '计划已确认，开始执行' }; }
       store.updatePlan(plan_id, { status: 'rejected' }); upsertPlanMessage(plan_id);
@@ -230,12 +230,12 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id } = args as any;
+      const { plan_id } = args as unknown;
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: any) => p.id === plan_id);
+      const plan = store.plans.find((p: unknown) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
-      const pendingSteps = plan.steps.filter((s: any) => s.status === 'pending');
-      const doneSteps = plan.steps.filter((s: any) => s.status === 'done');
+      const pendingSteps = plan.steps.filter((s: unknown) => s.status === 'pending');
+      const doneSteps = plan.steps.filter((s: unknown) => s.status === 'done');
       return { success: true, message: `计划验证：共 ${plan.steps.length} 步骤，已完成 ${doneSteps.length}，待完成 ${pendingSteps.length}`, data: { pendingSteps, doneSteps } };
     },
   }),
@@ -263,9 +263,9 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id } = args as any;
+      const { plan_id } = args as unknown;
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: any) => p.id === plan_id);
+      const plan = store.plans.find((p: unknown) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
       return { success: true, message: `已聚焦计划「${plan_id}」` };
     },
@@ -286,7 +286,7 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'reason'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, reason, changes } = args as any;
+      const { plan_id, reason, changes } = args as unknown;
       return { success: true, message: `计划 ${plan_id} 调整：${reason}${changes ? `，调整内容：${changes}` : ''}` };
     },
   }),

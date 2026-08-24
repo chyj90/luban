@@ -19,9 +19,8 @@ public class User {
     private String email;
 
     @Column(nullable = false, length = 50)
-    private String name;
+    private String account;
 
-    @Column(nullable = false)
     private String password;
 
     @Column(nullable = false, updatable = false)

@@ -1,12 +1,13 @@
 package com.luban.workflow.config;
 
+import com.luban.entity.User;
+import com.luban.repository.UserRepository;
 import com.luban.workflow.entity.Department;
 import com.luban.workflow.entity.Member;
 import com.luban.workflow.entity.Role;
 import com.luban.workflow.repository.DepartmentRepository;
 import com.luban.workflow.repository.MemberRepository;
 import com.luban.workflow.repository.RoleRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,7 +23,7 @@ public class TestDataService {
     private final MemberRepository memberRepository;
     private final DepartmentRepository departmentRepository;
     private final RoleRepository roleRepository;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final UserRepository userRepository;
 
     @Transactional
     public void ensureGlobalOrgData() {
@@ -81,10 +82,10 @@ public class TestDataService {
         Member zhou = findMember(members, "周九");
         Member zhang = findMember(members, "张三");
 
-        createRole("财务审批组", "role_finance", List.of(li.getId(), sun.getId()), applicationId);
-        createRole("HR 审批组", "role_hr", List.of(zhao.getId(), qian.getId()), applicationId);
-        createRole("高管审批组", "role_executive", List.of(zhou.getId()), applicationId);
-        createRole("部门负责人", "role_dept_manager", List.of(zhang.getId(), li.getId(), zhao.getId(), zhou.getId()), applicationId);
+        createRole("财务审批组", "role_finance", applicationId);
+        createRole("HR 审批组", "role_hr", applicationId);
+        createRole("高管审批组", "role_executive", applicationId);
+        createRole("部门负责人", "role_dept_manager", applicationId);
 
         log.info("应用 {} 测试角色数据初始化完成: {} 角色", applicationId, roleRepository.count());
     }
@@ -145,16 +146,13 @@ public class TestDataService {
         return memberRepository.save(member);
     }
 
-    private Role createRole(String name, String slug, List<Long> memberIds, Long applicationId) {
+    private Role createRole(String name, String slug, Long applicationId) {
         Role role = new Role();
         role.setName(name);
         role.setSlug(slug + "_" + applicationId);
         role.setApplicationId(applicationId);
-        try {
-            role.setMemberIds(objectMapper.writeValueAsString(memberIds));
-        } catch (Exception e) {
-            role.setMemberIds("[]");
-        }
+        role.setScope("APPLICATION");
+        userRepository.findFirstByOrderByIdAsc().ifPresent(u -> role.setCreatedBy(u.getId()));
         return roleRepository.save(role);
     }
 }

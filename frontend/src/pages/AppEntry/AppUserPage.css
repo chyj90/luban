@@ -37,6 +37,7 @@
 
 .appuser-tab:hover {
   color: #1677ff;
+  background: transparent;
 }
 
 .appuser-tab.active {

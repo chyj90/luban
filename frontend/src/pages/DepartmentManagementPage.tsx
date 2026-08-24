@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Building2, Plus, Pencil, Trash2, X, Check, Loader2, Users, ChevronRight } from 'lucide-react';
 import type { Department, User } from '@/types/user';
 import { listDepartments, createDepartment, updateDepartment, deleteDepartment, listUsers } from '@/api/user';
+import Select from '@/components/Select';
 import './DepartmentManagementPage.css';
 
 export default function DepartmentManagementPage() {
@@ -47,10 +48,15 @@ export default function DepartmentManagementPage() {
     if (!form.name) return;
     setSaving(true);
     try {
+      const payload = {
+        name: form.name,
+        managerId: form.managerId ?? undefined,
+        parentId: form.parentId ?? undefined,
+      };
       if (editing) {
-        await updateDepartment(editing.id, form);
+        await updateDepartment(editing.id, payload);
       } else {
-        await createDepartment(form);
+        await createDepartment(payload);
       }
       setShowForm(false);
       setEditing(null);
@@ -74,7 +80,7 @@ export default function DepartmentManagementPage() {
   const getManagerName = (managerId: number | null) => {
     if (!managerId) return null;
     const user = users.find((u) => u.id === managerId);
-    return user ? user.displayName || user.username : null;
+    return user ? user.displayName || user.account : null;
   };
 
   const getParentName = (parentId: number | null) => {
@@ -176,43 +182,40 @@ export default function DepartmentManagementPage() {
               </div>
               <div className="dept-page__form-group">
                 <label>上级部门</label>
-                <select
-                  value={form.parentId ?? ''}
-                  onChange={(e) =>
+                <Select
+                  value={form.parentId != null ? String(form.parentId) : ''}
+                  options={[
+                    { value: '', label: '无（顶级部门）' },
+                    ...departments
+                      .filter((d) => d.id !== editing?.id)
+                      .map((d) => ({ value: String(d.id), label: d.name })),
+                  ]}
+                  onChange={(value) =>
                     setForm((prev) => ({
                       ...prev,
-                      parentId: e.target.value ? Number(e.target.value) : null,
+                      parentId: value ? Number(value) : null,
                     }))
                   }
-                >
-                  <option value="">-- 无（顶级部门） --</option>
-                  {departments
-                    .filter((d) => d.id !== editing?.id)
-                    .map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                </select>
+                />
               </div>
               <div className="dept-page__form-group">
                 <label>部门负责人</label>
-                <select
-                  value={form.managerId ?? ''}
-                  onChange={(e) =>
+                <Select
+                  value={form.managerId != null ? String(form.managerId) : ''}
+                  options={[
+                    { value: '', label: '选择负责人' },
+                    ...users.map((u) => ({
+                      value: String(u.id),
+                      label: `${u.displayName} (@${u.account})`,
+                    })),
+                  ]}
+                  onChange={(value) =>
                     setForm((prev) => ({
                       ...prev,
-                      managerId: e.target.value ? Number(e.target.value) : null,
+                      managerId: value ? Number(value) : null,
                     }))
                   }
-                >
-                  <option value="">-- 选择负责人 --</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.displayName} (@{u.username})
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
             <div className="dept-page__modal-footer">

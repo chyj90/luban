@@ -44,7 +44,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
         ctx.dispatch?.({
           type: 'DELEGATE_QUERY_START',
           payload: { taskType: typedArgs.task_type, targetPage: typedArgs.target_page, queryName: typedArgs.query_name, requirement: typedArgs.requirement },
-        } as any);
+        } as unknown);
 
         try {
           const dbaPrompt = buildDataAssistantPrompt({
@@ -92,8 +92,8 @@ export const delegateSkills: Record<string, SkillFactory> = {
 
           const messages = executor.getMessages();
           const dbaResponse = messages
-            .filter((m: any) => m.role === 'assistant')
-            .map((m: any) => m.content)
+            .filter((m: unknown) => m.role === 'assistant')
+            .map((m: unknown) => m.content)
             .join('\n\n')
             .trim();
 
@@ -107,17 +107,17 @@ export const delegateSkills: Record<string, SkillFactory> = {
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
             payload: { taskType: typedArgs.task_type, queryName: typedArgs.query_name, success: true, details: dbaResponse },
-          } as any);
+          } as unknown);
           ctx.onQueriesChange?.();
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
           return { success: true, message: result.message, data: result };
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error(`[delegate_query] 失败:`, e);
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
             payload: { taskType: typedArgs.task_type, queryName: typedArgs.query_name, success: false, error: e.message },
-          } as any);
+          } as unknown);
           return { success: false, message: `数据辅助智能体执行失败: ${e.message}`, _noRetry: true };
         }
       },
@@ -151,14 +151,14 @@ export const delegateSkills: Record<string, SkillFactory> = {
         required: ['requirement'],
       },
       async execute(args) {
-        const { requirement, context } = args as any;
+        const { requirement, context } = args as unknown;
         const execStart = Date.now();
         console.log(`[delegate_workflow] 开始委派流程设计任务`);
 
         ctx.dispatch?.({
           type: 'DELEGATE_WORKFLOW_START',
           payload: { requirement },
-        } as any);
+        } as unknown);
 
         try {
           const systemPrompt = `你是流程设计专家，负责设计和管理业务流程。你必须调用工具来实际创建表单和流程，禁止只输出文本方案而不调用工具。
@@ -212,24 +212,24 @@ ${context ? `上下文信息：${context}` : ''}
 
           const messages = executor.getMessages();
           const response = messages
-            .filter((m: any) => m.role === 'assistant')
-            .map((m: any) => m.content)
+            .filter((m: unknown) => m.role === 'assistant')
+            .map((m: unknown) => m.content)
             .join('\n\n')
             .trim();
 
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
             payload: { success: true, details: response },
-          } as any);
+          } as unknown);
 
           console.log(`[delegate_workflow] 完成 | 总耗时: ${Date.now() - execStart}ms`);
           return { success: true, message: '流程设计任务完成', data: { response } };
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error(`[delegate_workflow] 失败:`, e);
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
             payload: { success: false, error: e.message },
-          } as any);
+          } as unknown);
           return { success: false, message: `流程设计智能体执行失败: ${e.message}`, _noRetry: true };
         }
       },
@@ -263,14 +263,14 @@ ${context ? `上下文信息：${context}` : ''}
         required: ['requirement'],
       },
       async execute(args) {
-        const { requirement, context } = args as any;
+        const { requirement, context } = args as unknown;
         const execStart = Date.now();
         console.log(`[delegate_analysis] 开始委派需求分析任务`);
 
         ctx.dispatch?.({
           type: 'DELEGATE_ANALYSIS_START',
           payload: { requirement },
-        } as any);
+        } as unknown);
 
         try {
           const systemPrompt = `${ANALYSIS_AGENT_PROMPT}
@@ -285,8 +285,8 @@ ${context ? `上下文信息：${context}` : ''}`;
 
           const messages = executor.getMessages();
           const response = messages
-            .filter((m: any) => m.role === 'assistant')
-            .map((m: any) => m.content)
+            .filter((m: unknown) => m.role === 'assistant')
+            .map((m: unknown) => m.content)
             .join('\n\n')
             .trim();
 
@@ -301,19 +301,19 @@ ${context ? `上下文信息：${context}` : ''}`;
           ctx.dispatch?.({
             type: 'DELEGATE_ANALYSIS_END',
             payload: { success: true, details: response, planId },
-          } as any);
+          } as unknown);
 
           return {
             success: true,
             message: '需求分析完成',
             data: { analysis: response, planId, messages },
           };
-        } catch (e: any) {
+        } catch (e: unknown) {
           console.error(`[delegate_analysis] 失败:`, e);
           ctx.dispatch?.({
             type: 'DELEGATE_ANALYSIS_END',
             payload: { success: false, error: e.message },
-          } as any);
+          } as unknown);
           return { success: false, message: `需求分析智能体执行失败: ${e.message}`, _noRetry: true };
         }
       },

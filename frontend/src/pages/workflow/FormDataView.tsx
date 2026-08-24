@@ -67,7 +67,7 @@ export default function FormDataView({ formData, fields }: FormDataViewProps) {
   const fieldSchemas = useMemo(() => parseFieldsSchema(fields || ''), [fields]);
   const data = useMemo(() => parseFormData(formData), [formData]);
 
-  const fieldMap = useMemo(() => {
+  const _fieldMap = useMemo(() => {
     const map = new Map<string, FieldSchema>();
     fieldSchemas.forEach((f) => map.set(f.key, f));
     return map;

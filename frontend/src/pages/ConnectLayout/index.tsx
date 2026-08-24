@@ -1,23 +1,29 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { usePermissionStore } from '@/stores/permissionStore';
 import './SidebarLayout.css';
 
 const MENU_ITEMS = [
-  { key: '/connect/systems', label: '系统管理', path: '/connect/systems' },
-  { key: '/connect/tools', label: '工具注册表', path: '/connect/tools' },
-  { key: '/connect/concepts', label: '概念本体', path: '/connect/concepts' },
-  { key: '/connect/gateway', label: 'MCP 网关', path: '/connect/gateway' },
-  { key: '/connect/keys', label: '我的 Key', path: '/connect/keys' },
+  { key: '/connect/systems', label: '系统管理', path: '/connect/systems', permission: 'connect:systems' },
+  { key: '/connect/gateway', label: '运行监控', path: '/connect/gateway', permission: 'connect:gateway' },
+  { key: '/connect/keys', label: '我的 KEY', path: '/connect/keys', permission: 'connect:keys' },
+  { key: '/connect/agent', label: '大模型配置', path: '/connect/agent', permission: 'connect:agent' },
 ];
 
 export function ConnectLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const hasPermission = usePermissionStore((s) => s.hasPermission);
+  const loaded = usePermissionStore((s) => s.loaded);
+
+  const filteredItems = loaded
+    ? MENU_ITEMS.filter((item) => hasPermission(item.permission))
+    : MENU_ITEMS;
 
   return (
     <div className="sidebar-layout">
       <aside className="sidebar-layout-sidebar">
         <nav className="sidebar-layout-menu">
-          {MENU_ITEMS.map((item) => (
+          {filteredItems.map((item) => (
             <button
               key={item.key}
               className={`sidebar-layout-menu-item ${location.pathname === item.path ? 'active' : ''}`}

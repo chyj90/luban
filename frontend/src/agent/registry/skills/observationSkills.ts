@@ -2,7 +2,7 @@ import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { listPages } from '@/api';
 
 export const observationSkills: Record<string, SkillFactory> = {
-  'observation:list_pages': (ctx) => ({
+  'observation:list_pages': (_ctx) => ({
     id: 'observation:list_pages',
     category: SkillCategory.OBSERVATION,
     name: 'list_pages',
@@ -16,13 +16,13 @@ export const observationSkills: Record<string, SkillFactory> = {
           message: `共 ${res.data.length} 个页面，当前页面 ID 为 ${ctx.pageId}`,
           data: { pages: res.data, currentPageId: ctx.pageId },
         };
-      } catch (e) {
+      } catch {
         return { success: false, message: `获取页面列表失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'observation:record': (ctx) => ({
+  'observation:record': (_ctx) => ({
     id: 'observation:record',
     category: SkillCategory.OBSERVATION,
     name: 'record_observation',

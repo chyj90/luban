@@ -74,9 +74,9 @@ export function AppListPage() {
         <div className="applist-spacer" />
         {user && (
           <div className="applist-user">
-            <span className="applist-user-name">{user.name}</span>
+            <span className="applist-user-name">{user.account}</span>
             <div className="applist-user-avatar">
-              {getInitials(user.name || '')}
+              {getInitials(user.account || '')}
             </div>
           </div>
         )}

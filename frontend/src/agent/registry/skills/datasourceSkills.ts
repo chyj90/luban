@@ -3,7 +3,7 @@ import { createDatasource, testDatasource, getDatasourceStructure } from '@/api'
 import { listDatasources } from '@/api/datasource';
 
 export const datasourceSkills: Record<string, SkillFactory> = {
-  'datasource:list': (ctx) => ({
+  'datasource:list': (_ctx) => ({
     id: 'datasource:list',
     category: SkillCategory.DATASOURCE,
     name: 'list_datasources',
@@ -15,7 +15,7 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'datasource:test': (ctx) => ({
+  'datasource:test': (_ctx) => ({
     id: 'datasource:test',
     category: SkillCategory.DATASOURCE,
     name: 'test_datasource',
@@ -29,13 +29,13 @@ export const datasourceSkills: Record<string, SkillFactory> = {
       try {
         await testDatasource(args.datasourceId as number);
         return { success: true, message: '数据源连接正常' };
-      } catch (e: any) {
+      } catch (e: unknown) {
         return { success: false, message: `数据源连接失败: ${e.message || '未知错误'}` };
       }
     },
   }),
 
-  'datasource:structure': (ctx) => ({
+  'datasource:structure': (_ctx) => ({
     id: 'datasource:structure',
     category: SkillCategory.DATASOURCE,
     name: 'fetch_datasource_structure',
@@ -51,7 +51,7 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'datasource:connect': (ctx) => ({
+  'datasource:connect': (_ctx) => ({
     id: 'datasource:connect',
     category: SkillCategory.DATASOURCE,
     name: 'connect_datasource',
@@ -81,7 +81,7 @@ config 字段：baseUrl（必填）、method（可选，默认 GET）、headers�
         } as Parameters<typeof createDatasource>[0]);
         await testDatasource(res.data.id);
         return { success: true, message: `数据源 "${args.name}" 连接成功`, data: res.data };
-      } catch (e) {
+      } catch {
         return { success: false, message: `连接数据源失败: ${(e as Error).message}` };
       }
     },

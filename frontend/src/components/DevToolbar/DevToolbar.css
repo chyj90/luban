@@ -60,7 +60,7 @@
 }
 
 .devtoolbar-impersonate-btn:hover {
-  background: #ebf8ff;
+  background: transparent;
   border-color: #1677ff;
   color: #1677ff;
 }

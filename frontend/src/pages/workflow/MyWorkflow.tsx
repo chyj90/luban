@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ClipboardList } from 'lucide-react';
+import PageTopbar from '../../components/PageTopbar';
 import { useLoadingStore } from '../../stores/loadingStore';
 import { useImpersonationStore } from '../../stores/impersonationStore';
 import type { WorkflowTask, WorkflowInstance, WorkflowDefinition } from '../../types/workflow';
@@ -106,34 +108,32 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
   return (
     <div className={`${styles.page} ${embedded ? styles.embedded : ''}`}>
       {!embedded && (
-        <>
-          <div className={styles.header}>
-            <div>
-              <h1 className={styles.title}>我的工作</h1>
-              <p className={styles.subtitle}>查看我发起的流程、待处理的任务和平台审核</p>
+        <PageTopbar
+          icon={<ClipboardList size={22} />}
+          title="我的工作"
+          subtitle="查看我发起的流程、待处理的任务和平台审核"
+          actions={
+            <div className={styles.tabs}>
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  className={`${styles.tab} ${tab === t.key ? styles.tabActive : ''}`}
+                  onClick={() => setTab(t.key)}
+                >
+                  {t.label}
+                  {t.key === 'pending' && pendingApprovalCount > 0 && !embedded && (
+                    <span className={styles.tagPending}>
+                      {pendingApprovalCount}
+                    </span>
+                  )}
+                </button>
+              ))}
             </div>
-          </div>
-          <hr className={styles.divider} />
-        </>
+          }
+        />
       )}
 
-      <div className={styles.tabs}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            className={`${styles.tab} ${tab === t.key ? styles.tabActive : ''}`}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-            {t.key === 'pending' && pendingApprovalCount > 0 && !embedded && (
-              <span className={styles.tagPending} style={{ marginLeft: 6, fontSize: 11 }}>
-                {pendingApprovalCount}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
+      <div className={styles.content}>
       {tab === 'pending' && pendingApprovalCount > 0 && !embedded && (
         <div className={styles.testBanner} style={{ background: '#e6f4ff', borderColor: '#91caff' }}>
           <span className={styles.testBannerDot} style={{ background: '#1677ff' }} />
@@ -175,7 +175,15 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
             ))}
           </div>
         ) : (
-          <div className={styles.emptyList}>暂无可用流程，请联系管理员发布流程</div>
+          <div className={styles.emptyList}>
+            <div className={styles.emptyIconWrap}>
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <h3>暂无可用流程</h3>
+            <p>请联系管理员发布流程</p>
+          </div>
         )
       ) : (isInitiatedTab ? (
         instances.length === 0 ? (
@@ -185,8 +193,8 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                 <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
             </div>
-            <div className={styles.emptyText}>暂无发起的流程</div>
-            <div className={styles.emptyHint}>提交表单后，发起的流程会显示在这里</div>
+            <h3>暂无发起的流程</h3>
+            <p>提交表单后，发起的流程会显示在这里</p>
           </div>
         ) : (
           <div className={styles.card}>
@@ -277,9 +285,9 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
               </svg>
             </div>
-            <div className={styles.emptyText}>
+            <h3>
               {tab === 'pending' ? '暂无待审批任务' : '暂无已处理任务'}
-            </div>
+            </h3>
           </div>
         ) : (
           <div className={styles.card}>
@@ -338,6 +346,7 @@ export default function MyWorkflow({ embedded, workflows, appId, onNavigate }: M
           </div>
         )
       ))}
+      </div>
     </div>
   );
 }

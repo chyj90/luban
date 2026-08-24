@@ -33,7 +33,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
   const [showWorkflow, setShowWorkflow] = useState(isImpersonating());
   const [loading, setLoading] = useState(true);
 
-  const userInfo = user ? { id: user.id, name: user.name || '', email: user.email || '' } : null;
+  const userInfo = user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
   const pageList = pages.map(p => ({ id: p.id, name: p.name }));
   const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate);
 
@@ -70,17 +70,6 @@ export function AppUserPage({ app }: AppUserPageProps) {
     });
   }, [app.id]);
 
-  // Load code page content when currentPageId changes
-  useEffect(() => {
-    if (!currentPageId) return;
-    getCodePage(currentPageId).then(res => {
-      codePageRef.current = res.data.codePage;
-      if (shellReadyRef.current) {
-        sendPageToIframe(res.data.codePage);
-      }
-    });
-  }, [currentPageId]);
-
   const sendPageToIframe = useCallback((cp: CodePageData) => {
     const iframe = iframeRef.current;
     if (!iframe || !shellReadyRef.current) return;
@@ -93,6 +82,17 @@ export function AppUserPage({ app }: AppUserPageProps) {
       bridgeScript: buildBridgeContent(queryNames),
     }, '*');
   }, [queryNames, buildBridgeContent]);
+
+  // Load code page content when currentPageId changes
+  useEffect(() => {
+    if (!currentPageId) return;
+    getCodePage(currentPageId).then(res => {
+      codePageRef.current = res.data.codePage;
+      if (shellReadyRef.current) {
+        sendPageToIframe(res.data.codePage);
+      }
+    });
+  }, [currentPageId, sendPageToIframe]);
 
   // Build shell iframe
   useEffect(() => {

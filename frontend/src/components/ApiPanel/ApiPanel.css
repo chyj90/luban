@@ -1,0 +1,301 @@
+.api-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.api-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf3;
+  flex-shrink: 0;
+}
+
+.api-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.api-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.api-add-btn:hover {
+  background: #e6f4ff;
+  border-color: #1677ff;
+}
+
+.api-form {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.api-form-row {
+  display: flex;
+  gap: 8px;
+}
+
+.api-form-method {
+  width: 80px;
+  padding: 5px 6px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+  color: #333;
+  flex-shrink: 0;
+}
+
+.api-form-url {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #333;
+}
+
+.api-form-url:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+.api-input {
+  padding: 5px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #333;
+}
+
+.api-input:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+.api-form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.api-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.api-btn-primary {
+  background: #1677ff;
+  color: #fff;
+}
+
+.api-btn-primary:hover {
+  background: #4096ff;
+}
+
+.api-btn-cancel {
+  background: #f5f5f5;
+  color: #666;
+}
+
+.api-btn-cancel:hover {
+  background: #e8e8e8;
+}
+
+.api-section {
+  padding: 8px 0;
+}
+
+.api-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8c9cab;
+  text-transform: uppercase;
+}
+
+.api-section-count {
+  margin-left: auto;
+  background: #e8edf3;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #666;
+}
+
+.api-list {
+  padding: 0 8px;
+}
+
+.api-card {
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.api-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.api-card-header:hover {
+  background: #fafbfc;
+}
+
+.api-card-chevron {
+  color: #999;
+  flex-shrink: 0;
+}
+
+.api-card-method {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.api-card-method.method-HTTP {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.api-card-method.method-MCP_PASSTHROUGH {
+  background: #f9f0ff;
+  color: #722ed1;
+}
+
+.api-card-name {
+  font-size: 12px;
+  color: #333;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.api-card-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  color: #666;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.api-card:hover .api-card-action-btn {
+  opacity: 1;
+}
+
+.api-card-action-btn:hover {
+  background: #f5f5f5;
+}
+
+.api-card-action-del:hover {
+  background: #fff1f0;
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+}
+
+.api-card-url {
+  padding: 0 10px 6px 10px;
+  font-size: 11px;
+  color: #999;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-card-desc {
+  padding: 0 10px 6px 10px;
+  font-size: 11px;
+  color: #999;
+}
+
+.api-card-detail {
+  padding: 6px 10px 10px;
+  border-top: 1px solid #f0f0f0;
+  background: #fafbfc;
+}
+
+.api-detail-row {
+  margin-bottom: 6px;
+}
+
+.api-detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.api-detail-label {
+  display: block;
+  font-size: 11px;
+  color: #999;
+  margin-bottom: 2px;
+}
+
+.api-detail-value {
+  font-size: 12px;
+  color: #555;
+}
+
+.api-detail-code {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #333;
+  overflow-x: auto;
+  max-height: 150px;
+  line-height: 1.5;
+}
+
+.api-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+}

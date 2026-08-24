@@ -27,11 +27,11 @@ public class Role {
     @Column(nullable = true)
     private Long applicationId;
 
-    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'APP'")
+    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'APPLICATION'")
     private String scope;
 
-    @Column(columnDefinition = "JSON")
-    private String memberIds;
+    @Column(name = "created_by", nullable = true)
+    private Long createdBy;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

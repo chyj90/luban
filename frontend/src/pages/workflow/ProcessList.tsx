@@ -5,6 +5,7 @@ import type { WorkflowDefinition, FormWorkflowBinding } from '../../types/workfl
 import { workflowApi, formApi, bindingApi } from '../../api/workflow';
 import { confirm } from '../../stores/confirmStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
+import SearchBox from '@/components/SearchBox';
 import styles from './ProcessList.module.css';
 
 interface ProcessListProps {
@@ -13,7 +14,7 @@ interface ProcessListProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function ProcessList({ embedded, appId: propAppId, onNavigate }: ProcessListProps = {}) {
+export default function ProcessList({ _embedded, appId: propAppId, onNavigate }: ProcessListProps = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const appId = propAppId ?? (searchParams.get('appId') ? Number(searchParams.get('appId')) : undefined);
@@ -88,7 +89,7 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
       setBindings(updated);
       setBindPickerOpen(null);
       setPickerPos(null);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
     }
   };
@@ -156,18 +157,11 @@ export default function ProcessList({ embedded, appId: propAppId, onNavigate }: 
           <div className={styles.toolbar}>
             <div className={styles.toolbarLeft}>
               <span className={styles.count}>共 <span className={styles.countNum}>{filtered.length}</span> 个流程</span>
-              <div className={styles.searchWrap}>
-                <svg className={styles.searchIcon} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <input
-                  className={styles.searchInput}
-                  type="text"
-                  placeholder="搜索流程名称..."
+              <SearchBox
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  placeholder="搜索流程名称..."
                 />
-              </div>
             </div>
           </div>
 

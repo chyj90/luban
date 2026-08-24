@@ -4,8 +4,8 @@ export { listPages, createCodePage, getCodePage, updateCodePage, deletePage, ren
 export { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from './datasource';
 export { listQueries, createQuery, updateQuery, deleteQuery, runQuery, executeSql } from './query';
 export { listJsFunctions, createJsFunction } from './jsFunction';
-export { get, post, put, del } from './client';
-export { listUsers, listRoles, listDepartments, updateUserRole, updateUserDepartment, updateUserLeader, createRole, updateRole, deleteRole, createDepartment, updateDepartment, deleteDepartment } from './user';
+export { get, post, put, del, axiosInstance } from './client';
+export { listUsers, createUserFromMember, listRoles, listDepartments, updateUserRole, updateUserDepartment, updateUserLeader, createRole, updateRole, deleteRole, createDepartment, updateDepartment, deleteDepartment, downloadUserTemplate, importUsers, getMyPermissions, listPermissions, getRolePermissions, updateRolePermissions, getRoleUsers, updateRoleUsers, listSimpleUsers } from './user';
 export {
   listToolGroups, createToolGroup, updateToolGroup, deleteToolGroup,
   listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition,

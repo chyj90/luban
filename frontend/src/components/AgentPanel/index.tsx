@@ -256,11 +256,11 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const isUserAtBottomRef = useRef(true);
   const lastScrollTimeRef = useRef(0);
   const chatRouterRef = useRef<ChatRouter | null>(null);
-  const lastApiMessagesRef = useRef<any[]>([]);
+  const lastApiMessagesRef = useRef<unknown[]>([]);
 
   const getDebugLogKey = () => `debug_chat_log_${appId}`;
 
-  const saveDebugLog = (messages: any[]) => {
+  const saveDebugLog = (messages: unknown[]) => {
     lastApiMessagesRef.current = messages;
     try {
       localStorage.setItem(getDebugLogKey(), JSON.stringify(messages));
@@ -332,7 +332,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     requestAnimationFrame(() => {
       setTimeout(() => {
         el.scrollTop = el.scrollHeight;
-        (window as any).bug_trace_log('scroll-init', {
+        (window as unknown).bug_trace_log('scroll-init', {
           scrollHeight: el.scrollHeight,
           clientHeight: el.clientHeight,
         });
@@ -350,7 +350,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         const el = messagesContainerRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-        (window as any).bug_trace_log('scroll-auto', {
+        (window as unknown).bug_trace_log('scroll-auto', {
           scrollTop: el.scrollTop,
           scrollHeight: el.scrollHeight,
           clientHeight: el.clientHeight,
@@ -367,7 +367,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       case 'DELEGATE_QUERY_START': {
         const payload = event.payload as { taskType: string; targetPage: string; queryName: string; requirement: string };
         console.log(`[AgentPanel] DELEGATE_QUERY_START | queryName=${payload.queryName} | targetPage=${payload.targetPage}`);
-        const displayName = payload.queryName || '查询';
+        const _displayName = payload.queryName || '查询';
         addMessage({
           id: crypto.randomUUID(),
           role: 'system',
@@ -431,7 +431,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         break;
       }
       case 'DEBUG_CHAT_LOG': {
-        saveDebugLog(event.payload as any[]);
+        saveDebugLog(event.payload as unknown[]);
         break;
       }
     }
@@ -500,7 +500,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         sessionId,
       });
       await result.executor.run(result.processedInput);
-    } catch (e) {
+    } catch {
       setError((e as Error).message);
     }
   };
@@ -638,7 +638,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const models: string[] = (data.data || [])
-        .map((m: any) => m.id)
+        .map((m: unknown) => m.id)
         .filter(Boolean)
         .sort();
       setAvailableModels(models);
@@ -1111,7 +1111,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
                   if (!el) return;
                   const threshold = 50;
                   isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-                  (window as any).bug_trace_log('scroll-user', {
+                  (window as unknown).bug_trace_log('scroll-user', {
                     scrollTop: el.scrollTop,
                     scrollHeight: el.scrollHeight,
                     clientHeight: el.clientHeight,

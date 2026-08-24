@@ -12,7 +12,7 @@ interface FormListProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function FormList({ embedded, appId: propAppId, onNavigate }: FormListProps = {}) {
+export default function FormList({ _embedded, appId: propAppId, onNavigate }: FormListProps = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const appId = propAppId ?? (searchParams.get('appId') ? Number(searchParams.get('appId')) : undefined);

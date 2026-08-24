@@ -22,8 +22,9 @@ public class DatasourceController {
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> list(
-            @RequestParam Long applicationId) {
-        return ResponseEntity.ok(ApiResponse.ok(datasourceService.listByApplication(applicationId)));
+            @RequestParam String slug,
+            @RequestParam(required = false) Long ownerId) {
+        return ResponseEntity.ok(ApiResponse.ok(datasourceService.listBySlug(slug, ownerId)));
     }
 
     @PostMapping

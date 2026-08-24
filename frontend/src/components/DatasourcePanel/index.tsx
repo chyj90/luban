@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
+import { listApplicationDatasources } from '@/api/tool';
 import { toast } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import type { Datasource, DatasourceType, DatasourceStructure } from '@/types/datasource';
@@ -9,10 +10,19 @@ interface DatasourcePanelProps {
   applicationId: number;
 }
 
+interface KeyDsItem {
+  id: number;
+  datasourceId: number;
+  apiKeyId: number;
+  status: string;
+  name: string;
+  type: string;
+  config: string;
+}
+
 const DS_TYPES: { value: DatasourceType; label: string; color: string }[] = [
   { value: 'MySQL', label: 'MySQL', color: '#00758F' },
   { value: 'PostgreSQL', label: 'PostgreSQL', color: '#336791' },
-  { value: 'REST_API', label: 'REST API', color: '#6B8F71' },
 ];
 
 const isJdbcType = (type: string) => type === 'MySQL' || type === 'PostgreSQL';
@@ -29,6 +39,7 @@ const EMPTY_FORM = {
 
 export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [datasources, setDatasources] = useState<Datasource[]>([]);
+  const [keyDatasources, setKeyDatasources] = useState<KeyDsItem[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [structure, setStructure] = useState<DatasourceStructure | null>(null);
@@ -37,7 +48,8 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
 
   useEffect(() => {
-    listDatasources(applicationId).then((res) => setDatasources(res.data));
+    listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
+    listApplicationDatasources(applicationId).then((res) => setKeyDatasources((res.data as KeyDsItem[]) || [])).catch(() => setKeyDatasources([]));
   }, [applicationId]);
 
   const buildConfig = () => {
@@ -70,16 +82,13 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const handleSubmit = async () => {
     if (!form.name.trim()) return;
     try {
+      const payload = { slug: 'APPLICATION' as const, ownerId: applicationId, name: form.name.trim(), type: form.type, config: buildConfig() };
       if (editingId) {
-        const res = await updateDatasource(editingId, {
-          applicationId, name: form.name.trim(), type: form.type, config: buildConfig(),
-        });
+        const res = await updateDatasource(editingId, payload);
         setDatasources(datasources.map((d) => (d.id === editingId ? res.data : d)));
         toast.success('数据源已更新');
       } else {
-        const res = await createDatasource({
-          applicationId, name: form.name.trim(), type: form.type, config: buildConfig(),
-        });
+        const res = await createDatasource(payload);
         setDatasources([res.data, ...datasources]);
         toast.success('数据源创建成功');
       }
@@ -291,7 +300,33 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       )}
 
       <div className="ds-list">
-        {datasources.length === 0 && !showForm && (
+        {keyDatasources.length > 0 && (
+          <div className="ds-section">
+            <div className="ds-section-header">
+              <span className="ds-section-title">KEY 授权数据源</span>
+              <span className="ds-section-count">{keyDatasources.length}</span>
+            </div>
+            {keyDatasources.map((kd) => {
+              const info = DS_TYPES.find((t) => t.value === kd.type) || DS_TYPES[0];
+              return (
+                <div key={kd.id} className="ds-card ds-card-key">
+                  <div className="ds-card-main">
+                    <div className="ds-card-icon" style={{ background: info.color + '14', color: info.color }}>
+                      {info.label.charAt(0)}
+                    </div>
+                    <div className="ds-card-info">
+                      <span className="ds-card-name">{kd.name}</span>
+                      <span className="ds-card-type">{info.label} · 来自 KEY</span>
+                    </div>
+                    <span className="ds-card-badge ds-badge-key">KEY</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {datasources.length === 0 && keyDatasources.length === 0 && !showForm && (
           <div className="ds-empty">暂无数据源，点击"+ 新建"添加</div>
         )}
         {datasources.map((ds) => {

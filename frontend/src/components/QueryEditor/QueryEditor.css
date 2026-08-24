@@ -68,7 +68,7 @@
 .qe-btn:hover {
   border-color: #1677ff;
   color: #1677ff;
-  background: #f0f7ff;
+  background: transparent;
 }
 
 .qe-btn.active {

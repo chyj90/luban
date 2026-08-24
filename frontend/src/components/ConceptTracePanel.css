@@ -1,0 +1,555 @@
+.conceptTracePanel {
+  margin: 8px 0;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.traceHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #fafafa;
+  cursor: pointer;
+  user-select: none;
+}
+
+.traceHeader:hover {
+  background: #f0f0f0;
+}
+
+.traceIcon { font-size: 14px; }
+
+.traceTitle {
+  font-weight: 500;
+  color: #333;
+  flex: 1;
+}
+
+.traceArrow {
+  color: #999;
+  font-size: 10px;
+}
+
+.traceBody {
+  padding: 8px 12px;
+  background: #fff;
+}
+
+/* ===== Inline Concept Tags ===== */
+.traceTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.traceTagWrap {
+  position: relative;
+}
+
+.traceTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafafa;
+  font-size: 12px;
+  line-height: 1.4;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.traceTag.clickable {
+  cursor: pointer;
+}
+
+.traceTag.clickable:hover {
+  border-color: #1677ff;
+  background: #e6f4ff;
+}
+
+.traceTag.expanded {
+  border-color: #1677ff;
+  background: #e6f4ff;
+}
+
+.traceTagName {
+  font-weight: 500;
+  color: #1677ff;
+}
+
+.traceTagConfidence {
+  font-size: 10px;
+  background: #e6f4ff;
+  color: #1677ff;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+/* ===== Tag Detail Popover ===== */
+.traceTagDetail {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 240px;
+  max-width: 320px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 8px 10px;
+  z-index: 10;
+}
+
+/* ===== Concept Feedback ===== */
+.traceTagFeedback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #bbb;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.traceTagFeedback:hover {
+  background: #e8e8e8;
+  color: #555;
+}
+
+.traceFeedbackPopover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  max-width: 260px;
+  background: #fff;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  z-index: 10;
+}
+
+.traceFeedbackPopover textarea {
+  width: 100%;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.traceFeedbackPopover textarea:focus {
+  border-color: #1677ff;
+}
+
+.traceFeedbackActions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.traceFeedbackBtn {
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.traceFeedbackBtn.correct {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.traceFeedbackBtn.correct:hover {
+  background: #d9f7be;
+}
+
+.traceFeedbackBtn.partial {
+  background: #fffbe6;
+  color: #d4b106;
+}
+
+.traceFeedbackBtn.partial:hover {
+  background: #fff1b8;
+}
+
+.traceFeedbackBtn.incorrect {
+  background: #fff2f0;
+  color: #ff4d4f;
+}
+
+.traceFeedbackBtn.incorrect:hover {
+  background: #ffccc7;
+}
+
+/* ===== Legacy (keep for capability_summary) ===== */
+.traceItem {
+  padding: 8px 0;
+  border-bottom: 1px dashed #f0f0f0;
+}
+
+.traceItem:last-child {
+  border-bottom: none;
+}
+
+.traceItemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.traceConceptName {
+  font-weight: 600;
+  color: #1677ff;
+}
+
+.traceConfidence {
+  background: #e6f7ff;
+  color: #1677ff;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.traceLabel {
+  font-size: 11px;
+  color: #999;
+  margin: 4px 0 2px;
+}
+
+.traceAttributes, .traceMappings, .traceJoins {
+  margin: 2px 0 2px 8px;
+  border-left: 2px solid #e8e8e8;
+  padding-left: 8px;
+}
+
+.traceAttrRow, .traceMappingRow, .traceJoinRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 0;
+  font-size: 11px;
+}
+
+.traceAttrName {
+  color: #333;
+  font-weight: 500;
+}
+
+.traceAttrTarget {
+  font-size: 11px;
+  background: #f5f5f5;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #d4380d;
+}
+
+.traceAttrValue {
+  color: #52c41a;
+  font-size: 11px;
+}
+
+.traceMappingType {
+  background: #f9f0ff;
+  color: #722ed1;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.traceJoinType {
+  background: #fff7e6;
+  color: #d46b08;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.traceJoinCondition {
+  color: #666;
+  font-size: 11px;
+}
+
+.traceMappingRow code, .traceJoinRow code {
+  font-size: 11px;
+  background: #f5f5f5;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #d4380d;
+}
+
+/* ===== Capability Summary ===== */
+.traceCapability {
+  padding: 8px 0;
+}
+
+.traceCapability .traceConfidence {
+  color: #1677ff;
+  background: #e6f4ff;
+  padding: 0 6px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+
+.traceCapabilitySample {
+  margin-top: 4px;
+  padding: 6px 10px;
+  background: #f6f8fa;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #555;
+  line-height: 1.5;
+}
+
+/* ===== Pipeline Stages ===== */
+.pipelineStages {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.pipelineStage {
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.pipelineStage:last-child {
+  border-bottom: none;
+}
+
+.pipelineStageHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.pipelineStageDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pipelineStageDot.faiss {
+  background: #1677ff;
+}
+
+.pipelineStageDot.ontology {
+  background: #722ed1;
+}
+
+.pipelineStageDot.submitted {
+  background: #52c41a;
+}
+
+.pipelineStageDot.used {
+  background: #fa8c16;
+}
+
+.pipelineStageLabel {
+  font-weight: 600;
+  font-size: 12px;
+  color: #333;
+  flex: 1;
+}
+
+.pipelineStageStatus {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.pipelineStageStatus.hit {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.pipelineStageStatus.miss {
+  background: #fff2f0;
+  color: #ff4d4f;
+}
+
+.pipelineStageEmpty {
+  font-size: 11px;
+  color: #999;
+  padding: 4px 8px;
+  background: #fafafa;
+  border-radius: 4px;
+  font-style: italic;
+}
+
+.pipelineStageConcepts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 14px;
+}
+
+.pipelineConceptTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  background: #e6f7ff;
+  border: 1px solid #91d5ff;
+  border-radius: 12px;
+  font-size: 11px;
+  color: #1677ff;
+  font-weight: 500;
+}
+
+.pipelineConceptTag.related {
+  background: #f9f0ff;
+  border-color: #d3adf7;
+  color: #722ed1;
+}
+
+.pipelineConceptTag.submitted {
+  background: #e6f7ff;
+  border-color: #91d5ff;
+  color: #1677ff;
+}
+
+.pipelineConceptTag.used {
+  background: #fff7e6;
+  border-color: #ffd591;
+  color: #fa8c16;
+}
+
+.pipelineConfidence {
+  font-size: 10px;
+  background: rgba(22, 119, 255, 0.15);
+  padding: 0 4px;
+  border-radius: 8px;
+  color: #1677ff;
+}
+
+.pipelineDepth {
+  font-size: 10px;
+  color: #9254de;
+  opacity: 0.7;
+}
+
+.pipelineConfidence {
+  font-size: 10px;
+  color: #1677ff;
+  opacity: 0.8;
+  margin-left: 4px;
+}
+
+/* ===== Pipeline Submitted ===== */
+.pipelineSubmitted {
+  padding-left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pipelineSubmittedRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.pipelineSubmittedLabel {
+  color: #999;
+  min-width: 52px;
+}
+
+.pipelineSubmittedValue {
+  color: #333;
+  font-weight: 500;
+}
+
+.pipelineSubmittedDetail {
+  padding-left: 14px;
+  margin-bottom: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pipelineSubmittedItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.pipelineSubmittedItem code {
+  font-size: 11px;
+  background: #f5f5f5;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #d4380d;
+}
+
+.pipelineMappingType {
+  background: #f9f0ff;
+  color: #722ed1;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.pipelineJoinType {
+  background: #fff7e6;
+  color: #d46b08;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.pipelineJoinCond {
+  color: #666;
+  font-size: 11px;
+}
+
+/* ===== Reuse Notice ===== */
+.traceReuse {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #8c6d00;
+  margin-bottom: 6px;
+}
+
+.traceReuseIcon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.traceReuseText {
+  line-height: 1.4;
+}

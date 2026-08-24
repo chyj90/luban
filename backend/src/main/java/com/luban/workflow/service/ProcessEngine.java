@@ -31,6 +31,7 @@ public class ProcessEngine {
     private final FormWorkflowBindingRepository formWorkflowBindingRepository;
     private final MemberRepository memberRepository;
     private final RoleRepository roleRepository;
+    private final RoleUserRepository roleUserRepository;
     private final DepartmentRepository departmentRepository;
 
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -1062,13 +1063,17 @@ public class ProcessEngine {
                     List<Object> roleIds = (List<Object>) config.getOrDefault("roleIds", Collections.emptyList());
                     return roleIds.stream()
                             .flatMap(id -> roleRepository.findById(Long.valueOf(id.toString()))
-                                    .map(role -> parseMemberIds(role.getMemberIds()))
+                                    .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
+                                            .map(RoleUser::getUserId)
+                                            .collect(Collectors.toList()))
                                     .orElse(Collections.emptyList()).stream())
                             .collect(Collectors.toList());
                 }
                 return roleSlugs.stream()
                         .flatMap(slug -> roleRepository.findBySlug(slug.toString())
-                                .map(role -> parseMemberIds(role.getMemberIds()))
+                                .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
+                                        .map(RoleUser::getUserId)
+                                        .collect(Collectors.toList()))
                                 .orElse(Collections.emptyList()).stream())
                         .collect(Collectors.toList());
             }
@@ -1268,6 +1273,12 @@ public class ProcessEngine {
                 if (node.nodeType == null) {
                     node.nodeType = (String) raw.get("type");
                 }
+                if (node.nodeType == null) {
+                    node.nodeType = (String) raw.get("nodeType");
+                }
+                if (node.nodeName == null) {
+                    node.nodeName = (String) raw.get("label");
+                }
                 if (node.config == null) {
                     node.config = castMap(raw.get("config"));
                 }
@@ -1302,15 +1313,6 @@ public class ProcessEngine {
             return objectMapper.readValue(formDataJson, Map.class);
         } catch (Exception e) {
             return Collections.emptyMap();
-        }
-    }
-
-    private List<Long> parseMemberIds(String memberIdsJson) {
-        try {
-            if (memberIdsJson == null || memberIdsJson.isEmpty()) return Collections.emptyList();
-            return objectMapper.readValue(memberIdsJson, new TypeReference<List<Long>>() {});
-        } catch (Exception e) {
-            return Collections.emptyList();
         }
     }
 

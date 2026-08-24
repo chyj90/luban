@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -116,8 +117,12 @@ public class ProcessService {
     private void populateAppNames(List<WorkflowInstance> instances) {
         if (instances == null || instances.isEmpty()) return;
         for (WorkflowInstance inst : instances) {
-            applicationRepository.findById(inst.getApplicationId())
-                    .ifPresent(app -> inst.setApplicationName(app.getName()));
+            WorkflowDefinition def = workflowDefinitionRepository.findById(inst.getWorkflowId()).orElse(null);
+            if (def != null && "PLATFORM".equals(def.getScope())) continue;
+            if (inst.getApplicationId() != null) {
+                applicationRepository.findById(inst.getApplicationId())
+                        .ifPresent(app -> inst.setApplicationName(app.getName()));
+            }
         }
     }
 
@@ -137,7 +142,7 @@ public class ProcessService {
         }
     }
 
-    private void populateTaskNodeNames(List<WorkflowTask> tasks) {
+    public void populateTaskNodeNames(List<WorkflowTask> tasks) {
         if (tasks == null || tasks.isEmpty()) return;
         for (WorkflowTask task : tasks) {
             try {
@@ -149,15 +154,13 @@ public class ProcessService {
                         definition.getNodes(),
                         new TypeReference<List<Map<String, Object>>>() {});
                 for (Map<String, Object> node : nodes) {
-                    if (task.getNodeId().equals(node.get("id"))) {
+                    if (task.getNodeId().equals(node.get("nodeId"))) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> data = (Map<String, Object>) node.get("data");
                         if (data != null) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> config = (Map<String, Object>) data.get("config");
-                            if (config != null) {
-                                task.setNodeName((String) config.get("nodeName"));
-                            }
+                            task.setNodeName((String) data.get("label"));
+                        } else {
+                            task.setNodeName((String) node.get("label"));
                         }
                         break;
                     }
@@ -214,6 +217,7 @@ public class ProcessService {
 
     public List<WorkflowInstance> listMyInstances(Long userId) {
         List<WorkflowInstance> instances = workflowInstanceRepository.findByInitiatorId(userId);
+        instances = filterPlatformInstances(instances);
         populateAppNames(instances);
         return instances;
     }
@@ -225,6 +229,7 @@ public class ProcessService {
         } else {
             instances = workflowInstanceRepository.findByInitiatorIdAndIsTest(userId, false);
         }
+        instances = filterPlatformInstances(instances);
         populateAppNames(instances);
         return instances;
     }
@@ -238,6 +243,14 @@ public class ProcessService {
         }
         populateAppNames(instances);
         return instances;
+    }
+
+    private List<WorkflowInstance> filterPlatformInstances(List<WorkflowInstance> instances) {
+        if (instances == null || instances.isEmpty()) return instances;
+        return instances.stream().filter(inst -> {
+            WorkflowDefinition def = workflowDefinitionRepository.findById(inst.getWorkflowId()).orElse(null);
+            return def == null || !"PLATFORM".equals(def.getScope());
+        }).collect(Collectors.toList());
     }
 
     public List<WorkflowInstance> listInstancesByApp(Long applicationId) {

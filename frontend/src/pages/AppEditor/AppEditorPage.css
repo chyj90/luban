@@ -229,8 +229,8 @@
 }
 
 .app-editor-preview-file-btn:hover {
-  background: #f4f6f9;
-  color: #1f1f1f;
+  background: transparent;
+  color: #1677ff;
   border-color: #1677ff;
 }
 
@@ -321,8 +321,8 @@
 }
 
 .app-editor-preview-fullscreen-btn:hover {
-  background: #f4f6f9;
-  color: #1f1f1f;
+  background: transparent;
+  color: #1677ff;
   border-color: #1677ff;
 }
 
@@ -372,8 +372,8 @@
 }
 
 .app-editor-fullscreen-close-btn:hover {
-  background: #f4f6f9;
-  color: #1f1f1f;
+  background: transparent;
+  color: #1677ff;
   border-color: #1677ff;
 }
 

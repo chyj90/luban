@@ -218,7 +218,7 @@
 }
 
 .perm-approval-form-cancel {
-  padding: 8px 20px;
+  padding: 5px 12px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
   background: #fff;
@@ -228,7 +228,7 @@
 }
 
 .perm-approval-form-submit {
-  padding: 8px 20px;
+  padding: 5px 12px;
   border: none;
   border-radius: 6px;
   background: #ff4d4f;

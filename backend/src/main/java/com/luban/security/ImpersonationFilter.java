@@ -47,23 +47,23 @@ public class ImpersonationFilter extends OncePerRequestFilter {
         String impersonateAppId = request.getHeader(HEADER_IMPERSONATE_APP);
         String path = request.getRequestURI();
 
-        log.info("ImpersonationFilter 进入, path={}, impersonateUserId={}, impersonateAppId={}",
+        log.debug("ImpersonationFilter 进入, path={}, impersonateUserId={}, impersonateAppId={}",
                 path, impersonateUserId, impersonateAppId);
 
         if (impersonateUserId == null || impersonateAppId == null) {
-            log.info("ImpersonationFilter 跳过: 无模拟头, path={}", path);
+            log.debug("ImpersonationFilter 跳过: 无模拟头, path={}", path);
             filterChain.doFilter(request, response);
             return;
         }
 
         var auth = SecurityContextHolder.getContext().getAuthentication();
-        log.info("ImpersonationFilter auth={}, principalClass={}, path={}",
+        log.debug("ImpersonationFilter auth={}, principalClass={}, path={}",
                 auth != null ? "存在" : "NULL",
                 auth != null ? auth.getPrincipal().getClass().getSimpleName() : "N/A",
                 path);
 
         if (auth == null) {
-            log.info("ImpersonationFilter 跳过: auth为null, path={}", path);
+            log.debug("ImpersonationFilter 跳过: auth为null, path={}", path);
             filterChain.doFilter(request, response);
             return;
         }
@@ -73,7 +73,7 @@ public class ImpersonationFilter extends OncePerRequestFilter {
             return;
         }
 
-        log.info("ImpersonationFilter 当前用户: id={}, name={}, path={}", currentUser.getId(), currentUser.getName(), path);
+        log.debug("ImpersonationFilter 当前用户: id={}, account={}, path={}", currentUser.getId(), currentUser.getAccount(), path);
 
         Long appId;
         Long targetUserId;
@@ -93,7 +93,7 @@ public class ImpersonationFilter extends OncePerRequestFilter {
             return;
         }
 
-        log.info("ImpersonationFilter 应用: id={}, createdBy={}, 当前用户id={}, path={}",
+        log.debug("ImpersonationFilter 应用: id={}, createdBy={}, 当前用户id={}, path={}",
                 app.getId(), app.getCreatedBy(), currentUser.getId(), path);
 
         if (!app.getCreatedBy().equals(currentUser.getId())) {
@@ -110,7 +110,7 @@ public class ImpersonationFilter extends OncePerRequestFilter {
             return;
         }
 
-        log.info("ImpersonationFilter 目标成员: id={}, name={}, userId={}",
+        log.debug("ImpersonationFilter 目标成员: id={}, name={}, userId={}",
                 member.getId(), member.getName(), member.getUserId());
 
         User targetUser = member.getUserId() != null
@@ -119,7 +119,7 @@ public class ImpersonationFilter extends OncePerRequestFilter {
         if (targetUser == null) {
             targetUser = new User();
             targetUser.setId(member.getUserId() != null ? member.getUserId() : member.getId());
-            targetUser.setName(member.getName());
+            targetUser.setAccount(member.getName());
             targetUser.setEmail(member.getEmail() != null ? member.getEmail() : "");
             targetUser.setPassword("");
         }
@@ -129,11 +129,11 @@ public class ImpersonationFilter extends OncePerRequestFilter {
         request.setAttribute(ORIGINAL_USER_ATTRIBUTE, currentUser);
         SecurityContextHolder.getContext().setAuthentication(impersonatedAuth);
 
-        log.info("模拟用户成功: {} -> {}, appId={}, path={}",
+        log.debug("模拟用户成功: {} -> {}, appId={}, path={}",
                 currentUser.getId(), targetUserId, appId, request.getRequestURI());
 
         filterChain.doFilter(request, response);
 
-        log.info("ImpersonationFilter 响应: status={}, path={}", response.getStatus(), request.getRequestURI());
+        log.debug("ImpersonationFilter 响应: status={}, path={}", response.getStatus(), request.getRequestURI());
     }
 }

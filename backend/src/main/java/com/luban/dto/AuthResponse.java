@@ -14,6 +14,7 @@ public class AuthResponse {
     public static class UserInfo {
         private Long id;
         private String email;
-        private String name;
+        private String account;
+        private boolean superAdmin;
     }
 }

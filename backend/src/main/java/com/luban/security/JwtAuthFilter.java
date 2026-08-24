@@ -40,42 +40,38 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+        // 如果已有认证（如 API Key 认证），跳过 JWT 处理
+        if (SecurityContextHolder.getContext().getAuthentication() != null) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String token = extractToken(request);
         String path = request.getRequestURI();
 
-        log.info("JwtAuthFilter 进入, path={}, hasToken={}", path, token != null);
+        log.debug("JwtAuthFilter 进入, path={}, hasToken={}", path, token != null);
 
         if (token == null) {
-            log.info("JwtAuthFilter 跳过: 无token, path={}", path);
+            log.debug("JwtAuthFilter 跳过: 无token, path={}", path);
             filterChain.doFilter(request, response);
             return;
         }
 
         if (!jwtTokenProvider.validateToken(token)) {
             log.warn("JWT filter: token 无效或已过期, path={}", path);
-            if (path.startsWith("/api/v1/auth/")) {
-                log.debug("JWT filter: auth 端点，跳过 token 校验");
-                filterChain.doFilter(request, response);
-                return;
-            }
-            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Token 无效或已过期");
+            filterChain.doFilter(request, response);
             return;
         }
 
         Optional<UserSession> sessionOpt = userSessionRepository.findByToken(token);
         if (sessionOpt.isEmpty()) {
             log.warn("JWT filter: 会话不存在, path={}", path);
-            if (path.startsWith("/api/v1/auth/")) {
-                log.debug("JWT filter: auth 端点，跳过会话校验");
-                filterChain.doFilter(request, response);
-                return;
-            }
-            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "会话不存在，请重新登录");
+            filterChain.doFilter(request, response);
             return;
         }
 
         userRepository.findById(sessionOpt.get().getUserId()).ifPresentOrElse(user -> {
-            log.info("JwtAuthFilter 认证成功: userId={}, name={}, path={}", user.getId(), user.getName(), path);
+            log.debug("JwtAuthFilter 认证成功: userId={}, account={}, path={}", user.getId(), user.getAccount(), path);
             UsernamePasswordAuthenticationToken auth =
                     new UsernamePasswordAuthenticationToken(user, null, Collections.emptyList());
             SecurityContextHolder.getContext().setAuthentication(auth);

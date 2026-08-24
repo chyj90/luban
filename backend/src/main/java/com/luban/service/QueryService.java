@@ -7,15 +7,22 @@ import com.luban.dto.UpdateQueryRequest;
 import com.luban.entity.Datasource;
 import com.luban.entity.Query;
 import com.luban.entity.User;
+import com.luban.entity.ApiKey;
+import com.luban.entity.ApiKeyDatasource;
 import com.luban.entity.Application;
+import com.luban.repository.ApiKeyDatasourceRepository;
+import com.luban.repository.ApiKeyRepository;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.net.URI;
 import java.util.stream.Collectors;
@@ -53,15 +60,21 @@ public class QueryService {
     private final QueryRepository queryRepository;
     private final DatasourceRepository datasourceRepository;
     private final ApplicationRepository applicationRepository;
+    private final ApiKeyRepository apiKeyRepository;
+    private final ApiKeyDatasourceRepository apiKeyDatasourceRepository;
     private final ObjectMapper objectMapper;
 
     public QueryService(QueryRepository queryRepository,
                         DatasourceRepository datasourceRepository,
                         ApplicationRepository applicationRepository,
+                        ApiKeyRepository apiKeyRepository,
+                        ApiKeyDatasourceRepository apiKeyDatasourceRepository,
                         ObjectMapper objectMapper) {
         this.queryRepository = queryRepository;
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
+        this.apiKeyRepository = apiKeyRepository;
+        this.apiKeyDatasourceRepository = apiKeyDatasourceRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -193,7 +206,7 @@ public class QueryService {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof User user) {
             authParams.put("userId", user.getId());
-            authParams.put("userName", user.getName());
+            authParams.put("userName", user.getAccount());
             authParams.put("userEmail", user.getEmail());
         }
 
@@ -216,10 +229,30 @@ public class QueryService {
             throw new IllegalArgumentException("未登录或登录已过期");
         }
 
-        Application app = applicationRepository.findById(ds.getApplicationId())
+        Application app = applicationRepository.findById(ds.getOwnerId())
                 .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
         if (!app.getCreatedBy().equals(user.getId())) {
             throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+        }
+
+        // KEY 数据源权限校验
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            HttpServletRequest request = attrs.getRequest();
+            String apiKeyHeader = request.getHeader("X-API-Key");
+            if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
+                String keyPrefix = apiKeyHeader.length() > 8 ? apiKeyHeader.substring(0, 8) : apiKeyHeader;
+                Optional<ApiKey> keyOpt = apiKeyRepository.findByKeyPrefix(keyPrefix);
+                if (keyOpt.isPresent()) {
+                    List<ApiKeyDatasource> permissions = apiKeyDatasourceRepository
+                            .findByApiKeyIdAndStatus(keyOpt.get().getId(), "APPROVED");
+                    boolean hasPermission = permissions.stream()
+                            .anyMatch(p -> p.getDatasourceId().equals(datasourceId));
+                    if (!hasPermission) {
+                        throw new IllegalArgumentException("该 KEY 无权访问此数据源");
+                    }
+                }
+            }
         }
 
         Map<String, Object> config = fromJsonMap(ds.getConfig());

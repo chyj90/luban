@@ -20,21 +20,21 @@ public class AdminController {
     public ResponseEntity<Void> forceJump(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String targetNodeId = params.get("targetNodeId").toString();
         String comment = params.getOrDefault("comment", "").toString();
-        processService.forceJump(id, targetNodeId, comment, user.getId(), user.getName());
+        processService.forceJump(id, targetNodeId, comment, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/instances/{id}/force-stop")
     public ResponseEntity<Void> forceStop(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String comment = params.getOrDefault("comment", "").toString();
-        processService.forceStop(id, comment, user.getId(), user.getName());
+        processService.forceStop(id, comment, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
     @PutMapping("/instances/{id}/force-withdraw")
     public ResponseEntity<Void> forceWithdraw(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String comment = params.getOrDefault("comment", "").toString();
-        processService.forceWithdraw(id, comment, user.getId(), user.getName());
+        processService.forceWithdraw(id, comment, user.getId(), user.getAccount());
         return ResponseEntity.noContent().build();
     }
 
@@ -42,6 +42,6 @@ public class AdminController {
     public WorkflowTask reassign(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         Long newAssigneeId = Long.valueOf(params.get("newAssigneeId").toString());
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.reassignTask(id, newAssigneeId, comment, user.getId(), user.getName());
+        return processService.reassignTask(id, newAssigneeId, comment, user.getId(), user.getAccount());
     }
 }

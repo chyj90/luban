@@ -15,8 +15,11 @@ public class Datasource {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private Long applicationId;
+    @Column(name = "owner_id")
+    private Long ownerId;
+
+    @Column(nullable = false, length = 20)
+    private String slug;
 
     @Column(nullable = false, length = 50)
     private String name;

@@ -34,12 +34,12 @@ export interface SkillDefinition {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>, ctx: ToolContext) => Promise<ToolExecuteResult>;
+  execute: (args: Record<string, unknown>, _ctx: ToolContext) => Promise<ToolExecuteResult>;
   requiresConfirmation?: boolean;
   isDangerous?: boolean;
 }
 
-export type SkillFactory = (ctx: ToolContext, chatRouter?: ChatRouter) => SkillDefinition;
+export type SkillFactory = (_ctx: ToolContext, chatRouter?: ChatRouter) => SkillDefinition;
 
 // ============================================================================
 // Registry
@@ -78,7 +78,7 @@ export function getSkillIdsByCategory(category: SkillCategory): string[] {
  */
 export function resolveSkills(
   skillIds: string[],
-  ctx: ToolContext,
+  _ctx: ToolContext,
   chatRouter?: ChatRouter,
 ): ToolDefinition[] {
   return skillIds

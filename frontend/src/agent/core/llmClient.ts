@@ -1,5 +1,3 @@
-import type { ToolExecuteResult } from '@/types/agent';
-
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -89,7 +87,7 @@ export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> 
 
     if (!res.ok) {
       const errorBody = await res.text();
-      const err: any = new Error(`LLM API 调用失败 (${res.status}): ${errorBody}`);
+      const err: unknown = new Error(`LLM API 调用失败 (${res.status}): ${errorBody}`);
       err.status = res.status;
       console.error(`[LLM] API 失败 (${res.status}): ${errorBody.slice(0, 500)}`);
       throw err;
@@ -105,21 +103,21 @@ export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> 
     const usage = data.usage;
 
     if (toolCalls.length > 0) {
-      console.log(`[LLM] ${elapsed}ms | ${toolCalls.length} tool_calls: [${toolCalls.map((tc: any) => tc.function.name).join(', ')}] | content: "${content.slice(0, 100)}"${usage ? ` | tokens: ${usage.prompt_tokens}→${usage.completion_tokens}` : ''}`);
+      console.log(`[LLM] ${elapsed}ms | ${toolCalls.length} tool_calls: [${toolCalls.map((tc: unknown) => tc.function.name).join(', ')}] | content: "${content.slice(0, 100)}"${usage ? ` | tokens: ${usage.prompt_tokens}→${usage.completion_tokens}` : ''}`);
       console.log(`[LLM] ${elapsed}ms | 纯文本回复 | content: "${content.slice(0, 200)}${content.length > 200 ? '...' : ''}"${usage ? ` | tokens: ${usage.prompt_tokens}→${usage.completion_tokens}` : ''}`);
     }
 
     return { content, toolCalls };
-  } catch (e: any) {
+  } catch (e: unknown) {
     clearTimeout(timeoutId);
     const elapsed = Date.now() - startTime;
     if (e.name === 'AbortError') {
       if (signal?.aborted) {
         console.log(`[LLM] ${elapsed}ms | 用户手动取消`);
-        throw new Error('Cancelled');
+        throw new Error('Cancelled', { cause: e });
       }
       console.error(`[LLM] ${elapsed}ms | 超时（${timeout / 1000}秒）`);
-      throw new Error(`LLM 调用超时（${timeout / 1000}秒）`);
+      throw new Error(`LLM 调用超时（${timeout / 1000}秒）`, { cause: e });
     }
     console.error(`[LLM] ${elapsed}ms | 异常: ${e.message}`);
     throw e;

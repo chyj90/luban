@@ -3,9 +3,10 @@ package com.luban.controller;
 import com.luban.entity.ToolDefinition;
 import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
-import com.luban.executor.SqlExecutor;
 import com.luban.repository.ToolDefinitionRepository;
+import com.luban.service.ApiKeyService;
 import com.luban.service.ToolEmbeddingService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,8 +22,9 @@ public class ToolDefinitionController {
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final ToolEmbeddingService toolEmbeddingService;
     private final HttpExecutor httpExecutor;
-    private final SqlExecutor sqlExecutor;
     private final McpExecutor mcpExecutor;
+    private final ApiKeyService apiKeyService;
+    private final HttpServletRequest request;
 
     @GetMapping("/systems")
     public ResponseEntity<List<Map<String, Object>>> listSystems() {
@@ -73,6 +75,15 @@ public class ToolDefinitionController {
             @RequestBody Map<String, Object> arguments) {
         return toolDefinitionRepository.findById(id)
                 .map(tool -> {
+                    // KEY 权限校验
+                    Long apiKeyId = (Long) request.getAttribute("api_key_id");
+                    if (apiKeyId != null && !apiKeyService.hasToolPermission(apiKeyId, tool.getId())) {
+                        Map<String, Object> err = new LinkedHashMap<>();
+                        err.put("error", "该 KEY 无权调用此工具");
+                        err.put("tool_name", tool.getName());
+                        return ResponseEntity.status(403).body(err);
+                    }
+
                     long start = System.currentTimeMillis();
                     String result;
                     try {
@@ -95,8 +106,6 @@ public class ToolDefinitionController {
         switch (tool.getToolType()) {
             case "HTTP":
                 return httpExecutor.execute(tool, arguments, "test");
-            case "SQL":
-                return sqlExecutor.execute(tool, arguments);
             case "MCP_PASSTHROUGH":
                 return mcpExecutor.execute(tool, arguments);
             default:

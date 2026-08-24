@@ -24,11 +24,11 @@ export interface AgentDefinition {
   icon: string;
   description: string;
   isDefault: boolean;
-  buildSystemPrompt: (ctx: AgentContext) => string;
+  buildSystemPrompt: (_ctx: AgentContext) => string;
   /** 该 Agent 允许使用的技能 ID 列表，通过 Skill Registry 解析为工具 */
   allowedSkills: string[];
   /** @deprecated 使用 allowedSkills 替代，保留用于向后兼容 */
-  buildTools?: (ctx: ToolContext) => ToolDefinition[];
+  buildTools?: (_ctx: ToolContext) => ToolDefinition[];
 }
 
 /**
@@ -37,7 +37,7 @@ export interface AgentDefinition {
  */
 export function resolveAgentTools(
   agentDef: AgentDefinition,
-  ctx: ToolContext,
+  _ctx: ToolContext,
   chatRouter?: ChatRouter,
 ): ToolDefinition[] {
   // 优先使用 allowedSkills（新方式）
@@ -58,7 +58,7 @@ export const AGENTS: AgentDefinition[] = [
     icon: '',
     description: '主智能体，负责设计页面、选择查询和API、生成代码',
     isDefault: true,
-    buildSystemPrompt: (ctx) =>
+    buildSystemPrompt: (_ctx) =>
       buildInteliSystemPrompt(ctx.applicationId, ctx.pageId, ctx.pageName, ctx.allPages),
     allowedSkills: [
       'page:create', 'page:delete', 'page:rename',
@@ -75,7 +75,7 @@ export const AGENTS: AgentDefinition[] = [
     icon: '',
     description: '数据辅助智能体，负责连接数据源、创建查询、执行调试',
     isDefault: false,
-    buildSystemPrompt: (ctx) =>
+    buildSystemPrompt: (_ctx) =>
       buildDataAssistantPrompt({
         applicationId: ctx.applicationId,
         taskType: ctx.taskType || 'B单页面',

@@ -11,7 +11,7 @@ interface InstanceDetailProps {
   onBack?: () => void;
 }
 
-export default function InstanceDetail({ embedded, instanceId: propInstanceId, onBack }: InstanceDetailProps = {}) {
+export default function InstanceDetail({ _embedded, instanceId: propInstanceId, onBack }: InstanceDetailProps = {}) {
   const { id: paramId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const id = propInstanceId ?? (paramId ? Number(paramId) : undefined);
@@ -83,7 +83,7 @@ export default function InstanceDetail({ embedded, instanceId: propInstanceId, o
       const [inst, hist] = await Promise.all([instanceApi.get(Number(id)), instanceApi.getHistory(Number(id))]);
       setInstance(inst);
       setHistory(hist);
-    } catch (e: any) {
+    } catch (e: unknown) {
       alert(e?.response?.data?.message || '操作失败');
     } finally {
       setSubmitting(false);

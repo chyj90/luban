@@ -1,5 +1,5 @@
-import type { Message, Plan, Step, ToolDefinition, ToolExecuteResult } from '@/types/agent';
-import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage, type ToolDef } from './llmClient';
+import type { Message, Plan, ToolDefinition } from '@/types/agent';
+import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage } from './llmClient';
 
 export interface AgentLoopOptions {
   baseUrl: string;
@@ -33,12 +33,12 @@ export interface AgentLoopResult {
 
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const {
-    baseUrl, apiKey, model, systemPrompt, tools, maxIterations,
+    baseUrl, apiKey, model, systemPrompt: _systemPrompt, tools, maxIterations,
     temperature, timeout, signal,
     conversationMessages: initialMessages,
     onStatusChange, onStreamingContent, onClearStreaming,
-    onAddMessage, onPlanCreate, onPlanConfirm, onStepUpdate,
-    onToolCall, onToolResult, onError, onTokenUsage, onApiMessages,
+    onAddMessage, onPlanCreate: _onPlanCreate, onPlanConfirm: _onPlanConfirm, onStepUpdate: _onStepUpdate,
+    onToolCall, onToolResult, onError, onTokenUsage: _onTokenUsage, onApiMessages,
   } = options;
 
   const conversationMessages = [...initialMessages];
@@ -136,10 +136,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           let toolResult: ToolExecuteResult;
           try {
             const toolStart = Date.now();
-            toolResult = await tool.execute(toolInput, {} as any);
+            toolResult = await tool.execute(toolInput, {} as unknown);
             const toolElapsed = Date.now() - toolStart;
             console.log(`[AgentLoop] ${toolName} ${toolElapsed}ms | ${toolResult.success ? 'OK' : 'ERR'} ${toolResult.message.slice(0, 200)}${toolResult._pause ? ' | pause' : ''}`);
-          } catch (err: any) {
+          } catch (err: unknown) {
             console.error(`[AgentLoop] ${toolName} ERR 异常: ${err.message}`);
             toolResult = { success: false, message: err.message };
           }
@@ -221,7 +221,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         onStatusChange('completed');
         return { response: content || '执行完毕。', conversationMessages };
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err.message === 'Cancelled' || err.name === 'AbortError') throw err;
       console.error(`[AgentLoop] ERR 第 ${iteration + 1} 轮错误: ${err.message}`);
       onError(err.message);

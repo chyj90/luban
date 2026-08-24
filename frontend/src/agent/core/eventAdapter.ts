@@ -117,7 +117,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
         }));
         console.log(`${prefix} plan.created: ${stepCount} steps`, steps.map((s) => s.description));
         const hasAutoMarker = event.plan.steps.some(
-          (s: any) => s.description.startsWith('[AUTO]') || s.description.includes('[BLOCKER]'),
+          (s: unknown) => s.description.startsWith('[AUTO]') || s.description.includes('[BLOCKER]'),
         );
         if (!hasAutoMarker) {
           planId = crypto.randomUUID();
@@ -188,7 +188,7 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
       }
 
       case 'plan.revised': {
-        console.log(`${prefix} 轮 plan.revised: ${event.plan?.steps.length} steps`, event.plan?.steps.map((s: any) => cleanDesc(s.description)));
+        console.log(`${prefix} 轮 plan.revised: ${event.plan?.steps.length} steps`, event.plan?.steps.map((s: unknown) => cleanDesc(s.description)));
         if (planId && event.plan) {
           const revisedSteps: Step[] = event.plan.steps.map((s, i) => ({
             id: s.id,

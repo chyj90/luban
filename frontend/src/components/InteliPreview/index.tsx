@@ -7,7 +7,7 @@ import './InteliPreview.css';
 interface InteliPreviewProps {
   codePage: CodePageData;
   queries: Query[];
-  userInfo?: { id: number; name: string; email: string } | null;
+  userInfo?: { id: number; account: string; email: string } | null;
   allPages?: Array<{ id: number; name: string }>;
   onNavigate?: (pageId: number) => void;
 }

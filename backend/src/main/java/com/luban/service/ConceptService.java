@@ -7,6 +7,9 @@ import com.luban.entity.ToolConcept;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.ConceptMappingRepository;
+import com.luban.repository.ConceptJoinMappingRepository;
+import com.luban.repository.ConceptEmbeddingTaskRepository;
 import com.luban.repository.ToolConceptRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +27,9 @@ public class ConceptService {
 
     private final ConceptRepository conceptRepository;
     private final ConceptRelationRepository conceptRelationRepository;
+    private final ConceptMappingRepository conceptMappingRepository;
+    private final ConceptJoinMappingRepository conceptJoinMappingRepository;
+    private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
     private final ToolConceptRepository toolConceptRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final OntologyService ontologyService;
@@ -32,7 +38,7 @@ public class ConceptService {
     public List<Concept> list(Long groupId, String keyword) {
         List<Concept> concepts;
         if (groupId != null) {
-            concepts = conceptRepository.findByGroupIdOrGroupIdIsNull(groupId);
+            concepts = conceptRepository.findByGroupId(groupId);
         } else {
             concepts = conceptRepository.findAll();
         }
@@ -43,7 +49,29 @@ public class ConceptService {
                     .toList();
         }
 
+        // 填充映射状态
+        Set<Long> mappedConceptIds = new HashSet<>(conceptMappingRepository.findDistinctConceptIds());
+        for (Concept c : concepts) {
+            c.setMapped(mappedConceptIds.contains(c.getId()));
+        }
+
         return concepts;
+    }
+
+    @Transactional(readOnly = true)
+    public List<Concept> findByIds(List<Long> ids) {
+        List<Concept> concepts = conceptRepository.findByIdIn(ids);
+        Set<Long> mappedConceptIds = new HashSet<>(conceptMappingRepository.findDistinctConceptIds());
+        for (Concept c : concepts) {
+            c.setMapped(mappedConceptIds.contains(c.getId()));
+        }
+        return concepts;
+    }
+
+    @Transactional(readOnly = true)
+    public Concept getConceptById(Long id) {
+        return conceptRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("Concept not found: " + id));
     }
 
     @Transactional(readOnly = true)
@@ -96,22 +124,41 @@ public class ConceptService {
 
     @Transactional
     public void delete(Long id) {
-        List<ConceptRelation> relations = conceptRelationRepository.findBySourceConceptId(id);
-        relations.addAll(conceptRelationRepository.findByTargetConceptId(id));
-        conceptRelationRepository.deleteAll(relations);
-
-        List<ToolConcept> bindings = toolConceptRepository.findByConceptId(id);
-        toolConceptRepository.deleteAll(bindings);
-
-        conceptRepository.deleteById(id);
+        deleteCore(Collections.singletonList(id));
         ontologyService.reload();
+    }
+
+    @Transactional
+    public void deleteBatch(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        deleteCore(ids);
+        ontologyService.reload();
+    }
+
+    private void deleteCore(List<Long> ids) {
+        conceptMappingRepository.deleteByConceptIdIn(ids);
+        conceptJoinMappingRepository.deleteByConceptIdIn(ids);
+        conceptEmbeddingTaskRepository.deleteByConceptIdIn(ids);
+
+        List<ConceptRelation> relations = conceptRelationRepository.findBySourceConceptIdIn(ids);
+        relations.addAll(conceptRelationRepository.findByTargetConceptIdIn(ids));
+        if (!relations.isEmpty()) {
+            conceptRelationRepository.deleteAll(relations);
+        }
+
+        List<ToolConcept> bindings = toolConceptRepository.findByConceptIdIn(ids);
+        if (!bindings.isEmpty()) {
+            toolConceptRepository.deleteAll(bindings);
+        }
+
+        conceptRepository.deleteAllById(ids);
     }
 
     @Transactional(readOnly = true)
     public List<ConceptTreeResponse> getTree(Long groupId) {
         List<Concept> concepts;
         if (groupId != null) {
-            concepts = conceptRepository.findByGroupIdOrGroupIdIsNull(groupId);
+            concepts = conceptRepository.findByGroupId(groupId);
         } else {
             concepts = conceptRepository.findAll();
         }
@@ -178,6 +225,18 @@ public class ConceptService {
         all.addAll(conceptRelationRepository.findBySourceConceptId(conceptId));
         all.addAll(conceptRelationRepository.findByTargetConceptId(conceptId));
         return all;
+    }
+
+    @Transactional(readOnly = true)
+    public List<ConceptRelation> listAllRelations(Long groupId) {
+        if (groupId != null) {
+            List<Concept> concepts = conceptRepository.findByGroupId(groupId);
+            List<Long> conceptIds = concepts.stream().map(Concept::getId).toList();
+            return conceptRelationRepository.findAll().stream()
+                    .filter(r -> conceptIds.contains(r.getSourceConceptId()) || conceptIds.contains(r.getTargetConceptId()))
+                    .toList();
+        }
+        return conceptRelationRepository.findAll();
     }
 
     @Transactional

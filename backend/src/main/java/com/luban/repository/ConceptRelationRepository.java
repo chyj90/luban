@@ -9,4 +9,8 @@ public interface ConceptRelationRepository extends JpaRepository<ConceptRelation
     List<ConceptRelation> findByTargetConceptId(Long targetConceptId);
     List<ConceptRelation> findBySourceConceptIdAndRelationType(Long sourceConceptId, String relationType);
     List<ConceptRelation> findByTargetConceptIdAndRelationType(Long targetConceptId, String relationType);
+    List<ConceptRelation> findBySourceConceptIdIn(List<Long> sourceConceptIds);
+    List<ConceptRelation> findByTargetConceptIdIn(List<Long> targetConceptIds);
+    void deleteBySourceConceptIdIn(List<Long> sourceConceptIds);
+    void deleteByTargetConceptIdIn(List<Long> targetConceptIds);
 }

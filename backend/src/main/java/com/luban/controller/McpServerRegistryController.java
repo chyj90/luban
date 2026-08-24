@@ -1,5 +1,6 @@
 package com.luban.controller;
 
+import com.luban.dto.ApiResponse;
 import com.luban.entity.McpServerRegistry;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.ToolGroup;
@@ -26,8 +27,8 @@ public class McpServerRegistryController {
     private final ToolGroupRepository toolGroupRepository;
 
     @GetMapping
-    public ResponseEntity<List<McpServerRegistry>> listServers() {
-        return ResponseEntity.ok(mcpServerRegistryRepository.findAll());
+    public ResponseEntity<ApiResponse<List<McpServerRegistry>>> listServers() {
+        return ResponseEntity.ok(ApiResponse.ok(mcpServerRegistryRepository.findAll()));
     }
 
     @PostMapping

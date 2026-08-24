@@ -9,6 +9,7 @@ import type {
   Department,
   Role,
 } from '../types/workflow';
+import type { ApiResponse } from '@/types/api';
 import { axiosInstance as api } from './client';
 
 export const formApi = {
@@ -155,34 +156,34 @@ export const adminApi = {
 
 export const orgApi = {
   getMembers: (params?: { departmentId?: number; keyword?: string }) =>
-    api.get<Member[]>('/members', { params }).then(r => r.data),
+    api.get<ApiResponse<Member[]>>('/members', { params }).then(r => r.data.data),
 
   getMember: (id: number) =>
-    api.get<Member>(`/members/${id}`).then(r => r.data),
+    api.get<ApiResponse<Member>>(`/members/${id}`).then(r => r.data.data),
 
   getDepartments: (params?: { parentId?: number }) =>
-    api.get<Department[]>('/departments', { params }).then(r => r.data),
+    api.get<ApiResponse<Department[]>>('/departments', { params }).then(r => r.data.data),
 
   getDepartmentTree: () =>
-    api.get<Department[]>('/departments/tree').then(r => r.data),
+    api.get<ApiResponse<Department[]>>('/departments/tree').then(r => r.data.data),
 
   getDepartment: (id: number) =>
-    api.get<Department>(`/departments/${id}`).then(r => r.data),
+    api.get<ApiResponse<Department>>(`/departments/${id}`).then(r => r.data.data),
 
   getDepartmentMembers: (id: number) =>
-    api.get<Member[]>(`/departments/${id}/members`).then(r => r.data),
+    api.get<ApiResponse<Member[]>>(`/departments/${id}/members`).then(r => r.data.data),
 
   getRoles: (applicationId: number) =>
-    api.get<Role[]>('/roles', { params: { applicationId } }).then(r => r.data),
+    api.get<ApiResponse<Role[]>>('/roles', { params: { applicationId } }).then(r => r.data.data),
 
   createRole: (data: Partial<Role>) =>
-    api.post<Role>('/roles', data).then(r => r.data),
+    api.post<ApiResponse<Role>>('/roles', data).then(r => r.data.data),
 
   updateRole: (id: number, data: Partial<Role>) =>
-    api.put<Role>(`/roles/${id}`, data).then(r => r.data),
+    api.put<ApiResponse<Role>>(`/roles/${id}`, data).then(r => r.data.data),
 
   deleteRole: (id: number) =>
-    api.delete(`/roles/${id}`).then(r => r.data),
+    api.delete<ApiResponse<void>>(`/roles/${id}`).then(r => r.data.data),
 };
 
 export const syncApi = {

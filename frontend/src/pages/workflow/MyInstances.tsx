@@ -11,7 +11,7 @@ interface MyInstancesProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function MyInstances({ embedded, onNavigate }: MyInstancesProps = {}) {
+export default function MyInstances({ _embedded, onNavigate }: MyInstancesProps = {}) {
   const navigate = useNavigate();
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
   const [loading, setLoading] = useState(true);

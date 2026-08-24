@@ -53,9 +53,17 @@ public class DatasourceService {
         }
     }
 
-    public List<Map<String, Object>> listByApplication(Long applicationId) {
-        verifyApplicationOwnership(applicationId);
-        List<Datasource> datasources = datasourceRepository.findByApplicationId(applicationId);
+    public List<Map<String, Object>> listBySlug(String slug, Long ownerId) {
+        if ("APPLICATION".equals(slug) && ownerId != null) {
+            verifyApplicationOwnership(ownerId);
+        }
+        List<Datasource> datasources = ownerId != null
+                ? datasourceRepository.findBySlugAndOwnerId(slug, ownerId)
+                : datasourceRepository.findBySlug(slug);
+        return buildDatasourceList(datasources);
+    }
+
+    private List<Map<String, Object>> buildDatasourceList(List<Datasource> datasources) {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Datasource ds : datasources) {
             result.add(buildDatasourceMap(ds));
@@ -64,9 +72,12 @@ public class DatasourceService {
     }
 
     public Map<String, Object> create(CreateDatasourceRequest request) {
-        verifyApplicationOwnership(request.getApplicationId());
+        if ("APPLICATION".equals(request.getSlug()) && request.getOwnerId() != null) {
+            verifyApplicationOwnership(request.getOwnerId());
+        }
         Datasource ds = new Datasource();
-        ds.setApplicationId(request.getApplicationId());
+        ds.setOwnerId(request.getOwnerId());
+        ds.setSlug(request.getSlug());
         ds.setName(request.getName());
         ds.setType(request.getType());
         ds.setConfig(toJson(request.getConfig()));
@@ -198,6 +209,11 @@ public class DatasourceService {
         ));
     }
 
+    public Datasource getById(Long id) {
+        return datasourceRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("数据源不存在: " + id));
+    }
+
     public void delete(Long id) {
         datasourceRepository.deleteById(id);
     }
@@ -218,7 +234,8 @@ public class DatasourceService {
     private Map<String, Object> buildDatasourceMap(Datasource ds) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", ds.getId());
-        map.put("applicationId", ds.getApplicationId());
+        map.put("ownerId", ds.getOwnerId());
+        map.put("slug", ds.getSlug());
         map.put("name", ds.getName());
         map.put("type", ds.getType());
         Map<String, Object> config = fromJsonMap(ds.getConfig());
@@ -247,7 +264,7 @@ public class DatasourceService {
         }
     }
 
-    private String buildJdbcUrl(String type, Map<String, Object> config) {
+    public String buildJdbcUrl(String type, Map<String, Object> config) {
         String host = String.valueOf(config.get("host"));
         Object portObj = config.get("port");
         String port = portObj != null ? String.valueOf(portObj) : "3306";

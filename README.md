@@ -547,6 +547,101 @@ DevToolbar 开发工具栏支持模拟任意用户身份，用于测试流程审
 
 ---
 
+## 本体权限体系：角色 → 域 → 行业
+
+### 核心链路
+
+```
+┌──────────┐    ┌───────────────────────┐    ┌──────────────┐    ┌──────────────┐
+│  用户     │    │ role_concept_permission│    │ ontology_group│    │   industry   │
+│  user_id │───→│ role_id              │───→│ group_id      │───→│ industry_id  │
+│          │    │ group_id             │    │ industry_id   │    │ name         │
+│  role_id │    └───────────────────────┘    └──────────────┘    └──────────────┘
+└──────────┘                                                          │
+                                                            ┌───────────┘
+                                                            ↓
+                                                  ┌──────────────────────┐
+                                                  │  industry_relation    │
+                                                  │  relation_type        │
+                                                  │  is_transitive ←── 控制 Jena 推理
+                                                  │  is_symmetric  ←── 控制 Jena 推理
+                                                  └──────────────────────┘
+```
+
+### 两层含义
+
+| 层级 | 用途 | 触发时机 |
+|------|------|:--:|
+| **角色 → 域** | 问数权限：用户能否查该域的概念 | 每次 NL2SQL 请求 |
+| **域 → 行业** | 推理规则：该行业的关系类型是否具备传递性/对称性 | Jena 模型构建时 |
+
+### 问数权限校验（自动）
+
+```
+用户登录 → 查 user_role 表获取角色列表
+         → 查 role_concept_permission 表获取授权的域列表
+         → 用户问"本月产量"
+         → Agent 识别概念「产量」→ 所属域「生产域」
+         → 权限校验：用户角色是否包含「生产域」的授权？
+         → 是 → 生成 SQL 执行
+         → 否 → 拒绝，提示"您没有该域的查询权限"
+```
+
+**关键代码**：[RoleConceptPermissionService.java](file:///Users/chengyajie/Project/luban/backend/src/main/java/com/luban/service/RoleConceptPermissionService.java)
+
+```java
+// checkQueryPermission(userId, conceptId)
+Concept concept = conceptRepository.findById(conceptId).orElseThrow(...);
+Long groupId = concept.getGroupId();                          // 概念 → 域
+List<Long> roleIds = roleUserRepository.findByUserId(userId)  // 用户 → 角色
+        .stream().map(ru -> ru.getRoleId()).toList();
+return permissionRepository.existsByRoleIdInAndGroupId(       // 角色 → 域权限
+        roleIds, groupId);
+```
+
+### Jena 推理规则（自动）
+
+```
+问数时 → expandByConcepts() 展开概念
+       → 对每个概念，resolveIndustryId(groupId)
+       → 域.industryId → 行业
+       → 找到该行业对应的 Jena OntModel
+       → 该 Model 中的 Property 已按 industry_relation 表的
+         isTransitive / isSymmetric 配置了推理规则
+       → 推理引擎自动推导子概念和传递关系
+```
+
+**关键代码**：[OntologyService.java](file:///Users/chengyajie/Project/luban/backend/src/main/java/com/luban/service/OntologyService.java)
+
+```java
+// buildModels() 时，每个行业独立构建 Jena Model
+Map<Long, Set<String>> industryTransitiveTypes = ...;  // 从 industry_relation 表读取
+Map<Long, Set<String>> industrySymmetricTypes = ...;
+
+// getOrCreateProperty(industryId, model, type, transitiveTypes, symmetricTypes)
+if (transitiveTypes.contains(type)) {
+    prop.convertToTransitiveProperty();   // 仅该行业配置为传递性的类型才生效
+}
+```
+
+### 行业维护（手动）
+
+| 操作 | 说明 |
+|------|------|
+| 新增行业 | 在行业管理页面创建，如「工业」「医疗」「金融」 |
+| 配置关系清单 | 为每个行业定义关系类型，设置 isTransitive/isSymmetric |
+| 导入概念 | 选择行业 → LLM 使用该行业的关系类型白名单 → 自动或手动选择域 |
+| 创建域 | 选择行业，该域下的概念自动继承行业的关系类型规则 |
+
+### 设计原则
+
+- **权限只到域**：不问行业，角色授权域→域下所有概念自动可用
+- **行业只管推理**：行业只控制 Jena 的 transitivity 规则和 LLM 的关系类型白名单
+- **自动推导**：用户 → 角色 → 域 → 行业，整条链路对用户透明，无需手动选择
+- **行业隔离**：每个行业的 Jena 模型独立构建，互不干扰
+
+---
+
 ## 快速开始
 
 ### 环境要求
@@ -666,6 +761,67 @@ DELETE FROM workflow_instances WHERE is_test = false;
 ```
 
 按外键依赖顺序：history → tasks → instances。
+
+---
+
+## 角色系统
+
+鲁班采用两级角色体系：**平台级角色**（PLATFORM）和**应用级角色**（APPLICATION），通过 `role_users` 关联表将用户与角色绑定。
+
+### 角色类型
+
+| 类型 | scope 值 | slug 格式 | 说明 | 可见范围 |
+|------|----------|-----------|------|----------|
+| 平台级 | `PLATFORM` | 简短标识，全局唯一 | 所有应用共享，控制跨应用权限 | 仅超管可见 |
+| 应用级 | `APPLICATION` | `{slug}_{applicationId}`，应用内唯一 | 绑定到指定应用，应用内生效 | 仅创建者可见 |
+
+> **slug 命名规则**：`super_admin`、`flow_tester`、`user` 为系统保留，不可使用。平台级角色 slug 全局唯一，应用级角色 slug 在同一应用下唯一。
+
+### 系统内置角色（不可删除）
+
+| 角色 | slug | 类型 | 说明 |
+|------|------|------|------|
+| 超级管理员 | `super_admin` | PLATFORM | 拥有全部权限，可操作所有平台级角色，不受创建者限制 |
+| 流程测试 | `flow_tester` | PLATFORM | 流程测试专用角色，详见下方详述 |
+| 普通用户 | `user` | PLATFORM | 默认注册角色，无特殊权限 |
+
+### 流程测试角色（flow_tester）
+
+`flow_tester` 是系统内置的流程测试专用角色，用于流程引擎的端到端测试场景。
+
+| 特性 | 说明 |
+|------|------|
+| **密码** | 设为该角色时自动清空密码，仅通过模拟用户过滤器登录 |
+| **角色互斥** | 不能与其他任何角色同时持有，角色选择中与其他角色互斥 |
+| **角色锁定** | 一旦成为流程测试用户，角色不可再变更 |
+| **用户管理** | 在用户管理页面中，将用户设为流程测试角色时：清空密码 + 清空所有其他角色，仅保留 `flow_tester` |
+| **人员管理** | 在人员管理（Member）中，`flow_tester` 仅出现在 PLATFORM scope 角色下拉中，不出现在 APP 级角色选择中 |
+
+### 权限规则
+
+| 规则 | 说明 |
+|------|------|
+| **可见性** | 平台级角色仅超管可见；应用级角色仅创建者可见（超管也看不到他人的应用级角色） |
+| **操作权限** | 平台级角色仅超管可编辑/删除；应用级角色仅创建者可编辑/删除 |
+| **创建限制** | 非超管用户只能创建应用级角色，超管可创建平台级角色 |
+| **API 校验** | 所有角色编辑/删除/权限配置/用户分配接口均通过 `checkOwnership` 硬校验，前端隐藏 + 后端拦截双重保障 |
+
+### 角色与用户分配
+
+| 规则 | 说明 |
+|------|------|
+| **多角色** | 一个用户可拥有多个角色，角色列表以逗号分隔显示 |
+| **互斥** | 流程测试角色与其他角色互斥，不能同时勾选 |
+| **锁定** | 一旦成为流程测试用户，角色不可再变更 |
+| **密码** | 设为流程测试角色时，自动清空密码 |
+
+### 数据库表
+
+| 表名 | 说明 |
+|------|------|
+| `workflow_roles` | 角色定义（name, slug, scope, application_id, created_by） |
+| `role_users` | 角色-用户关联（role_id, user_id） |
+| `role_permissions` | 角色-权限关联（role_id, permission） |
 
 ---
 

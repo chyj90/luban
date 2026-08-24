@@ -1,4 +1,6 @@
-export type DatasourceType = 'MySQL' | 'PostgreSQL' | 'REST_API';
+export type DatasourceType = 'MySQL' | 'PostgreSQL';
+
+export type DatasourceSlug = 'APPLICATION' | 'PLATFORM' | 'REF';
 
 export interface DatasourceConfig {
   host?: string;
@@ -11,7 +13,8 @@ export interface DatasourceConfig {
 
 export interface Datasource {
   id: number;
-  applicationId: number;
+  ownerId?: number;
+  slug: DatasourceSlug;
   name: string;
   type: DatasourceType;
   config: DatasourceConfig;
@@ -20,7 +23,8 @@ export interface Datasource {
 }
 
 export interface CreateDatasourceRequest {
-  applicationId: number;
+  ownerId?: number;
+  slug: DatasourceSlug;
   name: string;
   type: DatasourceType;
   config: DatasourceConfig;

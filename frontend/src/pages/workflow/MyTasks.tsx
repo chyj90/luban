@@ -10,7 +10,7 @@ interface MyTasksProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function MyTasks({ embedded, onNavigate }: MyTasksProps = {}) {
+export default function MyTasks({ _embedded, onNavigate }: MyTasksProps = {}) {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [loading, setLoading] = useState(true);

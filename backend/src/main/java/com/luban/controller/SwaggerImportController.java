@@ -194,6 +194,7 @@ public class SwaggerImportController {
                         : path.replaceAll("[{}/]", "_").replaceAll("^_|_$", "");
 
                 Map<String, Object> parameters = extractParameters(operation, path);
+                Map<String, Object> headers = extractHeaders(operation);
                 String inputSchema = buildInputSchema(parameters);
 
                 Map<String, Object> config = new LinkedHashMap<>();
@@ -201,6 +202,7 @@ public class SwaggerImportController {
                 config.put("url", baseUrl + path);
                 config.put("timeout", 10);
                 config.put("retry", 3);
+                config.put("headers", headers);
 
                 Map<String, Object> ep = new LinkedHashMap<>();
                 ep.put("path", path);
@@ -255,6 +257,7 @@ public class SwaggerImportController {
                 String name = (String) sp.get("name");
                 if (name == null) continue;
                 String in = (String) sp.get("in");
+                if ("header".equals(in)) continue;
                 String desc = (String) sp.getOrDefault("description", "");
                 Boolean required = (Boolean) sp.getOrDefault("required", false);
                 if (pathParams.contains(name)) required = true;
@@ -313,6 +316,23 @@ public class SwaggerImportController {
         }
 
         return params;
+    }
+
+    private Map<String, Object> extractHeaders(Map<String, Object> operation) {
+        Map<String, Object> headers = new LinkedHashMap<>();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> swaggerParams = (List<Map<String, Object>>) operation.get("parameters");
+        if (swaggerParams != null) {
+            for (Map<String, Object> sp : swaggerParams) {
+                String in = (String) sp.get("in");
+                if (!"header".equals(in)) continue;
+                String name = (String) sp.get("name");
+                if (name == null) continue;
+                String desc = (String) sp.getOrDefault("description", "");
+                headers.put(name, desc);
+            }
+        }
+        return headers;
     }
 
     private String buildInputSchema(Map<String, Object> parameters) {

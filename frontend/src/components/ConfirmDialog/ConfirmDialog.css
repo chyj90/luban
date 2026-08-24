@@ -85,7 +85,9 @@
 }
 
 .confirm-btn-cancel:hover {
-  background: #e2e8f0;
+  border-color: #1677ff;
+  color: #1677ff;
+  background: transparent;
 }
 
 .confirm-btn-confirm {

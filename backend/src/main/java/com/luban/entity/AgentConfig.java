@@ -1,5 +1,6 @@
 package com.luban.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -26,6 +27,7 @@ public class AgentConfig {
     @Column(name = "model_name", nullable = false, length = 128)
     private String modelName;
 
+    @JsonIgnore
     @Column(name = "secret_key_enc", nullable = false, length = 512)
     private String secretKeyEnc;
 

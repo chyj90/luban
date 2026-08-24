@@ -1397,7 +1397,7 @@
 .ap-test-btn:hover:not(:disabled) {
   border-color: #1677ff;
   color: #1677ff;
-  background: #e6f4ff;
+  background: transparent;
 }
 
 .ap-test-btn:disabled {

@@ -11,7 +11,7 @@ public class RegisterRequest {
     private String email;
 
     @NotBlank @Size(min = 2, max = 30)
-    private String name;
+    private String account;
 
     @NotBlank @Size(min = 6, max = 50)
     private String password;

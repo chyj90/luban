@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DatasourcePanel } from '@/components/DatasourcePanel';
+import { ApiPanel } from '@/components/ApiPanel';
 import { QueryPanel } from '@/components/QueryPanel';
 import { createCodePage, deletePage, renamePage } from '@/api';
 import { confirm } from '@/stores/confirmStore';
@@ -9,7 +10,7 @@ import type { Query } from '@/types/query';
 import type { WorkflowView } from '@/pages/AppEditor/AppEditorPage';
 import './EditorSidebar.css';
 
-type TabKey = 'pages' | 'queries' | 'workflow' | 'datasources';
+type TabKey = 'pages' | 'queries' | 'workflow' | 'datasources' | 'apis';
 
 interface EditorSidebarProps {
   appId: number;
@@ -28,7 +29,7 @@ interface EditorSidebarProps {
 }
 
 export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange }: EditorSidebarProps) {
-  const navigate = useNavigate();
+  const _navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');
   const [showNewPage, setShowNewPage] = useState(false);
@@ -99,6 +100,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'pages', label: '页面' },
     { key: 'queries', label: '查询' },
+    { key: 'apis', label: 'API' },
     { key: 'workflow', label: '流程' },
     { key: 'datasources', label: '数据源' },
   ];
@@ -109,6 +111,8 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>;
       case 'queries':
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>;
+      case 'apis':
+        return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 20l4-16m4 4l4-4-4-4M6 16l-4 4 4 4"/></svg>;
       case 'workflow':
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h8v8H8z"/></svg>;
       case 'datasources':
@@ -299,6 +303,10 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
 
         {activeTab === 'datasources' && (
           <DatasourcePanel applicationId={appId} />
+        )}
+
+        {activeTab === 'apis' && (
+          <ApiPanel applicationId={appId} />
         )}
       </div>
     </div>

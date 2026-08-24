@@ -10,4 +10,8 @@ public interface ConceptRepository extends JpaRepository<Concept, Long> {
     List<Concept> findByParentId(Long parentId);
     List<Concept> findByName(String name);
     List<Concept> findByNameContaining(String keyword);
+    List<Concept> findByIdIn(List<Long> ids);
+    long countByGroupId(Long groupId);
+    void deleteByGroupId(Long groupId);
+    long countByEmbeddingIsNotNull();
 }

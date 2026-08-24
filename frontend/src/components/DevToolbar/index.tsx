@@ -122,7 +122,7 @@ export function DevToolbar({ appId, onTestUserChange }: DevToolbarProps) {
                   className={`devtoolbar-dropdown-item ${selectedUserId === user.id ? 'active' : ''}`}
                   onClick={() => handleSelectUser(user.id)}
                 >
-                  <span className="devtoolbar-dropdown-name">{user.name}</span>
+                  <span className="devtoolbar-dropdown-name">{user.account}</span>
                   <span className="devtoolbar-dropdown-role">{user.departmentName || user.email}</span>
                 </div>
               ))}

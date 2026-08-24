@@ -9,12 +9,16 @@ import com.luban.repository.UserRepository;
 import com.luban.repository.UserSessionRepository;
 import com.luban.security.JwtTokenProvider;
 import com.luban.workflow.entity.Member;
+import com.luban.workflow.entity.RoleUser;
 import com.luban.workflow.repository.MemberRepository;
+import com.luban.workflow.repository.RoleRepository;
+import com.luban.workflow.repository.RoleUserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Service
 public class AuthService {
@@ -22,17 +26,23 @@ public class AuthService {
     private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
     private final MemberRepository memberRepository;
+    private final RoleUserRepository roleUserRepository;
+    private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
                        MemberRepository memberRepository,
+                       RoleUserRepository roleUserRepository,
+                       RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
         this.memberRepository = memberRepository;
+        this.roleUserRepository = roleUserRepository;
+        this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
     }
@@ -45,7 +55,7 @@ public class AuthService {
 
         User user = new User();
         user.setEmail(request.getEmail());
-        user.setName(request.getName());
+        user.setAccount(request.getAccount());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         userRepository.save(user);
 
@@ -56,7 +66,7 @@ public class AuthService {
         } else {
             member = new Member();
             member.setUserId(user.getId());
-            member.setName(request.getName());
+            member.setName(request.getAccount());
             member.setEmail(request.getEmail());
             member.setProvider("manual");
             memberRepository.save(member);
@@ -64,7 +74,8 @@ public class AuthService {
 
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);
-        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getName()));
+        boolean superAdmin = isSuperAdmin(user.getId());
+        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin));
     }
 
     @Transactional
@@ -78,7 +89,16 @@ public class AuthService {
 
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);
-        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getName()));
+        boolean superAdmin = isSuperAdmin(user.getId());
+        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin));
+    }
+
+    private boolean isSuperAdmin(Long userId) {
+        List<Long> roleIds = roleUserRepository.findByUserId(userId).stream()
+                .map(RoleUser::getRoleId)
+                .toList();
+        return roleRepository.findAllById(roleIds).stream()
+                .anyMatch(r -> "super_admin".equals(r.getSlug()));
     }
 
     private void saveSession(Long userId, String token) {

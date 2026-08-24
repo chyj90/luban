@@ -169,7 +169,9 @@
 }
 
 .applist-create-form .btn-cancel:hover {
-  background: #eee;
+  border-color: #1677ff;
+  color: #1677ff;
+  background: transparent;
 }
 
 .app-grid {

@@ -1,10 +1,12 @@
 package com.luban.config;
 
+import com.luban.security.ApiKeyAuthFilter;
 import com.luban.security.ImpersonationFilter;
 import com.luban.security.JwtAuthFilter;
 import com.luban.workflow.repository.MemberRepository;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.UserRepository;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -23,9 +25,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final ApiKeyAuthFilter apiKeyAuthFilter;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter,
+                          ApiKeyAuthFilter apiKeyAuthFilter) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.apiKeyAuthFilter = apiKeyAuthFilter;
     }
 
     @Bean
@@ -49,9 +54,12 @@ public class SecurityConfig {
                 })
             )
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/v1/auth/**").permitAll()
+                .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
+                .requestMatchers("/api/v1/auth/**", "/error").permitAll()
+                .requestMatchers("/api/v1/mcp/internal/**").permitAll()
                 .anyRequest().authenticated()
             )
+            .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(impersonationFilter, JwtAuthFilter.class);
 

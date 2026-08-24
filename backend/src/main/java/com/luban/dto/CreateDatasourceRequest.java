@@ -7,8 +7,10 @@ import java.util.Map;
 
 @Data
 public class CreateDatasourceRequest {
-    @NotNull
-    private Long applicationId;
+    private Long ownerId;
+
+    @NotBlank
+    private String slug;
 
     @NotBlank
     private String name;

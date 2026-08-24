@@ -13,7 +13,7 @@ export function AppEntryPage() {
   const { appId } = useParams<{ appId: string }>();
   const { user } = useAuthStore();
   const setGlobalLoading = useLoadingStore((s) => s.setLoading);
-  const impersonationVersion = useImpersonationStore((s) => s.version);
+  const _impersonationVersion = useImpersonationStore((s) => s.version);
   const [app, setApp] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
 

@@ -69,6 +69,7 @@
 
 .tab:hover {
   color: #1677ff;
+  background: transparent;
 }
 
 .tabActive {

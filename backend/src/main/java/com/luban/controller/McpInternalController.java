@@ -3,8 +3,9 @@ package com.luban.controller;
 import com.luban.entity.ToolDefinition;
 import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
-import com.luban.executor.SqlExecutor;
 import com.luban.repository.ToolDefinitionRepository;
+import com.luban.service.ApiKeyService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,8 +20,9 @@ public class McpInternalController {
 
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final HttpExecutor httpExecutor;
-    private final SqlExecutor sqlExecutor;
     private final McpExecutor mcpExecutor;
+    private final ApiKeyService apiKeyService;
+    private final HttpServletRequest request;
 
     @GetMapping("/tools/list")
     public ResponseEntity<List<Map<String, Object>>> listTools() {
@@ -64,6 +66,15 @@ public class McpInternalController {
             ));
         }
 
+        // KEY 权限校验
+        Long apiKeyId = (Long) this.request.getAttribute("api_key_id");
+        if (apiKeyId != null && !apiKeyService.hasToolPermission(apiKeyId, tool.getId())) {
+            return ResponseEntity.status(403).body(Map.of(
+                    "error", "该 KEY 无权调用此工具",
+                    "tool", toolName
+            ));
+        }
+
         long start = System.currentTimeMillis();
         String result;
         try {
@@ -87,8 +98,6 @@ public class McpInternalController {
         switch (tool.getToolType()) {
             case "HTTP":
                 return httpExecutor.execute(tool, arguments, "internal");
-            case "SQL":
-                return sqlExecutor.execute(tool, arguments);
             case "MCP_PASSTHROUGH":
                 return mcpExecutor.execute(tool, arguments);
             default:

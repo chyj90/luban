@@ -4,7 +4,7 @@ import { register as registerApi } from '@/api';
 import './LoginPage.css';
 
 export function RegisterPage() {
-  const [name, setName] = useState('');
+  const [account, setAccount] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -16,7 +16,7 @@ export function RegisterPage() {
     setError('');
     setLoading(true);
     try {
-      await registerApi({ name, email, password });
+      await registerApi({ account, email, password });
       navigate('/login');
     } catch {
       setError('注册失败，请稍后重试');
@@ -37,13 +37,13 @@ export function RegisterPage() {
 
         <form className="login-form" onSubmit={handleRegister}>
           <div className="login-field">
-            <label htmlFor="name">用户名</label>
+            <label htmlFor="account">账号</label>
             <input
-              id="name"
+              id="account"
               type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="请输入用户名"
+              value={account}
+              onChange={(e) => setAccount(e.target.value)}
+              placeholder="请输入账号"
               required
               minLength={2}
               maxLength={30}

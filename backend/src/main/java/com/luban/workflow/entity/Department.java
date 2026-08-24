@@ -31,6 +31,9 @@ public class Department {
 
     private Long managerId;
 
+    @Transient
+    private String managerName;
+
     @Column
     private Integer orderNum;
 

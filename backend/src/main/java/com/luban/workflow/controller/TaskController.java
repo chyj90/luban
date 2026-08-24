@@ -40,13 +40,13 @@ public class TaskController {
     @PutMapping("/{id}/approve")
     public WorkflowTask approve(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.approveTask(id, comment, user.getId(), user.getName());
+        return processService.approveTask(id, comment, user.getId(), user.getAccount());
     }
 
     @PutMapping("/{id}/reject")
     public WorkflowTask reject(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.rejectTask(id, comment, user.getId(), user.getName());
+        return processService.rejectTask(id, comment, user.getId(), user.getAccount());
     }
 
     @PutMapping("/{id}/transfer")
@@ -54,14 +54,14 @@ public class TaskController {
         Long targetUserId = Long.valueOf(params.get("targetUserId").toString());
         String targetUserName = params.getOrDefault("targetUserName", "").toString();
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.transferTask(id, targetUserId, targetUserName, comment, user.getId(), user.getName());
+        return processService.transferTask(id, targetUserId, targetUserName, comment, user.getId(), user.getAccount());
     }
 
     @PutMapping("/{id}/delegate")
     public WorkflowTask delegate(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         Long delegateUserId = Long.valueOf(params.get("delegateUserId").toString());
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.delegateTask(id, delegateUserId, comment, user.getId(), user.getName());
+        return processService.delegateTask(id, delegateUserId, comment, user.getId(), user.getAccount());
     }
 
     @PutMapping("/{id}/add-sign")
@@ -69,12 +69,12 @@ public class TaskController {
         Long addUserId = Long.valueOf(params.get("addUserId").toString());
         String addSignType = params.getOrDefault("addSignType", "AFTER").toString();
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.addSign(id, addUserId, addSignType, comment, user.getId(), user.getName());
+        return processService.addSign(id, addUserId, addSignType, comment, user.getId(), user.getAccount());
     }
 
     @PostMapping("/{id}/reject-previous")
     public WorkflowTask rejectToPrevious(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String comment = params.getOrDefault("comment", "").toString();
-        return processService.rejectToPrevious(id, comment, user.getId(), user.getName());
+        return processService.rejectToPrevious(id, comment, user.getId(), user.getAccount());
     }
 }

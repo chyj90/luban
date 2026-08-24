@@ -84,15 +84,19 @@ export interface SystemWithPerm {
 }
 
 export interface PendingApproval {
+  type: string;
   taskId: number;
   permissionId: number;
   applicant: string;
-  applicantId: number;
+  applicantName?: string;
+  applicantId?: number;
   systemName: string;
-  groupId: number;
-  reason: string;
+  groupId?: number;
+  reason?: string;
   nodeName: string;
   createdAt: string;
+  keyName?: string;
+  toolName?: string;
 }
 
 export interface AgentConfig {

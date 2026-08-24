@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import MemberPicker from './MemberPicker';
-import Select from './Select';
+import Select from '@/components/Select';
 import styles from './WorkflowDesigner.module.css';
 
 const APPROVER_TYPES = [

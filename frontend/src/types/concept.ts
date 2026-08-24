@@ -6,6 +6,7 @@ export interface Concept {
   description: string;
   createdAt: string;
   updatedAt: string;
+  mapped?: boolean;
 }
 
 export interface ConceptDetailResponse {
@@ -92,6 +93,99 @@ export interface CreateRelationRequest {
 export interface CreateToolConceptRequest {
   conceptId: number;
   relation: string;
+}
+
+export interface OntologyGroup {
+  id: number;
+  name: string;
+  displayName: string;
+  industryId: number | null;
+  description: string;
+  iconUrl: string;
+  sortOrder: number;
+  isSystem: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  conceptCount: number;
+}
+
+export interface Industry {
+  id: number;
+  name: string;
+  displayName: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IndustryRelation {
+  id: number;
+  industryId: number;
+  relationType: string;
+  description: string;
+  isTransitive: boolean;
+  isSymmetric: boolean;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface ConceptMapping {
+  id: number;
+  conceptId: number;
+  datasourceId: number;
+  tableName: string;
+  columnName: string;
+  attributeName: string;
+  mappingType: 'direct' | 'computed';
+  computedExpr: string;
+  confidence: number;
+  isAuto: boolean;
+  isRequired: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConceptJoinMapping {
+  id: number;
+  conceptId: number;
+  datasourceId: number;
+  targetConcept: string;
+  relationType: string;
+  joinTable: string;
+  joinCondition: string;
+  joinType: 'LEFT' | 'INNER' | 'RIGHT';
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConceptToolBinding {
+  id: number;
+  conceptId: number;
+  toolId: number;
+  bindingType: string;
+  isDefault: boolean;
+  config: string;
+  createdAt: string;
+}
+
+export interface ConceptFeedback {
+  id: number;
+  sessionId: string;
+  messageId: string;
+  feedbackType: 'like' | 'dislike';
+  userQuestion: string;
+  reasoning: string;
+  resolvedConcepts: string;
+  generatedSql: string;
+  queryResult: string;
+  userFeedback: string;
+  status: 'recorded' | 'pending' | 'analyzing' | 'applied' | 'ignored';
+  reviewedBy: string;
+  reviewComment: string;
+  createdAt: string;
+  reviewedAt: string;
 }
 
 export const RELATION_TYPE_LABELS: Record<string, string> = {

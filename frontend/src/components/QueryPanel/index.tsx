@@ -18,7 +18,7 @@ interface QueryPanelProps {
 export function QueryPanel({ applicationId, selectedQuery, onQuerySelect, queries: externalQueries, onQueriesChange }: QueryPanelProps) {
   const [internalQueries, setInternalQueries] = useState<Query[]>([]);
   const queries = externalQueries ?? internalQueries;
-  const setQueries = onQueriesChange
+  const _setQueries = onQueriesChange
     ? (() => {}) 
     : setInternalQueries;
   const [showForm, setShowForm] = useState(false);

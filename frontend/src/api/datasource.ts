@@ -1,8 +1,8 @@
 import { get, post, put, del } from '@/api/client';
 import type { Datasource, CreateDatasourceRequest, TestDatasourceResponse, DatasourceStructure } from '@/types/datasource';
 
-export async function listDatasources(applicationId: number) {
-  return get<Datasource[]>('/datasources', { params: { applicationId } });
+export async function listDatasources(slug: string, ownerId?: number) {
+  return get<Datasource[]>('/datasources', { params: ownerId != null ? { slug, ownerId } : { slug } });
 }
 
 export async function createDatasource(data: CreateDatasourceRequest) {

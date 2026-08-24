@@ -33,7 +33,7 @@ public class ToolController {
         if (toolType != null) {
             return ResponseEntity.ok(ApiResponse.ok(toolService.listByType(toolType)));
         }
-        return ResponseEntity.ok(ApiResponse.ok(List.of()));
+        return ResponseEntity.ok(ApiResponse.ok(toolService.listAll()));
     }
 
     @GetMapping("/{id}")

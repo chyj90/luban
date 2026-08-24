@@ -1,18 +1,26 @@
 package com.luban.service;
 
 import com.luban.entity.Concept;
+import com.luban.entity.ConceptJoinMapping;
+import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
+import com.luban.entity.IndustryRelation;
+import com.luban.entity.OntologyGroup;
 import com.luban.entity.ToolConcept;
 import com.luban.entity.ToolDefinition;
+import com.luban.repository.ConceptJoinMappingRepository;
+import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.IndustryRelationRepository;
+import com.luban.repository.OntologyGroupRepository;
 import com.luban.repository.ToolConceptRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.jena.ontology.*;
 import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.util.iterator.ExtendedIterator;
 import org.springframework.stereotype.Service;
 
@@ -23,98 +31,171 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OntologyService {
 
     private static final String NS = "http://luban.ai/ontology#";
 
     private final ConceptRepository conceptRepository;
     private final ConceptRelationRepository conceptRelationRepository;
+    private final ConceptMappingRepository conceptMappingRepository;
+    private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ToolConceptRepository toolConceptRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
+    private final OntologyGroupRepository groupRepository;
+    private final IndustryRelationRepository industryRelationRepository;
 
-    private volatile OntModel ontologyModel;
+    private static final Long NO_INDUSTRY = -1L;
+
+    private static final int MAX_CONCEPT_EXPAND = 20;
+    private static final int MAX_API_TOOLS = 15;
+
+    private volatile Map<Long, OntModel> models = Map.of();
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final Map<String, ObjectProperty> propertyCache = new ConcurrentHashMap<>();
-    private final Map<Long, OntClass> classMap = new ConcurrentHashMap<>();
+    private final Map<Long, Map<Long, OntClass>> classMaps = new ConcurrentHashMap<>();
+    private final Map<Long, Map<String, ObjectProperty>> propertyCaches = new ConcurrentHashMap<>();
 
-    private static final Set<String> TRANSITIVE_TYPES = Set.of(
-            "PARENT_OF", "PREREQUISITE_OF", "UPPER_STREAM_OF"
-    );
-    private static final Set<String> SYMMETRIC_TRANSITIVE_TYPES = Set.of(
-            "EQUIVALENT_TO"
-    );
+    public OntologyService(ConceptRepository conceptRepository,
+                           ConceptRelationRepository conceptRelationRepository,
+                           ConceptMappingRepository conceptMappingRepository,
+                           ConceptJoinMappingRepository conceptJoinMappingRepository,
+                           ToolConceptRepository toolConceptRepository,
+                           ToolDefinitionRepository toolDefinitionRepository,
+                           OntologyGroupRepository groupRepository,
+                           IndustryRelationRepository industryRelationRepository) {
+        this.conceptRepository = conceptRepository;
+        this.conceptRelationRepository = conceptRelationRepository;
+        this.conceptMappingRepository = conceptMappingRepository;
+        this.conceptJoinMappingRepository = conceptJoinMappingRepository;
+        this.toolConceptRepository = toolConceptRepository;
+        this.toolDefinitionRepository = toolDefinitionRepository;
+        this.groupRepository = groupRepository;
+        this.industryRelationRepository = industryRelationRepository;
+    }
 
     @PostConstruct
     public void init() {
         try {
-            buildModel();
-            log.info("Ontology model initialized with {} concepts, {} relations",
-                    classMap.size(), countRelations());
+            buildModels();
+            int totalConcepts = classMaps.values().stream().mapToInt(Map::size).sum();
+            log.info("Ontology models initialized: {} industries, {} concepts total",
+                    models.size(), totalConcepts);
         } catch (Exception e) {
-            log.error("Failed to initialize ontology model: {}", e.getMessage(), e);
-            ontologyModel = ModelFactory.createOntologyModel(OntModelSpec.OWL_MEM_MICRO_RULE_INF);
+            log.error("Failed to initialize ontology models: {}", e.getMessage(), e);
+            models = Map.of();
         }
     }
 
     public boolean isEnabled() {
-        return ontologyModel != null;
+        return !models.isEmpty();
     }
 
     public void reload() {
         lock.writeLock().lock();
         try {
-            propertyCache.clear();
-            classMap.clear();
-            buildModel();
-            log.info("Ontology model reloaded: {} concepts, {} relations",
-                    classMap.size(), countRelations());
+            classMaps.clear();
+            propertyCaches.clear();
+            buildModels();
+            int totalConcepts = classMaps.values().stream().mapToInt(Map::size).sum();
+            log.info("Ontology models reloaded: {} industries, {} concepts total",
+                    models.size(), totalConcepts);
         } catch (Exception e) {
-            log.error("Failed to reload ontology model: {}", e.getMessage(), e);
+            log.error("Failed to reload ontology models: {}", e.getMessage(), e);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    private void buildModel() {
-        ontologyModel = ModelFactory.createOntologyModel(OntModelSpec.OWL_MEM_MICRO_RULE_INF);
-        classMap.clear();
-        propertyCache.clear();
+    private void buildModels() {
+        Map<Long, OntModel> newModels = new HashMap<>();
+        classMaps.clear();
+        propertyCaches.clear();
 
+        Map<Long, Long> conceptIndustryMap = new HashMap<>();
         List<Concept> concepts = conceptRepository.findAll();
         for (Concept c : concepts) {
-            OntClass cls = ontologyModel.createClass(NS + escapeUri(c.getName()));
-            classMap.put(c.getId(), cls);
+            Long industryId = NO_INDUSTRY;
+            if (c.getGroupId() != null) {
+                OntologyGroup group = groupRepository.findById(c.getGroupId()).orElse(null);
+                if (group != null && group.getIndustryId() != null) {
+                    industryId = group.getIndustryId();
+                }
+            }
+            conceptIndustryMap.put(c.getId(), industryId);
+        }
+
+        Map<Long, Set<String>> industryTransitiveTypes = new HashMap<>();
+        Map<Long, Set<String>> industrySymmetricTypes = new HashMap<>();
+        List<IndustryRelation> allIndustryRelations = industryRelationRepository.findAll();
+        for (IndustryRelation ir : allIndustryRelations) {
+            Long indId = ir.getIndustryId();
+            if (Boolean.TRUE.equals(ir.getIsTransitive())) {
+                industryTransitiveTypes.computeIfAbsent(indId, k -> new HashSet<>())
+                        .add(ir.getRelationType());
+            }
+            if (Boolean.TRUE.equals(ir.getIsSymmetric())) {
+                industrySymmetricTypes.computeIfAbsent(indId, k -> new HashSet<>())
+                        .add(ir.getRelationType());
+            }
+        }
+
+        for (Long industryId : conceptIndustryMap.values()) {
+            newModels.computeIfAbsent(industryId, id -> {
+                OntModel model = ModelFactory.createOntologyModel(OntModelSpec.OWL_MEM_MICRO_RULE_INF);
+                classMaps.put(id, new ConcurrentHashMap<>());
+                propertyCaches.put(id, new ConcurrentHashMap<>());
+                return model;
+            });
         }
 
         for (Concept c : concepts) {
-            if (c.getParentId() != null && classMap.containsKey(c.getParentId())) {
-                OntClass parent = classMap.get(c.getParentId());
-                OntClass child = classMap.get(c.getId());
-                parent.addSubClass(child);
+            Long industryId = conceptIndustryMap.get(c.getId());
+            OntModel model = newModels.get(industryId);
+            OntClass cls = model.createClass(NS + escapeUri(c.getName()));
+            classMaps.get(industryId).put(c.getId(), cls);
+        }
+
+        for (Concept c : concepts) {
+            if (c.getParentId() != null) {
+                Long industryId = conceptIndustryMap.get(c.getId());
+                Map<Long, OntClass> cm = classMaps.get(industryId);
+                if (cm.containsKey(c.getParentId())) {
+                    OntClass parent = cm.get(c.getParentId());
+                    OntClass child = cm.get(c.getId());
+                    parent.addSubClass(child);
+                }
             }
         }
 
         List<ConceptRelation> relations = conceptRelationRepository.findAll();
         for (ConceptRelation r : relations) {
-            OntClass source = classMap.get(r.getSourceConceptId());
-            OntClass target = classMap.get(r.getTargetConceptId());
+            Long industryId = conceptIndustryMap.get(r.getSourceConceptId());
+            Map<Long, OntClass> cm = classMaps.get(industryId);
+            if (cm == null) continue;
+            OntClass source = cm.get(r.getSourceConceptId());
+            OntClass target = cm.get(r.getTargetConceptId());
             if (source == null || target == null) continue;
 
-            ObjectProperty prop = getOrCreateProperty(r.getRelationType());
+            Set<String> transitiveTypes = industryTransitiveTypes.getOrDefault(industryId, Set.of());
+            Set<String> symmetricTypes = industrySymmetricTypes.getOrDefault(industryId, Set.of());
+            ObjectProperty prop = getOrCreateProperty(industryId, newModels.get(industryId), r.getRelationType(),
+                    transitiveTypes, symmetricTypes);
             Individual sourceInd = source.createIndividual(NS + "s_" + r.getId());
             Individual targetInd = target.createIndividual(NS + "t_" + r.getId());
             sourceInd.addProperty(prop, targetInd);
         }
+
+        this.models = Map.copyOf(newModels);
     }
 
-    private ObjectProperty getOrCreateProperty(String relationType) {
-        return propertyCache.computeIfAbsent(relationType, type -> {
-            ObjectProperty prop = ontologyModel.createObjectProperty(NS + type);
-            if (TRANSITIVE_TYPES.contains(type)) {
+    private ObjectProperty getOrCreateProperty(Long industryId, OntModel model, String relationType,
+                                                Set<String> transitiveTypes, Set<String> symmetricTypes) {
+        Map<String, ObjectProperty> cache = propertyCaches.get(industryId);
+        return cache.computeIfAbsent(relationType, type -> {
+            ObjectProperty prop = model.createObjectProperty(NS + type);
+            if (transitiveTypes.contains(type)) {
                 prop.convertToTransitiveProperty();
             }
-            if (SYMMETRIC_TRANSITIVE_TYPES.contains(type)) {
+            if (symmetricTypes.contains(type)) {
                 prop.convertToSymmetricProperty();
                 prop.convertToTransitiveProperty();
             }
@@ -124,16 +205,18 @@ public class OntologyService {
 
     private int countRelations() {
         int count = 0;
-        for (OntClass cls : classMap.values()) {
-            for (ExtendedIterator<OntClass> it = cls.listSubClasses(); it.hasNext(); it.next()) {
-                count++;
+        for (Map<Long, OntClass> cm : classMaps.values()) {
+            for (OntClass cls : cm.values()) {
+                for (ExtendedIterator<OntClass> it = cls.listSubClasses(); it.hasNext(); it.next()) {
+                    count++;
+                }
             }
         }
         return count;
     }
 
     public List<ToolDefinition> expandByConcepts(List<ToolDefinition> topK, int maxExpanded) {
-        if (ontologyModel == null || classMap.isEmpty()) {
+        if (models.isEmpty()) {
             return topK;
         }
 
@@ -164,21 +247,25 @@ public class OntologyService {
                     Concept concept = conceptRepository.findById(cid).orElse(null);
                     if (concept == null) continue;
 
-                    // Step 2: Jena推理机展开子概念（传递性自动处理）
-                    OntClass cls = ontologyModel.getOntClass(NS + escapeUri(concept.getName()));
-                    if (cls != null) {
-                        for (ExtendedIterator<OntClass> it = cls.listSubClasses(); it.hasNext(); ) {
-                            OntClass sub = it.next();
-                            if (sub.isAnon()) continue;
-                            Long subId = findConceptIdByName(unescapeUri(sub.getLocalName()));
-                            if (subId != null && expandedConceptIds.add(subId)) {
-                                newIds.add(subId);
-                                changed = true;
+                    Long industryId = resolveIndustryId(concept.getGroupId());
+                    OntModel model = models.get(industryId);
+                    Map<Long, OntClass> cm = classMaps.get(industryId);
+
+                    if (model != null && cm != null) {
+                        OntClass cls = model.getOntClass(NS + escapeUri(concept.getName()));
+                        if (cls != null) {
+                            for (ExtendedIterator<OntClass> it = cls.listSubClasses(); it.hasNext(); ) {
+                                OntClass sub = it.next();
+                                if (sub.isAnon()) continue;
+                                Long subId = findConceptIdByName(unescapeUri(sub.getLocalName()));
+                                if (subId != null && expandedConceptIds.add(subId)) {
+                                    newIds.add(subId);
+                                    changed = true;
+                                }
                             }
                         }
                     }
 
-                    // Step 3: COMPUTED_FROM 关系 → 加入依赖的概念
                     List<ConceptRelation> computedFrom = conceptRelationRepository
                             .findByTargetConceptIdAndRelationType(cid, "COMPUTED_FROM");
                     for (ConceptRelation r : computedFrom) {
@@ -188,7 +275,6 @@ public class OntologyService {
                         }
                     }
 
-                    // Step 4: DERIVED_FROM 关系 → 加入条件依赖的概念
                     List<ConceptRelation> derivedFrom = conceptRelationRepository
                             .findByTargetConceptIdAndRelationType(cid, "DERIVED_FROM");
                     for (ConceptRelation r : derivedFrom) {
@@ -198,7 +284,6 @@ public class OntologyService {
                         }
                     }
 
-                    // Step 5: EQUIVALENT_TO 关系 → 跨系统等价概念
                     List<ConceptRelation> equivs = new ArrayList<>();
                     equivs.addAll(conceptRelationRepository.findBySourceConceptIdAndRelationType(cid, "EQUIVALENT_TO"));
                     equivs.addAll(conceptRelationRepository.findByTargetConceptIdAndRelationType(cid, "EQUIVALENT_TO"));
@@ -214,7 +299,6 @@ public class OntologyService {
                 expandedConceptIds.addAll(newIds);
             }
 
-            // Step 6: 查找 PRODUCES 每个扩展概念的工具
             for (Long conceptId : expandedConceptIds) {
                 if (result.size() >= maxExpanded) break;
                 List<ToolConcept> producers = toolConceptRepository.findByConceptIdAndRelation(conceptId, "PRODUCES");
@@ -230,9 +314,188 @@ public class OntologyService {
         }
     }
 
+    private Long resolveIndustryId(Long groupId) {
+        if (groupId == null) return NO_INDUSTRY;
+        OntologyGroup group = groupRepository.findById(groupId).orElse(null);
+        if (group == null || group.getIndustryId() == null) return NO_INDUSTRY;
+        Long industryId = group.getIndustryId();
+        return models.containsKey(industryId) ? industryId : NO_INDUSTRY;
+    }
+
     private Long findConceptIdByName(String name) {
         List<Concept> concepts = conceptRepository.findByName(name);
         return concepts.isEmpty() ? null : concepts.get(0).getId();
+    }
+
+    /**
+     * 语义层统一出口：根据概念 ID 列表，通过 Jena OWL 推理扩展语义上下文，
+     * 返回 LLM 所需的全部信息（概念关系、API 工具、表结构映射、JOIN 条件）。
+     */
+    public Map<String, Object> analyzeContext(List<Long> conceptIds, Map<Long, Double> faissConfidence) {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        List<Long> allConceptIds = new ArrayList<>(conceptIds);
+        Set<Long> allConceptIdSet = new LinkedHashSet<>(conceptIds);
+        List<Map<String, Object>> trace = new ArrayList<>();
+        List<ToolDefinition> apiTools = new ArrayList<>();
+        List<ConceptMapping> tableMappings = new ArrayList<>();
+        List<ConceptJoinMapping> joinMappings = new ArrayList<>();
+        Map<Long, List<Map<String, Object>> > relatedConcepts = new LinkedHashMap<>();
+
+        // 置信度传播：FAISS 置信度 → 本体扩展继承
+        Map<Long, Double> confidenceMap = new HashMap<>(faissConfidence);
+        final double DECAY_FACTOR = 0.85;
+
+        Set<Long> visited = new HashSet<>(conceptIds);
+        Deque<Long> queue = new ArrayDeque<>(conceptIds);
+        int depth = 0;
+        int maxDepth = 2;
+
+        while (!queue.isEmpty() && depth <= maxDepth && allConceptIdSet.size() < MAX_CONCEPT_EXPAND) {
+            int size = queue.size();
+            for (int i = 0; i < size; i++) {
+                Long conceptId = queue.poll();
+                if (conceptId == null) continue;
+
+                Concept concept = conceptRepository.findById(conceptId).orElse(null);
+                if (concept == null) continue;
+
+                Map<String, Object> traceItem = new LinkedHashMap<>();
+                traceItem.put("conceptId", conceptId);
+                traceItem.put("conceptName", concept.getName());
+                traceItem.put("depth", depth);
+                traceItem.put("groupId", concept.getGroupId());
+                Double conf = confidenceMap.get(conceptId);
+                if (conf != null) {
+                    traceItem.put("confidence", conf);
+                }
+                trace.add(traceItem);
+
+                List<ConceptMapping> mappings = conceptMappingRepository.findByConceptId(conceptId);
+                tableMappings.addAll(mappings);
+
+                List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptId(conceptId);
+                joinMappings.addAll(joins);
+
+                List<ToolConcept> toolBindings = toolConceptRepository.findByConceptId(conceptId);
+                for (ToolConcept tc : toolBindings) {
+                    toolDefinitionRepository.findById(tc.getToolId()).ifPresent(td -> {
+                        if (!"HTTP".equals(td.getToolType())) return;
+                        boolean exists = apiTools.stream().anyMatch(t -> t.getId().equals(td.getId()));
+                        if (!exists && apiTools.size() < MAX_API_TOOLS) {
+                            apiTools.add(td);
+                        }
+                    });
+                }
+
+                if (isEnabled() && depth < maxDepth) {
+                    Double parentConfidence = confidenceMap.getOrDefault(conceptId, 0.0);
+                    expandViaJena(concept, visited, queue, allConceptIds, allConceptIdSet, relatedConcepts, parentConfidence, confidenceMap, DECAY_FACTOR);
+                }
+            }
+            depth++;
+        }
+
+        result.put("conceptIds", allConceptIds);
+        result.put("conceptTrace", trace);
+        result.put("apiTools", apiTools);
+        result.put("tableMappings", tableMappings);
+        result.put("joinMappings", joinMappings);
+        result.put("relatedConcepts", relatedConcepts);
+        return result;
+    }
+
+    /**
+     * 通过 Jena OWL 推理扩展概念邻居：
+     * 1. subClass（子类）和 superClass（父类）—— OWL 推理自动处理传递性
+     * 2. ObjectProperty 关联的概念（COMPUTED_FROM/DERIVED_FROM/EQUIVALENT_TO 等）
+     *    —— 若标记为 transitive/symmetric，Jena 自动推理
+     */
+    private void expandViaJena(Concept concept, Set<Long> visited, Deque<Long> queue, List<Long> allConceptIds, Set<Long> allConceptIdSet, Map<Long, List<Map<String, Object>> > relatedConcepts, double parentConfidence, Map<Long, Double> confidenceMap, double decayFactor) {
+        lock.readLock().lock();
+        try {
+            Long industryId = resolveIndustryId(concept.getGroupId());
+            OntModel model = models.get(industryId);
+            Map<Long, OntClass> cm = classMaps.get(industryId);
+            if (model == null || cm == null) return;
+
+            OntClass cls = model.getOntClass(NS + escapeUri(concept.getName()));
+            if (cls == null) return;
+
+            List<Map<String, Object>> related = new ArrayList<>();
+            double propagatedConfidence = parentConfidence * decayFactor;
+
+            // 1. 通过 OWL 推理获取子类（Jena 自动处理传递性）
+            for (ExtendedIterator<OntClass> it = cls.listSubClasses(); it.hasNext(); ) {
+                OntClass sub = it.next();
+                if (sub.isAnon()) continue;
+                Long subId = findConceptIdByName(unescapeUri(sub.getLocalName()));
+                if (subId != null) {
+                    double conf = Math.max(propagatedConfidence, confidenceMap.getOrDefault(subId, 0.0));
+                    confidenceMap.put(subId, conf);
+                    related.add(Map.of("conceptId", subId, "conceptName", unescapeUri(sub.getLocalName()), "relation", "subClassOf", "confidence", conf));
+                    if (visited.add(subId)) {
+                        queue.add(subId);
+                    }
+                    if (allConceptIdSet.add(subId)) {
+                        allConceptIds.add(subId);
+                    }
+                }
+            }
+
+            // 2. 通过 OWL 推理获取父类
+            for (ExtendedIterator<OntClass> it = cls.listSuperClasses(); it.hasNext(); ) {
+                OntClass sup = it.next();
+                if (sup.isAnon() || sup.getLocalName() == null) continue;
+                Long supId = findConceptIdByName(unescapeUri(sup.getLocalName()));
+                if (supId != null) {
+                    double conf = Math.max(propagatedConfidence, confidenceMap.getOrDefault(supId, 0.0));
+                    confidenceMap.put(supId, conf);
+                    related.add(Map.of("conceptId", supId, "conceptName", unescapeUri(sup.getLocalName()), "relation", "superClassOf", "confidence", conf));
+                    if (visited.add(supId)) {
+                        queue.add(supId);
+                    }
+                    if (allConceptIdSet.add(supId)) {
+                        allConceptIds.add(supId);
+                    }
+                }
+            }
+
+            // 3. 通过 ObjectProperty 关联的概念（Jena 自动推理 transitive/symmetric）
+            for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
+                Individual ind = it.next();
+                for (StmtIterator sit = ind.listProperties(); sit.hasNext(); ) {
+                    org.apache.jena.rdf.model.Statement stmt = sit.next();
+                    if (stmt.getObject().isResource()) {
+                        org.apache.jena.rdf.model.Resource obj = stmt.getObject().asResource();
+                        if (obj.canAs(Individual.class)) {
+                            Individual targetInd = obj.as(Individual.class);
+                            OntClass targetCls = targetInd.getOntClass();
+                            if (targetCls != null && !targetCls.isAnon() && targetCls.getLocalName() != null) {
+                                Long targetId = findConceptIdByName(unescapeUri(targetCls.getLocalName()));
+                                if (targetId != null) {
+                                    double conf = Math.max(propagatedConfidence, confidenceMap.getOrDefault(targetId, 0.0));
+                                    confidenceMap.put(targetId, conf);
+                                    related.add(Map.of("conceptId", targetId, "conceptName", unescapeUri(targetCls.getLocalName()), "relation", stmt.getPredicate().getLocalName(), "confidence", conf));
+                                    if (visited.add(targetId)) {
+                                        queue.add(targetId);
+                                    }
+                                    if (allConceptIdSet.add(targetId)) {
+                                        allConceptIds.add(targetId);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!related.isEmpty()) {
+                relatedConcepts.put(concept.getId(), related);
+            }
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     private String escapeUri(String name) {

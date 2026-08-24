@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { login } from '@/api';
+import { login, getMyPermissions } from '@/api';
 import { useAuthStore } from '@/stores/authStore';
+import { usePermissionStore } from '@/stores/permissionStore';
 import './LoginPage.css';
 
 export function LoginPage() {
@@ -11,6 +12,7 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const setPermissions = usePermissionStore((s) => s.setPermissions);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,6 +21,12 @@ export function LoginPage() {
     try {
       const res = await login({ email, password });
       setAuth(res.data.token, res.data.user);
+      try {
+        const permRes = await getMyPermissions();
+        setPermissions(permRes.data as string[]);
+      } catch {
+        setPermissions([]);
+      }
       navigate('/apps');
     } catch {
       setError('登录失败，请检查邮箱和密码');

@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Network, RefreshCw, GitBranch } from 'lucide-react';
+import PageTopbar from '@/components/PageTopbar';
 import {
   ReactFlow,
-  addEdge,
   useNodesState,
   useEdgesState,
   Controls,
@@ -20,39 +22,65 @@ import '@xyflow/react/dist/style.css';
 import * as dagre from 'dagre';
 import {
   listConcepts,
+  batchGetConcepts,
   createConcept,
   updateConcept,
   deleteConcept,
   getConceptRelations,
+  listAllRelations,
   createConceptRelation,
   deleteConceptRelation,
-  getConceptTools,
   bindToolConcept,
   unbindToolConcept,
   getConcept,
+  listConceptMappings,
+  createConceptMapping,
+  updateConceptMapping,
+  deleteConceptMapping,
+  autoMatchConceptMappings,
+  applyAutoMatchMappings,
+  listConceptJoinMappings,
+  createConceptJoinMapping,
+  updateConceptJoinMapping,
+  deleteConceptJoinMapping,
+  rebuildConceptIndex,
+  listOntologyGroups,
+  getOntologyGroup,
+  listIndustries,
+  getConceptTree,
 } from '@/api/concept';
-import { listToolDefinitions } from '@/api/tool';
+import { listToolDefinitions, listToolGroups } from '@/api/tool';
+import { listDatasources } from '@/api/datasource';
+import type { Datasource } from '@/types/datasource';
 import type {
   Concept,
   ConceptRelation,
-  ToolConcept,
-  ConceptDetailResponse,
   ToolBindingInfo,
   ConceptTreeResponse,
+  ConceptMapping,
+  ConceptJoinMapping,
+  OntologyGroup,
+  Industry,
 } from '@/types/concept';
 import {
   RELATION_TYPE_LABELS,
   RELATION_TYPE_COLORS,
-  RELATION_TYPE_PRIORITY,
   CONCEPT_NODE_ICONS,
   CONCEPT_NODE_COLORS,
 } from '@/types/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
+import Select from '@/components/Select';
 import './ConceptEditorPage.css';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 64;
+
+const DOMAIN_COLORS = [
+  '#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96',
+  '#13c2c2', '#f5222d', '#faad14', '#2f54eb', '#a0d911',
+  '#fa541c', '#1890ff', '#7cb305', '#531dab', '#c41d7f',
+];
 
 function getNodeType(concept: Concept, concepts: Concept[], relations: ConceptRelation[]): string {
   if (relations.some((r) => r.sourceConceptId === concept.id && r.relationType === 'COMPUTED_FROM')) return 'computed';
@@ -62,9 +90,10 @@ function getNodeType(concept: Concept, concepts: Concept[], relations: ConceptRe
   return 'default';
 }
 
-function ConceptNode({ data }: { data: { label: string; description: string; nodeType: string; icon: string } }) {
+function ConceptNode({ data }: { data: { label: string; description: string; nodeType: string; icon: string; domainName?: string; domainColor?: string; mapped?: boolean } }) {
   const bgColor = CONCEPT_NODE_COLORS[data.nodeType] || CONCEPT_NODE_COLORS.default;
   const borderColor = (() => {
+    if (data.domainColor) return data.domainColor;
     switch (data.nodeType) {
       case 'root': return '#fa8c16';
       case 'computed': return '#722ed1';
@@ -90,10 +119,27 @@ function ConceptNode({ data }: { data: { label: string; description: string; nod
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
         <span style={{ fontSize: 16 }}>{data.icon}</span>
         <span style={{ fontSize: 14, fontWeight: 600, color: '#333' }}>{data.label}</span>
+        {data.mapped && (
+          <span style={{ fontSize: 10, color: '#52c41a', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 3, padding: '0 4px', lineHeight: '16px', flexShrink: 0 }}>已映射</span>
+        )}
       </div>
       {data.description && (
         <div style={{ fontSize: 11, color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 22 }}>
           {data.description}
+        </div>
+      )}
+      {data.domainName && (
+        <div style={{
+          fontSize: 10, marginTop: 2, paddingLeft: 22,
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <span style={{
+            display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+            background: data.domainColor || '#999', flexShrink: 0,
+          }} />
+          <span style={{ color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {data.domainName}
+          </span>
         </div>
       )}
       <Handle type="source" position={Position.Bottom} style={{ background: borderColor }} />
@@ -131,24 +177,48 @@ function suggestRelationType(sourceName: string, targetName: string): string {
   return bestType;
 }
 
-function layoutNodes(concepts: Concept[], relations: ConceptRelation[]): { nodes: Node[]; edges: Edge[] } {
+function layoutNodes(
+  concepts: Concept[],
+  relations: ConceptRelation[],
+  getDomainName: (gid: number | null | undefined) => string,
+  getDomainColor: (gid: number | null | undefined) => string | undefined,
+): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 80 });
 
+  const conceptDomainMap = new Map<number, { groupId: number | null; name: string; color?: string }>();
+  for (const c of concepts) {
+    conceptDomainMap.set(c.id, {
+      groupId: c.groupId,
+      name: getDomainName(c.groupId),
+      color: getDomainColor(c.groupId),
+    });
+  }
+
   const nodes: Node[] = concepts.map((c) => {
     const nodeType = getNodeType(c, concepts, relations);
+    const domain = conceptDomainMap.get(c.id);
     return {
       id: String(c.id),
       type: 'conceptNode',
       position: { x: 0, y: 0 },
-      data: { label: c.name, description: c.description || '', nodeType, icon: CONCEPT_NODE_ICONS[nodeType] || CONCEPT_NODE_ICONS.default },
+      data: {
+        label: c.name,
+        description: c.description || '',
+        nodeType,
+        icon: CONCEPT_NODE_ICONS[nodeType] || CONCEPT_NODE_ICONS.default,
+        domainName: domain?.name,
+        domainColor: domain?.color,
+        mapped: c.mapped,
+      },
     };
   });
 
+  const conceptIdSet = new Set(concepts.map((c) => c.id));
   const edges: Edge[] = [];
   for (const c of concepts) {
-    if (c.parentId) {
+    if (c.parentId && conceptIdSet.has(c.parentId)) {
       edges.push({
         id: `parent-${c.parentId}-${c.id}`,
         source: String(c.parentId),
@@ -169,18 +239,44 @@ function layoutNodes(concepts: Concept[], relations: ConceptRelation[]): { nodes
     const label = RELATION_TYPE_LABELS[r.relationType] || r.relationType;
     const dir = getRelationTypeDirection(r.relationType);
     const isBidirectional = r.relationType === 'EQUIVALENT_TO';
+
+    const srcDomain = conceptDomainMap.get(r.sourceConceptId);
+    const tgtDomain = conceptDomainMap.get(r.targetConceptId);
+    const isCrossDomain = srcDomain && tgtDomain && srcDomain.groupId !== tgtDomain.groupId;
+
+    const edgeStyle = {
+      stroke: isCrossDomain ? '#8c8c8c' : color,
+      strokeWidth: isCrossDomain ? 2.5 : 2,
+      strokeDasharray: isCrossDomain ? '8,4' : (r.relationType === 'DERIVED_FROM' || r.relationType === 'COMPUTED_FROM' ? '5,5' : 'none'),
+    };
+
     edges.push({
       id: `rel-${r.id}`,
       source: dir === 'source_to_target' ? String(r.sourceConceptId) : String(r.targetConceptId),
       target: dir === 'source_to_target' ? String(r.targetConceptId) : String(r.sourceConceptId),
       type: 'smoothstep',
-      animated: r.relationType === 'UPPER_STREAM_OF',
-      style: { stroke: color, strokeWidth: 2, strokeDasharray: r.relationType === 'DERIVED_FROM' || r.relationType === 'COMPUTED_FROM' ? '5,5' : 'none' },
-      markerEnd: isBidirectional ? undefined : { type: MarkerType.ArrowClosed, color },
-      markerStart: isBidirectional ? { type: MarkerType.ArrowClosed, color } : undefined,
-      label,
-      labelStyle: { fontSize: 10, fill: color },
-      labelBgStyle: { fill: '#fff', fillOpacity: 0.9 },
+      animated: r.relationType === 'UPPER_STREAM_OF' || isCrossDomain,
+      style: edgeStyle,
+      markerEnd: isBidirectional ? undefined : {
+        type: MarkerType.ArrowClosed,
+        color: isCrossDomain ? '#8c8c8c' : color,
+      },
+      markerStart: isBidirectional ? {
+        type: MarkerType.ArrowClosed,
+        color: isCrossDomain ? '#8c8c8c' : color,
+      } : undefined,
+      label: isCrossDomain
+        ? `${label} (跨域)`
+        : label,
+      labelStyle: {
+        fontSize: 10,
+        fill: isCrossDomain ? '#8c8c8c' : color,
+        fontStyle: isCrossDomain ? 'italic' : 'normal',
+      },
+      labelBgStyle: {
+        fill: isCrossDomain ? '#fafafa' : '#fff',
+        fillOpacity: 0.9,
+      },
     });
   }
 
@@ -198,10 +294,14 @@ function layoutNodes(concepts: Concept[], relations: ConceptRelation[]): { nodes
 }
 
 export default function ConceptEditorPage() {
+  const [searchParams] = useSearchParams();
+  const urlDomainId = Number(searchParams.get('domainId')) || null;
+  const urlDomainIdRef = useRef<number | null>(urlDomainId);
+
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [relations, setRelations] = useState<ConceptRelation[]>([]);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loading, setLoading] = useState(true);
   const [selectedConcept, setSelectedConcept] = useState<Concept | null>(null);
   const [selectedRelations, setSelectedRelations] = useState<ConceptRelation[]>([]);
@@ -209,6 +309,9 @@ export default function ConceptEditorPage() {
   const [editingForm, setEditingForm] = useState({ name: '', description: '' });
   const [inlineEditing, setInlineEditing] = useState<string | null>(null);
   const [inlineName, setInlineName] = useState('');
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createDialogName, setCreateDialogName] = useState('');
+  const createDialogCallback = useRef<((name: string) => void) | null>(null);
 
   const [showRelationDialog, setShowRelationDialog] = useState(false);
   const [pendingConnection, setPendingConnection] = useState<{ source: string; target: string } | null>(null);
@@ -216,7 +319,7 @@ export default function ConceptEditorPage() {
   const [relationExpression, setRelationExpression] = useState('');
 
   const [showToolPicker, setShowToolPicker] = useState(false);
-  const [availableTools, setAvailableTools] = useState<{ id: number; displayName: string; description: string }[]>([]);
+  const [availableTools, setAvailableTools] = useState<{ id: number; displayName: string; description: string; groupId: number; groupName: string }[]>([]);
   const [selectedToolId, setSelectedToolId] = useState<number | null>(null);
   const [selectedToolRelation, setSelectedToolRelation] = useState('PRODUCES');
 
@@ -225,9 +328,85 @@ export default function ConceptEditorPage() {
   const [treeData, setTreeData] = useState<ConceptTreeResponse[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
 
+  const [conceptMappings, setConceptMappings] = useState<ConceptMapping[]>([]);
+  const [joinMappings, setJoinMappings] = useState<ConceptJoinMapping[]>([]);
+  const [showMappingForm, setShowMappingForm] = useState(false);
+  const [mappingForm, setMappingForm] = useState<Partial<ConceptMapping>>({});
+  const [editingMappingId, setEditingMappingId] = useState<number | null>(null);
+  const [showJoinForm, setShowJoinForm] = useState(false);
+  const [joinForm, setJoinForm] = useState<Partial<ConceptJoinMapping>>({});
+  const [editingJoinId, setEditingJoinId] = useState<number | null>(null);
+
+  const [industries, setIndustries] = useState<Industry[]>([]);
+  const [selectedIndustryId, setSelectedIndustryId] = useState<number | null>(null);
+  const [domainGroups, setDomainGroups] = useState<OntologyGroup[]>([]);
+  const [selectedDomainId, setSelectedDomainId] = useState<number | null | undefined>(undefined);
+  const [datasources, setDatasources] = useState<Datasource[]>([]);
+  const [selectedDatasourceIds, setSelectedDatasourceIds] = useState<number[]>([]);
+  const [showDatasourceModal, setShowDatasourceModal] = useState(false);
+  const [showConceptSelectModal, setShowConceptSelectModal] = useState(false);
+  const [selectedConceptIds, setSelectedConceptIds] = useState<number[]>([]);
+  const [allIndustryConcepts, setAllIndustryConcepts] = useState<Map<number, Concept[]>>(new Map());
+  const [ownerNameMap, setOwnerNameMap] = useState<Map<number, string>>(new Map());
+  const [domainLegendCollapsed, setDomainLegendCollapsed] = useState(false);
+  const domainColorMap = useRef<Record<number, string>>({});
+  const domainGroupsFetchedRef = useRef<number | null>(null);
+  const [industryConceptGroupMap, setIndustryConceptGroupMap] = useState<Map<number, number>>(new Map());
+  const [industryAllRelations, setIndustryAllRelations] = useState<ConceptRelation[]>([]);
+
+  const crossDomainStats = useMemo(() => {
+    const domainIdToName = new Map<number, string>();
+    domainGroups.forEach((d) => domainIdToName.set(d.id, d.displayName));
+    const conceptToDomain = industryConceptGroupMap;
+    const crossByDomain = new Map<number, { count: number; peers: Map<number, number> }>();
+    industryAllRelations.forEach((r) => {
+      const srcDomain = conceptToDomain.get(r.sourceConceptId);
+      const tgtDomain = conceptToDomain.get(r.targetConceptId);
+      if (srcDomain != null && tgtDomain != null && srcDomain !== tgtDomain) {
+        [srcDomain, tgtDomain].forEach((d) => {
+          if (!crossByDomain.has(d)) {
+            crossByDomain.set(d, { count: 0, peers: new Map() });
+          }
+        });
+        const srcEntry = crossByDomain.get(srcDomain)!;
+        srcEntry.count++;
+        srcEntry.peers.set(tgtDomain, (srcEntry.peers.get(tgtDomain) || 0) + 1);
+        const tgtEntry = crossByDomain.get(tgtDomain)!;
+        tgtEntry.count++;
+        tgtEntry.peers.set(srcDomain, (tgtEntry.peers.get(srcDomain) || 0) + 1);
+      }
+    });
+    return { crossByDomain, domainIdToName };
+  }, [industryAllRelations, industryConceptGroupMap, domainGroups]);
+
+  const groupedDatasources = useMemo(() => {
+    const groups = new Map<number, Datasource[]>();
+    const noOwner: Datasource[] = [];
+    datasources.forEach((ds) => {
+      if (ds.ownerId != null) {
+        const list = groups.get(ds.ownerId) || [];
+        list.push(ds);
+        groups.set(ds.ownerId, list);
+      } else {
+        noOwner.push(ds);
+      }
+    });
+    return { groups, noOwner };
+  }, [datasources]);
+
+  const [showSearchRelation, setShowSearchRelation] = useState(false);
+  const [searchRelSourceId, setSearchRelSourceId] = useState<number | null>(null);
+  const [searchRelKeyword, setSearchRelKeyword] = useState('');
+  const [searchRelResults, setSearchRelResults] = useState<Concept[]>([]);
+  const [searchRelTargetId, setSearchRelTargetId] = useState<number | null>(null);
+  const [searchRelType, setSearchRelType] = useState('PARENT_OF');
+  const [searchRelExpression, setSearchRelExpression] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+
   const reactFlow = useReactFlow();
-  const toast = useToastStore((s) => s.add);
-  const confirm = useConfirmStore((s) => s.show);
+  const toast = useToastStore((s) => s.show);
+  const confirm = useConfirmStore((s) => s.confirm);
+  const selectedIndustryIdRef = useRef<number | null>(null);
   const undoStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const redoStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
@@ -237,29 +416,151 @@ export default function ConceptEditorPage() {
     redoStack.current = [];
   }, [nodes, edges]);
 
+  const getDomainName = useCallback((groupId: number | null | undefined): string => {
+    if (groupId == null) return '全局';
+    const g = domainGroups.find((d) => d.id === groupId);
+    return g ? g.displayName : '全局';
+  }, [domainGroups]);
+
+  const getDomainColor = useCallback((groupId: number | null | undefined): string | undefined => {
+    if (groupId == null) return undefined;
+    if (!domainColorMap.current[groupId]) {
+      const idx = domainGroups.findIndex((d) => d.id === groupId);
+      domainColorMap.current[groupId] = idx >= 0 ? DOMAIN_COLORS[idx % DOMAIN_COLORS.length] : '#999';
+    }
+    return domainColorMap.current[groupId];
+  }, [domainGroups]);
+
+  const fetchIndustries = useCallback(async () => {
+    try {
+      const res = await listIndustries();
+      setIndustries(res.data);
+
+      if (urlDomainIdRef.current) {
+        try {
+          const domainRes = await getOntologyGroup(urlDomainIdRef.current);
+          const domainIndustryId = domainRes.data.industryId;
+          if (domainIndustryId && res.data.some((ind) => ind.id === domainIndustryId)) {
+            setSelectedIndustryId(domainIndustryId);
+            return;
+          }
+        } catch {
+          // fall through to default selection
+        }
+      }
+
+      if (res.data.length > 0 && selectedIndustryIdRef.current === null) {
+        setSelectedIndustryId(res.data[0].id);
+      }
+    } catch {
+      // industries are optional
+    }
+  }, []);
+
+  const fetchDomainGroups = useCallback(async (industryId?: number | null) => {
+    if (!industryId || domainGroupsFetchedRef.current === industryId) return;
+    domainGroupsFetchedRef.current = industryId;
+    try {
+      const res = await listOntologyGroups(industryId);
+      const groups = res.data;
+      setDomainGroups(groups);
+      if (urlDomainIdRef.current && groups.some((g) => g.id === urlDomainIdRef.current)) {
+        setSelectedDomainId(urlDomainIdRef.current);
+        urlDomainIdRef.current = null;
+      } else if (groups.length > 0) {
+        setSelectedDomainId(groups[0].id);
+      } else {
+        setSelectedDomainId(null);
+      }
+
+      const [allConceptsRes, allRelationsRes] = await Promise.all([
+        Promise.all(groups.map((g) => listConcepts(g.id))),
+        listAllRelations(),
+      ]);
+      const map = new Map<number, number>();
+      const groupConcepts = new Map<number, Concept[]>();
+      allConceptsRes.forEach((r, i) => {
+        const gid = groups[i].id;
+        groupConcepts.set(gid, r.data);
+        r.data.forEach((c) => map.set(c.id, c.groupId!));
+      });
+      setAllIndustryConcepts(groupConcepts);
+      setIndustryConceptGroupMap(map);
+      const conceptIds = new Set(map.keys());
+      setIndustryAllRelations(allRelationsRes.data.filter(
+        (r) => conceptIds.has(r.sourceConceptId) || conceptIds.has(r.targetConceptId)
+      ));
+    } catch {
+      // domains are optional, don't block
+    }
+  }, []);
+
   const fetchData = useCallback(async () => {
+    if (selectedDomainId === undefined) return;
+    const industryId = selectedIndustryIdRef.current;
+    if (industryId === null) return;
     try {
       setLoading(true);
-      const [conceptsRes, relationsRes] = await Promise.all([
-        listConcepts(),
-        getConceptRelations(0),
-      ]);
-      const allConcepts = conceptsRes.data;
-      setConcepts(allConcepts);
 
-      const allRelations: ConceptRelation[] = [];
-      for (const c of allConcepts) {
-        const relRes = await getConceptRelations(c.id);
-        allRelations.push(...relRes.data);
+      let visibleConcepts: Concept[] = [];
+      let allRelations: ConceptRelation[] = [];
+
+      if (selectedDomainId) {
+        const [conceptsRes, relationsRes] = await Promise.all([
+          listConcepts(selectedDomainId),
+          listAllRelations(selectedDomainId),
+        ]);
+        visibleConcepts = conceptsRes.data;
+        allRelations = relationsRes.data;
+
+        const domainConceptIds = new Set(visibleConcepts.map((c) => c.id));
+        const crossDomainIds = new Set<number>();
+        for (const r of allRelations) {
+          if (domainConceptIds.has(r.sourceConceptId) && !domainConceptIds.has(r.targetConceptId)) {
+            crossDomainIds.add(r.targetConceptId);
+          } else if (!domainConceptIds.has(r.sourceConceptId) && domainConceptIds.has(r.targetConceptId)) {
+            crossDomainIds.add(r.sourceConceptId);
+          }
+        }
+        for (const c of visibleConcepts) {
+          if (c.parentId && !domainConceptIds.has(c.parentId)) {
+            crossDomainIds.add(c.parentId);
+          }
+        }
+        if (crossDomainIds.size > 0) {
+          const crossRes = await batchGetConcepts([...crossDomainIds]);
+          visibleConcepts = [...visibleConcepts, ...crossRes.data];
+        }
+      } else {
+        if (domainGroups.length > 0) {
+          const domainIds = domainGroups.map((g) => g.id);
+          const [conceptsResults, relationsRes] = await Promise.all([
+            Promise.all(domainIds.map((id) => listConcepts(id))),
+            listAllRelations(),
+          ]);
+          const conceptMap = new Map<number, Concept>();
+          for (const r of conceptsResults) {
+            for (const c of r.data) {
+              conceptMap.set(c.id, c);
+            }
+          }
+          visibleConcepts = [...conceptMap.values()];
+          allRelations = relationsRes.data;
+        }
       }
-      const uniqueRelations = allRelations.filter((r, i, arr) =>
-        arr.findIndex((x) => x.id === r.id) === i
-      );
-      setRelations(uniqueRelations);
 
-      const layout = layoutNodes(allConcepts, uniqueRelations);
+      const visibleConceptIds = new Set(visibleConcepts.map((c) => c.id));
+      allRelations = allRelations.filter(
+        (r) => visibleConceptIds.has(r.sourceConceptId) && visibleConceptIds.has(r.targetConceptId)
+      );
+
+      setConcepts(visibleConcepts);
+      setRelations(allRelations);
+
+      const layout = layoutNodes(visibleConcepts, allRelations, getDomainName, getDomainColor);
       setNodes(layout.nodes);
       setEdges(layout.edges);
+      reactFlow.fitView({ padding: 0.2 });
       undoStack.current = [];
       redoStack.current = [];
     } catch {
@@ -267,9 +568,31 @@ export default function ConceptEditorPage() {
     } finally {
       setLoading(false);
     }
-  }, [setNodes, setEdges, toast]);
+  }, [selectedDomainId, domainGroups, setNodes, setEdges, toast, getDomainName, getDomainColor]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  useEffect(() => { fetchIndustries(); }, [fetchIndustries]);
+
+  useEffect(() => {
+    listDatasources('PLATFORM').then((res) => setDatasources(res.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    listToolGroups().then((res) => {
+      const map = new Map<number, string>();
+      res.data.forEach((g) => map.set(g.id, g.name));
+      setOwnerNameMap(map);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => { selectedIndustryIdRef.current = selectedIndustryId; }, [selectedIndustryId]);
+
+  useEffect(() => {
+    if (selectedIndustryId !== null) {
+      fetchDomainGroups(selectedIndustryId);
+    }
+  }, [fetchDomainGroups, selectedIndustryId]);
 
   const selectConcept = useCallback(async (conceptId: string) => {
     const concept = concepts.find((c) => String(c.id) === conceptId);
@@ -279,15 +602,21 @@ export default function ConceptEditorPage() {
     setSelectedEdge(null);
 
     try {
-      const [detailRes, relRes] = await Promise.all([
+      const [detailRes, relRes, mappingRes, joinRes] = await Promise.all([
         getConcept(concept.id),
         getConceptRelations(concept.id),
+        listConceptMappings(concept.id),
+        listConceptJoinMappings(concept.id),
       ]);
       setSelectedRelations(relRes.data);
       setSelectedTools(detailRes.data.toolBindings);
+      setConceptMappings(mappingRes.data);
+      setJoinMappings(joinRes.data);
     } catch {
       setSelectedRelations([]);
       setSelectedTools([]);
+      setConceptMappings([]);
+      setJoinMappings([]);
     }
   }, [concepts]);
 
@@ -324,14 +653,32 @@ export default function ConceptEditorPage() {
     setSelectedEdge(null);
   }, []);
 
-  const onPaneDoubleClick = useCallback((event: React.MouseEvent) => {
-    const name = prompt('请输入概念名称:');
-    if (!name?.trim()) return;
-    createConcept({ name: name.trim() }).then(() => {
-      toast('概念创建成功', 'success');
-      fetchData();
-    }).catch(() => toast('概念创建失败', 'error'));
-  }, [fetchData, toast]);
+  const openCreateDialog = useCallback((defaultName: string, cb: (name: string) => void) => {
+    setCreateDialogName(defaultName);
+    createDialogCallback.current = cb;
+    setShowCreateDialog(true);
+  }, []);
+
+  const handleCreateDialogConfirm = useCallback(() => {
+    const name = createDialogName.trim();
+    if (!name) return;
+    setShowCreateDialog(false);
+    createDialogCallback.current?.(name);
+    createDialogCallback.current = null;
+  }, [createDialogName]);
+
+  const onPaneDoubleClick = useCallback((_event: React.MouseEvent) => {
+    openCreateDialog('', (name) => {
+      createConcept({ name }).then(() => {
+        toast('概念创建成功', 'success');
+        fetchData();
+      }).catch(() => toast('概念创建失败', 'error'));
+    });
+  }, [fetchData, toast, openCreateDialog]);
+
+  const onPaneDoubleClickHandler = useCallback((event: React.MouseEvent) => {
+    onPaneDoubleClick(event);
+  }, [onPaneDoubleClick]);
 
   const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
     event.preventDefault();
@@ -361,7 +708,7 @@ export default function ConceptEditorPage() {
     setShowRelationDialog(true);
   }, [concepts, pushUndo]);
 
-  const onNodeDragStop = useCallback((_event: React.MouseEvent, node: Node) => {
+  const onNodeDragStop = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
     // Check if dropped on another node to create PARENT_OF
     const allNodes = reactFlow.getNodes();
     const draggingNode = allNodes.find((n) => n.id === node.id);
@@ -382,7 +729,7 @@ export default function ConceptEditorPage() {
         confirm({
           title: '建立包含关系',
           message: `将「${source.name}」设为「${target.name}」的子概念？`,
-        }).then((ok) => {
+        }).then((ok: boolean) => {
           if (ok) {
             updateConcept(source.id, { name: source.name, parentId: target.id }).then(() => {
               toast('包含关系已建立', 'success');
@@ -417,16 +764,72 @@ export default function ConceptEditorPage() {
     }
   };
 
-  const handleCreateConcept = async () => {
-    const name = prompt('请输入概念名称:');
-    if (!name?.trim()) return;
-    pushUndo();
+  const handleSearchConcepts = useCallback(async (keyword: string) => {
+    setSearchRelKeyword(keyword);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (!keyword.trim()) {
+      setSearchRelResults([]);
+      return;
+    }
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const res = await listConcepts(undefined, keyword.trim());
+        setSearchRelResults(res.data);
+      } catch {
+        // ignore
+      }
+    }, 300);
+  }, []);
+
+  const handleOpenSearchRelation = (sourceId: number) => {
+    setSearchRelSourceId(sourceId);
+    setSearchRelTargetId(null);
+    setSearchRelKeyword('');
+    setSearchRelResults([]);
+    setSearchRelType('PARENT_OF');
+    setSearchRelExpression('');
+    setShowSearchRelation(true);
+  };
+
+  const handleCreateSearchRelation = async () => {
+    if (!searchRelSourceId || !searchRelTargetId) return;
+    const dir = getRelationTypeDirection(searchRelType);
+    const sourceId = dir === 'source_to_target' ? searchRelSourceId : searchRelTargetId;
+    const targetId = dir === 'source_to_target' ? searchRelTargetId : searchRelSourceId;
     try {
-      await createConcept({ name: name.trim() });
-      toast('概念创建成功', 'success');
+      await createConceptRelation(sourceId, {
+        targetConceptId: targetId,
+        relationType: searchRelType,
+        expression: searchRelExpression || undefined,
+      });
+      toast('关系创建成功', 'success');
+      setShowSearchRelation(false);
       fetchData();
+      if (selectedConcept?.id === searchRelSourceId) {
+        const relRes = await getConceptRelations(searchRelSourceId);
+        setSelectedRelations(relRes.data);
+      }
     } catch {
-      toast('概念创建失败', 'error');
+      toast('关系创建失败', 'error');
+    }
+  };
+
+  const handleCreateConcept = useCallback(() => {
+    openCreateDialog('', (name) => {
+      pushUndo();
+      createConcept({ name }).then(() => {
+        toast('概念创建成功', 'success');
+        fetchData();
+      }).catch(() => toast('概念创建失败', 'error'));
+    });
+  }, [pushUndo, fetchData, toast, openCreateDialog]);
+
+  const handleRebuildIndex = async () => {
+    try {
+      await rebuildConceptIndex();
+      toast('索引重建完成', 'success');
+    } catch {
+      toast('索引重建失败，请确认 Embedding 服务已启动', 'error');
     }
   };
 
@@ -521,11 +924,18 @@ export default function ConceptEditorPage() {
 
   const handleOpenToolPicker = async () => {
     try {
-      const res = await listToolDefinitions();
-      setAvailableTools(res.data.map((t: { id: number; displayName: string; description: string }) => ({
+      const [groupsRes, toolsRes] = await Promise.all([
+        listToolGroups(),
+        listToolDefinitions(),
+      ]);
+      const groups = groupsRes.data as { id: number; name: string }[];
+      const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+      setAvailableTools(toolsRes.data.map((t: { id: number; displayName: string; description: string; groupId: number }) => ({
         id: t.id,
         displayName: t.displayName,
         description: t.description,
+        groupId: t.groupId,
+        groupName: groupMap.get(t.groupId) || '未分组',
       })));
       setShowToolPicker(true);
       setSelectedToolId(null);
@@ -562,6 +972,131 @@ export default function ConceptEditorPage() {
     }
   };
 
+  const handleOpenMappingForm = (mapping?: ConceptMapping) => {
+    if (mapping) {
+      setEditingMappingId(mapping.id);
+      setMappingForm(mapping);
+    } else {
+      setEditingMappingId(null);
+      setMappingForm({ datasourceId: undefined, tableName: '', columnName: '', attributeName: '', mappingType: 'direct' });
+    }
+    setShowMappingForm(true);
+  };
+
+  const handleAutoMatch = async () => {
+    if (!selectedIndustryId) {
+      toast('请先选择一个行业', 'warning');
+      return;
+    }
+    setSelectedDatasourceIds([]);
+    setShowConceptSelectModal(true);
+    const unmapped: number[] = [];
+    for (const concepts of allIndustryConcepts.values()) {
+      for (const c of concepts) {
+        if (!c.mapped) unmapped.push(c.id);
+      }
+    }
+    setSelectedConceptIds(unmapped);
+  };
+
+  const handleConceptSelectNext = () => {
+    if (selectedConceptIds.length === 0) {
+      toast('请至少选择一个概念', 'warning');
+      return;
+    }
+    setShowConceptSelectModal(false);
+    setShowDatasourceModal(true);
+  };
+
+  const handleAutoMatchConfirm = async () => {
+    if (selectedDatasourceIds.length === 0) {
+      toast('请先选择至少一个数据源', 'warning');
+      return;
+    }
+    if (selectedConceptIds.length === 0) {
+      toast('请先选择概念', 'warning');
+      return;
+    }
+    setShowDatasourceModal(false);
+    try {
+      const res = await autoMatchConceptMappings(selectedConceptIds, selectedDatasourceIds);
+      toast(`自动映射任务已提交（任务ID: ${res.data.taskId}），请在异步任务列表查看结果`, 'success');
+      setSelectedDatasourceIds([]);
+      setSelectedConceptIds([]);
+    } catch {
+      toast('提交自动映射任务失败', 'error');
+    }
+  };
+
+  const handleSaveMapping = async () => {
+    if (!selectedConcept || !mappingForm.tableName || !mappingForm.columnName) return;
+    try {
+      if (editingMappingId) {
+        await updateConceptMapping(selectedConcept.id, editingMappingId, mappingForm);
+        toast('映射已更新', 'success');
+      } else {
+        await createConceptMapping(selectedConcept.id, mappingForm);
+        toast('映射已创建', 'success');
+      }
+      setShowMappingForm(false);
+      const res = await listConceptMappings(selectedConcept.id);
+      setConceptMappings(res.data);
+    } catch {
+      toast('保存映射失败', 'error');
+    }
+  };
+
+  const handleDeleteMapping = async (mappingId: number) => {
+    if (!selectedConcept) return;
+    try {
+      await deleteConceptMapping(selectedConcept.id, mappingId);
+      toast('映射已删除', 'success');
+      setConceptMappings((prev) => prev.filter((m) => m.id !== mappingId));
+    } catch {
+      toast('删除失败', 'error');
+    }
+  };
+
+  const handleOpenJoinForm = (join?: ConceptJoinMapping) => {
+    if (join) {
+      setEditingJoinId(join.id);
+      setJoinForm(join);
+    } else {
+      setEditingJoinId(null);
+      setJoinForm({ datasourceId: undefined, targetConcept: '', relationType: 'LEFT', joinTable: '', joinCondition: '' });
+    }
+    setShowJoinForm(true);
+  };
+
+  const handleSaveJoin = async () => {
+    if (!selectedConcept || !joinForm.targetConcept || !joinForm.joinTable || !joinForm.joinCondition) return;
+    try {
+      if (editingJoinId) {
+        await updateConceptJoinMapping(selectedConcept.id, editingJoinId, joinForm);
+        toast('JOIN 映射已更新', 'success');
+      } else {
+        await createConceptJoinMapping(selectedConcept.id, joinForm);
+        toast('JOIN 映射已创建', 'success');
+      }
+      setShowJoinForm(false);
+      const res = await listConceptJoinMappings(selectedConcept.id);
+      setJoinMappings(res.data);
+    } catch {
+      toast('保存 JOIN 映射失败', 'error');
+    }
+  };
+
+  const handleDeleteJoin = async (joinId: number) => {
+    if (!selectedConcept) return;
+    try {
+      await deleteConceptJoinMapping(selectedConcept.id, joinId);
+      toast('JOIN 映射已删除', 'success');
+      setJoinMappings((prev) => prev.filter((j) => j.id !== joinId));
+    } catch {
+      toast('删除失败', 'error');
+    }
+  };
+
   const handleUndo = useCallback(() => {
     const prev = undoStack.current.pop();
     if (prev) {
@@ -582,13 +1117,13 @@ export default function ConceptEditorPage() {
 
   const handleCopyNode = useCallback(() => {
     if (!selectedConcept) return;
-    const name = prompt('复制概念名称:', selectedConcept.name + ' (副本)');
-    if (!name?.trim()) return;
-    createConcept({ name: name.trim(), description: selectedConcept.description }).then(() => {
-      toast('概念已复制', 'success');
-      fetchData();
-    }).catch(() => toast('复制失败', 'error'));
-  }, [selectedConcept, fetchData, toast]);
+    openCreateDialog(selectedConcept.name + ' (副本)', (name) => {
+      createConcept({ name, description: selectedConcept.description }).then(() => {
+        toast('概念已复制', 'success');
+        fetchData();
+      }).catch(() => toast('复制失败', 'error'));
+    });
+  }, [selectedConcept, fetchData, toast, openCreateDialog]);
 
   const handleFitView = () => reactFlow.fitView({ padding: 0.2 });
 
@@ -647,8 +1182,8 @@ export default function ConceptEditorPage() {
     return items.map((item) => (
       <div key={item.id}>
         <div
-          className="treeNode"
-          style={{ paddingLeft: depth * 24 + 8 }}
+          className={`treeNode ${depth > 0 ? 'treeNodeIndent' : ''}`}
+          style={{ paddingLeft: depth * 32 + 12 }}
           onClick={() => {
             setTreeMode(false);
             selectConcept(String(item.id));
@@ -656,7 +1191,7 @@ export default function ConceptEditorPage() {
             if (node) reactFlow.setCenter(node.position.x, node.position.y, { zoom: 1.5, duration: 300 });
           }}
         >
-          <span className="treeIcon">{CONCEPT_NODE_ICONS[getNodeType(item as Concept, concepts, relations)] || CONCEPT_NODE_ICONS.default}</span>
+          <span className="treeIcon">{CONCEPT_NODE_ICONS[getNodeType(item as unknown as Concept, concepts, relations)] || CONCEPT_NODE_ICONS.default}</span>
           <span className="treeName">{item.name}</span>
           {item.relations.length > 0 && (
             <span className="treeRelations">
@@ -673,27 +1208,76 @@ export default function ConceptEditorPage() {
     ));
   };
 
-  if (loading) {
-    return <div className="loading">加载中...</div>;
-  }
-
   const zoomLevel = Math.round(reactFlow.getZoom() * 100);
 
   return (
     <div className="conceptEditor">
-      <div className="toolbar">
-        <span className="toolbarTitle">概念本体编辑器</span>
-        <button className="toolbarBtnPrimary" onClick={handleCreateConcept}>+ 新建概念</button>
-        <button className={`toolbarBtn ${treeMode ? 'toolbarBtnActive' : ''}`} onClick={toggleTreeMode}>
-          {treeMode ? '图编辑视图' : '树形视图'}
-        </button>
-        <div className="toolbarActions">
-          <button className="toolbarBtn" onClick={fetchData}>刷新</button>
-        </div>
-      </div>
+      <PageTopbar
+        icon={<Network size={22} />}
+        title={
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2 className="page-topbar__title" style={{ margin: 0 }}>概念编辑器</h2>
+            <button className="titleIconBtn" onClick={fetchData} title="刷新">
+              <RefreshCw size={15} />
+            </button>
+            <button
+              className={`titleIconBtn ${treeMode ? 'titleIconBtnActive' : ''}`}
+              onClick={toggleTreeMode}
+              title={treeMode ? '图编辑视图' : '树形视图'}
+            >
+              <GitBranch size={15} />
+            </button>
+          </span>
+        }
+        subtitle="可视化编辑概念图谱，管理概念、关系与工具绑定"
+        actions={
+          <div className="toolbar">
+            <div className="toolbarDomainSelect">
+              <Select
+                value={selectedIndustryId ? String(selectedIndustryId) : ''}
+                options={industries.map((ind) => ({
+                  value: String(ind.id),
+                  label: ind.displayName,
+                }))}
+                onChange={(v) => setSelectedIndustryId(v ? Number(v) : null)}
+                placeholder="选择行业"
+              />
+            </div>
+            <div className="toolbarDomainSelect">
+              <Select
+                value={selectedDomainId ? String(selectedDomainId) : ''}
+                options={[
+                  { value: '', label: '全部概念域' },
+                  ...domainGroups.map((d) => ({
+                    value: String(d.id),
+                    label: `${d.displayName} (${d.name})`,
+                  })),
+                ]}
+                onChange={(v) => setSelectedDomainId(v ? Number(v) : null)}
+                placeholder="全部概念域"
+              />
+            </div>
+            <button className="toolbarBtnPrimary" onClick={handleCreateConcept}>+ 新建概念</button>
+            <div className="toolbarActions">
+              <button className="toolbarBtn" onClick={handleAutoMatch}>⚡ 自动映射</button>
+              <button className="toolbarBtn" onClick={handleRebuildIndex}>重建索引</button>
+            </div>
+          </div>
+        }
+      />
 
       <div className="body">
-        {treeMode ? (
+        {loading ? (
+          <div className="canvasLoading">
+            <svg className="canvasLoadingIcon" viewBox="0 0 40 40" width="40" height="40">
+              <circle cx="20" cy="20" r="16" fill="none" stroke="#e6f4ff" strokeWidth="3" />
+              <circle cx="20" cy="20" r="16" fill="none" stroke="#1677ff" strokeWidth="3" strokeLinecap="round" strokeDasharray="100" strokeDashoffset="60" />
+            </svg>
+            <span className="canvasLoadingText">加载中</span>
+          </div>
+        ) : selectedIndustryId === null ? (
+          <div className="emptyState">请先选择一个行业</div>
+        ) : treeMode ? (
           <div className="treeView">
             <div className="treeViewHeader">概念树形结构</div>
             {treeData.length === 0 ? (
@@ -714,7 +1298,7 @@ export default function ConceptEditorPage() {
               onNodeDoubleClick={onNodeDoubleClick}
               onNodeDragStop={onNodeDragStop}
               onPaneClick={onPaneClick}
-              onPaneDoubleClick={onPaneDoubleClick}
+              onDoubleClick={onPaneDoubleClickHandler}
               onPaneContextMenu={onPaneContextMenu}
               onNodeContextMenu={onNodeContextMenu}
               onEdgeClick={onEdgeClick}
@@ -728,9 +1312,51 @@ export default function ConceptEditorPage() {
             >
               <Controls />
               <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+              {domainGroups.length > 0 && (
+                <Panel position="top-left" className="domainLegend">
+                  <div className="domainLegendTitle" onClick={() => setDomainLegendCollapsed(!domainLegendCollapsed)}>
+                    <span className="domainLegendCollapseIcon">{domainLegendCollapsed ? '▸' : '▾'}</span>
+                    概念域
+                  </div>
+                  {!domainLegendCollapsed && (
+                    <div className="domainLegendBody">
+                      {domainGroups.map((d, i) => {
+                    const crossInfo = crossDomainStats.crossByDomain.get(d.id);
+                    const crossCount = crossInfo?.count || 0;
+                    const peers = crossInfo?.peers;
+                    return (
+                      <div key={d.id} className="domainLegendItem">
+                        <span className="domainLegendDot" style={{ background: DOMAIN_COLORS[i % DOMAIN_COLORS.length] }} />
+                        <span className="domainLegendName">{d.displayName}</span>
+                        <span className="domainLegendCount">{d.conceptCount || 0}</span>
+                        {crossCount > 0 && (
+                          <span className="domainLegendCross" title={
+                            peers ? '跨域边\n' + [...peers.entries()].map(([pid, cnt]) =>
+                              `${crossDomainStats.domainIdToName.get(pid) || '未知'}: ${cnt}条`
+                            ).join('\n') : '跨域边'
+                          }>
+                            ⇄{crossCount}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {concepts.some((c) => c.groupId == null) && (
+                    <div className="domainLegendItem">
+                      <span className="domainLegendDot" style={{ background: '#bfbfbf' }} />
+                      <span className="domainLegendName">全局</span>
+                      <span className="domainLegendCount">
+                        {concepts.filter((c) => c.groupId == null).length}
+                      </span>
+                    </div>
+                  )}
+                    </div>
+                  )}
+                </Panel>
+              )}
               <Panel position="bottom-center">
                 <div className="bottomBar">
-                  <span>{concepts.length} 个概念</span>
+                  <span>{concepts.filter((c) => !selectedDomainId || c.groupId === selectedDomainId).length} 个概念</span>
                   <span className="bottomBarSep">|</span>
                   <span>{relations.length} 条关系</span>
                   <span className="bottomBarSep">|</span>
@@ -744,10 +1370,23 @@ export default function ConceptEditorPage() {
 
         {!treeMode && selectedConcept && (
           <div className="sidebar">
-            <div className="sidebarTitle">{selectedConcept.name}</div>
+            <div className="sidebarHeader">
+              <span className="sidebarHeaderIcon">{CONCEPT_NODE_ICONS[getNodeType(selectedConcept, concepts, relations)] || CONCEPT_NODE_ICONS.default}</span>
+              <div className="sidebarHeaderInfo">
+                <div className="sidebarHeaderName">{selectedConcept.name}</div>
+                <div className="sidebarHeaderMeta">
+                  {selectedConcept.groupId && (
+                    <span className="sidebarHeaderDomain" style={{ color: getDomainColor(selectedConcept.groupId), borderColor: getDomainColor(selectedConcept.groupId) }}>
+                      {getDomainName(selectedConcept.groupId)}
+                    </span>
+                  )}
+                  <span className="sidebarHeaderType">{getNodeType(selectedConcept, concepts, relations)}</span>
+                </div>
+              </div>
+            </div>
 
-            <div className="sidebarSection">
-              <div className="sidebarLabel">基本信息</div>
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">基本信息</div>
               <div className="formGroup">
                 <label className="formLabel">名称</label>
                 <input
@@ -762,6 +1401,7 @@ export default function ConceptEditorPage() {
                   className="formTextarea"
                   value={editingForm.description}
                   onChange={(e) => setEditingForm((f) => ({ ...f, description: e.target.value }))}
+                  rows={3}
                 />
               </div>
               <div className="formActions">
@@ -770,10 +1410,13 @@ export default function ConceptEditorPage() {
               </div>
             </div>
 
-            <div className="sidebarSection">
-              <div className="sidebarLabel">关系</div>
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">
+                关系
+                {selectedRelations.length > 0 && <span className="sidebarCardBadge">{selectedRelations.length}</span>}
+              </div>
               {selectedRelations.length === 0 ? (
-                <div className="emptyState">暂无关系，从节点拖线到另一个节点创建</div>
+                <div className="emptyHint">从节点拖线到另一个节点创建关系</div>
               ) : (
                 selectedRelations.map((r) => {
                   const isSource = r.sourceConceptId === selectedConcept.id;
@@ -783,48 +1426,115 @@ export default function ConceptEditorPage() {
                   const label = RELATION_TYPE_LABELS[r.relationType] || r.relationType;
                   const dir = getRelationTypeDirection(r.relationType);
                   const arrow = (dir === 'source_to_target' && isSource) || (dir !== 'source_to_target' && !isSource) ? ' → ' : ' ← ';
+                  const otherGroup = otherConcept ? getDomainName(otherConcept.groupId) : '';
                   return (
-                    <div key={r.id} className="relationItem">
-                      <div className="relationItemLeft">
-                        <span className="relationTypeTag" style={{ background: color }}>{label}</span>
-                        <span className="relationTarget">
+                    <div key={r.id} className="sidebarItem">
+                      <div className="sidebarItemMain">
+                        <span className="sidebarItemTag" style={{ background: color }}>{label}</span>
+                        <span className="sidebarItemText">
                           {selectedConcept.name}{arrow}{otherConcept?.name || `ID:${otherId}`}
+                          {otherGroup && otherGroup !== getDomainName(selectedConcept.groupId) && (
+                            <span className="crossDomainBadge" title="跨域关系">{otherGroup}</span>
+                          )}
                         </span>
                       </div>
-                      <button className="relationDelete" onClick={() => handleDeleteRelation(r.id)}>×</button>
-                      {r.expression && <div className="relationExpr">公式: {r.expression}</div>}
+                      <button className="sidebarItemRemove" onClick={() => handleDeleteRelation(r.id)}>×</button>
+                      {r.expression && <div className="sidebarItemExtra">公式: {r.expression}</div>}
                     </div>
                   );
                 })
               )}
+              <button className="sidebarAddBtn" onClick={() => handleOpenSearchRelation(selectedConcept.id)}>+ 添加关系</button>
             </div>
 
-            <div className="sidebarSection">
-              <div className="sidebarLabel">生产该概念的工具</div>
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">
+                绑定工具
+                {selectedTools.length > 0 && <span className="sidebarCardBadge">{selectedTools.length}</span>}
+              </div>
+              <div className="sidebarCardSubTitle">生产概念的工具</div>
               {selectedTools.filter((t) => t.relation === 'PRODUCES').length === 0 ? (
-                <div className="emptyState">暂无</div>
+                <div className="emptyHint">暂无</div>
               ) : (
                 selectedTools.filter((t) => t.relation === 'PRODUCES').map((tb) => (
-                  <div key={tb.id} className="toolBindItem">
-                    <span className="toolBindTag" style={{ background: '#52c41a' }}>生产</span>
-                    <span className="toolBindName">{tb.toolName}</span>
-                    <button className="toolBindDelete" onClick={() => handleUnbindTool(tb.id)}>×</button>
+                  <div key={tb.id} className="sidebarItem">
+                    <div className="sidebarItemMain">
+                      <span className="sidebarItemTag" style={{ background: '#52c41a' }}>生产</span>
+                      <span className="sidebarItemText">{tb.toolName}</span>
+                    </div>
+                    <button className="sidebarItemRemove" onClick={() => handleUnbindTool(tb.id)}>×</button>
                   </div>
                 ))
               )}
-              <div className="sidebarLabel" style={{ marginTop: 12 }}>消费该概念的工具</div>
+              <div className="sidebarCardSubTitle">消费概念的工具</div>
               {selectedTools.filter((t) => t.relation === 'CONSUMES').length === 0 ? (
-                <div className="emptyState">暂无</div>
+                <div className="emptyHint">暂无</div>
               ) : (
                 selectedTools.filter((t) => t.relation === 'CONSUMES').map((tb) => (
-                  <div key={tb.id} className="toolBindItem">
-                    <span className="toolBindTag" style={{ background: '#1677ff' }}>消费</span>
-                    <span className="toolBindName">{tb.toolName}</span>
-                    <button className="toolBindDelete" onClick={() => handleUnbindTool(tb.id)}>×</button>
+                  <div key={tb.id} className="sidebarItem">
+                    <div className="sidebarItemMain">
+                      <span className="sidebarItemTag" style={{ background: '#1677ff' }}>消费</span>
+                      <span className="sidebarItemText">{tb.toolName}</span>
+                    </div>
+                    <button className="sidebarItemRemove" onClick={() => handleUnbindTool(tb.id)}>×</button>
                   </div>
                 ))
               )}
-              <button className="btn" style={{ marginTop: 8 }} onClick={handleOpenToolPicker}>+ 绑定工具</button>
+              <button className="sidebarAddBtn" onClick={handleOpenToolPicker}>+ 绑定工具</button>
+            </div>
+
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">
+                字段映射
+                {conceptMappings.length > 0 && <span className="sidebarCardBadge">{conceptMappings.length}</span>}
+              </div>
+              {conceptMappings.length === 0 ? (
+                <div className="emptyHint">暂无字段映射</div>
+              ) : (
+                conceptMappings.map((m) => (
+                  <div key={m.id} className="sidebarItem">
+                    <div className="sidebarItemMain">
+                      <span className="sidebarItemTag" style={{ background: '#722ed1' }}>{m.mappingType}</span>
+                      <span className="sidebarItemText">
+                        {m.tableName}.{m.columnName}
+                        {m.attributeName && ` → ${m.attributeName}`}
+                      </span>
+                    </div>
+                    <div className="sidebarItemActions">
+                      <button className="sidebarItemEdit" onClick={() => handleOpenMappingForm(m)}>✎</button>
+                      <button className="sidebarItemRemove" onClick={() => handleDeleteMapping(m.id)}>×</button>
+                    </div>
+                  </div>
+                ))
+              )}
+              <button className="sidebarAddBtn" onClick={() => handleOpenMappingForm()}>+ 添加映射</button>
+            </div>
+
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">
+                JOIN 映射
+                {joinMappings.length > 0 && <span className="sidebarCardBadge">{joinMappings.length}</span>}
+              </div>
+              {joinMappings.length === 0 ? (
+                <div className="emptyHint">暂无 JOIN 映射</div>
+              ) : (
+                joinMappings.map((j) => (
+                  <div key={j.id} className="sidebarItem">
+                    <div className="sidebarItemMain">
+                      <span className="sidebarItemTag" style={{ background: '#13c2c2' }}>{j.relationType} JOIN</span>
+                      <span className="sidebarItemText">
+                        {j.targetConcept} ← {j.joinTable}
+                      </span>
+                    </div>
+                    <div className="sidebarItemActions">
+                      <button className="sidebarItemEdit" onClick={() => handleOpenJoinForm(j)}>✎</button>
+                      <button className="sidebarItemRemove" onClick={() => handleDeleteJoin(j.id)}>×</button>
+                    </div>
+                    <div className="sidebarItemExtra">{j.joinCondition}</div>
+                  </div>
+                ))
+              )}
+              <button className="sidebarAddBtn" onClick={() => handleOpenJoinForm()}>+ 添加 JOIN</button>
             </div>
           </div>
         )}
@@ -853,9 +1563,11 @@ export default function ConceptEditorPage() {
                 <label className="formLabel">关系类型</label>
                 <div className="formValue">{selectedEdge.label as string || '未知'}</div>
               </div>
-              <div className="formActions">
-                <button className="btnDanger" onClick={handleDeleteEdge}>删除关系</button>
-              </div>
+              {relations.some(r => `rel-${r.id}` === selectedEdge.id) && (
+                <div className="formActions">
+                  <button className="btnDanger" onClick={handleDeleteEdge}>删除关系</button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -877,6 +1589,29 @@ export default function ConceptEditorPage() {
             <div className="formActions" style={{ marginTop: 12 }}>
               <button className="btnPrimary" onClick={() => handleInlineSave(inlineEditing!)}>保存</button>
               <button className="btn" onClick={() => setInlineEditing(null)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateDialog && (
+        <div className="overlay" onClick={() => { setShowCreateDialog(false); createDialogCallback.current = null; }}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
+            <div className="dialogTitle">新建概念</div>
+            <div className="dialogSubtitle">请输入概念名称</div>
+            <div className="formGroup">
+              <input
+                className="formInput"
+                value={createDialogName}
+                onChange={(e) => setCreateDialogName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDialogConfirm(); }}
+                placeholder="概念名称"
+                autoFocus
+              />
+            </div>
+            <div className="formActions" style={{ marginTop: 12 }}>
+              <button className="btnPrimary" onClick={handleCreateDialogConfirm}>确定</button>
+              <button className="btn" onClick={() => { setShowCreateDialog(false); createDialogCallback.current = null; }}>取消</button>
             </div>
           </div>
         </div>
@@ -907,7 +1642,7 @@ export default function ConceptEditorPage() {
                   confirm({
                     title: '删除概念',
                     message: `确定要删除「${concept.name}」吗？`,
-                  }).then((ok) => {
+                  }).then((ok: boolean) => {
                     if (ok) {
                       deleteConcept(concept.id).then(() => {
                         toast('已删除', 'success');
@@ -992,30 +1727,429 @@ export default function ConceptEditorPage() {
             <div className="dialogSubtitle">选择要绑定到「{selectedConcept?.name}」的工具</div>
             <div className="formGroup">
               <label className="formLabel">绑定关系</label>
-              <select
-                className="formSelect"
+              <Select
                 value={selectedToolRelation}
-                onChange={(e) => setSelectedToolRelation(e.target.value)}
-              >
-                <option value="PRODUCES">生产该概念</option>
-                <option value="CONSUMES">消费该概念</option>
-              </select>
+                options={[
+                  { value: 'PRODUCES', label: '生产该概念' },
+                  { value: 'CONSUMES', label: '消费该概念' },
+                ]}
+                onChange={setSelectedToolRelation}
+              />
             </div>
             <div style={{ maxHeight: 240, overflowY: 'auto', marginBottom: 12 }}>
-              {availableTools.map((tool) => (
-                <button
-                  key={tool.id}
-                  className={`relationOption ${selectedToolId === tool.id ? 'relationOptionSelected' : ''}`}
-                  onClick={() => setSelectedToolId(tool.id)}
-                >
-                  <div className="relationOptionTitle">{tool.displayName}</div>
-                  <div className="relationOptionDesc">{tool.description}</div>
-                </button>
-              ))}
+              {(() => {
+                const grouped = new Map<string, typeof availableTools>();
+                for (const t of availableTools) {
+                  const key = t.groupName;
+                  if (!grouped.has(key)) grouped.set(key, []);
+                  grouped.get(key)!.push(t);
+                }
+                return Array.from(grouped.entries()).map(([groupName, tools]) => (
+                  <div key={groupName} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, color: '#999', padding: '4px 8px', fontWeight: 600 }}>
+                      {groupName}
+                    </div>
+                    {tools.map((tool) => (
+                      <button
+                        key={tool.id}
+                        className={`relationOption ${selectedToolId === tool.id ? 'relationOptionSelected' : ''}`}
+                        onClick={() => setSelectedToolId(tool.id)}
+                      >
+                        <div className="relationOptionTitle">{tool.displayName}</div>
+                        <div className="relationOptionDesc">{tool.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                ));
+              })()}
             </div>
             <div className="formActions">
               <button className="btnPrimary" onClick={handleBindTool} disabled={!selectedToolId}>绑定</button>
               <button className="btn" onClick={() => setShowToolPicker(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showMappingForm && (
+        <div className="overlay" onClick={() => setShowMappingForm(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialogTitle">{editingMappingId ? '编辑字段映射' : '添加字段映射'}</div>
+            <div className="dialogSubtitle">概念「{selectedConcept?.name}」的数据库字段映射</div>
+            <div className="formGroup">
+              <label className="formLabel">数据源 ID</label>
+              <input
+                className="formInput"
+                type="number"
+                placeholder="数据源 ID"
+                value={mappingForm.datasourceId || ''}
+                onChange={(e) => setMappingForm((f) => ({ ...f, datasourceId: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">表名</label>
+              <input
+                className="formInput"
+                placeholder="如: hr_employee"
+                value={mappingForm.tableName || ''}
+                onChange={(e) => setMappingForm((f) => ({ ...f, tableName: e.target.value }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">字段名</label>
+              <input
+                className="formInput"
+                placeholder="如: employee_name"
+                value={mappingForm.columnName || ''}
+                onChange={(e) => setMappingForm((f) => ({ ...f, columnName: e.target.value }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">属性名</label>
+              <input
+                className="formInput"
+                placeholder="如: 姓名、编号、创建时间"
+                value={mappingForm.attributeName || ''}
+                onChange={(e) => setMappingForm((f) => ({ ...f, attributeName: e.target.value }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">映射类型</label>
+              <Select
+                value={mappingForm.mappingType || 'direct'}
+                options={[
+                  { value: 'direct', label: '直接映射' },
+                  { value: 'computed', label: '计算字段' },
+                ]}
+                onChange={(v) => setMappingForm((f) => ({ ...f, mappingType: v as ConceptMapping['mappingType'] }))}
+              />
+            </div>
+            {mappingForm.mappingType === 'computed' && (
+              <div className="formGroup">
+                <label className="formLabel">计算表达式</label>
+                <input
+                  className="formInput"
+                  placeholder="如: salary * 12"
+                  value={mappingForm.computedExpr || ''}
+                  onChange={(e) => setMappingForm((f) => ({ ...f, computedExpr: e.target.value }))}
+                />
+              </div>
+            )}
+            <div className="formGroup">
+              <label className="formLabel">置信度 (0-1)</label>
+              <input
+                className="formInput"
+                type="number"
+                min="0"
+                max="1"
+                step="0.1"
+                value={mappingForm.confidence ?? 0.8}
+                onChange={(e) => setMappingForm((f) => ({ ...f, confidence: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="formActions">
+              <button className="btnPrimary" onClick={handleSaveMapping}>保存</button>
+              <button className="btn" onClick={() => setShowMappingForm(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showJoinForm && (
+        <div className="overlay" onClick={() => setShowJoinForm(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="dialogTitle">{editingJoinId ? '编辑 JOIN 映射' : '添加 JOIN 映射'}</div>
+            <div className="dialogSubtitle">概念「{selectedConcept?.name}」的关联表映射</div>
+            <div className="formGroup">
+              <label className="formLabel">数据源 ID</label>
+              <input
+                className="formInput"
+                type="number"
+                placeholder="数据源 ID"
+                value={joinForm.datasourceId || ''}
+                onChange={(e) => setJoinForm((f) => ({ ...f, datasourceId: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">关联概念</label>
+              <input
+                className="formInput"
+                placeholder="如: department"
+                value={joinForm.targetConcept || ''}
+                onChange={(e) => setJoinForm((f) => ({ ...f, targetConcept: e.target.value }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">JOIN 类型</label>
+              <Select
+                value={joinForm.relationType || 'LEFT'}
+                options={[
+                  { value: 'LEFT', label: 'LEFT JOIN' },
+                  { value: 'RIGHT', label: 'RIGHT JOIN' },
+                  { value: 'INNER', label: 'INNER JOIN' },
+                  { value: 'FULL', label: 'FULL JOIN' },
+                ]}
+                onChange={(v) => setJoinForm((f) => ({ ...f, relationType: v }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">JOIN 表名</label>
+              <input
+                className="formInput"
+                placeholder="如: hr_department"
+                value={joinForm.joinTable || ''}
+                onChange={(e) => setJoinForm((f) => ({ ...f, joinTable: e.target.value }))}
+              />
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">JOIN 条件</label>
+              <input
+                className="formInput"
+                placeholder="如: t1.dept_id = t2.id"
+                value={joinForm.joinCondition || ''}
+                onChange={(e) => setJoinForm((f) => ({ ...f, joinCondition: e.target.value }))}
+              />
+            </div>
+            <div className="formActions">
+              <button className="btnPrimary" onClick={handleSaveJoin}>保存</button>
+              <button className="btn" onClick={() => setShowJoinForm(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSearchRelation && (
+        <div className="overlay" onClick={() => setShowSearchRelation(false)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
+            <div className="dialogTitle">添加关系</div>
+            <div className="dialogSubtitle">
+              为「{concepts.find((c) => c.id === searchRelSourceId)?.name}」选择关联概念
+            </div>
+            <div className="formGroup">
+              <label className="formLabel">搜索概念（全量搜索，不限域）</label>
+              <input
+                className="formInput"
+                placeholder="输入概念名称搜索..."
+                value={searchRelKeyword}
+                onChange={(e) => handleSearchConcepts(e.target.value)}
+                autoFocus
+              />
+            </div>
+            {searchRelResults.length > 0 && (
+              <div className="searchResultList">
+                {searchRelResults.map((c) => (
+                  <button
+                    key={c.id}
+                    className={`searchResultItem ${searchRelTargetId === c.id ? 'searchResultItemActive' : ''}`}
+                    onClick={() => setSearchRelTargetId(c.id)}
+                    disabled={c.id === searchRelSourceId}
+                  >
+                    <span className="searchResultName">{c.name}</span>
+                    <span className="searchResultDesc">{c.description || ''}</span>
+                    <span className="searchResultDomain">{getDomainName(c.groupId)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {searchRelKeyword && searchRelResults.length === 0 && (
+              <div className="emptyState" style={{ padding: 12 }}>未找到匹配概念</div>
+            )}
+            {searchRelTargetId && (
+              <>
+                <div className="dialogSubtitle" style={{ marginTop: 12 }}>
+                  选择关系类型
+                </div>
+                {RELATION_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.type}
+                    className={`relationOption ${searchRelType === opt.type ? 'relationOptionSelected' : ''}`}
+                    onClick={() => setSearchRelType(opt.type)}
+                  >
+                    <div className="relationOptionTitle">
+                      <span className="relationOptionDot" style={{ background: opt.dot }} />
+                      {opt.title}
+                    </div>
+                    <div className="relationOptionDesc">{opt.desc}</div>
+                  </button>
+                ))}
+                {searchRelType === 'COMPUTED_FROM' && (
+                  <div className="formGroup" style={{ marginTop: 12 }}>
+                    <label className="formLabel">计算公式（可选）</label>
+                    <input
+                      className="formInput"
+                      placeholder="如: 离职人数 / 员工总数"
+                      value={searchRelExpression}
+                      onChange={(e) => setSearchRelExpression(e.target.value)}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            <div className="formActions" style={{ marginTop: 16 }}>
+              <button
+                className="btnPrimary"
+                disabled={!searchRelTargetId}
+                onClick={handleCreateSearchRelation}
+              >
+                确定
+              </button>
+              <button className="btn" onClick={() => setShowSearchRelation(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConceptSelectModal && (
+        <div className="modalOverlay" onClick={() => setShowConceptSelectModal(false)}>
+          <div className="modalContent modalContentWide" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modalTitle">选择概念</h3>
+            <p className="modalDesc">选择需要进行自动映射的概念，未映射的概念默认已勾选</p>
+            <div className="conceptSelectBody">
+              {(() => {
+                const unmappedIds = new Set<number>();
+                const mappedIds = new Set<number>();
+                const allIds: number[] = [];
+                const domainList: { gid: number; name: string; concepts: Concept[] }[] = [];
+                for (const [gid, concepts] of allIndustryConcepts.entries()) {
+                  const domain = domainGroups.find(d => d.id === gid);
+                  domainList.push({ gid, name: domain?.displayName || `域 ${gid}`, concepts });
+                  for (const c of concepts) {
+                    allIds.push(c.id);
+                    if (c.mapped) mappedIds.add(c.id);
+                    else unmappedIds.add(c.id);
+                  }
+                }
+                const allSelected = selectedConceptIds.length === allIds.length && allIds.length > 0;
+                const allUnmappedSelected = unmappedIds.size > 0 &&
+                  [...unmappedIds].every(id => selectedConceptIds.includes(id));
+                return (
+                  <>
+                    <div className="conceptSelectActions">
+                      <label className="conceptSelectAll">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={() => setSelectedConceptIds(allSelected ? [] : [...allIds])}
+                        />
+                        全选
+                      </label>
+                      <button
+                        className="conceptSelectUnmappedBtn"
+                        onClick={() => {
+                          if (allUnmappedSelected) {
+                            setSelectedConceptIds(prev => prev.filter(id => !unmappedIds.has(id)));
+                          } else {
+                            setSelectedConceptIds(prev => {
+                              const next = new Set(prev);
+                              unmappedIds.forEach(id => next.add(id));
+                              return [...next];
+                            });
+                          }
+                        }}
+                      >
+                        {allUnmappedSelected ? '取消未映射' : '仅选未映射'}
+                      </button>
+                      <span className="conceptSelectCount">已选 {selectedConceptIds.length}/{allIds.length}</span>
+                    </div>
+                    <div className="conceptSelectList">
+                      {domainList.map(({ gid, name, concepts }) => {
+                        const domainColor = domainColorMap.current[gid] || '#999';
+                        return (
+                          <div key={gid} className="conceptSelectDomain">
+                            <div className="conceptSelectDomainHeader">
+                              <span className="conceptSelectDomainDot" style={{ background: domainColor }} />
+                              {name}
+                              <span className="conceptSelectDomainCount">
+                                {concepts.filter(c => selectedConceptIds.includes(c.id)).length}/{concepts.length}
+                              </span>
+                            </div>
+                            {concepts.map(c => (
+                              <label
+                                key={c.id}
+                                className={`conceptSelectItem ${c.mapped ? 'conceptSelectItemMapped' : ''}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedConceptIds.includes(c.id)}
+                                  onChange={() => {
+                                    setSelectedConceptIds(prev =>
+                                      prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]
+                                    );
+                                  }}
+                                />
+                                <span className="conceptSelectItemName">{c.name}</span>
+                                {c.description && <span className="conceptSelectItemDesc">{c.description}</span>}
+                                <span className={`conceptSelectItemStatus ${c.mapped ? 'mapped' : 'unmapped'}`}>
+                                  {c.mapped ? '✓ 已映射' : '◦ 未映射'}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+            <div className="formActions">
+              <button className="btnPrimary" onClick={handleConceptSelectNext}>下一步：选择数据源</button>
+              <button className="btn" onClick={() => setShowConceptSelectModal(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDatasourceModal && (
+        <div className="modalOverlay" onClick={() => setShowDatasourceModal(false)}>
+          <div className="modalContent" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modalTitle">选择数据源</h3>
+            <p className="modalDesc">选择要匹配的数据源，将对已选的 {selectedConceptIds.length} 个概念进行字段映射</p>
+            <div className="datasourceCheckList">
+              {[...groupedDatasources.groups.entries()].map(([ownerId, dsList]) => (
+                <div key={ownerId} className="datasourceGroup">
+                  <div className="datasourceGroupHeader">{ownerNameMap.get(ownerId) || `系统 ${ownerId}`}</div>
+                  {dsList.map((ds) => (
+                    <label key={ds.id} className="datasourceCheckItem">
+                      <input
+                        type="checkbox"
+                        checked={selectedDatasourceIds.includes(ds.id)}
+                        onChange={() => {
+                          setSelectedDatasourceIds((prev) =>
+                            prev.includes(ds.id) ? prev.filter((id) => id !== ds.id) : [...prev, ds.id]
+                          );
+                        }}
+                      />
+                      <span className="datasourceCheckName">{ds.name}</span>
+                      <span className="datasourceCheckType">{ds.type}</span>
+                    </label>
+                  ))}
+                </div>
+              ))}
+              {groupedDatasources.noOwner.length > 0 && (
+                <div className="datasourceGroup">
+                  <div className="datasourceGroupHeader">未归类</div>
+                  {groupedDatasources.noOwner.map((ds) => (
+                    <label key={ds.id} className="datasourceCheckItem">
+                      <input
+                        type="checkbox"
+                        checked={selectedDatasourceIds.includes(ds.id)}
+                        onChange={() => {
+                          setSelectedDatasourceIds((prev) =>
+                            prev.includes(ds.id) ? prev.filter((id) => id !== ds.id) : [...prev, ds.id]
+                          );
+                        }}
+                      />
+                      <span className="datasourceCheckName">{ds.name}</span>
+                      <span className="datasourceCheckType">{ds.type}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="formActions">
+              <button className="btnPrimary" onClick={handleAutoMatchConfirm}>开始匹配</button>
+              <button className="btn" onClick={() => setShowDatasourceModal(false)}>取消</button>
             </div>
           </div>
         </div>

@@ -1,14 +1,31 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
+import { usePermissionStore } from '@/stores/permissionStore';
 import { getApplication } from '@/api/application';
 import './GlobalHeader.css';
+
+const NAV_ITEMS = [
+  { path: '/work', label: '工作中心', permission: 'workbench:read' },
+  { path: '/agent-chat', label: '智能洞察', permission: 'ask:read' },
+  { path: '/apps', label: '应用开发', permission: 'apps:read' },
+  { path: '/concept', label: '概念图谱', permission: 'connect:concepts' },
+  { path: '/connect', label: '系统配置', permission: 'connect:systems' },
+  { path: '/people', label: '人员管理', permission: 'people:users' },
+];
 
 export function GlobalHeader() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const hasPermission = usePermissionStore((s) => s.hasPermission);
+  const loaded = usePermissionStore((s) => s.loaded);
+  const resetPermissions = usePermissionStore((s) => s.reset);
   const [appName, setAppName] = useState('');
+
+  const filteredNav = loaded
+    ? NAV_ITEMS.filter((item) => hasPermission(item.permission))
+    : NAV_ITEMS;
 
   const appIdMatch = location.pathname.match(/^\/apps\/(\d+)/);
   const appId = appIdMatch ? Number(appIdMatch[1]) : null;
@@ -29,6 +46,7 @@ export function GlobalHeader() {
   const isActive = (path: string) => {
     if (path === '/apps') return location.pathname === '/apps' || location.pathname.startsWith('/apps/');
     if (path === '/connect') return location.pathname.startsWith('/connect');
+    if (path === '/concept') return location.pathname.startsWith('/concept');
     if (path === '/people') return location.pathname.startsWith('/people');
     if (path === '/work') return location.pathname.startsWith('/work');
     if (path === '/agent-chat') return location.pathname === '/agent-chat';
@@ -37,6 +55,7 @@ export function GlobalHeader() {
 
   const handleLogout = () => {
     logout();
+    resetPermissions();
     localStorage.removeItem('impersonate_user_id');
     localStorage.removeItem('impersonate_app_id');
     navigate('/login');
@@ -74,36 +93,15 @@ export function GlobalHeader() {
               <span className="global-header-logo-text">鲁班</span>
             </div>
             <nav className="global-header-nav">
-              <button
-                className={`global-header-nav-link ${isActive('/work') ? 'active' : ''}`}
-                onClick={() => navigate('/work')}
-              >
-                工作中心
-              </button>
-              <button
-                className={`global-header-nav-link ${isActive('/agent-chat') ? 'active' : ''}`}
-                onClick={() => navigate('/agent-chat')}
-              >
-                问数
-              </button>
-              <button
-                className={`global-header-nav-link ${isActive('/apps') ? 'active' : ''}`}
-                onClick={() => navigate('/apps')}
-              >
-                应用开发
-              </button>
-              <button
-                className={`global-header-nav-link ${isActive('/people') ? 'active' : ''}`}
-                onClick={() => navigate('/people')}
-              >
-                人员管理
-              </button>
-              <button
-                className={`global-header-nav-link ${isActive('/connect') ? 'active' : ''}`}
-                onClick={() => navigate('/connect')}
-              >
-                系统连接
-              </button>
+              {filteredNav.map((item) => (
+                <button
+                  key={item.path}
+                  className={`global-header-nav-link ${isActive(item.path) ? 'active' : ''}`}
+                  onClick={() => navigate(item.path)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </nav>
           </>
         )}
@@ -111,9 +109,9 @@ export function GlobalHeader() {
       <div className="global-header-right">
         {user && (
           <div className="global-header-user">
-            <span className="global-header-user-name">{user.name}</span>
+            <span className="global-header-user-name">{user.account}</span>
             <div className="global-header-user-avatar">
-              {user.name?.charAt(0)?.toUpperCase() || 'U'}
+              {user.account?.charAt(0)?.toUpperCase() || 'U'}
             </div>
           </div>
         )}

@@ -8,7 +8,7 @@ interface OrganizationProps {
   embedded?: boolean;
 }
 
-export default function Organization({ embedded }: OrganizationProps = {}) {
+export default function Organization({ _embedded }: OrganizationProps = {}) {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [selectedDept, setSelectedDept] = useState<Department | null>(null);
   const [members, setMembers] = useState<Member[]>([]);

@@ -1,27 +1,14 @@
 .api-key {
-  padding: 24px 32px;
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .api-key-loading {
   text-align: center;
   padding: 40px;
   color: #999;
-}
-
-.api-key-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.api-key-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1a1a2e;
-  margin: 0;
 }
 
 .api-key-generate-btn {
@@ -41,11 +28,39 @@
   background: #4096ff;
 }
 
+.api-key-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-key-name-input {
+  width: 220px;
+  padding: 8px 12px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #1f1f1f;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.api-key-name-input::placeholder {
+  color: #bcc4d0;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.api-key-name-input:focus {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
 .api-key-new-key {
-  background: #fff7e6;
-  border: 1px solid #ffd591;
+  background: linear-gradient(135deg, #e6f4ff 0%, #f0f7ff 100%);
+  border: 1px solid #91caff;
   border-radius: 8px;
-  padding: 20px;
+  padding: 24px;
   margin-bottom: 20px;
 }
 
@@ -53,67 +68,77 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .api-key-new-key-header h3 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: #d46b08;
+  color: #1677ff;
 }
 
 .api-key-new-key-warning {
   font-size: 12px;
   color: #fa8c16;
+  background: #fff7e6;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #ffd591;
 }
 
 .api-key-new-key-value {
   display: flex;
   gap: 12px;
   align-items: center;
-  padding: 12px;
+  padding: 12px 16px;
   background: #fff;
-  border: 1px solid #ffd591;
+  border: 1px solid #d9d9d9;
   border-radius: 6px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .api-key-new-key-value code {
   flex: 1;
-  font-family: monospace;
+  font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 14px;
-  color: #333;
+  color: #1f1f1f;
   word-break: break-all;
 }
 
 .api-key-new-key-value button {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 14px;
-  border: 1px solid #d9d9d9;
+  gap: 6px;
+  padding: 6px 16px;
+  border: 1px solid #1677ff;
   border-radius: 6px;
-  background: #fff;
-  color: #666;
+  background: #1677ff;
+  color: #fff;
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 0.2s;
 }
 
 .api-key-new-key-value button:hover {
-  border-color: #1677ff;
-  color: #1677ff;
+  background: #4096ff;
 }
 
 .api-key-new-key-close {
-  padding: 6px 16px;
-  border: 1px solid #d9d9d9;
+  width: 100%;
+  padding: 8px 0;
+  border: none;
   border-radius: 6px;
-  background: #fff;
-  color: #666;
-  font-size: 13px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 14px;
   cursor: pointer;
+  transition: background 0.2s;
+}
+
+.api-key-new-key-close:hover {
+  background: #4096ff;
 }
 
 .api-key-table-wrap {
@@ -121,6 +146,7 @@
   border: 1px solid #e8e8e8;
   border-radius: 8px;
   overflow: hidden;
+  margin: 24px 32px;
 }
 
 .api-key-table {
@@ -151,6 +177,67 @@
 
 .api-key-name {
   font-weight: 500;
+}
+
+.api-key-name-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.api-key-name-text:hover {
+  background: #e6f4ff;
+}
+
+.api-key-name-edit-icon {
+  opacity: 0;
+  color: #8c9cab;
+  transition: opacity 0.15s;
+}
+
+.api-key-name-text:hover .api-key-name-edit-icon {
+  opacity: 1;
+}
+
+.api-key-name-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.api-key-name-edit-input {
+  width: 140px;
+  padding: 4px 8px;
+  border: 1px solid #1677ff;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f1f1f;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.api-key-name-edit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #8c9cab;
+  cursor: pointer;
+}
+
+.api-key-name-edit-btn:hover {
+  background: #f0f0f0;
+  color: #1f1f1f;
 }
 
 .api-key-id {
@@ -184,34 +271,77 @@
   color: #999;
 }
 
+.api-key-app-bindings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.api-key-app-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #e6f4ff;
+  color: #1677ff;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.api-key-app-none {
+  color: #ccc;
+  font-size: 12px;
+}
+
 .api-key-row-actions {
   display: flex;
   gap: 8px;
 }
 
 .api-key-row-btn {
-  padding: 4px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 4px;
-  background: #fff;
-  color: #666;
-  font-size: 13px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8c9cab;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.api-key-row-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.api-key-row-btn:hover::after {
+  opacity: 1;
 }
 
 .api-key-row-btn:hover {
+  background: #e6f4ff;
   color: #1677ff;
-  border-color: #1677ff;
-}
-
-.api-key-row-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .api-key-row-btn.danger:hover {
+  background: #fff1f0;
   color: #ff4d4f;
-  border-color: #ff4d4f;
 }
 
 .api-key-perm-overlay {
@@ -270,7 +400,7 @@
 }
 
 .api-key-perm-cancel {
-  padding: 8px 20px;
+  padding: 5px 12px;
   border: 1px solid #d9d9d9;
   border-radius: 6px;
   background: #fff;
@@ -279,8 +409,14 @@
   cursor: pointer;
 }
 
+.api-key-perm-cancel:hover {
+  background: #fff;
+  color: #1677ff;
+  border-color: #1677ff;
+}
+
 .api-key-perm-submit {
-  padding: 8px 20px;
+  padding: 5px 12px;
   border: none;
   border-radius: 6px;
   background: #1677ff;

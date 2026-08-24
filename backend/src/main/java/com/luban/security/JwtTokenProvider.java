@@ -31,7 +31,7 @@ public class JwtTokenProvider {
         return Jwts.builder()
                 .subject(user.getId().toString())
                 .claim("email", user.getEmail())
-                .claim("name", user.getName())
+                .claim("account", user.getAccount())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key)

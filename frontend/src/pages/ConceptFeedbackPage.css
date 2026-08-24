@@ -1,0 +1,784 @@
+.cfb-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cfb-page__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #999;
+}
+
+.cfb-page__spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.cfb-page__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cfb-page__back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #5a6a7e;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__back-btn:hover {
+  background: #f0f5ff;
+  color: #1677ff;
+  border-color: #1677ff;
+}
+
+.cfb-page__back-icon {
+  transform: rotate(180deg);
+}
+
+.cfb-page__filter-select {
+  width: 150px;
+}
+
+/* ===== 标签页 ===== */
+
+.cfb-page__tabs {
+  display: flex;
+  gap: 0;
+  background: #f0f0f0;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.cfb-page__tab {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 13px;
+  color: #5a6a7e;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cfb-page__tab:hover {
+  color: #1f1f1f;
+  background: transparent;
+}
+
+.cfb-page__tab.active {
+  background: #fff;
+  color: #1677ff;
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.cfb-page__tab-label {
+  font-size: 13px;
+}
+
+.cfb-page__tab-desc {
+  font-size: 11px;
+  font-weight: 400;
+  color: #bbb;
+}
+
+.cfb-page__tab.active .cfb-page__tab-desc {
+  color: #91caff;
+}
+
+.cfb-page__empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #999;
+  font-size: 14px;
+}
+
+/* ===== 表格 ===== */
+
+.cfb-page__table-wrap {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 24px 32px;
+}
+
+.cfb-page__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.cfb-page__table th {
+  text-align: left;
+  padding: 8px 12px;
+  background: #fafafa;
+  color: #666;
+  font-weight: 500;
+  font-size: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  white-space: nowrap;
+}
+
+.cfb-page__table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f5f5f5;
+  color: #333;
+  vertical-align: top;
+}
+
+.cfb-page__table tr:last-child td {
+  border-bottom: none;
+}
+
+.cfb-page__table-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cfb-page__table-row:hover td {
+  background: #f5f7fa;
+}
+
+.cfb-page__table-row.expanded td {
+  background: #e6f4ff;
+}
+
+/* —— 展开行 —— */
+
+.cfb-page__expand-row td {
+  padding: 0;
+  background: #fafbfc;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.cfb-page__expand-content {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cfb-page__expand-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+
+.cfb-page__expand-group {
+  min-width: 0;
+}
+
+.cfb-page__expand-group h4 {
+  font-size: 12px;
+  font-weight: 500;
+  color: #999;
+  margin: 0 0 4px;
+}
+
+.cfb-page__expand-group p {
+  font-size: 13px;
+  color: #333;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.cfb-page__expand-group--full {
+  grid-column: 1 / -1;
+}
+
+.cfb-page__expand-code {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  background: #f5f5f5;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.cfb-page__expand-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.cfb-page__expand-suggestions {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
+}
+
+.cfb-page__expand-suggestions h4 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  margin: 0 0 8px;
+}
+
+.cfb-page__expand-preview {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 12px;
+}
+
+.cfb-page__expand-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cfb-page__expand-preview-header h4 {
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cfb-page__table-row:hover {
+  background: #e6f4ff;
+}
+
+.cfb-page__cell-mono {
+  font-family: monospace;
+  font-size: 12px;
+  color: #999;
+}
+
+.cfb-page__cell-text {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfb-page__cell-time {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+}
+
+.cfb-page__status {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.cfb-page__action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cfb-page__action-btn:hover {
+  background: #f5f5f5;
+  color: #555;
+}
+
+/* ===== 工作台布局 ===== */
+
+.cfb-page__workbench {
+  flex: 1;
+  display: flex;
+  gap: 24px;
+  padding: 24px 32px;
+  overflow: hidden;
+}
+
+.cfb-page__workbench-left {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cfb-page__workbench-right {
+  width: 380px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ===== 详情卡片 ===== */
+
+.cfb-page__detail-card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+  padding: 20px 24px;
+}
+
+.cfb-page__detail-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.cfb-page__detail-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a2233;
+}
+
+.cfb-page__detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.cfb-page__detail-group {
+  margin-bottom: 0;
+}
+
+.cfb-page__detail-group--full {
+  grid-column: 1 / -1;
+}
+
+.cfb-page__detail-group label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #999;
+  font-weight: 500;
+}
+
+.cfb-page__detail-value {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.cfb-page__detail-code {
+  background: #f5f5f5;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.cfb-page__detail-actions {
+  display: flex;
+  gap: 10px;
+  padding: 0;
+}
+
+/* ===== 按钮 ===== */
+
+.cfb-page__btn-primary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: #1677ff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__btn-primary:hover:not(:disabled) {
+  background: #4096ff;
+}
+
+.cfb-page__btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cfb-page__btn-success {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: #52c41a;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__btn-success:hover:not(:disabled) {
+  background: #73d13d;
+}
+
+.cfb-page__btn-success:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cfb-page__btn-cancel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #5a6a7e;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__btn-cancel:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+/* ===== 建议卡片 ===== */
+
+.cfb-page__suggestion-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: #1677ff;
+  background: #e6f4ff;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.cfb-page__suggestion-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  color: #bbb;
+  font-size: 13px;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 10px;
+}
+
+.cfb-page__suggestion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cfb-page__suggestion-card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  transition: border-color 0.15s;
+}
+
+.cfb-page__suggestion-card:hover {
+  border-color: #bfd9ff;
+}
+
+.cfb-page__suggestion-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cfb-page__suggestion-card-type {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1677ff;
+}
+
+.cfb-page__suggestion-card-index {
+  font-size: 11px;
+  color: #bbb;
+  font-family: monospace;
+}
+
+.cfb-page__suggestion-card-reasoning {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  color: #8c8c8c;
+  line-height: 1.5;
+  padding: 8px 10px;
+  background: #fafafa;
+  border-radius: 6px;
+  border-left: 3px solid #e8edf3;
+}
+
+.cfb-page__suggestion-card-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.cfb-page__suggestion-card-param {
+  font-size: 12px;
+  padding: 3px 8px;
+  background: #f7f9fc;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  color: #5a6a7e;
+}
+
+.cfb-page__suggestion-card-param em {
+  font-style: normal;
+  color: #1677ff;
+  font-weight: 500;
+}
+
+.cfb-page__suggestion-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cfb-page__btn-sm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__btn-sm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cfb-page__btn-sm--outline {
+  color: #5a6a7e;
+  background: #fff;
+  border: 1px solid #e8edf3;
+}
+
+.cfb-page__btn-sm--outline:hover:not(:disabled) {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.cfb-page__btn-sm--primary {
+  color: #fff;
+  background: #1677ff;
+}
+
+.cfb-page__btn-sm--primary:hover:not(:disabled) {
+  background: #4096ff;
+}
+
+/* ===== 预览 ===== */
+
+.cfb-page__preview-type-tag {
+  font-size: 12px;
+  font-weight: 500;
+  color: #fa8c16;
+  background: #fff7e6;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.cfb-page__label-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #fa8c16;
+}
+
+.cfb-page__label-danger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ff4d4f;
+}
+
+.cfb-page__impact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cfb-page__impact-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.cfb-page__impact-item--conflict {
+  background: #fff2f0;
+  border-color: #ffccc7;
+  color: #ff4d4f;
+}
+
+.cfb-page__impact-entity {
+  font-weight: 600;
+  color: #1677ff;
+}
+
+.cfb-page__impact-id {
+  color: #999;
+  font-family: monospace;
+}
+
+.cfb-page__impact-attr {
+  color: #5a6a7e;
+  background: #f0f0f0;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* —— 概念分类展示 —— */
+
+.cfb-page__breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cfb-page__breakdown-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: default;
+}
+
+.cfb-page__breakdown-label {
+  flex-shrink: 0;
+  min-width: 36px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+  border: 1px solid;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.cfb-page__breakdown-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+}
+
+.cfb-page__breakdown-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: #333;
+  background: #f5f5f5;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.cfb-page__breakdown-pct {
+  font-size: 10px;
+  color: #999;
+}
+
+.cfb-page__breakdown-more {
+  font-size: 11px;
+  color: #999;
+  padding: 0 4px;
+}
+
+/* —— 类型徽章 —— */
+.cfb-page__type-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.cfb-page__type-badge.like {
+  color: #52c41a;
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+}
+
+.cfb-page__type-badge.dislike {
+  color: #ff4d4f;
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+}
+
+/* —— 状态流转提示 —— */
+.cfb-page__detail-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cfb-page__status-hint {
+  font-size: 12px;
+  color: #999;
+}
+
+.cfb-page__text-muted {
+  color: #bbb;
+  font-size: 13px;
+}

@@ -29,21 +29,21 @@ export function deleteToolGroup(id: number) {
   return del<void>(`/tool-groups/${id}`);
 }
 
-export function listToolDefinitions(groupId?: number) {
-  const url = groupId ? `/tool-definitions?groupId=${groupId}` : '/tool-definitions';
-  return get<ToolDefinition[]>(url);
+export function listToolDefinitions(params?: Record<string, string>) {
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return get<ToolDefinition[]>(`/tools${qs}`);
 }
 
 export function createToolDefinition(data: Partial<ToolDefinition>) {
-  return post<ToolDefinition>('/tool-definitions', data);
+  return post<ToolDefinition>('/tools', data);
 }
 
 export function updateToolDefinition(id: number, data: Partial<ToolDefinition>) {
-  return put<ToolDefinition>(`/tool-definitions/${id}`, data);
+  return put<ToolDefinition>(`/tools/${id}`, data);
 }
 
 export function deleteToolDefinition(id: number) {
-  return del<void>(`/tool-definitions/${id}`);
+  return del<void>(`/tools/${id}`);
 }
 
 export function searchTools(systemId: number, query: string) {
@@ -106,6 +106,10 @@ export function listPendingApprovals() {
   return get<PendingApproval[]>('/permissions/pending');
 }
 
+export function listProcessedApprovals() {
+  return get<PendingApproval[]>('/permissions/processed');
+}
+
 export function approvePermission(id: number, taskId: number, comment: string) {
   return post<Record<string, unknown>>(`/permissions/${id}/approve`, { taskId, comment });
 }
@@ -120,6 +124,13 @@ export function getAgentConfig() {
 
 export function updateAgentConfig(id: number, data: Partial<AgentConfig>) {
   return put<AgentConfig>(`/agent-configs/${id}`, data);
+}
+
+export function testAgentConfig(data: { modelEndpoint: string; secretKey: string }) {
+  return post<{ success: boolean; models?: { id: string; name: string }[]; error?: string }>(
+    '/agent-configs/test',
+    data,
+  );
 }
 
 export function parseSwagger(data: { url?: string; content?: string }) {
@@ -137,14 +148,73 @@ export function listApiKeys() {
   return get<unknown[]>('/api-keys');
 }
 
-export function generateApiKey() {
-  return post<unknown>('/api-keys');
+export function generateApiKey(name?: string) {
+  return post<unknown>('/api-keys', name ? { name } : undefined);
+}
+
+export function renameApiKey(keyId: number, name: string) {
+  return put<unknown>(`/api-keys/${keyId}/name`, { name });
 }
 
 export function requestToolPermission(apiKeyId: number, toolId: number) {
   return post<unknown>(`/api-keys/${apiKeyId}/request-tool`, { toolId });
 }
 
+export function requestToolPermissions(apiKeyId: number, toolIds: number[]) {
+  return post<unknown>(`/api-keys/${apiKeyId}/request-tools`, { toolIds });
+}
+
+export function listKeyTools(apiKeyId: number) {
+  return get<unknown[]>(`/api-keys/${apiKeyId}/tools`);
+}
+
 export function deleteApiKey(id: number) {
   return del<void>(`/api-keys/${id}`);
+}
+
+export function deletePermanentApiKey(id: number) {
+  return del<void>(`/api-keys/${id}/permanent`);
+}
+
+export function restoreApiKey(id: number) {
+  return post<unknown>(`/api-keys/${id}/restore`);
+}
+
+// Datasource permissions
+export function listKeyDatasources(apiKeyId: number) {
+  return get<unknown[]>(`/api-keys/${apiKeyId}/datasources`);
+}
+
+export function listAvailableDatasources(groupId: number) {
+  return get<unknown[]>(`/api-keys/available-datasources?groupId=${groupId}`);
+}
+
+export function requestDatasourcePermission(apiKeyId: number, datasourceId: number) {
+  return post<unknown>(`/api-keys/${apiKeyId}/request-datasource`, { datasourceId });
+}
+
+// Application binding
+export function listKeysByApplication(applicationId: number) {
+  return get<unknown[]>(`/api-keys/by-application/${applicationId}`);
+}
+
+export function listApplicationsByKey(apiKeyId: number) {
+  return get<unknown[]>(`/api-keys/${apiKeyId}/applications`);
+}
+
+export function bindApplicationToKey(apiKeyId: number, applicationId: number) {
+  return post<unknown>(`/api-keys/${apiKeyId}/bind-application`, { applicationId });
+}
+
+export function unbindApplicationFromKey(apiKeyId: number, applicationId: number) {
+  return post<unknown>(`/api-keys/${apiKeyId}/unbind-application`, { applicationId });
+}
+
+// Application resource aggregation
+export function listApplicationTools(applicationId: number) {
+  return get<unknown[]>(`/api-keys/application/${applicationId}/tools`);
+}
+
+export function listApplicationDatasources(applicationId: number) {
+  return get<unknown[]>(`/api-keys/application/${applicationId}/datasources`);
 }

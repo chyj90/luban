@@ -20,7 +20,7 @@ import { workflowApi, formApi, bindingApi, instanceApi } from '../../api/workflo
 import { toast } from '@/stores/toastStore';
 import { isImpersonating } from '../../utils/impersonation';
 import ApproverSelector from './ApproverSelector';
-import Select from './Select';
+import Select from '@/components/Select';
 import * as XLSX from 'xlsx';
 import styles from './WorkflowDesigner.module.css';
 
@@ -115,9 +115,9 @@ function groupFormFieldsIntoRows<T extends { colSpan?: number }>(fields: T[]): T
 }
 
 export default function WorkflowDesigner({
-  nodesConfig: initialNodesConfig,
-  edgesConfig: initialEdgesConfig,
-  onChange,
+  nodesConfig: _initialNodesConfig,
+  edgesConfig: _initialEdgesConfig,
+  onChange: _onChange,
   embedded = false,
   processId: propProcessId,
   formMode: propFormMode = false,
@@ -202,7 +202,7 @@ export default function WorkflowDesigner({
   const initRef = useRef(true);
 
   const onViewportChange = useCallback(
-    (_event: any, viewport: { zoom: number }) => {
+    (_event: unknown, viewport: { zoom: number }) => {
       setViewportZoom(viewport.zoom);
     },
     [],
@@ -231,7 +231,7 @@ export default function WorkflowDesigner({
       try {
         const fields = fieldsJson ? JSON.parse(fieldsJson) : [];
         if (Array.isArray(fields) && fields.length > 0) {
-          setStartFormFields(fields.map((f: any) => ({
+          setStartFormFields(fields.map((f: unknown) => ({
             key: f.key || f.name || '',
             label: f.label || f.name || '',
             type: f.type || 'text',
@@ -242,7 +242,7 @@ export default function WorkflowDesigner({
             columns: f.columns || [],
           })));
           const initial: Record<string, string> = {};
-          fields.forEach((f: any) => {
+          fields.forEach((f: unknown) => {
             initial[f.key || f.name || ''] = '';
           });
           setStartFormData(initial);
@@ -322,8 +322,8 @@ export default function WorkflowDesigner({
       outDegree.set(e.source, (outDegree.get(e.source) || 0) + 1);
     });
 
-    const startNode = nodes.find((n) => (n.data as any)?.nodeType === 'start');
-    const endNode = nodes.find((n) => (n.data as any)?.nodeType === 'end');
+    const startNode = nodes.find((n) => (n.data as unknown)?.nodeType === 'start');
+    const endNode = nodes.find((n) => (n.data as unknown)?.nodeType === 'end');
 
     nodes.forEach((node) => {
       g.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -386,14 +386,14 @@ export default function WorkflowDesigner({
           if (def.nodes) {
             const parsed = JSON.parse(def.nodes);
             let maxCounter = 0;
-            parsed.forEach((node: any) => {
+            parsed.forEach((node: unknown) => {
               const match = node.id?.match(/_(\d+)$/);
               if (match) {
                 maxCounter = Math.max(maxCounter, parseInt(match[1], 10));
               }
             });
             nodeIdCounter.current = maxCounter;
-            const safeNodes = parsed.map((node: any, i: number) => ({
+            const safeNodes = parsed.map((node: unknown, i: number) => ({
               ...node,
               position: node.position && typeof node.position.x === 'number' && typeof node.position.y === 'number'
                 ? node.position
@@ -427,7 +427,7 @@ export default function WorkflowDesigner({
           formApi.get(binding.formId).then((form) => {
             try {
               const fields = form.fields ? JSON.parse(form.fields) : [];
-              setFormFieldNames(Array.isArray(fields) ? fields.map((f: any) => f.name || f.key) : []);
+              setFormFieldNames(Array.isArray(fields) ? fields.map((f: unknown) => f.name || f.key) : []);
             } catch { setFormFieldNames([]); }
           }).catch(() => {});
         }
@@ -443,7 +443,7 @@ export default function WorkflowDesigner({
         try {
           const fields = form.fields ? JSON.parse(form.fields) : [];
           if (Array.isArray(fields)) {
-            setFormFields(fields.map((f: any) => ({
+            setFormFields(fields.map((f: unknown) => ({
               key: f.key || '',
               label: f.label || '',
               type: f.type || 'text',
@@ -462,8 +462,8 @@ export default function WorkflowDesigner({
   const openFormPicker = useCallback(async () => {
     setFormPickerOpen(true);
     try {
-      const forms = await formApi.list({ applicationId: appId } as any);
-      setAvailableForms(forms.map((f: any) => ({ id: f.id, name: f.name })));
+      const forms = await formApi.list({ applicationId: appId } as unknown);
+      setAvailableForms(forms.map((f: unknown) => ({ id: f.id, name: f.name })));
     } catch {
       setAvailableForms([]);
     }
@@ -472,8 +472,8 @@ export default function WorkflowDesigner({
   const loadWorkflows = useCallback(async () => {
     if (availableWorkflows.length > 0) return;
     try {
-      const defs = await workflowApi.listDefinitions({ applicationId: appId } as any);
-      setAvailableWorkflows(defs.filter((d: any) => d.id !== processId).map((d: any) => ({ id: d.id, name: d.name })));
+      const defs = await workflowApi.listDefinitions({ applicationId: appId } as unknown);
+      setAvailableWorkflows(defs.filter((d: unknown) => d.id !== processId).map((d: unknown) => ({ id: d.id, name: d.name })));
     } catch {
       setAvailableWorkflows([]);
     }
@@ -491,13 +491,15 @@ export default function WorkflowDesigner({
       const form = await formApi.get(formId);
       try {
         const fields = form.fields ? JSON.parse(form.fields) : [];
-        setFormFieldNames(Array.isArray(fields) ? fields.map((f: any) => f.name || f.key) : []);
+        setFormFieldNames(Array.isArray(fields) ? fields.map((f: unknown) => f.name || f.key) : []);
       } catch { setFormFieldNames([]); }
       toast.success('表单关联成功');
-    } catch (e: any) {
+    } catch (e: unknown) {
       toast.error(e?.response?.data?.message || '关联失败');
     }
   }, [processId]);
+
+  const GATEWAY_TYPES = new Set(['condition', 'parallel']);
 
   const handleSave = useCallback(async () => {
     if (!workflowName.trim()) {
@@ -511,9 +513,9 @@ export default function WorkflowDesigner({
         outgoing.set(e.source, (outgoing.get(e.source) || 0) + 1);
       });
       for (const node of nodes) {
-        const nt = (node.data as any)?.nodeType || node.type?.replace('Node', '') || '';
+        const nt = (node.data as unknown)?.nodeType || node.type?.replace('Node', '') || '';
         if (!GATEWAY_TYPES.has(nt) && (outgoing.get(node.id) || 0) > 1) {
-          toast.warning(`节点「${(node.data as any)?.label || node.id}」有多条出边，请使用「并行节点」或「条件节点」来分叉`);
+          toast.warning(`节点「${(node.data as unknown)?.label || node.id}」有多条出边，请使用「并行节点」或「条件节点」来分叉`);
           setSaving(false);
           return;
         }
@@ -526,17 +528,17 @@ export default function WorkflowDesigner({
         edges: JSON.stringify(edges),
       };
       if (processId) {
-        await workflowApi.updateDefinition(processId, data as any);
+        await workflowApi.updateDefinition(processId, data as unknown);
         toast.success('保存成功');
       } else {
-        const created = await workflowApi.createDefinition(data as any);
+        const created = await workflowApi.createDefinition(data as unknown);
         toast.success('创建成功');
         // Update URL if navigating from /workflow/designer to /workflow/designer/:id
         if (!embedded) {
           window.history.replaceState(null, '', `/apps/${appId}/designer/${created.id}`);
         }
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e?.response?.data?.message || e?.message || '保存失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '保存失败');
     } finally {
@@ -568,13 +570,13 @@ export default function WorkflowDesigner({
         nodes: JSON.stringify(nodes),
         edges: JSON.stringify(edges),
       };
-      await workflowApi.updateDefinition(processId, data as any);
+      await workflowApi.updateDefinition(processId, data as unknown);
       await workflowApi.publishDefinition(processId);
       toast.success('发布成功');
       if (!embedded) {
         window.location.reload();
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e?.response?.data?.message || e?.message || '发布失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发布失败');
     } finally {
@@ -589,7 +591,7 @@ export default function WorkflowDesigner({
     }
     try {
       await workflowApi.initTestData(appId!);
-      const def = await workflowApi.getDefinition(processId);
+      const _def = await workflowApi.getDefinition(processId);
       const isTest = true;
       await instanceApi.start({
         definitionId: processId,
@@ -597,7 +599,7 @@ export default function WorkflowDesigner({
         isTest,
       });
       toast.success('测试流程已发起，请前往「我的工作」查看');
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e?.response?.data?.message || e?.message || '发起测试失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发起测试失败');
     }
@@ -625,7 +627,7 @@ export default function WorkflowDesigner({
       setStartSubmitted(true);
       toast.success('流程已发起');
       setTimeout(() => navigate(effectiveAppId ? `/apps/${effectiveAppId}` : '/work'), 1500);
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e?.response?.data?.message || e?.message || '发起失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '发起失败');
     } finally {
@@ -633,13 +635,11 @@ export default function WorkflowDesigner({
     }
   }, [processId, startFormFields, startFormData, excelParsedData]);
 
-  const GATEWAY_TYPES = new Set(['condition', 'parallel']);
-
   const onConnect = useCallback(
     (params: Connection) => {
       const sourceNode = nodes.find((n) => n.id === params.source);
       if (sourceNode) {
-        const nodeType = (sourceNode.data as any)?.nodeType || sourceNode.type?.replace('Node', '') || '';
+        const nodeType = (sourceNode.data as unknown)?.nodeType || sourceNode.type?.replace('Node', '') || '';
         if (!GATEWAY_TYPES.has(nodeType)) {
           const existingOutgoing = edges.filter((e) => e.source === params.source);
           if (existingOutgoing.length > 0) {
@@ -650,7 +650,7 @@ export default function WorkflowDesigner({
       }
       setEdges((eds) =>
         addEdge(
-          { ...params, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, pathOptions: { borderRadius: 0 } } as any,
+          { ...params, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, pathOptions: { borderRadius: 0 } } as unknown,
           eds,
         ),
       );
@@ -794,7 +794,7 @@ export default function WorkflowDesigner({
       }
       if (onBack) onBack();
       else window.history.back();
-    } catch (e: any) {
+    } catch (e: unknown) {
       const msg = e?.response?.data?.message || e?.message || '保存失败';
       toast.error(typeof msg === 'string' ? msg.substring(0, 200) : '保存失败');
     } finally {
@@ -1379,8 +1379,8 @@ export default function WorkflowDesigner({
                           headerMap[h] = col ? col.key : h;
                         });
                         const parsed = data.slice(1)
-                          .filter((row: any) => row.some((cell: unknown) => cell !== '' && cell !== null && cell !== undefined))
-                          .map((row: any) => {
+                          .filter((row: unknown) => row.some((cell: unknown) => cell !== '' && cell !== null && cell !== undefined))
+                          .map((row: unknown) => {
                             const obj: Record<string, string> = {};
                             rawHeaders.forEach((h, i) => { obj[headerMap[h]] = String(row[i] ?? ''); });
                             return obj;
@@ -1791,7 +1791,7 @@ export default function WorkflowDesigner({
               type: 'smoothstep',
               markerEnd: { type: MarkerType.ArrowClosed },
               pathOptions: { borderRadius: 0 },
-            } as any}
+            } as unknown}
             connectionLineStyle={{
               stroke: '#2563eb',
               strokeWidth: 2,
@@ -1834,7 +1834,7 @@ export default function WorkflowDesigner({
                     .filter((e) => e.source === selectedNode.id)
                     .map((edge, idx) => {
                       const targetNode = nodes.find((n) => n.id === edge.target);
-                      const targetLabel = (targetNode?.data as any)?.label || edge.target;
+                      const targetLabel = (targetNode?.data as unknown)?.label || edge.target;
                       const edgeData = (edge.data || {}) as Record<string, unknown>;
                       return (
                         <div key={edge.id} className={styles.conditionItem}>
