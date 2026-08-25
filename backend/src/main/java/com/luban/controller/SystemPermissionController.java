@@ -1,6 +1,7 @@
 package com.luban.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.constant.WorkflowScope;
 import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyTool;
 import com.luban.entity.SystemPermission;
@@ -461,7 +462,7 @@ public class SystemPermissionController {
 
     private WorkflowInstance startApprovalWorkflow(User user, ToolGroup group, String reason,
                                                     SystemPermission perm) {
-        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope("PLATFORM");
+        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM);
         WorkflowDefinition sysPermWf = platformDefs.stream()
                 .filter(d -> "系统权限审批".equals(d.getName()) && "PUBLISHED".equals(d.getStatus()))
                 .findFirst()

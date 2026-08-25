@@ -123,6 +123,7 @@ public class SwaggerImportController {
                 tool.setInputSchema(inputSchema != null ? inputSchema : "{}");
                 tool.setConfig(config != null ? config : "{}");
                 tool.setGroupId(groupId);
+                tool.setScope("PLATFORM");
                 tool.setStatus("ENABLED");
                 toolDefinitionRepository.save(tool);
 

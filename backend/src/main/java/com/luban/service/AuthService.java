@@ -8,9 +8,7 @@ import com.luban.entity.UserSession;
 import com.luban.repository.UserRepository;
 import com.luban.repository.UserSessionRepository;
 import com.luban.security.JwtTokenProvider;
-import com.luban.workflow.entity.Member;
 import com.luban.workflow.entity.RoleUser;
-import com.luban.workflow.repository.MemberRepository;
 import com.luban.workflow.repository.RoleRepository;
 import com.luban.workflow.repository.RoleUserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -25,7 +23,6 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
-    private final MemberRepository memberRepository;
     private final RoleUserRepository roleUserRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
@@ -33,14 +30,12 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
-                       MemberRepository memberRepository,
                        RoleUserRepository roleUserRepository,
                        RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
-        this.memberRepository = memberRepository;
         this.roleUserRepository = roleUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
@@ -56,21 +51,10 @@ public class AuthService {
         User user = new User();
         user.setEmail(request.getEmail());
         user.setAccount(request.getAccount());
+        user.setName(request.getAccount());
+        user.setProvider("manual");
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         userRepository.save(user);
-
-        Member member = memberRepository.findByEmail(request.getEmail()).orElse(null);
-        if (member != null) {
-            member.setUserId(user.getId());
-            memberRepository.save(member);
-        } else {
-            member = new Member();
-            member.setUserId(user.getId());
-            member.setName(request.getAccount());
-            member.setEmail(request.getEmail());
-            member.setProvider("manual");
-            memberRepository.save(member);
-        }
 
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);

@@ -20,3 +20,30 @@ export async function updateApplication(id: number, name: string) {
 export async function deleteApplication(id: number) {
   return del<void>(`/applications/${id}`);
 }
+
+export async function listAccessibleApplications() {
+  return get<AccessibleApp[]>('/applications/accessible');
+}
+
+export interface AccessiblePage {
+  id: number;
+  name: string;
+  slug: string;
+  isDefault: boolean;
+  accessible: boolean;
+}
+
+export interface AccessibleWorkflow {
+  id: number;
+  name: string;
+  description: string;
+  forms: { formId: number; bindingType: string; isDefault: boolean }[];
+}
+
+export interface AccessibleApp {
+  id: number;
+  name: string;
+  slug: string;
+  pages: AccessiblePage[];
+  workflows: AccessibleWorkflow[];
+}

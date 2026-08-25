@@ -3,10 +3,12 @@ package com.luban.workflow.controller;
 import com.luban.annotation.RequirePermission;
 import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
+import com.luban.entity.User;
+import com.luban.entity.UserDept;
+import com.luban.repository.UserDeptRepository;
+import com.luban.repository.UserRepository;
 import com.luban.workflow.entity.Department;
-import com.luban.workflow.entity.Member;
 import com.luban.workflow.repository.DepartmentRepository;
-import com.luban.workflow.repository.MemberRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,7 +23,8 @@ import java.util.stream.Collectors;
 public class DepartmentController {
 
     private final DepartmentRepository departmentRepository;
-    private final MemberRepository memberRepository;
+    private final UserRepository userRepository;
+    private final UserDeptRepository userDeptRepository;
 
     private void populateManagerNames(List<Department> departments) {
         List<Long> managerIds = departments.stream()
@@ -30,8 +33,8 @@ public class DepartmentController {
                 .distinct()
                 .collect(Collectors.toList());
         if (managerIds.isEmpty()) return;
-        Map<Long, String> nameMap = memberRepository.findAllById(managerIds).stream()
-                .collect(Collectors.toMap(Member::getId, Member::getName));
+        Map<Long, String> nameMap = userRepository.findAllById(managerIds).stream()
+                .collect(Collectors.toMap(User::getId, User::getName));
         departments.forEach(d -> {
             if (d.getManagerId() != null) {
                 d.setManagerName(nameMap.get(d.getManagerId()));
@@ -63,15 +66,18 @@ public class DepartmentController {
         Department dept = departmentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("部门不存在: " + id));
         if (dept.getManagerId() != null) {
-            memberRepository.findById(dept.getManagerId())
-                    .ifPresent(m -> dept.setManagerName(m.getName()));
+            userRepository.findById(dept.getManagerId())
+                    .ifPresent(u -> dept.setManagerName(u.getName()));
         }
         return ApiResponse.ok(dept);
     }
 
     @GetMapping("/{id}/members")
-    public ApiResponse<List<Member>> members(@PathVariable Long id) {
-        return ApiResponse.ok(memberRepository.findByDepartmentId(id));
+    public ApiResponse<List<User>> members(@PathVariable Long id) {
+        List<Long> userIds = userDeptRepository.findByDepartmentId(id).stream()
+                .map(UserDept::getUserId)
+                .collect(Collectors.toList());
+        return ApiResponse.ok(userRepository.findAllById(userIds));
     }
 
     @PostMapping
@@ -81,8 +87,8 @@ public class DepartmentController {
         department.setSyncedAt(java.time.LocalDateTime.now());
         Department saved = departmentRepository.save(department);
         if (saved.getManagerId() != null) {
-            memberRepository.findById(saved.getManagerId())
-                    .ifPresent(m -> saved.setManagerName(m.getName()));
+            userRepository.findById(saved.getManagerId())
+                    .ifPresent(u -> saved.setManagerName(u.getName()));
         }
         return ApiResponse.ok(saved);
     }
@@ -96,8 +102,8 @@ public class DepartmentController {
         existing.setManagerId(department.getManagerId());
         Department saved = departmentRepository.save(existing);
         if (saved.getManagerId() != null) {
-            memberRepository.findById(saved.getManagerId())
-                    .ifPresent(m -> saved.setManagerName(m.getName()));
+            userRepository.findById(saved.getManagerId())
+                    .ifPresent(u -> saved.setManagerName(u.getName()));
         }
         return ApiResponse.ok(saved);
     }

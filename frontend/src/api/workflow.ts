@@ -5,10 +5,10 @@ import type {
   WorkflowTask,
   WorkflowHistory,
   FormWorkflowBinding,
-  Member,
   Department,
   Role,
 } from '../types/workflow';
+import type { User } from '../types/user';
 import type { ApiResponse } from '@/types/api';
 import { axiosInstance as api } from './client';
 
@@ -68,16 +68,10 @@ export const workflowApi = {
 
   getVersions: (id: number) =>
     api.get<WorkflowDefinition[]>(`/workflows/${id}/versions`).then(r => r.data),
-
-  initTestData: (applicationId: number) =>
-    api.post('/workflows/test-data/init', null, { params: { applicationId } }).then(r => r.data),
-
-  resetTestData: (applicationId: number) =>
-    api.post('/workflows/test-data/reset', null, { params: { applicationId } }).then(r => r.data),
 };
 
 export const instanceApi = {
-  list: (params?: { isTest?: boolean }) =>
+  list: (params?: { applicationId?: number }) =>
     api.get<WorkflowInstance[]>('/workflow-instances', { params }).then(r => r.data),
 
   get: (id: number) =>
@@ -86,7 +80,7 @@ export const instanceApi = {
   getHistory: (id: number) =>
     api.get<WorkflowHistory[]>(`/workflow-instances/${id}/history`).then(r => r.data),
 
-  start: (params: { definitionId: number; formData: string; isTest?: boolean }) =>
+  start: (params: { definitionId: number; formData: string }) =>
     api.post<WorkflowInstance>('/workflow-instances', params).then(r => r.data),
 
   cancel: (id: number) =>
@@ -156,10 +150,10 @@ export const adminApi = {
 
 export const orgApi = {
   getMembers: (params?: { departmentId?: number; keyword?: string }) =>
-    api.get<ApiResponse<Member[]>>('/members', { params }).then(r => r.data.data),
+    api.get<ApiResponse<{ items: User[] }>>('/users', { params }).then(r => r.data.data?.items || []),
 
   getMember: (id: number) =>
-    api.get<ApiResponse<Member>>(`/members/${id}`).then(r => r.data.data),
+    api.get<ApiResponse<User>>(`/users/${id}`).then(r => r.data.data),
 
   getDepartments: (params?: { parentId?: number }) =>
     api.get<ApiResponse<Department[]>>('/departments', { params }).then(r => r.data.data),
@@ -171,7 +165,7 @@ export const orgApi = {
     api.get<ApiResponse<Department>>(`/departments/${id}`).then(r => r.data.data),
 
   getDepartmentMembers: (id: number) =>
-    api.get<ApiResponse<Member[]>>(`/departments/${id}/members`).then(r => r.data.data),
+    api.get<ApiResponse<User[]>>(`/departments/${id}/members`).then(r => r.data.data),
 
   getRoles: (applicationId: number) =>
     api.get<ApiResponse<Role[]>>('/roles', { params: { applicationId } }).then(r => r.data.data),

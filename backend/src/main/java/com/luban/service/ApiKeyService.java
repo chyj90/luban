@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.WorkflowScope;
 import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyDatasource;
 import com.luban.entity.ApiKeyTool;
@@ -73,7 +74,7 @@ public class ApiKeyService {
     }
 
     public List<ToolDefinition> listAvailableTools() {
-        return toolDefinitionRepository.findByStatus("ENABLED");
+        return toolDefinitionRepository.findByStatusAndScope("ENABLED", "PLATFORM");
     }
 
     @Transactional
@@ -126,7 +127,7 @@ public class ApiKeyService {
         ToolDefinition tool = toolDefinitionRepository.findById(toolId).orElse(null);
         String toolName = tool != null ? (tool.getDisplayName() != null ? tool.getDisplayName() : tool.getName()) : "未知工具";
 
-        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope("PLATFORM");
+        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM);
         WorkflowDefinition toolPermWf = platformDefs.stream()
                 .filter(d -> "工具权限审批".equals(d.getName()) && "PUBLISHED".equals(d.getStatus()))
                 .findFirst()
@@ -242,7 +243,7 @@ public class ApiKeyService {
         Datasource ds = datasourceRepository.findById(datasourceId).orElse(null);
         String dsName = ds != null ? ds.getName() : "未知数据源";
 
-        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope("PLATFORM");
+        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM);
         WorkflowDefinition dsPermWf = platformDefs.stream()
                 .filter(d -> "数据源权限审批".equals(d.getName()) && "PUBLISHED".equals(d.getStatus()))
                 .findFirst()

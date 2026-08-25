@@ -4,15 +4,11 @@ import { useLoadingStore } from '@/stores/loadingStore';
 import { listPages } from '@/api/page';
 import { getCodePage } from '@/api/page';
 import { listQueries } from '@/api/query';
-import { workflowApi } from '@/api/workflow';
-import { isImpersonating } from '@/utils/impersonation';
-import { DevToolbar } from '@/components/DevToolbar';
+import { listAppTools, listApplicationTools } from '@/api/tool';
 import type { Application } from '@/types/application';
 import type { Page, CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
-import type { WorkflowDefinition } from '@/types/workflow';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
-import MyWorkflow from '@/pages/workflow/MyWorkflow';
 import './AppUserPage.css';
 
 interface AppUserPageProps {
@@ -27,17 +23,25 @@ export function AppUserPage({ app }: AppUserPageProps) {
   const codePageRef = useRef<CodePageData | null>(null);
 
   const [pages, setPages] = useState<Page[]>([]);
+  const [totalPages, setTotalPages] = useState(0);
   const [currentPageId, setCurrentPageId] = useState<number | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
-  const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
-  const [showWorkflow, setShowWorkflow] = useState(isImpersonating());
   const [loading, setLoading] = useState(true);
+  const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
 
   const userInfo = user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
   const pageList = pages.map(p => ({ id: p.id, name: p.name }));
-  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate);
+  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate, app.id, appTools);
 
   function handlePageNavigate(pageId: number) {
+    const target = pages.find(p => p.id === pageId);
+    if (target && target.accessible === false) {
+      const firstAccessible = pages.find(p => p.accessible !== false);
+      if (firstAccessible) {
+        setCurrentPageId(firstAccessible.id);
+      }
+      return;
+    }
     setCurrentPageId(pageId);
   }
 
@@ -49,22 +53,33 @@ export function AppUserPage({ app }: AppUserPageProps) {
     Promise.allSettled([
       listPages(app.id),
       listQueries(app.id),
-      workflowApi.listDefinitions({ applicationId: app.id, status: isImpersonating() ? 'DRAFT' : 'PUBLISHED' }),
+      listAppTools(app.id),
+      listApplicationTools(app.id),
     ]).then((results) => {
-      const [pagesResult, queriesResult, wfResult] = results;
+      const [pagesResult, queriesResult, toolsResult, keyToolsResult] = results;
 
       if (pagesResult.status === 'fulfilled') {
-        setPages(pagesResult.value.data);
-        if (pagesResult.value.data.length > 0) {
-          const defaultPage = pagesResult.value.data.find((p: Page) => p.isDefault) || pagesResult.value.data[0];
+        const allPages = pagesResult.value.data as Page[];
+        setTotalPages(allPages.length);
+        const accessiblePages = allPages.filter(p => p.accessible !== false);
+        setPages(accessiblePages);
+        if (accessiblePages.length > 0) {
+          const defaultPage = accessiblePages.find((p: Page) => p.isDefault) || accessiblePages[0];
           setCurrentPageId(defaultPage.id);
         }
       }
       if (queriesResult.status === 'fulfilled') {
         setQueries(queriesResult.value.data);
       }
-      if (wfResult.status === 'fulfilled') {
-        setWorkflows(wfResult.value);
+      if (toolsResult.status === 'fulfilled' || keyToolsResult.status === 'fulfilled') {
+        const selfTools = toolsResult.status === 'fulfilled'
+          ? ((toolsResult.value.data as Record<string, unknown>[]) || []).map((t) => ({ id: t.id as number, name: (t.displayName || t.name || '') as string }))
+          : [];
+        const keyTools = keyToolsResult.status === 'fulfilled'
+          ? ((keyToolsResult.value.data as Record<string, unknown>[]) || []).map((t) => ({ id: t.id as number, name: (t.displayName || t.name || '') as string }))
+          : [];
+        const merged = [...selfTools, ...keyTools.filter(kt => !selfTools.some(st => st.id === kt.id))];
+        setAppTools(merged);
       }
       setLoading(false);
     });
@@ -168,21 +183,14 @@ export function AppUserPage({ app }: AppUserPageProps) {
 
   return (
     <div className="appuser">
-      {isImpersonating() && <DevToolbar appId={app.id} />}
-      {/* 页面标签 + 我的工作 */}
+      {/* 页面标签 */}
       <div className="appuser-tabs">
         <div className="appuser-tabs-left">
-          <div
-            className={`appuser-tab ${showWorkflow ? 'active' : ''}`}
-            onClick={() => { setShowWorkflow(true); setCurrentPageId(null); }}
-          >
-            我的工作
-          </div>
           {pages.map(page => (
             <div
               key={page.id}
-              className={`appuser-tab ${!showWorkflow && currentPageId === page.id ? 'active' : ''}`}
-              onClick={() => { setCurrentPageId(page.id); setShowWorkflow(false); }}
+              className={`appuser-tab ${currentPageId === page.id ? 'active' : ''}`}
+              onClick={() => setCurrentPageId(page.id)}
             >
               {page.name}
             </div>
@@ -192,9 +200,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
 
       {/* 页面内容区 */}
       <div className="appuser-page">
-        {showWorkflow ? (
-          <MyWorkflow embedded workflows={workflows} appId={app.id} />
-        ) : currentPageId ? (
+        {currentPageId ? (
           <iframe
             ref={iframeRef}
             title="应用页面"
@@ -204,8 +210,12 @@ export function AppUserPage({ app }: AppUserPageProps) {
         ) : (
           <div className="appuser-empty">
             {pages.length === 0 ? (
-              <p>该应用暂无页面</p>
-            ) : (
+                totalPages === 0 ? (
+                  <p>该应用暂无页面，请联系管理员配置</p>
+                ) : (
+                  <p>您暂无访问此应用的权限，请联系管理员</p>
+                )
+              ) : (
               <p>请选择一个页面</p>
             )}
           </div>

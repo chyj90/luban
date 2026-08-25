@@ -175,6 +175,7 @@ public class McpServerRegistryController {
                                 tool.setDescription(description);
                                 tool.setConfig("{\"mcpServerId\":" + id + ",\"remoteToolName\":\"" + toolName + "\"}");
                                 tool.setGroupId(groupId);
+                                tool.setScope("PLATFORM");
                                 tool.setStatus("ENABLED");
                                 if (inputSchema != null) {
                                     tool.setInputSchema(toJson(inputSchema));

@@ -10,4 +10,5 @@ public interface FormWorkflowBindingRepository extends JpaRepository<FormWorkflo
     List<FormWorkflowBinding> findByWorkflowId(Long workflowId);
     Optional<FormWorkflowBinding> findByFormIdAndIsDefaultTrue(Long formId);
     Optional<FormWorkflowBinding> findByFormIdAndWorkflowId(Long formId, Long workflowId);
+    void deleteByWorkflowIdIn(List<Long> workflowIds);
 }

@@ -5,6 +5,11 @@
   min-width: 340px;
   flex-shrink: 0;
   border-right: 1px solid #e8edf3;
+  transition: min-width 0.2s ease;
+}
+
+.editor-sidebar--collapsed {
+  min-width: 48px;
 }
 
 .editor-sidebar-tabs {
@@ -321,4 +326,12 @@
   text-align: center;
   color: #8c9cab;
   font-size: 13px;
+}
+
+.editor-sidebar-hint {
+  padding: 16px 12px;
+  text-align: center;
+  color: #8c9cab;
+  font-size: 12px;
+  line-height: 1.6;
 }

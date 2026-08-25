@@ -17,6 +17,7 @@ export interface WorkflowDefinition {
   name: string;
   description: string;
   applicationId: number;
+  scope: 'APPLICATION' | 'PLATFORM';
   version: number;
   status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
   nodes: string;
@@ -37,20 +38,28 @@ export interface FormWorkflowBinding {
   createdAt: string;
 }
 
+export interface PendingTaskInfo {
+  nodeId: string;
+  nodeName: string;
+  assigneeId: number;
+  assigneeName?: string;
+}
+
 export interface WorkflowInstance {
   id: number;
   workflowId: number;
+  workflowName?: string;
   applicationId: number;
   applicationName?: string;
   workflowVersion: number;
   definitionVersion: number;
-  isTest: boolean;
   formId: number;
   formData: string;
   status: 'RUNNING' | 'COMPLETED' | 'REJECTED' | 'CANCELLED' | 'FROZEN';
   initiatorId: number;
   initiatorName?: string;
   currentNodes: string;
+  pendingTasks: PendingTaskInfo[];
   deadline: string;
   startedAt: string;
   completedAt: string;
@@ -99,25 +108,8 @@ export interface WorkflowHistory {
   createdAt: string;
 }
 
-export interface Member {
-  id: number;
-  userId: number;
-  name: string;
-  email: string;
-  mobile: string;
-  avatar: string;
-  departmentId: number;
-  departmentName: string;
-  position: string;
-  externalId: string;
-  employeeNo: string;
-  leaderId: number;
-  provider: string;
-  status: string;
-  syncedAt: string;
-  createdAt: string;
-  updatedAt: string;
-}
+// Member 已合并到 User，不再使用此类型
+// 请使用 @/types/user 中的 User 接口
 
 export interface Department {
   id: number;

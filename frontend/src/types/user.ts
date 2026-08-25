@@ -38,6 +38,8 @@ export interface Role {
   slug: string;
   description: string;
   scope: string;
+  applicationId?: number | null;
+  applicationName?: string;
   createdBy?: number | null;
 }
 

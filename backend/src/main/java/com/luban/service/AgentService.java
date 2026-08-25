@@ -83,7 +83,7 @@ public class AgentService {
     private final ConcurrentHashMap<String, CompiledGraph<AgentState>> compiledGraphs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Deque<Long>> rateLimitBuckets = new ConcurrentHashMap<>();
     private final AtomicInteger totalCallCount = new AtomicInteger(0);
-    private final AtomicInteger totalToolCallCount = new AtomicInteger(0);
+    
     private final java.util.concurrent.ScheduledExecutorService idleExecutor =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "llm-idle-watchdog");
@@ -410,14 +410,7 @@ public class AgentService {
         return conversationHistories.size();
     }
 
-    public String executeToolByName(String toolName, Map<String, Object> arguments) {
-        long startTime = System.currentTimeMillis();
-        String result = executeTool(toolName, arguments);
-        long duration = System.currentTimeMillis() - startTime;
-        totalToolCallCount.incrementAndGet();
-        log.info("Tool call: name={}, duration={}ms, success={}", toolName, duration, !result.contains("\"error\""));
-        return result;
-    }
+    
 
     private boolean checkRateLimit(String key) {
         long now = System.currentTimeMillis();
@@ -774,7 +767,7 @@ public class AgentService {
                     }
                 }
             } else if (apiTools.isEmpty()) {
-                List<ToolDefinition> allTools = toolDefinitionRepository.findAll();
+                List<ToolDefinition> allTools = toolDefinitionRepository.findByScope("PLATFORM");
                 if (allTools != null && !allTools.isEmpty()) {
                     apiTools.addAll(allTools);
                 }

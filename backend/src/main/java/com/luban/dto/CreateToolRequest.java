@@ -14,6 +14,7 @@ public class CreateToolRequest {
     private String toolType;
     @NotBlank
     private Long groupId;
+    private String scope;
     private String inputSchema;
     private String outputSchema;
     @NotBlank

@@ -1,6 +1,5 @@
 import { get, post, put, del, axiosInstance } from './index';
 import type { User, Role, Department, PageResult, ImportResult } from '@/types/user';
-import type { Member } from '@/types/workflow';
 
 export function getMyPermissions() {
   return get<string[]>('/auth/permissions');
@@ -46,8 +45,8 @@ export function listDepartments() {
   return get<Department[]>('/departments');
 }
 
-export function createUserFromMember(memberId: number, userType: 'normal' | 'test' = 'normal') {
-  return post<User>(`/users/from-member/${memberId}?userType=${userType}`);
+export function listDepartmentMembers(deptId: number) {
+  return get<User[]>(`/departments/${deptId}/members`);
 }
 
 export function updateUserRole(userId: number, roleIds: number[]) {
@@ -62,7 +61,7 @@ export function updateUserLeader(userId: number, leaderId: number | null) {
   return put<User>(`/users/${userId}/leader?leaderId=${leaderId ?? ''}`);
 }
 
-export function createRole(data: { name: string; slug: string; description: string; scope: string }) {
+export function createRole(data: { name: string; slug: string; description: string; scope: string; applicationId?: number }) {
   return post<Role>('/roles', data);
 }
 
@@ -100,19 +99,4 @@ export function updateDepartment(id: number, data: { name?: string; parentId?: n
 
 export function deleteDepartment(id: number) {
   return del<void>(`/departments/${id}`);
-}
-
-export function listDepartmentMembers(deptId: number) {
-  return get<Member[]>(`/departments/${deptId}/members`);
-}
-
-export function updateMember(id: number, data: {
-  name?: string;
-  email?: string;
-  mobile?: string;
-  position?: string;
-  employeeNo?: string;
-  departmentId?: number | null;
-}) {
-  return put<Member>(`/members/${id}`, data);
 }

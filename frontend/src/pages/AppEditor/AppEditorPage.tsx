@@ -8,15 +8,17 @@ import { EditorSidebar } from '@/components/EditorSidebar';
 import { InteliPreview } from '@/components/InteliPreview';
 import { InteliEditor } from '@/components/InteliEditor';
 import { QueryEditor } from '@/components/QueryEditor';
+import { ApiPanel } from '@/components/ApiPanel';
+import { ApiDetail } from '@/components/ApiDetail';
+import type { SelectedApi } from '@/components/ApiDetail';
+import { DatasourcePanel } from '@/components/DatasourcePanel';
 import { AgentPanel } from '@/components/AgentPanel';
-import { DevToolbar } from '@/components/DevToolbar';
 import ProcessList from '@/pages/workflow/ProcessList';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import MyWorkflow from '@/pages/workflow/MyWorkflow';
 import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
-import Organization from '@/pages/workflow/Organization';
 import { listPages, listQueries } from '@/api';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
@@ -32,8 +34,7 @@ export type WorkflowView =
   | { view: 'my-workflow'; appId?: number }
   | { view: 'forms'; appId?: number }
   | { view: 'form-preview'; formId: number; appId?: number }
-  | { view: 'instance-detail'; instanceId: number; appId?: number }
-  | { view: 'organization'; appId?: number };
+  | { view: 'instance-detail'; instanceId: number; appId?: number };
 
 const FILE_TABS: { key: EditingFile; label: string }[] = [
   { key: 'html', label: 'index.html' },
@@ -49,6 +50,8 @@ export function AppEditorPage() {
   const [pages, setPages] = useState<Page[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
+  const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
+  const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null);
   const [workflowView, setWorkflowView] = useState<WorkflowView>({ view: 'processes', appId: Number(appId) });
   const [editingFile, setEditingFile] = useState<EditingFile | null>(null);
@@ -129,6 +132,9 @@ export function AppEditorPage() {
 
   const handleSidebarTabChange = useCallback((tab: SidebarTab) => {
     setSidebarTab(tab);
+    if (tab !== 'apis') {
+      setSelectedApi(null);
+    }
     if (tab !== 'workflow') {
       setEditingFile(null);
     }
@@ -162,7 +168,6 @@ export function AppEditorPage() {
 
   return (
     <div className="app-editor">
-      <DevToolbar appId={Number(appId)} />
 
       <div className="app-editor-body">
         <EditorSidebar
@@ -179,6 +184,9 @@ export function AppEditorPage() {
           onQuerySelect={setSelectedQuery}
           onWorkflowNavigate={handleWorkflowNavigate}
           onTabChange={handleSidebarTabChange}
+          selectedApi={selectedApi}
+          onApiSelect={setSelectedApi}
+          onToolsChange={setAppTools}
         />
 
         <div className="app-editor-main">
@@ -228,9 +236,6 @@ export function AppEditorPage() {
                   onBack={() => setWorkflowView({ view: 'my-workflow', appId: Number(appId) })}
                 />
               )}
-              {workflowView.view === 'organization' && (
-                <Organization embedded />
-              )}
             </div>
           ) : selectedQuery ? (
             <QueryEditor
@@ -250,9 +255,13 @@ export function AppEditorPage() {
               <span className="app-editor-query-empty-text">暂无 Query</span>
               <span className="app-editor-query-empty-hint">点击左侧 + 创建查询</span>
             </div>
-          ) : sidebarTab === 'apis' || sidebarTab === 'datasources' ? (
-            <div className="app-editor-query-empty">
-              <span className="app-editor-query-empty-text">请在左侧面板管理{sidebarTab === 'apis' ? 'API' : '数据源'}</span>
+          ) : sidebarTab === 'apis' ? (
+            <div className="app-editor-api-panel">
+              <ApiDetail api={selectedApi} />
+            </div>
+          ) : sidebarTab === 'datasources' ? (
+            <div className="app-editor-ds-panel">
+              <DatasourcePanel applicationId={Number(appId)} />
             </div>
           ) : editingFile ? (
             <div className="app-editor-code-panel">
@@ -324,6 +333,8 @@ export function AppEditorPage() {
                 userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}
+                applicationId={Number(appId)}
+                appTools={appTools}
               />
             </div>
           )}
@@ -366,6 +377,8 @@ export function AppEditorPage() {
             userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
             allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
             onNavigate={handlePageChange}
+            applicationId={Number(appId)}
+            appTools={appTools}
           />
         </div>
       )}

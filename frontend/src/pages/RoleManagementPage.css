@@ -578,3 +578,73 @@
   border-radius: 6px;
   font-size: 13px;
 }
+
+.role-page__modal--wide {
+  width: 560px;
+}
+
+.role-page__app-perm-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid #e8edf3;
+  margin-bottom: 12px;
+}
+
+.role-page__app-perm-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #8c9cab;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.role-page__app-perm-tab:hover {
+  background: transparent;
+  color: #1677ff;
+  border-bottom-color: #bae0ff;
+}
+
+.role-page__app-perm-tab.active {
+  background: transparent;
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+}
+
+.role-page__section-header--collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+.role-page__section-header--collapsible:hover {
+  color: #1677ff;
+}
+
+.role-page__app-perm-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 0;
+}
+
+.role-page__app-perm-action-btn {
+  padding: 4px 14px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  color: #555;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.role-page__app-perm-action-btn:hover {
+  background: #fff;
+  border-color: #1677ff;
+  color: #1677ff;
+}

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import MemberPicker from './MemberPicker';
+import RolePicker from './RolePicker';
+import DepartmentPicker from './DepartmentPicker';
 import Select from '@/components/Select';
 import styles from './WorkflowDesigner.module.css';
 
@@ -22,9 +24,10 @@ const COLLABORATION_MODES = [
 interface ApproverSelectorProps {
   config: Record<string, unknown>;
   onChange: (key: string, value: unknown) => void;
+  appId?: number;
 }
 
-export default function ApproverSelector({ config, onChange }: ApproverSelectorProps) {
+export default function ApproverSelector({ config, onChange, appId }: ApproverSelectorProps) {
   const [activeType, setActiveType] = useState<string>((config.approverType as string) || 'member');
   const [selectedMembers, setSelectedMembers] = useState<string[]>(
     (config.approverIds as string[]) || [],
@@ -95,12 +98,13 @@ export default function ApproverSelector({ config, onChange }: ApproverSelectorP
       {activeType === 'role' && (
         <div className={styles.configGroup}>
           <label className={styles.configLabel}>选择角色</label>
-          <MemberPicker
+          <RolePicker
             value={config.roleIds ? (config.roleIds as string[]) : []}
             onChange={(ids) => {
               onChange('roleIds', ids);
             }}
             placeholder="搜索角色..."
+            appId={appId}
           />
         </div>
       )}
@@ -117,6 +121,15 @@ export default function ApproverSelector({ config, onChange }: ApproverSelectorP
             ]}
             onChange={(v) => onChange('departmentSource', v)}
           />
+          {(config.departmentSource as string) === 'specified' && (
+            <div style={{ marginTop: 12 }}>
+              <DepartmentPicker
+                value={config.departmentIds ? (config.departmentIds as string[]) : []}
+                onChange={(ids) => onChange('departmentIds', ids)}
+                placeholder="选择部门"
+              />
+            </div>
+          )}
         </div>
       )}
 

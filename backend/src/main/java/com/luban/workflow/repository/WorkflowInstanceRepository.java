@@ -8,11 +8,12 @@ import java.util.List;
 public interface WorkflowInstanceRepository extends JpaRepository<WorkflowInstance, Long> {
     List<WorkflowInstance> findByInitiatorId(Long initiatorId);
     List<WorkflowInstance> findByInitiatorIdAndStatus(Long initiatorId, String status);
-    List<WorkflowInstance> findByInitiatorIdAndIsTest(Long initiatorId, Boolean isTest);
-    List<WorkflowInstance> findByInitiatorIdAndIsTestAndApplicationId(Long initiatorId, Boolean isTest, Long applicationId);
+    List<WorkflowInstance> findByInitiatorIdAndApplicationId(Long initiatorId, Long applicationId);
     List<WorkflowInstance> findByWorkflowIdIn(List<Long> workflowIds);
     List<WorkflowInstance> findByStatus(String status);
     long countByStatus(String status);
     List<WorkflowInstance> findByStatusAndDeadlineBefore(String status, LocalDateTime dateTime);
     List<WorkflowInstance> findByParentInstanceId(Long parentInstanceId);
+    void deleteByApplicationId(Long applicationId);
+    void deleteByWorkflowIdIn(List<Long> workflowIds);
 }

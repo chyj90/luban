@@ -3,7 +3,6 @@ package com.luban.config;
 import com.luban.entity.Application;
 import com.luban.entity.User;
 import com.luban.repository.ApplicationRepository;
-import com.luban.security.ImpersonationFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -37,11 +36,7 @@ public class ApplicationOwnershipInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        // 模拟场景下，使用原始用户做所有权校验，而非被模拟用户
-        User effectiveUser = (User) request.getAttribute(ImpersonationFilter.ORIGINAL_USER_ATTRIBUTE);
-        if (effectiveUser == null) {
-            effectiveUser = (User) auth.getPrincipal();
-        }
+        User effectiveUser = (User) auth.getPrincipal();
 
         Application app = applicationRepository.findById(applicationId).orElse(null);
         if (app == null) {

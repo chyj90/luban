@@ -2,9 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
-import { useImpersonationStore } from '@/stores/impersonationStore';
 import { getApplication } from '@/api/application';
-import { isImpersonating } from '@/utils/impersonation';
 import type { Application } from '@/types/application';
 import { AppEditorPage } from '@/pages/AppEditor/AppEditorPage';
 import { AppUserPage } from './AppUserPage';
@@ -13,7 +11,6 @@ export function AppEntryPage() {
   const { appId } = useParams<{ appId: string }>();
   const { user } = useAuthStore();
   const setGlobalLoading = useLoadingStore((s) => s.setLoading);
-  const _impersonationVersion = useImpersonationStore((s) => s.version);
   const [app, setApp] = useState<Application | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -38,7 +35,7 @@ export function AppEntryPage() {
     return <div className="appentry-error">应用不存在</div>;
   }
 
-  const isOwner = app.createdBy === user?.id && !isImpersonating();
+  const isOwner = app.createdBy === user?.id;
 
   if (isOwner) {
     return <AppEditorPage />;

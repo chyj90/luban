@@ -1,5 +1,6 @@
 package com.luban.workflow.entity;
 
+import com.luban.constant.WorkflowScope;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -24,8 +25,9 @@ public class WorkflowDefinition {
     @Column(nullable = true)
     private Long applicationId;
 
-    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'APP'")
-    private String scope;
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'APPLICATION'")
+    private WorkflowScope scope;
 
     @Column(nullable = false)
     private Integer version;

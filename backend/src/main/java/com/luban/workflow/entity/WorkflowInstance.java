@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -19,7 +21,13 @@ public class WorkflowInstance {
     private String applicationName;
 
     @Transient
+    private String workflowName;
+
+    @Transient
     private String initiatorName;
+
+    @Transient
+    private List<Map<String, Object>> pendingTasks;
 
     @Column(nullable = false)
     private Long workflowId;
@@ -62,9 +70,6 @@ public class WorkflowInstance {
 
     @Column
     private Long subProcessDefinitionId;
-
-    @Column(nullable = false)
-    private Boolean isTest = false;
 
     @Column(nullable = false)
     private Integer definitionVersion = 1;

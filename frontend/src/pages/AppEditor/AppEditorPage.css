@@ -417,6 +417,28 @@
   color: #8c9cab;
 }
 
+/* API / Datasource panels on right side */
+.app-editor-api-panel {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-editor-ds-panel {
+  flex: 1;
+  background: #fff;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-editor-ds-panel .ds-panel {
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
 .app-editor-fullscreen-overlay .ip-frame-wrap:hover {
   box-shadow: none;
 }

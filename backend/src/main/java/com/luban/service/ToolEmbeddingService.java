@@ -74,7 +74,7 @@ public class ToolEmbeddingService {
         if (embeddingClient == null || !embeddingClient.isAvailable()) {
             return;
         }
-        List<ToolDefinition> tools = toolDefinitionRepository.findByGroupIdAndStatus(groupId, "ENABLED");
+        List<ToolDefinition> tools = toolDefinitionRepository.findByGroupIdAndStatusAndScope(groupId, "ENABLED", "PLATFORM");
         List<ToolDefinition> pending = tools.stream()
                 .filter(t -> t.getEmbedding() == null || t.getEmbedding().isEmpty())
                 .collect(Collectors.toList());
@@ -101,7 +101,7 @@ public class ToolEmbeddingService {
     }
 
     public List<ToolDefinition> search(Long groupId, String query, int topK) {
-        List<ToolDefinition> tools = toolDefinitionRepository.findByGroupIdAndStatus(groupId, "ENABLED");
+        List<ToolDefinition> tools = toolDefinitionRepository.findByGroupIdAndStatusAndScope(groupId, "ENABLED", "PLATFORM");
         if (tools.isEmpty()) {
             return Collections.emptyList();
         }

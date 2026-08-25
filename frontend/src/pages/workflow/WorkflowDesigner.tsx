@@ -18,7 +18,6 @@ import '@xyflow/react/dist/style.css';
 import type { WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { workflowApi, formApi, bindingApi, instanceApi } from '../../api/workflow';
 import { toast } from '@/stores/toastStore';
-import { isImpersonating } from '../../utils/impersonation';
 import ApproverSelector from './ApproverSelector';
 import Select from '@/components/Select';
 import * as XLSX from 'xlsx';
@@ -590,13 +589,9 @@ export default function WorkflowDesigner({
       return;
     }
     try {
-      await workflowApi.initTestData(appId!);
-      const _def = await workflowApi.getDefinition(processId);
-      const isTest = true;
       await instanceApi.start({
         definitionId: processId,
         formData: '{}',
-        isTest,
       });
       toast.success('测试流程已发起，请前往「我的工作」查看');
     } catch (e: unknown) {
@@ -622,7 +617,6 @@ export default function WorkflowDesigner({
       await instanceApi.start({
         definitionId: processId,
         formData,
-        isTest: isImpersonating(),
       });
       setStartSubmitted(true);
       toast.success('流程已发起');
@@ -1824,6 +1818,7 @@ export default function WorkflowDesigner({
                 <ApproverSelector
                   config={selectedNodeConfig}
                   onChange={updateNodeConfig}
+                  appId={appId}
                 />
               )}
 
@@ -1995,6 +1990,7 @@ export default function WorkflowDesigner({
                   <ApproverSelector
                     config={selectedNodeConfig}
                     onChange={updateNodeConfig}
+                    appId={appId}
                   />
                 </div>
               )}

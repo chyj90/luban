@@ -56,8 +56,6 @@ export function GlobalHeader() {
   const handleLogout = () => {
     logout();
     resetPermissions();
-    localStorage.removeItem('impersonate_user_id');
-    localStorage.removeItem('impersonate_app_id');
     navigate('/login');
   };
 

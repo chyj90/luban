@@ -38,6 +38,7 @@
 }
 
 .backBtn:hover {
+  background: #fff;
   border-color: #2563eb;
   color: #2563eb;
 }
@@ -163,72 +164,74 @@
   right: 0;
   z-index: 100;
   background: linear-gradient(135deg, #1677ff 0%, #0958d9 100%);
-  box-shadow: 0 2px 12px rgba(22, 119, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(22, 119, 255, 0.35);
 }
 
 .approvalBarInner {
   max-width: 980px;
   margin: 0 auto;
-  padding: 8px 32px;
+  padding: 0 32px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: 52px;
   box-sizing: border-box;
 }
 
 .approvalBarLeft {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: #fff;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .approvalBarRight {
   display: flex;
-  gap: 10px;
+  gap: 12px;
 }
 
 .approveBtnSm {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 18px;
+  gap: 6px;
+  padding: 4px 18px;
   border: none;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
-  font-size: 13px;
+  background: #fff;
+  color: #1677ff;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.2s;
-  backdrop-filter: blur(4px);
+  transition: all 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .approveBtnSm:hover {
-  background: rgba(255, 255, 255, 0.35);
+  background: #f0f5ff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .rejectBtnSm {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 6px 18px;
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  gap: 6px;
+  padding: 4px 18px;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
   border-radius: 8px;
   background: transparent;
   color: #fff;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .rejectBtnSm:hover {
-  background: rgba(239, 68, 68, 0.25);
-  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #fff;
 }
 
 /* Overlay & Dialog */
@@ -345,6 +348,7 @@
 }
 
 .dialogApprove:hover {
+  background: linear-gradient(135deg, #1677ff 0%, #4096ff 100%);
   box-shadow: 0 4px 14px rgba(22, 119, 255, 0.35);
 }
 
@@ -460,6 +464,22 @@
   font-size: 12px;
   color: #2563eb;
   margin-top: 6px;
+}
+
+.timelineDotPending {
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px #f59e0b;
+  animation: pulse 2s infinite;
+}
+
+.timelineActionPending {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .emptyHistory {

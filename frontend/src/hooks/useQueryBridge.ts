@@ -1,23 +1,26 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { runQuery } from '@/api';
+import { runQuery, runAppTool } from '@/api';
 import type { Query } from '@/types/query';
 
 interface BridgeRequest {
-  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME';
+  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME' | 'CALL_API';
   id: string;
   queryName?: string;
   params?: Record<string, unknown>;
   pageId?: number;
   pageName?: string;
+  apiName?: string;
 }
 
 interface BridgeResponse {
-  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT';
+  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT';
   id: string;
   queryName?: string;
   result?: { columns: string[]; rows: unknown[][]; totalCount: number };
   error?: string;
   success?: boolean;
+  apiName?: string;
+  apiResult?: unknown;
 }
 
 interface UserInfo {
@@ -31,11 +34,18 @@ interface PageInfo {
   name: string;
 }
 
+interface AppToolInfo {
+  id: number;
+  name: string;
+}
+
 export function useQueryBridge(
   queries: Query[],
   userInfo?: UserInfo | null,
   allPages?: PageInfo[],
   onNavigate?: (pageId: number) => void,
+  applicationId?: number,
+  appTools?: AppToolInfo[],
 ) {
   const queriesRef = useRef<Query[]>(queries);
   queriesRef.current = queries;
@@ -45,6 +55,12 @@ export function useQueryBridge(
 
   const allPagesRef = useRef<PageInfo[]>(allPages || []);
   allPagesRef.current = allPages || [];
+
+  const appToolsRef = useRef<AppToolInfo[]>(appTools || []);
+  appToolsRef.current = appTools || [];
+
+  const appIdRef = useRef<number | undefined>(applicationId);
+  appIdRef.current = applicationId;
 
   const handleMessage = useCallback(async (event: MessageEvent) => {
     const msg = event.data as BridgeRequest;
@@ -98,6 +114,36 @@ export function useQueryBridge(
       } else {
         respond({ type: 'NAVIGATE_RESULT', id: msg.id, success: false, error: `未找到页面 "${msg.pageName}"` });
       }
+    } else if (msg.type === 'CALL_API') {
+      const appId = appIdRef.current;
+      const tool = appToolsRef.current.find((t) => t.name === msg.apiName);
+
+      if (!appId) {
+        respond({ type: 'API_RESULT', id: msg.id, apiName: msg.apiName, error: '应用 ID 未配置' });
+        return;
+      }
+
+      if (!tool) {
+        respond({ type: 'API_RESULT', id: msg.id, apiName: msg.apiName, error: `API "${msg.apiName}" 不存在` });
+        return;
+      }
+
+      try {
+        const res = await runAppTool(appId, tool.id, msg.params || {});
+        respond({
+          type: 'API_RESULT',
+          id: msg.id,
+          apiName: msg.apiName,
+          apiResult: res.data,
+        });
+      } catch (e: unknown) {
+        respond({
+          type: 'API_RESULT',
+          id: msg.id,
+          apiName: msg.apiName,
+          error: (e as Error).message,
+        });
+      }
     }
   }, []);
 
@@ -142,6 +188,15 @@ export function useQueryBridge(
     },
     getAllPages: function() {
       return ${allPagesJson};
+    },
+    callApi: function(apiName, params) {
+      return new Promise(function(resolve, reject) {
+        var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        _pending[id] = { resolve: resolve, reject: reject };
+        window.parent.postMessage({
+          type: 'CALL_API', id: id, apiName: apiName, params: params
+        }, '*');
+      });
     }
   };
 
@@ -163,6 +218,14 @@ export function useQueryBridge(
       if (cb) {
         if (d.success) { cb.resolve(true); }
         else { cb.reject(new Error(d.error)); }
+        delete _pending[d.id];
+      }
+    }
+    if (d.type === 'API_RESULT') {
+      var cb = _pending[d.id];
+      if (cb) {
+        if (d.error) { cb.reject(new Error(d.error)); }
+        else { cb.resolve(d.apiResult); }
         delete _pending[d.id];
       }
     }
@@ -281,6 +344,16 @@ window.__LUBAN__ = {
   },
   getAllPages: function() {
     return ${allPagesJson};
+  },
+  callApi: function(apiName, params) {
+    return new Promise(function(resolve, reject) {
+      var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      var pending = window.__bridge_pending || {};
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({
+        type: 'CALL_API', id: id, apiName: apiName, params: params
+      }, '*');
+    });
   }
 };
 ${JSON.stringify(queryNames)}.forEach(function(name) {

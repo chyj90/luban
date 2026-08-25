@@ -21,25 +21,23 @@ public class WorkflowInstanceController {
     public WorkflowInstance start(@RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         Long definitionId = Long.valueOf(params.get("definitionId").toString());
         String formData = params.getOrDefault("formData", "{}").toString();
-        boolean isTest = Boolean.parseBoolean(params.getOrDefault("isTest", "false").toString());
-        return processService.startProcess(definitionId, formData, user.getId(), user.getAccount(), isTest);
+        return processService.startProcess(definitionId, formData, user.getId(), user.getAccount());
     }
 
     @GetMapping
     public List<WorkflowInstance> list(@AuthenticationPrincipal User user,
-                                        @RequestParam(required = false) Boolean isTest,
                                         @RequestParam(required = false) Long applicationId) {
-        return processService.listMyInstances(user.getId(), isTest, applicationId);
+        return processService.listMyInstances(user.getId(), applicationId);
     }
 
     @GetMapping("/{id}")
-    public WorkflowInstance get(@PathVariable Long id) {
-        return processService.getInstance(id);
+    public WorkflowInstance get(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return processService.getInstance(id, user.getId());
     }
 
     @GetMapping("/{id}/history")
-    public List<WorkflowHistory> getHistory(@PathVariable Long id) {
-        return processService.getInstanceHistory(id);
+    public List<WorkflowHistory> getHistory(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return processService.getInstanceHistory(id, user.getId());
     }
 
     @PutMapping("/{id}/cancel")

@@ -4,6 +4,7 @@ export interface Page {
   applicationId: number;
   slug: string;
   isDefault: boolean;
+  accessible?: boolean;
   createdAt: string;
   updatedAt: string;
 }

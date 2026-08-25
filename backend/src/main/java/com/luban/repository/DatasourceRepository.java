@@ -7,4 +7,5 @@ import java.util.List;
 public interface DatasourceRepository extends JpaRepository<Datasource, Long> {
     List<Datasource> findBySlugAndOwnerId(String slug, Long ownerId);
     List<Datasource> findBySlug(String slug);
+    void deleteByOwnerId(Long ownerId);
 }

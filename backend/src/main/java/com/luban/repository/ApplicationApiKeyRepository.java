@@ -13,4 +13,5 @@ public interface ApplicationApiKeyRepository extends JpaRepository<ApplicationAp
     Optional<ApplicationApiKey> findByApplicationIdAndApiKeyId(Long applicationId, Long apiKeyId);
     @Modifying
     void deleteByApplicationIdAndApiKeyId(Long applicationId, Long apiKeyId);
+    void deleteByApplicationId(Long applicationId);
 }

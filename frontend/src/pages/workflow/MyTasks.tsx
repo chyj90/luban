@@ -2,26 +2,16 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { WorkflowTask } from '../../types/workflow';
 import { taskApi } from '../../api/workflow';
-import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './MyTasks.module.css';
 
-interface MyTasksProps {
-  embedded?: boolean;
-  onNavigate?: (view: WorkflowView) => void;
-}
-
-export default function MyTasks({ _embedded, onNavigate }: MyTasksProps = {}) {
+export default function MyTasks() {
   const navigate = useNavigate();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'pending' | 'completed'>('pending');
 
-  const goTo = (view: WorkflowView) => {
-    if (onNavigate) {
-      onNavigate(view);
-    } else if (view.view === 'instance-detail' && view.appId != null) {
-      navigate(`/apps/${view.appId}/instances/${view.instanceId}`);
-    }
+  const goTo = (instanceId: number) => {
+    navigate(`/work/instances/${instanceId}`);
   };
 
   useEffect(() => {
@@ -32,10 +22,12 @@ export default function MyTasks({ _embedded, onNavigate }: MyTasksProps = {}) {
       .finally(() => setLoading(false));
   }, [tab]);
 
-  const statusBadge = (status: string) => {
+  const statusBadge = (status: string, action?: string | null) => {
+    const isRejected = status === 'COMPLETED' && action === 'REJECT';
     const map: Record<string, { label: string; className: string }> = {
       PENDING: { label: '待审批', className: styles.tagPending },
-      COMPLETED: { label: '已通过', className: styles.tagCompleted },
+      PROCESSING: { label: '处理中', className: styles.tagPending },
+      COMPLETED: { label: isRejected ? '已驳回' : '已通过', className: isRejected ? styles.tagRejected : styles.tagCompleted },
       REJECTED: { label: '已驳回', className: styles.tagRejected },
       TRANSFERRED: { label: '已转办', className: styles.tagTransferred },
       CANCELLED: { label: '已取消', className: styles.tagCancelled },
@@ -85,11 +77,11 @@ export default function MyTasks({ _embedded, onNavigate }: MyTasksProps = {}) {
               <div
                 key={task.id}
                 className={styles.card}
-                onClick={() => goTo({ view: 'instance-detail', instanceId: task.instanceId, appId: task.applicationId })}
+                onClick={() => goTo(task.instanceId)}
               >
                 <div className={styles.cardHeader}>
                   <span className={styles.cardTitle}>{task.nodeName || task.nodeId}</span>
-                  {statusBadge(task.status)}
+                  {statusBadge(task.status, task.action)}
                 </div>
                 <div className={styles.cardMeta}>
                   <span>类型: {task.assigneeType}</span>

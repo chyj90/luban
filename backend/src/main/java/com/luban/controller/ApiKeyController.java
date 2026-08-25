@@ -225,8 +225,30 @@ public class ApiKeyController {
             item.put("toolType", tool != null ? tool.getToolType() : "");
             item.put("inputSchema", tool != null ? tool.getInputSchema() : "");
             item.put("outputSchema", tool != null ? tool.getOutputSchema() : "");
+            item.put("config", tool != null ? tool.getConfig() : "");
             return item;
         }).collect(Collectors.toList());
+
+        List<ToolDefinition> appTools = toolDefinitionRepository
+                .findByGroupIdAndScope(applicationId, "APPLICATION");
+        List<Map<String, Object>> appToolItems = appTools.stream()
+                .filter(t -> !"DISABLED".equals(t.getStatus()))
+                .map(t -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", t.getId());
+                    item.put("toolId", t.getId());
+                    item.put("toolName", t.getName());
+                    item.put("displayName", t.getDisplayName());
+                    item.put("description", t.getDescription());
+                    item.put("toolType", t.getToolType());
+                    item.put("inputSchema", t.getInputSchema());
+                    item.put("outputSchema", t.getOutputSchema());
+                    item.put("config", t.getConfig());
+                    item.put("status", t.getStatus());
+                    return item;
+                }).collect(Collectors.toList());
+
+        result.addAll(appToolItems);
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 

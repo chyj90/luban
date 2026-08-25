@@ -1,11 +1,7 @@
 package com.luban.config;
 
 import com.luban.security.ApiKeyAuthFilter;
-import com.luban.security.ImpersonationFilter;
 import com.luban.security.JwtAuthFilter;
-import com.luban.workflow.repository.MemberRepository;
-import com.luban.repository.ApplicationRepository;
-import com.luban.repository.UserRepository;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
@@ -34,15 +30,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    public ImpersonationFilter impersonationFilter(ApplicationRepository appRepo,
-                                                    UserRepository userRepo,
-                                                    MemberRepository memberRepo) {
-        return new ImpersonationFilter(appRepo, userRepo, memberRepo);
-    }
-
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                    ImpersonationFilter impersonationFilter) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -56,12 +44,10 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/v1/auth/**", "/error").permitAll()
-                .requestMatchers("/api/v1/mcp/internal/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterAfter(impersonationFilter, JwtAuthFilter.class);
+            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }

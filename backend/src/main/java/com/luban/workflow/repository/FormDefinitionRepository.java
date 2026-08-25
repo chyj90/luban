@@ -6,4 +6,5 @@ import java.util.List;
 
 public interface FormDefinitionRepository extends JpaRepository<FormDefinition, Long> {
     List<FormDefinition> findByApplicationId(Long applicationId);
+    void deleteByApplicationId(Long applicationId);
 }

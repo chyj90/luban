@@ -20,11 +20,10 @@ public class TaskController {
     public List<WorkflowTask> list(
             @AuthenticationPrincipal User user,
             @RequestParam(required = false, defaultValue = "pending") String status,
-            @RequestParam(required = false) Long applicationId,
-            @RequestParam(required = false) Boolean isTest) {
+            @RequestParam(required = false) Long applicationId) {
         return "completed".equalsIgnoreCase(status)
-                ? processService.getCompletedTasks(user.getId(), applicationId, isTest)
-                : processService.getPendingTasks(user.getId(), applicationId, isTest);
+                ? processService.getCompletedTasks(user.getId(), applicationId)
+                : processService.getPendingTasks(user.getId(), applicationId);
     }
 
     @GetMapping("/{id}")

@@ -1,10 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Shield, Plus, Pencil, Trash2, X, Check, Loader2, Globe, Lock, Users, Search, Box } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Shield, Plus, Pencil, Trash2, X, Check, Loader2, Globe, Lock, Users, Search, Box, FileText, GitBranch, ChevronDown, ChevronRight } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import type { Role } from '@/types/user';
+import type { Page } from '@/types/page';
+import type { WorkflowDefinition } from '@/types/workflow';
 import { listRoles, createRole, updateRole, deleteRole, getRolePermissions, updateRolePermissions, getRoleUsers, updateRoleUsers, listSimpleUsers, listPermissions } from '@/api/user';
 import { listOntologyGroups, getRoleConceptPermissions, updateRoleConceptPermissions } from '@/api/concept';
+import { listPages } from '@/api/page';
+import { listApplications } from '@/api/application';
+import { workflowApi } from '@/api/workflow';
 import type { OntologyGroup } from '@/types/concept';
+import type { Application } from '@/types/application';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import Select from '@/components/Select';
@@ -21,7 +28,8 @@ export default function RoleManagementPage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Role | null>(null);
-  const [form, setForm] = useState({ name: '', slug: '', description: '', scope: 'PLATFORM' });
+  const [form, setForm] = useState({ name: '', slug: '', description: '', scope: 'PLATFORM', applicationId: undefined as number | undefined });
+  const [applications, setApplications] = useState<Application[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<Role | null>(null);
   const [permRole, setPermRole] = useState<Role | null>(null);
@@ -40,10 +48,47 @@ export default function RoleManagementPage() {
   const [conceptGroups, setConceptGroups] = useState<OntologyGroup[]>([]);
   const [conceptPermGroupIds, setConceptPermGroupIds] = useState<Set<number>>(new Set());
   const [conceptPermSaving, setConceptPermSaving] = useState(false);
+  const [appPermRole, setAppPermRole] = useState<Role | null>(null);
+  const [appPermTab, setAppPermTab] = useState<'pages' | 'workflows'>('pages');
+  const [appPermPages, setAppPermPages] = useState<Page[]>([]);
+  const [appPermWorkflows, setAppPermWorkflows] = useState<WorkflowDefinition[]>([]);
+  const [appPermPageIds, setAppPermPageIds] = useState<Set<number>>(new Set());
+  const [appPermWorkflowIds, setAppPermWorkflowIds] = useState<Set<number>>(new Set());
+  const [appPermLoading, setAppPermLoading] = useState(false);
+  const [appPermSaving, setAppPermSaving] = useState(false);
   const toast = useToastStore((s) => s.show);
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.superAdmin === true;
   const currentUserId = user?.id;
+  const [searchParams] = useSearchParams();
+  const urlAppId = searchParams.get('appId');
+  const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
+
+  const appRoles = roles.filter((r) => r.scope !== 'PLATFORM');
+  const appGroups = useMemo(() => {
+    const map = new Map<string, { appId: string; appName: string; roles: Role[] }>();
+    for (const r of appRoles) {
+      const key = r.applicationId ? String(r.applicationId) : '__no_app__';
+      if (!map.has(key)) {
+        map.set(key, {
+          appId: key,
+          appName: r.applicationName || (key === '__no_app__' ? '未关联应用' : `应用 ${key}`),
+          roles: [],
+        });
+      }
+      map.get(key)!.roles.push(r);
+    }
+    return Array.from(map.values());
+  }, [appRoles]);
+
+  const toggleAppGroup = (appId: string) => {
+    setExpandedApps((prev) => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  };
 
   const canEditRole = (role: Role) => {
     if (role.scope === 'PLATFORM') return isSuperAdmin;
@@ -71,16 +116,39 @@ export default function RoleManagementPage() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (urlAppId) {
+      setExpandedApps(new Set([urlAppId]));
+    }
+  }, [urlAppId]);
+
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', slug: '', description: '', scope: isSuperAdmin ? 'PLATFORM' : 'APPLICATION' });
+    setForm({
+      name: '',
+      slug: '',
+      description: '',
+      scope: isSuperAdmin ? (urlAppId ? 'APPLICATION' : 'PLATFORM') : 'APPLICATION',
+      applicationId: urlAppId ? Number(urlAppId) : undefined,
+    });
+    if (!isSuperAdmin || urlAppId) {
+      loadApplications();
+    }
     setShowForm(true);
   };
 
   const openEdit = (role: Role) => {
     setEditing(role);
-    setForm({ name: role.name, slug: role.slug, description: role.description, scope: role.scope });
+    setForm({ name: role.name, slug: role.slug, description: role.description, scope: role.scope, applicationId: role.applicationId ?? undefined });
+    if (role.scope === 'APPLICATION') {
+      loadApplications();
+    }
     setShowForm(true);
+  };
+
+  const loadApplications = () => {
+    if (applications.length > 0) return;
+    listApplications().then(res => setApplications(res.data as Application[])).catch(() => {});
   };
 
   const handleSave = async () => {
@@ -192,6 +260,77 @@ export default function RoleManagementPage() {
     }
   };
 
+  const openAppPermissions = async (role: Role) => {
+    setAppPermRole(role);
+    setAppPermTab('pages');
+    setAppPermLoading(true);
+    setError('');
+    const appId = role.applicationId;
+    if (!appId) {
+      setAppPermLoading(false);
+      setError('该角色未关联应用');
+      return;
+    }
+    try {
+      const [pagesRes, wfRes, permRes] = await Promise.all([
+        listPages(appId),
+        workflowApi.listDefinitions({ applicationId: appId, status: 'PUBLISHED' }),
+        getRolePermissions(role.id),
+      ]);
+      const pages = (pagesRes.data as Page[]) || [];
+      const workflows = (wfRes as WorkflowDefinition[]) || [];
+      const perms = (permRes.data as string[]) || [];
+      setAppPermPages(pages);
+      setAppPermWorkflows(workflows);
+      setAppPermPageIds(new Set(pages.filter(p => perms.includes(`app:page:${p.id}`)).map(p => p.id)));
+      setAppPermWorkflowIds(new Set(workflows.filter(w => perms.includes(`app:workflow:${w.id}`)).map(w => w.id)));
+    } catch {
+      setAppPermPages([]);
+      setAppPermWorkflows([]);
+      setAppPermPageIds(new Set());
+      setAppPermWorkflowIds(new Set());
+    } finally {
+      setAppPermLoading(false);
+    }
+  };
+
+  const toggleAppPage = (pageId: number) => {
+    setAppPermPageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(pageId)) next.delete(pageId);
+      else next.add(pageId);
+      return next;
+    });
+  };
+
+  const toggleAppWorkflow = (wfId: number) => {
+    setAppPermWorkflowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(wfId)) next.delete(wfId);
+      else next.add(wfId);
+      return next;
+    });
+  };
+
+  const handleSaveAppPermissions = async () => {
+    if (!appPermRole) return;
+    setAppPermSaving(true);
+    setError('');
+    try {
+      const allPerms: string[] = [
+        ...Array.from(appPermPageIds).map(id => `app:page:${id}`),
+        ...Array.from(appPermWorkflowIds).map(id => `app:workflow:${id}`),
+      ];
+      await updateRolePermissions(appPermRole.id, allPerms);
+      setAppPermRole(null);
+      toast('权限已保存', 'success');
+    } catch {
+      setError('保存权限失败，请重试');
+    } finally {
+      setAppPermSaving(false);
+    }
+  };
+
   const openUsers = async (role: Role) => {
     setUserRole(role);
     setUserSearch('');
@@ -270,7 +409,6 @@ export default function RoleManagementPage() {
   }
 
   const platformRoles = roles.filter((r) => r.scope === 'PLATFORM');
-  const appRoles = roles.filter((r) => r.scope !== 'PLATFORM');
 
   const renderRoleCard = (role: Role) => (
     <div key={role.id} className="role-page__card">
@@ -298,6 +436,11 @@ export default function RoleManagementPage() {
               <Lock size={14} />
             </button>
           )}
+          {role.scope === 'APPLICATION' && (
+            <button className="role-page__action-btn" onClick={() => openAppPermissions(role)}>
+              <Lock size={14} />
+            </button>
+          )}
           {role.scope === 'PLATFORM' && (
             <button className="role-page__action-btn" onClick={() => openConceptPermissions(role)}>
               <Box size={14} />
@@ -308,7 +451,7 @@ export default function RoleManagementPage() {
             <Pencil size={14} />
           </button>
           )}
-          {canEditRole(role) && role.slug !== 'super_admin' && role.slug !== 'flow_tester' && (
+          {canEditRole(role) && role.slug !== 'super_admin' && (
             <button
               className="role-page__action-btn role-page__action-btn--danger"
               onClick={() => setDeleteConfirm(role)}
@@ -352,18 +495,26 @@ export default function RoleManagementPage() {
               </div>
             </div>
           )}
-          {appRoles.length > 0 && (
-            <div className="role-page__section">
-              <div className="role-page__section-header">
-                <Globe size={16} />
-                <span>应用角色</span>
-                <span className="role-page__section-count">{appRoles.length}</span>
+          {appRoles.length > 0 && appGroups.map((group) => {
+            const isExpanded = expandedApps.has(group.appId) || expandedApps.size === 0;
+            return (
+              <div key={group.appId} className="role-page__section">
+                <div
+                  className="role-page__section-header role-page__section-header--collapsible"
+                  onClick={() => toggleAppGroup(group.appId)}
+                >
+                  {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span>{group.appName}</span>
+                  <span className="role-page__section-count">{group.roles.length}</span>
+                </div>
+                {isExpanded && (
+                  <div className="role-page__grid">
+                    {group.roles.map(renderRoleCard)}
+                  </div>
+                )}
               </div>
-              <div className="role-page__grid">
-                {appRoles.map(renderRoleCard)}
-              </div>
-            </div>
-          )}
+            );
+          })}
         </>
       )}
       </div>
@@ -414,7 +565,10 @@ export default function RoleManagementPage() {
                       { value: 'PLATFORM', label: '平台级', desc: '所有应用共享' },
                       { value: 'APPLICATION', label: '应用级', desc: '仅限指定应用' },
                     ]}
-                    onChange={(value) => setForm((prev) => ({ ...prev, scope: value }))}
+                    onChange={(value) => {
+                      setForm((prev) => ({ ...prev, scope: value, applicationId: value === 'PLATFORM' ? undefined : prev.applicationId }));
+                      if (value === 'APPLICATION') loadApplications();
+                    }}
                   />
                 ) : (
                   <div className="role-page__scope-disabled">
@@ -423,6 +577,17 @@ export default function RoleManagementPage() {
                   </div>
                 )}
               </div>
+              {form.scope === 'APPLICATION' && (
+                <div className="role-page__form-group">
+                  <label>关联应用</label>
+                  <Select
+                    value={form.applicationId ? String(form.applicationId) : ''}
+                    options={applications.map(app => ({ value: String(app.id), label: app.name }))}
+                    onChange={(value) => setForm((prev) => ({ ...prev, applicationId: value ? Number(value) : undefined }))}
+                    placeholder="选择应用"
+                  />
+                </div>
+              )}
             </div>
             <div className="role-page__modal-footer">
               <button className="role-page__modal-cancel" onClick={() => setShowForm(false)}>
@@ -673,6 +838,140 @@ export default function RoleManagementPage() {
               </button>
               <button className="role-page__modal-save" onClick={handleSaveConceptPermissions} disabled={conceptPermSaving}>
                 {conceptPermSaving ? (
+                  <>
+                    <Loader2 size={14} className="role-page__spin" />
+                    保存中...
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} />
+                    保存权限
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {appPermRole && (
+        <div className="role-page__modal-backdrop" onClick={() => setAppPermRole(null)}>
+          <div className="role-page__modal role-page__modal--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="role-page__modal-header">
+              <h3>权限配置 — {appPermRole.name}</h3>
+              <button className="role-page__modal-close" onClick={() => setAppPermRole(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="role-page__modal-body">
+              {error && <div className="role-page__error">{error}</div>}
+              <div className="role-page__app-perm-tabs">
+                <button
+                  className={`role-page__app-perm-tab ${appPermTab === 'pages' ? 'active' : ''}`}
+                  onClick={() => setAppPermTab('pages')}
+                >
+                  <FileText size={14} />
+                  页面权限
+                </button>
+                <button
+                  className={`role-page__app-perm-tab ${appPermTab === 'workflows' ? 'active' : ''}`}
+                  onClick={() => setAppPermTab('workflows')}
+                >
+                  <GitBranch size={14} />
+                  流程发起权限
+                </button>
+              </div>
+              {appPermLoading ? (
+                <div className="role-page__loading" style={{ padding: '32px 0' }}>
+                  <Loader2 className="role-page__loading-icon" />
+                  <span>加载中...</span>
+                </div>
+              ) : appPermTab === 'pages' ? (
+                <>
+                  <div className="role-page__perm-list">
+                    {appPermPages.length === 0 ? (
+                      <div className="role-page__empty">该应用暂无页面</div>
+                    ) : (
+                      appPermPages.map((p) => (
+                        <label key={p.id} className="role-page__perm-item">
+                          <input
+                            type="checkbox"
+                            checked={appPermPageIds.has(p.id)}
+                            onChange={() => toggleAppPage(p.id)}
+                          />
+                          <span className="role-page__perm-item-body">
+                            <span className="role-page__perm-item-label">{p.name}</span>
+                            <span className="role-page__perm-item-desc">
+                              {p.isDefault ? '默认页面' : ''}
+                            </span>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  {appPermPages.length > 0 && (
+                    <div className="role-page__app-perm-actions">
+                      <button
+                        className="role-page__app-perm-action-btn"
+                        onClick={() => setAppPermPageIds(new Set(appPermPages.map((p) => p.id)))}
+                      >
+                        全选
+                      </button>
+                      <button
+                        className="role-page__app-perm-action-btn"
+                        onClick={() => setAppPermPageIds(new Set())}
+                      >
+                        全不选
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="role-page__perm-list">
+                    {appPermWorkflows.length === 0 ? (
+                      <div className="role-page__empty">该应用暂无已发布流程</div>
+                    ) : (
+                      appPermWorkflows.map((w) => (
+                        <label key={w.id} className="role-page__perm-item">
+                          <input
+                            type="checkbox"
+                            checked={appPermWorkflowIds.has(w.id)}
+                            onChange={() => toggleAppWorkflow(w.id)}
+                          />
+                          <span className="role-page__perm-item-body">
+                            <span className="role-page__perm-item-label">{w.name}</span>
+                            <span className="role-page__perm-item-desc">{w.description}</span>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  {appPermWorkflows.length > 0 && (
+                    <div className="role-page__app-perm-actions">
+                      <button
+                        className="role-page__app-perm-action-btn"
+                        onClick={() => setAppPermWorkflowIds(new Set(appPermWorkflows.map((w) => w.id)))}
+                      >
+                        全选
+                      </button>
+                      <button
+                        className="role-page__app-perm-action-btn"
+                        onClick={() => setAppPermWorkflowIds(new Set())}
+                      >
+                        全不选
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="role-page__modal-footer">
+              <button className="role-page__modal-cancel" onClick={() => setAppPermRole(null)}>
+                取消
+              </button>
+              <button className="role-page__modal-save" onClick={handleSaveAppPermissions} disabled={appPermSaving}>
+                {appPermSaving ? (
                   <>
                     <Loader2 size={14} className="role-page__spin" />
                     保存中...

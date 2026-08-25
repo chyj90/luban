@@ -1,8 +1,14 @@
 package com.luban.workflow.service;
 
+import com.luban.constant.TaskOperation;
+import com.luban.constant.WorkflowScope;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.entity.User;
+import com.luban.entity.UserDept;
+import com.luban.repository.UserRepository;
+import com.luban.repository.UserDeptRepository;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.workflow.entity.FormWorkflowBinding;
@@ -29,7 +35,8 @@ public class ProcessEngine {
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final FormDefinitionRepository formDefinitionRepository;
     private final FormWorkflowBindingRepository formWorkflowBindingRepository;
-    private final MemberRepository memberRepository;
+    private final UserRepository userRepository;
+    private final UserDeptRepository userDeptRepository;
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final DepartmentRepository departmentRepository;
@@ -66,16 +73,10 @@ public class ProcessEngine {
     @Transactional
     public WorkflowInstance startProcess(Long workflowDefinitionId, String formDataJson,
                                           Long initiatorId, String initiatorName) {
-        return startProcess(workflowDefinitionId, formDataJson, initiatorId, initiatorName, false);
-    }
-
-    @Transactional
-    public WorkflowInstance startProcess(Long workflowDefinitionId, String formDataJson,
-                                          Long initiatorId, String initiatorName, boolean isTest) {
         WorkflowDefinition definition = workflowDefinitionRepository.findById(workflowDefinitionId)
                 .orElseThrow(() -> new RuntimeException("流程定义不存在: " + workflowDefinitionId));
 
-        if (!isTest && !"PUBLISHED".equals(definition.getStatus())) {
+        if (!"PUBLISHED".equals(definition.getStatus())) {
             throw new RuntimeException("流程定义未发布，无法发起");
         }
 
@@ -84,7 +85,6 @@ public class ProcessEngine {
         instance.setApplicationId(definition.getApplicationId());
         instance.setWorkflowVersion(definition.getVersion());
         instance.setDefinitionVersion(definition.getVersion());
-        instance.setIsTest(isTest);
 
         Long bindingWorkflowId = "DRAFT".equals(definition.getStatus())
                 ? definition.getPublishedVersionId() : definition.getId();
@@ -110,7 +110,7 @@ public class ProcessEngine {
         workflowInstanceRepository.save(instance);
 
         recordHistory(instance.getId(), null, "START", "SUBMIT", initiatorId,
-                isTest ? "[测试] 发起流程" : "发起流程", null, null, null);
+                "发起流程", null, null, null);
 
         // 找到开始节点后的第一个节点，创建任务
         createTasksForNextNodes(definition, instance, "start", formDataJson);
@@ -131,6 +131,8 @@ public class ProcessEngine {
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
             throw new RuntimeException("任务已被处理");
         }
+
+        checkTaskAssignee(task, operatorId, TaskOperation.APPROVE);
 
         WorkflowInstance instance = workflowInstanceRepository.findById(task.getInstanceId())
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + task.getInstanceId()));
@@ -285,6 +287,8 @@ public class ProcessEngine {
         WorkflowTask task = workflowTaskRepository.findById(taskId)
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
 
+        checkTaskAssignee(task, operatorId, TaskOperation.REJECT);
+
         WorkflowInstance instance = workflowInstanceRepository.findById(task.getInstanceId())
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + task.getInstanceId()));
 
@@ -381,6 +385,8 @@ public class ProcessEngine {
             throw new RuntimeException("只能转办待处理的任务");
         }
 
+        checkTaskAssignee(task, operatorId, TaskOperation.TRANSFER);
+
         // 取消原任务
         task.setStatus("CANCELLED");
         task.setCompletedAt(LocalDateTime.now());
@@ -421,6 +427,8 @@ public class ProcessEngine {
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
             throw new RuntimeException("只能对待处理任务进行加签");
         }
+
+        checkTaskAssignee(task, operatorId, TaskOperation.ADD_SIGN);
 
         if ("BEFORE".equals(addSignType)) {
             // 前加签：加签人先审批，原审批人最后审批
@@ -481,6 +489,8 @@ public class ProcessEngine {
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
             throw new RuntimeException("只能委派待处理的任务");
         }
+
+        checkTaskAssignee(task, operatorId, TaskOperation.DELEGATE);
 
         // 原任务标记为委派
         task.setStatus("CANCELLED");
@@ -613,9 +623,9 @@ public class ProcessEngine {
     }
 
     private void autoEscalate(WorkflowTask task) {
-        // 查找处理人的直属上级
-        Member member = memberRepository.findById(task.getAssigneeId()).orElse(null);
-        if (member == null || member.getLeaderId() == null) return;
+        Long leaderId = userDeptRepository.findByUserIdAndIsPrimaryTrue(task.getAssigneeId())
+                .map(UserDept::getLeaderId).orElse(null);
+        if (leaderId == null) return;
 
         // 取消原任务
         task.setStatus("CANCELLED");
@@ -627,12 +637,12 @@ public class ProcessEngine {
         newTask.setInstanceId(task.getInstanceId());
         newTask.setApplicationId(task.getApplicationId());
         newTask.setNodeId(task.getNodeId());
-        newTask.setAssigneeId(member.getLeaderId());
+        newTask.setAssigneeId(leaderId);
         newTask.setAssigneeType("DELEGATE");
         newTask.setOriginalAssigneeId(task.getAssigneeId());
         newTask.setStatus("PENDING");
         newTask.setCollaborationMode("any_pass");
-        newTask.setAllAssigneeIds(objectMapper.createArrayNode().add(member.getLeaderId()).toString());
+        newTask.setAllAssigneeIds(objectMapper.createArrayNode().add(leaderId).toString());
         newTask.setDeadline(task.getDeadline());
         newTask.setStartedAt(LocalDateTime.now());
         workflowTaskRepository.save(newTask);
@@ -642,7 +652,7 @@ public class ProcessEngine {
                 "SLA超时自动升级至上级", task.getNodeId(), null,
                 objectMapper.createObjectNode()
                         .put("fromAssigneeId", task.getAssigneeId())
-                        .put("toAssigneeId", member.getLeaderId())
+                        .put("toAssigneeId", leaderId)
                         .put("type", "ESCALATE")
                         .toString());
     }
@@ -721,6 +731,9 @@ public class ProcessEngine {
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
             throw new RuntimeException("只能修改待处理任务的处理人");
         }
+
+        checkTaskAssignee(task, operatorId, TaskOperation.REASSIGN);
+
         Long oldAssigneeId = task.getAssigneeId();
         task.setAssigneeId(newAssigneeId);
         task.setOriginalAssigneeId(oldAssigneeId);
@@ -918,13 +931,17 @@ public class ProcessEngine {
         String approverType = (String) config.getOrDefault("approverType", "member");
         String collaborationMode = (String) config.getOrDefault("collaborationMode", "any_pass");
 
-        // 解析审批人列表
-        List<Long> assigneeIds = resolveAssignees(approverType, config, formData, instance.getInitiatorId());
+        // 获取流程定义，用于判断平台级/应用级流程
+        WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
+                .orElse(null);
+        WorkflowScope scope = definition != null ? definition.getScope() : WorkflowScope.APPLICATION;
+        Long defAppId = definition != null ? definition.getApplicationId() : null;
+
+        // 解析审批人列表：平台级流程不过滤 applicationId，应用级流程按 definition.applicationId 过滤
+        List<Long> assigneeIds = resolveAssignees(approverType, config, formData, instance.getInitiatorId(), scope, defAppId);
 
         if (assigneeIds.isEmpty()) {
             // 没有审批人，跳过该节点，继续找下一个
-            WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
-                    .orElse(null);
             if (definition != null) {
                 createTasksForNextNodes(definition, instance, nodeId, instance.getFormData());
             }
@@ -1047,7 +1064,8 @@ public class ProcessEngine {
      * 解析审批人列表
      */
     private List<Long> resolveAssignees(String approverType, Map<String, Object> config,
-                                         Map<String, Object> formData, Long initiatorId) {
+                                         Map<String, Object> formData, Long initiatorId,
+                                         WorkflowScope scope, Long defAppId) {
         switch (approverType) {
             case "member": {
                 @SuppressWarnings("unchecked")
@@ -1058,11 +1076,14 @@ public class ProcessEngine {
             case "role": {
                 @SuppressWarnings("unchecked")
                 List<Object> roleSlugs = (List<Object>) config.getOrDefault("roleSlugs", Collections.emptyList());
+                boolean isPlatform = WorkflowScope.PLATFORM == scope;
                 if (roleSlugs.isEmpty()) {
                     @SuppressWarnings("unchecked")
                     List<Object> roleIds = (List<Object>) config.getOrDefault("roleIds", Collections.emptyList());
                     return roleIds.stream()
                             .flatMap(id -> roleRepository.findById(Long.valueOf(id.toString()))
+                                    .filter(role -> isPlatform || role.getApplicationId() == null
+                                            || role.getApplicationId().equals(defAppId))
                                     .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
                                             .map(RoleUser::getUserId)
                                             .collect(Collectors.toList()))
@@ -1070,17 +1091,26 @@ public class ProcessEngine {
                             .collect(Collectors.toList());
                 }
                 return roleSlugs.stream()
-                        .flatMap(slug -> roleRepository.findBySlug(slug.toString())
-                                .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
-                                        .map(RoleUser::getUserId)
-                                        .collect(Collectors.toList()))
-                                .orElse(Collections.emptyList()).stream())
+                        .flatMap(slug -> {
+                            if (!isPlatform && defAppId != null) {
+                                return roleRepository.findBySlugAndApplicationId(slug.toString(), defAppId)
+                                        .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
+                                                .map(RoleUser::getUserId)
+                                                .collect(Collectors.toList()))
+                                        .orElse(Collections.emptyList()).stream();
+                            }
+                            return roleRepository.findBySlug(slug.toString())
+                                    .map(role -> roleUserRepository.findByRoleId(role.getId()).stream()
+                                            .map(RoleUser::getUserId)
+                                            .collect(Collectors.toList()))
+                                    .orElse(Collections.emptyList()).stream();
+                        })
                         .collect(Collectors.toList());
             }
             case "department_head": {
-                Member member = memberRepository.findById(initiatorId).orElse(null);
-                if (member != null && member.getDepartmentId() != null) {
-                    Department dept = departmentRepository.findById(member.getDepartmentId())
+                UserDept ud = userDeptRepository.findByUserIdAndIsPrimaryTrue(initiatorId).orElse(null);
+                if (ud != null && ud.getDepartmentId() != null) {
+                    Department dept = departmentRepository.findById(ud.getDepartmentId())
                             .orElse(null);
                     if (dept != null && dept.getManagerId() != null) {
                         return Collections.singletonList(dept.getManagerId());
@@ -1089,9 +1119,9 @@ public class ProcessEngine {
                 return Collections.emptyList();
             }
             case "leader": {
-                Member member = memberRepository.findById(initiatorId).orElse(null);
-                if (member != null && member.getLeaderId() != null) {
-                    return Collections.singletonList(member.getLeaderId());
+                UserDept ud = userDeptRepository.findByUserIdAndIsPrimaryTrue(initiatorId).orElse(null);
+                if (ud != null && ud.getLeaderId() != null) {
+                    return Collections.singletonList(ud.getLeaderId());
                 }
                 return Collections.emptyList();
             }
@@ -1124,12 +1154,11 @@ public class ProcessEngine {
                     engine.put("formData", formData);
                     engine.put("initiatorId", initiatorId);
                     if (initiatorId != null) {
-                        memberRepository.findById(initiatorId).ifPresent(m -> {
-                            engine.put("initiator", m);
+                        userRepository.findById(initiatorId).ifPresent(u -> {
+                            engine.put("initiator", u);
                         });
                     }
-                    // 注入 memberRepository 供脚本调用
-                    engine.put("memberRepository", memberRepository);
+                    engine.put("userRepository", userRepository);
                     engine.put("roleRepository", roleRepository);
 
                     Object result = engine.eval(script);
@@ -1324,6 +1353,23 @@ public class ProcessEngine {
         } catch (Exception e) {
             return new HashSet<>();
         }
+    }
+
+    private void checkTaskAssignee(WorkflowTask task, Long operatorId, TaskOperation operation) {
+        Set<Long> allAssignees = parseIdSet(task.getAllAssigneeIds());
+
+        if (allAssignees.isEmpty()) {
+            if (task.getAssigneeId() != null && task.getAssigneeId().equals(operatorId)) {
+                return;
+            }
+            throw new RuntimeException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
+        }
+
+        if (allAssignees.contains(operatorId)) {
+            return;
+        }
+
+        throw new RuntimeException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
     }
 
     private List<Long> parseIdList(String json) {

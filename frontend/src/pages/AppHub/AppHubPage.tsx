@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Key, Link, Unlink } from 'lucide-react';
+import { LayoutGrid, Key, Link, Unlink, Plus, ArrowRight, Clock, Layers, Globe } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import { useApplicationStore } from '@/stores/applicationStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -11,7 +11,26 @@ import { listApiKeys, listKeysByApplication, bindApplicationToKey, unbindApplica
 import type { Application } from '@/types/application';
 import './AppHubPage.css';
 
-const APP_COLORS = ['#6B8F71', '#E07B39', '#4A90D9', '#9B59B6', '#E74C3C', '#2ECC71', '#1ABC9C', '#3498DB'];
+const APP_COLORS = [
+  '#6B8F71', '#E07B39', '#4A90D9', '#9B59B6',
+  '#E74C3C', '#2ECC71', '#1ABC9C', '#3498DB',
+  '#F39C12', '#E91E63', '#00BCD4', '#8BC34A',
+];
+
+function formatTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+
+  if (mins < 1) return '刚刚';
+  if (mins < 60) return `${mins} 分钟前`;
+  if (hours < 24) return `${hours} 小时前`;
+  if (days < 30) return `${days} 天前`;
+  return d.toLocaleDateString('zh-CN');
+}
 
 export function AppHubPage() {
   const navigate = useNavigate();
@@ -19,6 +38,7 @@ export function AppHubPage() {
   const { applications, loading, fetchApplications, addApplication, removeApplication } = useApplicationStore();
   const setGlobalLoading = useLoadingStore((s) => s.setLoading);
   const [newAppName, setNewAppName] = useState('');
+  const [showCreateApp, setShowCreateApp] = useState(false);
   const [keyModalAppId, setKeyModalAppId] = useState<number | null>(null);
   const [keyModalAppName, setKeyModalAppName] = useState('');
   const [boundKeys, setBoundKeys] = useState<{ id: number; name: string }[]>([]);
@@ -28,14 +48,13 @@ export function AppHubPage() {
   useEffect(() => {
     setGlobalLoading(loading);
   }, [loading, setGlobalLoading]);
-  const [showCreateApp, setShowCreateApp] = useState(false);
 
   useEffect(() => {
     fetchApplications();
   }, [fetchApplications]);
 
   const myApps = applications.filter((app) => app.createdBy === user?.id);
-  const otherApps = applications.filter((app) => app.createdBy !== user?.id);
+  const hasAnyApps = myApps.length > 0;
 
   const handleCreateApp = async () => {
     if (!newAppName.trim()) return;
@@ -106,28 +125,38 @@ export function AppHubPage() {
     }
   };
 
-  const handleEnterApp = (app: Application) => {
-    if (app.createdBy === user?.id) {
-      navigate(`/apps/${app.id}`);
-    } else {
-      navigate(`/apps/${app.id}`);
-    }
-  };
-
   const getAppColor = (appId: number) => {
     return APP_COLORS[appId % APP_COLORS.length];
   };
+
+  const renderCreateBar = () => (
+    <div className="apphub-create-bar">
+      <input
+        value={newAppName}
+        onChange={(e) => setNewAppName(e.target.value)}
+        placeholder="输入应用名称，按 Enter 创建"
+        autoFocus
+        onKeyDown={(e) => e.key === 'Enter' && handleCreateApp()}
+      />
+      <button className="apphub-btn-cancel" onClick={() => { setShowCreateApp(false); setNewAppName(''); }}>
+        取消
+      </button>
+      <button className="apphub-btn-confirm" onClick={handleCreateApp}>
+        创建应用
+      </button>
+    </div>
+  );
 
   const renderAppCard = (app: Application, isOwner: boolean) => (
     <div
       key={app.id}
       className="apphub-card"
-      onClick={() => handleEnterApp(app)}
+      onClick={() => navigate(`/apps/${app.id}`)}
     >
       {isOwner && (
         <>
           <button
-            className="apphub-card-delete"
+            className="apphub-card-action apphub-card-delete"
             onClick={(e) => handleDeleteApp(e, app.id, app.name)}
             title="删除应用"
           >
@@ -137,7 +166,7 @@ export function AppHubPage() {
             </svg>
           </button>
           <button
-            className="apphub-card-key-btn"
+            className="apphub-card-action apphub-card-key"
             onClick={(e) => openKeyModal(e, app)}
             title="管理 KEY"
           >
@@ -145,26 +174,50 @@ export function AppHubPage() {
           </button>
         </>
       )}
-      <div
-        className="apphub-card-icon"
-        style={{ background: getAppColor(app.id) }}
-      >
-        {app.icon || app.name.charAt(0).toUpperCase()}
-      </div>
-      <div className="apphub-card-info">
-        <div className="apphub-card-name">{app.name}</div>
-        <div className="apphub-card-meta">
-          {app.slug && <span className="apphub-card-slug">{app.slug}</span>}
+
+      <div className="apphub-card-body">
+        <div
+          className="apphub-card-icon"
+          style={{ background: getAppColor(app.id) }}
+        >
+          {app.icon || app.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="apphub-card-info">
+          <div className="apphub-card-name">{app.name}</div>
+          <div className="apphub-card-meta">
+            {app.slug && (
+              <span className="apphub-card-meta-item">
+                <Globe size={12} />
+                {app.slug}
+              </span>
+            )}
+            {app.publishedWorkflowCount != null && app.publishedWorkflowCount > 0 && (
+              <span className="apphub-card-meta-item">
+                <Layers size={12} />
+                {app.publishedWorkflowCount} 个流程
+              </span>
+            )}
+          </div>
         </div>
       </div>
-      {!isOwner && (
-        <button
-          className="apphub-btn apphub-btn-enter"
-          onClick={(e) => { e.stopPropagation(); navigate(`/apps/${app.id}`); }}
-        >
-          进入
-        </button>
-      )}
+
+      <div className="apphub-card-footer">
+        <div className="apphub-card-footer-left">
+          <Clock size={12} />
+          <span>{formatTime(app.createdAt)}</span>
+        </div>
+        <div className="apphub-card-footer-right">
+          {!isOwner && (
+            <button
+              className="apphub-btn-enter"
+              onClick={(e) => { e.stopPropagation(); navigate(`/apps/${app.id}`); }}
+            >
+              进入
+              <ArrowRight size={12} />
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 
@@ -177,67 +230,65 @@ export function AppHubPage() {
         title="应用开发"
         subtitle="创建和管理应用，构建工作流与表单，实现业务自动化"
         actions={
-          <button className="apphub-create-btn" onClick={() => setShowCreateApp(true)}>
-            + 新建应用
-          </button>
+          !showCreateApp && (
+            <button className="apphub-hero-btn" onClick={() => setShowCreateApp(true)} style={{ padding: '8px 20px', fontSize: '13px' }}>
+              <Plus size={16} />
+              新建应用
+            </button>
+          )
         }
       />
+
       <div className="apphub-content">
-        {myApps.length > 0 && (
-          <section className="apphub-section">
-            <div className="apphub-section-header">
-              <h2 className="apphub-section-title">我的应用</h2>
+        {!hasAnyApps && !showCreateApp ? (
+          <div className="apphub-hero">
+            <div className="apphub-hero-icon">
+              <LayoutGrid size={36} color="#fff" />
             </div>
-            {showCreateApp && (
-              <div className="apphub-create-form">
-                <input
-                  value={newAppName}
-                  onChange={(e) => setNewAppName(e.target.value)}
-                  placeholder="输入应用名称"
-                  autoFocus
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateApp()}
-                />
-                <button className="apphub-btn-confirm" onClick={handleCreateApp}>创建</button>
-                <button className="apphub-btn-cancel" onClick={() => { setShowCreateApp(false); setNewAppName(''); }}>取消</button>
-              </div>
+            <h2>开始构建你的第一个应用</h2>
+            <p>
+              应用是业务功能的集合，你可以在这里创建页面、设计工作流、
+              配置表单，将复杂的业务流程转化为简单的操作体验。
+            </p>
+            <button className="apphub-hero-btn" onClick={() => setShowCreateApp(true)}>
+              <Plus size={20} />
+              创建第一个应用
+            </button>
+          </div>
+        ) : (
+          <>
+            {myApps.length > 0 && (
+              <section className="apphub-section">
+                <div className="apphub-section-header">
+                  <div className="apphub-section-icon my">
+                    <LayoutGrid size={18} />
+                  </div>
+                  <h2 className="apphub-section-title">我的应用</h2>
+                  <span className="apphub-section-count">{myApps.length}</span>
+                </div>
+                {showCreateApp && renderCreateBar()}
+                <div className="apphub-grid">
+                  {myApps.map((app) => renderAppCard(app, true))}
+                </div>
+              </section>
             )}
-            <div className="apphub-grid">
-              {myApps.map((app) => renderAppCard(app, true))}
-            </div>
-          </section>
-        )}
 
-        {myApps.length === 0 && (
-          <section className="apphub-section">
-            <div className="apphub-section-header">
-              <h2 className="apphub-section-title">开始使用</h2>
-            </div>
-            {showCreateApp && (
-              <div className="apphub-create-form">
-                <input
-                  value={newAppName}
-                  onChange={(e) => setNewAppName(e.target.value)}
-                  placeholder="输入应用名称"
-                  autoFocus
-                  onKeyDown={(e) => e.key === 'Enter' && handleCreateApp()}
-                />
-                <button className="apphub-btn-confirm" onClick={handleCreateApp}>创建</button>
-                <button className="apphub-btn-cancel" onClick={() => { setShowCreateApp(false); setNewAppName(''); }}>取消</button>
-              </div>
+            {myApps.length === 0 && (
+              <section className="apphub-section">
+                <div className="apphub-section-header">
+                  <div className="apphub-section-icon my">
+                    <LayoutGrid size={18} />
+                  </div>
+                  <h2 className="apphub-section-title">我的应用</h2>
+                  <span className="apphub-section-count">0</span>
+                </div>
+                {showCreateApp && renderCreateBar()}
+                <div className="apphub-other-empty">
+                  <p>你还没有创建应用，点击上方按钮开始</p>
+                </div>
+              </section>
             )}
-            <p className="apphub-empty-hint">创建你的第一个应用，开始搭建工作流</p>
-          </section>
-        )}
-
-        {otherApps.length > 0 && (
-          <section className="apphub-section">
-            <div className="apphub-section-header">
-              <h2 className="apphub-section-title">可用应用</h2>
-            </div>
-            <div className="apphub-grid">
-              {otherApps.map((app) => renderAppCard(app, false))}
-            </div>
-          </section>
+          </>
         )}
       </div>
 

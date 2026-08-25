@@ -183,22 +183,7 @@ public class AgentController {
         });
     }
 
-    @PostMapping("/tool-call")
-    public ResponseEntity<Map<String, Object>> proxyToolCall(@RequestBody Map<String, Object> params) {
-        String toolName = (String) params.get("tool");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> arguments = (Map<String, Object>) params.getOrDefault("arguments", Map.of());
-
-        if (toolName == null || toolName.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "tool name is required"));
-        }
-
-        String result = agentService.executeToolByName(toolName, arguments);
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("tool", toolName);
-        response.put("result", result);
-        return ResponseEntity.ok(response);
-    }
+    
 
     @PostMapping("/chat/clear")
     public ResponseEntity<Map<String, Object>> clearSession(@RequestBody Map<String, Object> params) {

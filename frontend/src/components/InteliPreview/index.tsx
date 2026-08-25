@@ -10,16 +10,18 @@ interface InteliPreviewProps {
   userInfo?: { id: number; account: string; email: string } | null;
   allPages?: Array<{ id: number; name: string }>;
   onNavigate?: (pageId: number) => void;
+  applicationId?: number;
+  appTools?: Array<{ id: number; name: string }>;
 }
 
-export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigate }: InteliPreviewProps) {
+export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigate, applicationId, appTools }: InteliPreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shellReadyRef = useRef(false);
   const shellBuiltRef = useRef(false);
   const lastQueryNamesRef = useRef<string[]>([]);
   const codePageRef = useRef(codePage);
   codePageRef.current = codePage;
-  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, allPages, onNavigate);
+  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, allPages, onNavigate, applicationId, appTools);
 
   const queryNames = useMemo(() => queries.map((q) => q.name), [queries]);
 

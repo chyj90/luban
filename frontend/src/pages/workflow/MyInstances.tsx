@@ -19,8 +19,8 @@ export default function MyInstances({ _embedded, onNavigate }: MyInstancesProps 
   const goTo = (view: WorkflowView) => {
     if (onNavigate) {
       onNavigate(view);
-    } else if (view.view === 'instance-detail' && view.appId != null) {
-      navigate(`/apps/${view.appId}/instances/${view.instanceId}`);
+    } else if (view.view === 'instance-detail') {
+      navigate(`/work/instances/${view.instanceId}`);
     }
   };
 
@@ -84,7 +84,7 @@ export default function MyInstances({ _embedded, onNavigate }: MyInstancesProps 
                   return (
                     <tr key={inst.id}>
                       <td>
-                        <div className={styles.instanceName}>流程 #{inst.workflowId}</div>
+                        <div className={styles.instanceName}>{inst.workflowName || `流程 #${inst.workflowId}`}</div>
                       </td>
                       <td className={styles.cellCenter}>
                         {inst.currentNodes || '-'}

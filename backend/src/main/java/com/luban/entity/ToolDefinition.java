@@ -47,6 +47,9 @@ public class ToolDefinition {
     @Column(name = "group_id", nullable = false)
     private Long groupId;
 
+    @Column(nullable = false, length = 20)
+    private String scope;
+
     @Column(name = "created_by")
     private Long createdBy;
 
@@ -61,6 +64,7 @@ public class ToolDefinition {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
         if (status == null) status = "ENABLED";
+        if (scope == null) scope = "PLATFORM";
     }
 
     @PreUpdate

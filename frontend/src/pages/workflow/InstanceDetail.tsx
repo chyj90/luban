@@ -224,10 +224,13 @@ export default function InstanceDetail({ _embedded, instanceId: propInstanceId, 
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>审批历史</h2>
         <div className={styles.timeline}>
+        {history.length === 0 && instance.pendingTasks.length === 0 && (
+            <div className={styles.emptyHistory}>暂无审批记录</div>
+          )}
         {history.map((item, index) => (
           <div key={item.id} className={styles.timelineItem}>
             <div className={styles.timelineDot} />
-            {index < history.length - 1 && <div className={styles.timelineLine} />}
+            {(index < history.length - 1 || instance.pendingTasks.length > 0) && <div className={styles.timelineLine} />}
             <div className={styles.timelineContent}>
               <div className={styles.timelineHeader}>
                 <span className={styles.timelineOperator}>{item.operatorName || `操作人 #${item.operatorId}`}</span>
@@ -249,9 +252,25 @@ export default function InstanceDetail({ _embedded, instanceId: propInstanceId, 
             </div>
           </div>
         ))}
-        {history.length === 0 && (
-            <div className={styles.emptyHistory}>暂无审批记录</div>
-          )}
+        {instance.pendingTasks.map((task, idx) => (
+          <div key={`pending-${task.nodeId}`} className={styles.timelineItem}>
+            <div className={`${styles.timelineDot} ${styles.timelineDotPending}`} />
+            {idx < instance.pendingTasks.length - 1 && <div className={styles.timelineLine} />}
+            <div className={styles.timelineContent}>
+              <div className={styles.timelineHeader}>
+                <span className={styles.timelineOperator}>
+                  {task.assigneeName || `用户 #${task.assigneeId}`}
+                </span>
+                <span className={`${styles.timelineAction} ${styles.timelineActionPending}`}>
+                  待审批
+                </span>
+              </div>
+              <div className={styles.timelineTarget}>
+                当前节点: {task.nodeName || task.nodeId}
+              </div>
+            </div>
+          </div>
+        ))}
         </div>
       </div>
     </div>

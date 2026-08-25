@@ -40,12 +40,49 @@
 }
 
 .api-form {
-  padding: 10px 12px;
+  padding: 0;
   border-bottom: 1px solid #e8edf3;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   flex-shrink: 0;
+}
+
+.api-form-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.api-form-tab {
+  padding: 6px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font-size: 11px;
+  color: #8c9cab;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.api-form-tab:hover {
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+  background: none;
+}
+
+.api-form-tab.active {
+  color: #1677ff;
+  border-bottom-color: #1677ff;
+}
+
+.api-form-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .api-form-row {
@@ -91,9 +128,157 @@
   border-color: #1677ff;
 }
 
+.api-form-content-type {
+  padding: 5px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #fff;
+  color: #333;
+}
+
+.api-form-body-input {
+  padding: 6px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: #333;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.api-form-body-input:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+/* Key-Value pairs */
+.api-kv-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-kv-label {
+  font-size: 11px;
+  color: #8c9cab;
+  font-weight: 500;
+  flex: 1;
+}
+
+.api-kv-add {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 4px;
+  background: none;
+  color: #1677ff;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.api-kv-add:hover {
+  background: #e6f4ff;
+  border-style: solid;
+}
+
+.api-kv-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.api-kv-input {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #333;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 0;
+}
+
+.api-kv-input:focus {
+  outline: none;
+  border-color: #1677ff;
+}
+
+.api-kv-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #999;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.api-kv-remove:hover {
+  background: #fff1f0;
+  color: #ff4d4f;
+}
+
+.api-kv-empty {
+  font-size: 11px;
+  color: #ccc;
+  text-align: center;
+  padding: 8px 0;
+}
+
 .api-form-actions {
   display: flex;
   gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid #e8edf3;
+}
+
+.api-form-hint {
+  margin: 4px 12px 0;
+  padding: 10px 12px;
+  background: #f0f5ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 6px;
+}
+
+.api-form-hint-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1677ff;
+  margin-bottom: 6px;
+}
+
+.api-form-hint-text {
+  font-size: 11px;
+  color: #5a6a7e;
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+
+.api-form-hint-text:last-child {
+  margin-bottom: 0;
+}
+
+.api-form-hint-text code {
+  padding: 1px 5px;
+  background: #e6f4ff;
+  border: 1px solid #bae0ff;
+  border-radius: 3px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #1677ff;
 }
 
 .api-btn {
@@ -156,6 +341,22 @@
   margin-bottom: 6px;
   background: #fff;
   overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.api-card:hover {
+  border-color: #cbd5e1;
+}
+
+.api-card--selected {
+  border-color: #1677ff;
+  background: #e6f4ff;
+  box-shadow: 0 0 0 1px #1677ff;
+}
+
+.api-card--selected:hover {
+  border-color: #1677ff;
 }
 
 .api-card-header {
@@ -281,7 +482,7 @@
   color: #555;
 }
 
-.api-detail-code {
+.api-panel .api-detail-code {
   margin: 2px 0 0;
   padding: 6px 8px;
   background: #f5f5f5;

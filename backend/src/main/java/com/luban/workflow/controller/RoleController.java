@@ -3,7 +3,9 @@ package com.luban.workflow.controller;
 import com.luban.annotation.RequirePermission;
 import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
+import com.luban.entity.Application;
 import com.luban.entity.User;
+import com.luban.repository.ApplicationRepository;
 import com.luban.repository.UserRepository;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
@@ -26,12 +28,12 @@ public class RoleController {
     private final RolePermissionRepository rolePermissionRepository;
     private final RoleUserRepository roleUserRepository;
     private final UserRepository userRepository;
+    private final ApplicationRepository applicationRepository;
     private final RoleConceptPermissionService roleConceptPermissionService;
 
     private static final String SUPER_ADMIN_SLUG = "super_admin";
-    private static final String FLOW_TESTER_SLUG = "flow_tester";
     private static final String USER_SLUG = "user";
-    private static final Set<String> RESERVED_SLUGS = Set.of(SUPER_ADMIN_SLUG, FLOW_TESTER_SLUG, USER_SLUG);
+    private static final Set<String> RESERVED_SLUGS = Set.of(SUPER_ADMIN_SLUG, USER_SLUG);
 
     private boolean isSuperAdmin(User user) {
         List<RoleUser> roleUsers = roleUserRepository.findByUserId(user.getId());
@@ -41,7 +43,7 @@ public class RoleController {
     }
 
     @GetMapping
-    public ApiResponse<List<Role>> list(@AuthenticationPrincipal User user) {
+    public ApiResponse<List<Map<String, Object>>> list(@AuthenticationPrincipal User user) {
         List<Role> roles;
         if (isSuperAdmin(user)) {
             List<Role> platformRoles = roleRepository.findByScope("PLATFORM");
@@ -51,7 +53,37 @@ public class RoleController {
         } else {
             roles = roleRepository.findByCreatedByAndScope(user.getId(), "APPLICATION");
         }
-        return ApiResponse.ok(roles);
+
+        Set<Long> appIds = roles.stream()
+                .map(Role::getApplicationId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, String> appNameMap = new HashMap<>();
+        if (!appIds.isEmpty()) {
+            List<Application> apps = applicationRepository.findAllById(appIds);
+            for (Application app : apps) {
+                appNameMap.put(app.getId(), app.getName());
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Role role : roles) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("id", role.getId());
+            map.put("name", role.getName());
+            map.put("slug", role.getSlug());
+            map.put("description", role.getDescription());
+            map.put("applicationId", role.getApplicationId());
+            map.put("scope", role.getScope());
+            map.put("createdBy", role.getCreatedBy());
+            map.put("createdAt", role.getCreatedAt());
+            map.put("updatedAt", role.getUpdatedAt());
+            if (role.getApplicationId() != null) {
+                map.put("applicationName", appNameMap.getOrDefault(role.getApplicationId(), ""));
+            }
+            result.add(map);
+        }
+        return ApiResponse.ok(result);
     }
 
     @GetMapping("/{id}")
@@ -111,7 +143,7 @@ public class RoleController {
     public ApiResponse<Void> delete(@PathVariable Long id, @AuthenticationPrincipal User user) {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
-        if (SUPER_ADMIN_SLUG.equals(role.getSlug()) || FLOW_TESTER_SLUG.equals(role.getSlug())) {
+        if (SUPER_ADMIN_SLUG.equals(role.getSlug())) {
             throw new RuntimeException("系统内置角色不可删除");
         }
         checkOwnership(role, user);
@@ -127,9 +159,6 @@ public class RoleController {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
         checkOwnership(role, user);
-        if ("APPLICATION".equals(role.getScope())) {
-            throw new RuntimeException("应用级角色不支持配置权限");
-        }
         List<String> perms = rolePermissionRepository.findByRoleId(id)
                 .stream()
                 .map(RolePermission::getPermission)
@@ -144,9 +173,6 @@ public class RoleController {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
         checkOwnership(role, user);
-        if ("APPLICATION".equals(role.getScope())) {
-            throw new RuntimeException("应用级角色不支持配置权限");
-        }
         List<String> perms = body.get("permissions");
         rolePermissionRepository.deleteByRoleId(id);
         rolePermissionRepository.flush();
@@ -178,18 +204,6 @@ public class RoleController {
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
         checkOwnership(role, user);
         List<Long> userIds = body.get("userIds");
-
-        if (FLOW_TESTER_SLUG.equals(role.getSlug())) {
-            if (userIds != null) {
-                for (Long uid : userIds) {
-                    roleUserRepository.deleteByUserId(uid);
-                    userRepository.findById(uid).ifPresent(u -> {
-                        u.setPassword(null);
-                        userRepository.save(u);
-                    });
-                }
-            }
-        }
 
         roleUserRepository.deleteByRoleId(id);
         roleUserRepository.flush();

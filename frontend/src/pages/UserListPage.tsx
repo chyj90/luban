@@ -6,7 +6,7 @@ import Select from '@/components/Select';
 import DataTable from '@/components/DataTable';
 import type { Column } from '@/components/DataTable';
 import type { User, Role, Department } from '@/types/user';
-import { listUsers, createUserFromMember, updateUserRole, updateMember, listRoles, listDepartments, downloadUserTemplate, importUsers } from '@/api/user';
+import { listUsers, updateUserRole, updateUserDepartment, listRoles, listDepartments, downloadUserTemplate, importUsers } from '@/api/user';
 import { toast } from '@/stores/toastStore';
 import './UserListPage.css';
 
@@ -118,11 +118,6 @@ export default function UserListPage() {
 
   type DeptOption = { value: string; label: string; children: DeptOption[] };
 
-  const flowTesterId = useMemo(() => {
-    const r = roles.find((r) => r.slug === 'flow_tester');
-    return r ? r.id : null;
-  }, [roles]);
-
   const deptTreeOptions = useMemo(() => {
     const build = (parentId: number | null): DeptOption[] => {
       const children = departments.filter((d) => (d.parentId ?? null) === parentId);
@@ -139,7 +134,7 @@ export default function UserListPage() {
     setCreateMenuOpen(null);
     setCreatingIds((prev) => new Set(prev).add(user.id));
     try {
-      await createUserFromMember(user.id, userType);
+      await updateUserRole(user.id, userType === 'test' ? [flowTesterId!] : []);
       toast.success(userType === 'test' ? '测试账号创建成功' : '账号创建成功');
       await fetchData(page, pageSize, debouncedSearch, accountFilter);
     } catch {
@@ -170,21 +165,14 @@ export default function UserListPage() {
     if (!editingUser) return;
     setSaving(true);
     try {
-      await updateMember(editingUser.id, {
-        name: editForm.name,
-        email: editForm.email,
-        mobile: editForm.mobile,
-        position: editForm.position,
-        employeeNo: editForm.employeeNo,
-        departmentId: editForm.deptId,
-      });
-      if (editingUser.userId) {
-        const oldIds = editingUser.roleIds ? editingUser.roleIds.split(',').map(Number) : [];
-        const newIds = editForm.roleIds.sort();
-        const oldSorted = [...oldIds].sort();
-        if (JSON.stringify(newIds) !== JSON.stringify(oldSorted)) {
-          await updateUserRole(editingUser.userId, newIds);
-        }
+      if (editForm.deptId !== editingUser.deptId) {
+        await updateUserDepartment(editingUser.id, editForm.deptId!);
+      }
+      const oldIds = editingUser.roleIds ? editingUser.roleIds.split(',').map(Number) : [];
+      const newIds = editForm.roleIds.sort();
+      const oldSorted = [...oldIds].sort();
+      if (JSON.stringify(newIds) !== JSON.stringify(oldSorted)) {
+        await updateUserRole(editingUser.id, newIds);
       }
       setEditingUser(null);
       toast.success('用户信息已更新');
@@ -551,31 +539,21 @@ export default function UserListPage() {
                   <div className="user-list__form-group">
                     <label><Shield size={14} />角色</label>
                     {(() => {
-                      const isFlowTester = editForm.roleIds.includes(flowTesterId!);
-                      const wasFlowTester = editingUser.roleIds ? editingUser.roleIds.split(',').map(Number).includes(flowTesterId!) : false;
                       const platformRoles = roles.filter(r => r.scope === 'PLATFORM');
                       return (
                         <div className="user-list__role-checkboxes">
                           {platformRoles.map((r) => {
-                            const isFlowTesterRole = r.slug === 'flow_tester';
                             const checked = editForm.roleIds.includes(r.id);
-                            const disabled = wasFlowTester
-                              || (isFlowTesterRole && isFlowTester && !checked)
-                              || (!isFlowTesterRole && isFlowTester);
                             return (
                               <label
                                 key={r.id}
-                                className={`user-list__role-checkbox ${disabled ? 'user-list__role-checkbox--disabled' : ''}`}
+                                className="user-list__role-checkbox"
                               >
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  disabled={disabled}
                                   onChange={() => {
                                     setEditForm((prev) => {
-                                      if (isFlowTesterRole) {
-                                        return { ...prev, roleIds: checked ? [] : [r.id] };
-                                      }
                                       const next = checked
                                         ? prev.roleIds.filter(id => id !== r.id)
                                         : [...prev.roleIds, r.id];

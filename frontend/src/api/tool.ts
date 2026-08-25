@@ -218,3 +218,29 @@ export function listApplicationTools(applicationId: number) {
 export function listApplicationDatasources(applicationId: number) {
   return get<unknown[]>(`/api-keys/application/${applicationId}/datasources`);
 }
+
+// Application tool CRUD
+export function listAppTools(applicationId: number) {
+  return get<unknown[]>(`/application-tools/${applicationId}`);
+}
+
+export function createAppTool(applicationId: number, data: Record<string, unknown>) {
+  return post<unknown>(`/application-tools/${applicationId}`, data);
+}
+
+export function updateAppTool(applicationId: number, id: number, data: Record<string, unknown>) {
+  return put<unknown>(`/application-tools/${applicationId}/${id}`, data);
+}
+
+export function deleteAppTool(applicationId: number, id: number) {
+  return del<void>(`/application-tools/${applicationId}/${id}`);
+}
+
+export function runAppTool(applicationId: number, id: number, params: Record<string, unknown>) {
+  return post<{
+    status: number;
+    headers: Record<string, string[]>;
+    elapsed: number;
+    body: unknown;
+  }>(`/application-tools/${applicationId}/${id}/run`, { params });
+}

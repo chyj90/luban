@@ -1,0 +1,58 @@
+.gateLoading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+
+.gateSpinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e8edf3;
+  border-top-color: #1677ff;
+  border-radius: 50%;
+  animation: gateSpin 0.8s linear infinite;
+}
+
+@keyframes gateSpin {
+  to { transform: rotate(360deg); }
+}
+
+.gateForbidden {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 12px;
+}
+
+.gateCode {
+  font-size: 64px;
+  font-weight: 700;
+  color: #8c9cab;
+  margin: 0;
+}
+
+.gateMessage {
+  font-size: 16px;
+  color: #5a6b7a;
+  margin: 0 0 8px;
+}
+
+.gateBackBtn {
+  padding: 6px 24px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+  color: #2c3e50;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.gateBackBtn:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+  background: #fff;
+}

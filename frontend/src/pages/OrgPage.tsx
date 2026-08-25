@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Building2, Plus, Pencil, Trash2, X, Users, ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import type { Department, User } from '@/types/user';
-import type { Member } from '@/types/workflow';
 import { listDepartments, createDepartment, updateDepartment, deleteDepartment, listUsers, listDepartmentMembers } from '@/api/user';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
@@ -17,7 +16,7 @@ export default function OrgPage() {
   const [form, setForm] = useState({ name: '', managerId: null as number | null, parentId: null as number | null });
   const [saving, setSaving] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [deptMembers, setDeptMembers] = useState<Record<number, Member[]>>({});
+  const [deptMembers, setDeptMembers] = useState<Record<number, User[]>>({});
   const [loadingMembers, setLoadingMembers] = useState<Set<number>>(new Set());
   const fetchingMembersRef = useRef<Set<number>>(new Set());
 
@@ -66,7 +65,7 @@ export default function OrgPage() {
     setLoadingMembers((prev) => new Set(prev).add(deptId));
     try {
       const res = await listDepartmentMembers(deptId);
-      setDeptMembers((prev) => ({ ...prev, [deptId]: res.data as Member[] }));
+      setDeptMembers((prev) => ({ ...prev, [deptId]: res.data as User[] }));
     } catch {
       toast('加载成员失败', 'error');
     } finally {
@@ -210,9 +209,9 @@ export default function OrgPage() {
         {members.map((m) => (
           <div key={m.id} className="org-tree-member">
             <div className="org-tree-member-avatar">
-              {m.name.charAt(0).toUpperCase()}
+              {(m.displayName || '?').charAt(0).toUpperCase()}
             </div>
-            <span className="org-tree-member-name">{m.name}</span>
+            <span className="org-tree-member-name">{m.displayName}</span>
             {m.position && <span className="org-tree-member-position">{m.position}</span>}
           </div>
         ))}

@@ -9,4 +9,5 @@ public interface WorkflowHistoryRepository extends JpaRepository<WorkflowHistory
     List<WorkflowHistory> findByInstanceIdOrderByCreatedAtDesc(Long instanceId);
     List<WorkflowHistory> findByTaskId(Long taskId);
     List<WorkflowHistory> findByOperatorId(Long operatorId);
+    void deleteByInstanceIdIn(List<Long> instanceIds);
 }

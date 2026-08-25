@@ -1,28 +1,76 @@
 package com.luban.controller;
 
 import com.luban.dto.*;
+import com.luban.entity.User;
 import com.luban.service.PageService;
+import com.luban.workflow.entity.Role;
+import com.luban.workflow.entity.RoleUser;
+import com.luban.workflow.repository.RoleRepository;
+import com.luban.workflow.repository.RoleUserRepository;
+import com.luban.workflow.repository.RolePermissionRepository;
+import com.luban.workflow.entity.RolePermission;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/pages")
 public class PageController {
 
     private final PageService pageService;
+    private final RoleRepository roleRepository;
+    private final RoleUserRepository roleUserRepository;
+    private final RolePermissionRepository rolePermissionRepository;
 
-    public PageController(PageService pageService) {
+    public PageController(PageService pageService,
+                          RoleRepository roleRepository,
+                          RoleUserRepository roleUserRepository,
+                          RolePermissionRepository rolePermissionRepository) {
         this.pageService = pageService;
+        this.roleRepository = roleRepository;
+        this.roleUserRepository = roleUserRepository;
+        this.rolePermissionRepository = rolePermissionRepository;
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> list(@RequestParam Long applicationId) {
-        return ResponseEntity.ok(ApiResponse.ok(pageService.listByApplication(applicationId)));
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> list(
+            @RequestParam Long applicationId,
+            @AuthenticationPrincipal User user) {
+        List<Map<String, Object>> pages = pageService.listByApplication(applicationId);
+
+        // 获取用户在该应用的角色权限，标记 accessible
+        List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
+        List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
+        List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
+        List<Long> userRoleIds = userRoles.stream()
+                .map(RoleUser::getRoleId)
+                .filter(appRoleIds::contains)
+                .toList();
+
+        Set<String> pagePermissions = rolePermissionRepository.findByRoleIdIn(userRoleIds).stream()
+                .map(RolePermission::getPermission)
+                .filter(p -> p.startsWith("app:page:"))
+                .collect(Collectors.toSet());
+
+        for (Map<String, Object> page : pages) {
+            Long pageId = (Long) page.get("id");
+            String permKey = "app:page:" + pageId;
+            boolean accessible = pagePermissions.contains(permKey);
+            // 如果用户没有任何角色权限，默认全部可访问（兼容旧逻辑：无角色设置时所有页面可见）
+            if (pagePermissions.isEmpty()) {
+                accessible = true;
+            }
+            page.put("accessible", accessible);
+        }
+
+        return ResponseEntity.ok(ApiResponse.ok(pages));
     }
 
     @PostMapping("/code")

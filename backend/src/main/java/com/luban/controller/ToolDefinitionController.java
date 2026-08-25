@@ -1,6 +1,8 @@
 package com.luban.controller;
 
+import com.luban.annotation.RequirePermission;
 import com.luban.entity.ToolDefinition;
+import com.luban.entity.User;
 import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
 import com.luban.repository.ToolDefinitionRepository;
@@ -9,6 +11,7 @@ import com.luban.service.ToolEmbeddingService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -28,7 +31,7 @@ public class ToolDefinitionController {
 
     @GetMapping("/systems")
     public ResponseEntity<List<Map<String, Object>>> listSystems() {
-        List<ToolDefinition> tools = toolDefinitionRepository.findByStatus("ENABLED");
+        List<ToolDefinition> tools = toolDefinitionRepository.findByStatusAndScope("ENABLED", "PLATFORM");
         Map<Long, Map<String, Object>> systemMap = new LinkedHashMap<>();
         for (ToolDefinition tool : tools) {
             Long groupId = tool.getGroupId();
@@ -69,17 +72,24 @@ public class ToolDefinitionController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @RequirePermission("connect:tools")
     @PostMapping("/{id}/test")
     public ResponseEntity<Map<String, Object>> testTool(
             @PathVariable Long id,
-            @RequestBody Map<String, Object> arguments) {
+            @RequestBody Map<String, Object> arguments,
+            @AuthenticationPrincipal User user) {
         return toolDefinitionRepository.findById(id)
                 .map(tool -> {
-                    // KEY 权限校验
                     Long apiKeyId = (Long) request.getAttribute("api_key_id");
-                    if (apiKeyId != null && !apiKeyService.hasToolPermission(apiKeyId, tool.getId())) {
+                    if (apiKeyId != null) {
                         Map<String, Object> err = new LinkedHashMap<>();
-                        err.put("error", "该 KEY 无权调用此工具");
+                        err.put("error", "API KEY 无权调用 /test 端点，请通过 SDK 调用");
+                        return ResponseEntity.status(403).body(err);
+                    }
+
+                    if (!tool.getCreatedBy().equals(user.getId())) {
+                        Map<String, Object> err = new LinkedHashMap<>();
+                        err.put("error", "只能测试自己创建的工具");
                         err.put("tool_name", tool.getName());
                         return ResponseEntity.status(403).body(err);
                     }

@@ -175,7 +175,8 @@
 
 .actionBtn:hover {
   border-color: #2563eb;
-  background: #eff6ff;
+  background: #fff;
+  color: #2563eb;
 }
 
 .actionBtnDanger {

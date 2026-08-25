@@ -7,10 +7,8 @@ import com.luban.entity.User;
 import com.luban.entity.UserDept;
 import com.luban.repository.UserDeptRepository;
 import com.luban.repository.UserRepository;
-import com.luban.workflow.entity.Member;
 import com.luban.workflow.entity.Role;
 import com.luban.workflow.entity.RoleUser;
-import com.luban.workflow.repository.MemberRepository;
 import com.luban.workflow.repository.RoleRepository;
 import com.luban.workflow.repository.RoleUserRepository;
 import lombok.AllArgsConstructor;
@@ -49,7 +47,6 @@ class SimpleUserVO {
 @RequiredArgsConstructor
 public class UserController {
 
-    private final MemberRepository memberRepository;
     private final UserRepository userRepository;
     private final UserDeptRepository userDeptRepository;
     private final RoleUserRepository roleUserRepository;
@@ -90,8 +87,8 @@ public class UserController {
         String af = (accountFilter != null && !accountFilter.isBlank()) ? accountFilter : null;
         int offset = (page - 1) * pageSize;
 
-        long total = memberRepository.countMembersWithUserInfo(kw, af);
-        List<Object[]> rows = memberRepository.findMembersWithUserInfoPage(kw, af, pageSize, offset);
+        long total = userRepository.countUsersWithDeptInfo(kw, af);
+        List<Object[]> rows = userRepository.findUsersWithDeptInfoPage(kw, af, pageSize, offset);
         List<UserVO> users = rows.stream().map(this::mapRowToVO).collect(Collectors.toList());
 
         int totalPages = (int) Math.ceil((double) total / pageSize);
@@ -122,7 +119,7 @@ public class UserController {
     @GetMapping("/export-template")
     public ResponseEntity<byte[]> downloadTemplate() throws IOException {
         try (Workbook workbook = new XSSFWorkbook()) {
-            Sheet sheet = workbook.createSheet("成员导入模板");
+            Sheet sheet = workbook.createSheet("用户导入模板");
             Row header = sheet.createRow(0);
             String[] headers = {"姓名", "邮箱", "手机号", "职位", "工号", "部门名称"};
             CellStyle headerStyle = workbook.createCellStyle();
@@ -154,7 +151,7 @@ public class UserController {
             workbook.write(bos);
             byte[] bytes = bos.toByteArray();
 
-            String filename = URLEncoder.encode("成员导入模板.xlsx", StandardCharsets.UTF_8)
+            String filename = URLEncoder.encode("用户导入模板.xlsx", StandardCharsets.UTF_8)
                     .replace("+", "%20");
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION,
@@ -166,7 +163,7 @@ public class UserController {
     }
 
     @PostMapping("/import")
-    public ResponseEntity<ApiResponse<ImportResult>> importMembers(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<ApiResponse<ImportResult>> importUsers(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("请上传文件"));
         }
@@ -195,25 +192,25 @@ public class UserController {
                 String employeeNo = getCellString(row, 4);
                 String deptName = getCellString(row, 5);
 
-                boolean exists = memberRepository.findByNameContaining(name).stream()
-                        .anyMatch(m -> m.getName().equals(name));
-                if (exists) {
-                    errors.add("第" + (i + 1) + "行: 成员 " + name + " 已存在，跳过");
+                if (email == null || email.isBlank()) {
+                    email = name + "@luban.local";
+                }
+                if (userRepository.existsByEmail(email)) {
+                    errors.add("第" + (i + 1) + "行: 用户 " + email + " 已存在，跳过");
                     skipped++;
                     continue;
                 }
 
-                Member member = new Member();
-                member.setName(name);
-                member.setEmail(email != null ? email : name + "@luban.local");
-                member.setMobile(mobile);
-                member.setPosition(position);
-                member.setEmployeeNo(employeeNo);
-                member.setDepartmentName(deptName);
-                member.setProvider("import");
-                member.setStatus("ACTIVE");
-                member.setSyncedAt(LocalDateTime.now());
-                memberRepository.save(member);
+                User user = new User();
+                user.setName(name);
+                user.setEmail(email);
+                user.setAccount(name);
+                user.setMobile(mobile);
+                user.setPosition(position);
+                user.setEmployeeNo(employeeNo);
+                user.setProvider("import");
+                user.setStatus("ACTIVE");
+                userRepository.save(user);
                 success++;
             }
 
@@ -238,85 +235,13 @@ public class UserController {
         };
     }
 
-    @PostMapping("/from-member/{memberId}")
-    public ResponseEntity<ApiResponse<UserVO>> createFromMember(
-            @PathVariable Long memberId,
-            @RequestParam(defaultValue = "normal") String userType) {
-        Member member = memberRepository.findById(memberId)
-                .orElseThrow(() -> new RuntimeException("成员不存在: " + memberId));
-
-        if (member.getUserId() != null) {
-            throw new RuntimeException("该成员已是平台用户");
-        }
-
-        User user = new User();
-        user.setEmail(member.getEmail() != null ? member.getEmail() : "member_" + memberId + "@luban.local");
-        user.setAccount(member.getName());
-
-        if ("test".equals(userType)) {
-            user.setPassword(null);
-        } else {
-            user.setPassword(passwordEncoder.encode("luban123"));
-        }
-        userRepository.save(user);
-
-        member.setUserId(user.getId());
-        memberRepository.save(member);
-
-        if ("test".equals(userType)) {
-            roleUserRepository.deleteByUserId(user.getId());
-            roleRepository.findBySlug("flow_tester").ifPresent(role -> {
-                RoleUser ru = new RoleUser();
-                ru.setRoleId(role.getId());
-                ru.setUserId(user.getId());
-                roleUserRepository.save(ru);
-            });
-        } else {
-            roleRepository.findBySlug("user").ifPresent(role -> {
-                RoleUser ru = new RoleUser();
-                ru.setRoleId(role.getId());
-                ru.setUserId(user.getId());
-                roleUserRepository.save(ru);
-            });
-        }
-
-        List<Object[]> rows = memberRepository.findAllMembersWithUserInfo();
-        UserVO vo = rows.stream()
-                .filter(row -> ((Number) row[0]).longValue() == memberId)
-                .findFirst()
-                .map(this::mapRowToVO)
-                .orElseThrow(() -> new RuntimeException("查询失败"));
-
-        return ResponseEntity.ok(ApiResponse.ok(vo));
-    }
-
     @PutMapping("/{userId}/role")
     public ResponseEntity<ApiResponse<Void>> updateRole(
             @PathVariable Long userId,
             @RequestBody List<Long> roleIds) {
-        List<Role> roles = roleRepository.findAllById(roleIds);
-        boolean hasFlowTester = roles.stream().anyMatch(r -> "flow_tester".equals(r.getSlug()));
-
-        if (hasFlowTester && roleIds.size() > 1) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("流程测试角色不能与其他角色同时选择"));
-        }
-
-        boolean alreadyFlowTester = roleUserRepository.findByRoleIdAndUserId(
-                roleRepository.findBySlug("flow_tester").map(Role::getId).orElse(-1L), userId).isPresent();
-        if (alreadyFlowTester) {
-            return ResponseEntity.badRequest().body(ApiResponse.error("该用户已是流程测试角色，不可更改"));
-        }
-
         roleUserRepository.deleteByUserId(userId);
         for (Long roleId : roleIds) {
             roleUserRepository.save(new RoleUser(roleId, userId));
-        }
-
-        if (hasFlowTester) {
-            userRepository.findById(userId).ifPresent(u -> {
-                u.setPassword(null);
-                userRepository.save(u);
-            });
         }
 
         return ResponseEntity.ok(ApiResponse.ok(null));
@@ -326,13 +251,14 @@ public class UserController {
     public ResponseEntity<ApiResponse<Void>> updateDepartment(
             @PathVariable Long userId,
             @RequestParam Long deptId) {
-        List<UserDept> existing = userDeptRepository.findByUserId(userId);
-        if (!existing.isEmpty()) {
-            userDeptRepository.deleteByUserIdAndDepartmentId(userId, existing.get(0).getDepartmentId());
+        UserDept ud = userDeptRepository.findByUserIdAndIsPrimaryTrue(userId).orElse(null);
+        if (ud != null) {
+            userDeptRepository.delete(ud);
         }
-        UserDept ud = new UserDept();
+        ud = new UserDept();
         ud.setUserId(userId);
         ud.setDepartmentId(deptId);
+        ud.setIsPrimary(true);
         userDeptRepository.save(ud);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
@@ -341,10 +267,10 @@ public class UserController {
     public ResponseEntity<ApiResponse<Void>> updateLeader(
             @PathVariable Long userId,
             @RequestParam(required = false) Long leaderId) {
-        Member member = memberRepository.findByUserId(userId)
-                .orElseThrow(() -> new RuntimeException("成员不存在"));
-        member.setLeaderId(leaderId);
-        memberRepository.save(member);
+        UserDept ud = userDeptRepository.findByUserIdAndIsPrimaryTrue(userId)
+                .orElseThrow(() -> new RuntimeException("用户未关联部门"));
+        ud.setLeaderId(leaderId);
+        userDeptRepository.save(ud);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 

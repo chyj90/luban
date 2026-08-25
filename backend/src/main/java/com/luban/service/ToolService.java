@@ -20,15 +20,15 @@ public class ToolService {
     }
 
     public List<ToolDefinition> listByGroup(Long groupId) {
-        return toolDefinitionRepository.findByGroupId(groupId);
+        return toolDefinitionRepository.findByGroupIdAndScope(groupId, "PLATFORM");
     }
 
     public List<ToolDefinition> listByType(String toolType) {
-        return toolDefinitionRepository.findByToolType(toolType);
+        return toolDefinitionRepository.findByToolTypeAndScope(toolType, "PLATFORM");
     }
 
     public List<ToolDefinition> listAll() {
-        return toolDefinitionRepository.findAll();
+        return toolDefinitionRepository.findByScope("PLATFORM");
     }
 
     public ToolDefinition getById(Long id) {
@@ -50,6 +50,9 @@ public class ToolService {
         tool.setDescription(request.getDescription());
         tool.setToolType(request.getToolType());
         tool.setGroupId(request.getGroupId());
+        if (request.getScope() != null) {
+            tool.setScope(request.getScope());
+        }
         tool.setInputSchema(request.getInputSchema());
         tool.setOutputSchema(request.getOutputSchema());
         tool.setConfig(request.getConfig());

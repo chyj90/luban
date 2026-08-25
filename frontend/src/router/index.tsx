@@ -1,5 +1,5 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import { ProtectedRoute, GuestRoute, PermissionGate } from './guards';
+import { ProtectedRoute, GuestRoute, PermissionGate, AppAccessGate } from './guards';
 import { ReactFlowProvider } from '@xyflow/react';
 import { AppLayout } from '@/pages/AppLayout';
 import { ConnectLayout } from '@/pages/ConnectLayout';
@@ -30,6 +30,7 @@ import UserListPage from '@/pages/UserListPage';
 import RoleManagementPage from '@/pages/RoleManagementPage';
 import OrgPage from '@/pages/OrgPage';
 import WorkApprovalPage from '@/pages/WorkApprovalPage';
+import { WorkAppPageViewer } from '@/pages/WorkAppPageViewer';
 
 export const router = createBrowserRouter([
   {
@@ -45,12 +46,22 @@ export const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: '/apps', element: <AppHubPage /> },
-          { path: '/apps/:appId', element: <AppEntryPage /> },
-          { path: '/apps/:appId/designer/:id', element: <WorkflowDesigner /> },
-          { path: '/apps/:appId/designer', element: <WorkflowDesigner /> },
-          { path: '/apps/:appId/instances/:id', element: <InstanceDetail /> },
-          { path: '/apps/:appId/forms/:id/preview', element: <FormPreview /> },
+          {
+            element: <PermissionGate permission="apps:read" />,
+            children: [
+              { path: '/apps', element: <AppHubPage /> },
+              {
+                element: <AppAccessGate />,
+                children: [
+                  { path: '/apps/:appId', element: <AppEntryPage /> },
+                  { path: '/apps/:appId/designer/:id', element: <WorkflowDesigner /> },
+                  { path: '/apps/:appId/designer', element: <WorkflowDesigner /> },
+                  { path: '/apps/:appId/instances/:id', element: <InstanceDetail /> },
+                  { path: '/apps/:appId/forms/:id/preview', element: <FormPreview /> },
+                ],
+              },
+            ],
+          },
           {
             element: <PermissionGate permission="connect:systems" />,
             children: [
@@ -110,6 +121,14 @@ export const router = createBrowserRouter([
                 children: [
                   { index: true, element: <MyWorkflow /> },
                   { path: 'approvals', element: <WorkApprovalPage /> },
+                  { path: 'instances/:id', element: <InstanceDetail /> },
+                  {
+                    path: 'app',
+                    element: <AppAccessGate />,
+                    children: [
+                      { path: ':appId/page/:pageId', element: <WorkAppPageViewer /> },
+                    ],
+                  },
                 ],
               },
             ],
@@ -117,10 +136,10 @@ export const router = createBrowserRouter([
           { path: '/agent-chat', element: <AgentChatPage /> },
         ],
       },
-      { path: '/workspace', element: <Navigate to="/apps" replace /> },
+      { path: '/workspace', element: <Navigate to="/work" replace /> },
       { path: '/workflow/tasks', element: <Navigate to="/work" replace /> },
       { path: '/workflow/my-workflow', element: <Navigate to="/work" replace /> },
-      { path: '/workflow/*', element: <Navigate to="/apps" replace /> },
+      { path: '/workflow/*', element: <Navigate to="/work" replace /> },
       { path: '/connect/mcp', element: <Navigate to="/connect/gateway" replace /> },
       { path: '/connect/concepts', element: <Navigate to="/concept/concepts" replace /> },
       { path: '/connect/ontology-groups', element: <Navigate to="/concept/ontology-groups" replace /> },
@@ -135,6 +154,6 @@ export const router = createBrowserRouter([
   },
   {
     path: '*',
-    element: <Navigate to="/apps" replace />,
+    element: <Navigate to="/work" replace />,
   },
 ]);

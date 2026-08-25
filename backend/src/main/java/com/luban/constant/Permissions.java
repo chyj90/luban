@@ -52,6 +52,7 @@ public final class Permissions {
             new Def(CONNECT_CONCEPT_EMBEDDINGS, "概念向量", "管理概念向量嵌入", "概念图谱"),
             new Def(CONNECT_GATEWAY, "MCP 网关", "网关配置", "系统配置"),
             new Def(CONNECT_KEYS, "我的 Key", "API Key 管理", "系统配置"),
-            new Def(CONNECT_AGENT, "大模型配置", "管理大模型配置", "系统配置")
+            new Def(CONNECT_AGENT, "大模型配置", "管理大模型配置", "系统配置"),
+            new Def(SYSTEM_TASKS, "异步任务", "管理异步任务", "系统配置")
     );
 }

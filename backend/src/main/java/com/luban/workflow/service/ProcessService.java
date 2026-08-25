@@ -1,5 +1,9 @@
 package com.luban.workflow.service;
 
+import com.luban.constant.WorkflowScope;
+import com.luban.entity.User;
+import com.luban.repository.UserRepository;
+import com.luban.service.ApplicationService;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.repository.ApplicationRepository;
@@ -19,11 +23,12 @@ import java.util.stream.Collectors;
 public class ProcessService {
 
     private final ApplicationRepository applicationRepository;
+    private final ApplicationService applicationService;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final WorkflowInstanceRepository workflowInstanceRepository;
     private final WorkflowTaskRepository workflowTaskRepository;
     private final WorkflowHistoryRepository workflowHistoryRepository;
-    private final MemberRepository memberRepository;
+    private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final DepartmentRepository departmentRepository;
     private final FormWorkflowBindingRepository formWorkflowBindingRepository;
@@ -46,8 +51,21 @@ public class ProcessService {
                 .orElseThrow(() -> new RuntimeException("流程定义不存在: " + id));
     }
 
+    private void checkAppOwner(WorkflowDefinition definition, Long userId) {
+        if (definition.getApplicationId() == null) {
+            throw new RuntimeException("平台级流程不允许通过 REST 接口操作");
+        }
+        applicationRepository.findById(definition.getApplicationId())
+                .ifPresent(app -> {
+                    if (!app.getCreatedBy().equals(userId)) {
+                        throw new RuntimeException("无权操作此流程，仅应用创建者可操作");
+                    }
+                });
+    }
+
     @Transactional
-    public WorkflowDefinition createDefinition(WorkflowDefinition definition) {
+    public WorkflowDefinition createDefinition(WorkflowDefinition definition, Long userId) {
+        checkAppOwner(definition, userId);
         validateNodeConfig(definition.getNodes());
         definition.setVersion(1);
         definition.setStatus("DRAFT");
@@ -55,8 +73,9 @@ public class ProcessService {
     }
 
     @Transactional
-    public WorkflowDefinition updateDefinition(Long id, WorkflowDefinition updated) {
+    public WorkflowDefinition updateDefinition(Long id, WorkflowDefinition updated, Long userId) {
         WorkflowDefinition existing = getDefinition(id);
+        checkAppOwner(existing, userId);
         validateNodeConfig(updated.getNodes());
         existing.setName(updated.getName());
         existing.setDescription(updated.getDescription());
@@ -66,8 +85,9 @@ public class ProcessService {
     }
 
     @Transactional
-    public WorkflowDefinition publishDefinition(Long id) {
+    public WorkflowDefinition publishDefinition(Long id, Long userId) {
         WorkflowDefinition draft = getDefinition(id);
+        checkAppOwner(draft, userId);
         if (!"DRAFT".equals(draft.getStatus())) {
             throw new RuntimeException("只有草稿版本的流程定义可以发布");
         }
@@ -101,6 +121,7 @@ public class ProcessService {
         newDraft.setName(draft.getName());
         newDraft.setDescription(draft.getDescription());
         newDraft.setApplicationId(draft.getApplicationId());
+        newDraft.setScope(draft.getScope());
         newDraft.setVersion(publishedVersion + 1);
         newDraft.setStatus("DRAFT");
         newDraft.setNodes(draft.getNodes());
@@ -118,7 +139,10 @@ public class ProcessService {
         if (instances == null || instances.isEmpty()) return;
         for (WorkflowInstance inst : instances) {
             WorkflowDefinition def = workflowDefinitionRepository.findById(inst.getWorkflowId()).orElse(null);
-            if (def != null && "PLATFORM".equals(def.getScope())) continue;
+            if (def != null) {
+                inst.setWorkflowName(def.getName());
+                if (WorkflowScope.PLATFORM == def.getScope()) continue;
+            }
             if (inst.getApplicationId() != null) {
                 applicationRepository.findById(inst.getApplicationId())
                         .ifPresent(app -> inst.setApplicationName(app.getName()));
@@ -129,8 +153,8 @@ public class ProcessService {
     private void populateInitiatorNames(List<WorkflowInstance> instances) {
         if (instances == null || instances.isEmpty()) return;
         for (WorkflowInstance inst : instances) {
-            memberRepository.findById(inst.getInitiatorId())
-                    .ifPresent(member -> inst.setInitiatorName(member.getName()));
+            userRepository.findById(inst.getInitiatorId())
+                    .ifPresent(u -> inst.setInitiatorName(u.getName()));
         }
     }
 
@@ -154,7 +178,8 @@ public class ProcessService {
                         definition.getNodes(),
                         new TypeReference<List<Map<String, Object>>>() {});
                 for (Map<String, Object> node : nodes) {
-                    if (task.getNodeId().equals(node.get("nodeId"))) {
+                    String nid = (String) node.getOrDefault("id", node.get("nodeId"));
+                    if (task.getNodeId().equals(nid)) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> data = (Map<String, Object>) node.get("data");
                         if (data != null) {
@@ -171,8 +196,9 @@ public class ProcessService {
     }
 
     @Transactional
-    public WorkflowDefinition unpublishDefinition(Long id) {
+    public WorkflowDefinition unpublishDefinition(Long id, Long userId) {
         WorkflowDefinition definition = getDefinition(id);
+        checkAppOwner(definition, userId);
         if (!"PUBLISHED".equals(definition.getStatus())) {
             throw new RuntimeException("只能下线已发布的流程");
         }
@@ -197,8 +223,9 @@ public class ProcessService {
     }
 
     @Transactional
-    public void deleteDefinition(Long id) {
+    public void deleteDefinition(Long id, Long userId) {
         WorkflowDefinition definition = getDefinition(id);
+        checkAppOwner(definition, userId);
         if ("PUBLISHED".equals(definition.getStatus())) {
             throw new RuntimeException("已发布的流程不能删除，请先下线");
         }
@@ -219,29 +246,20 @@ public class ProcessService {
         List<WorkflowInstance> instances = workflowInstanceRepository.findByInitiatorId(userId);
         instances = filterPlatformInstances(instances);
         populateAppNames(instances);
+        instances.forEach(this::populatePendingTasks);
         return instances;
     }
 
-    public List<WorkflowInstance> listMyInstances(Long userId, Boolean isTest) {
-        List<WorkflowInstance> instances;
-        if (isTest != null) {
-            instances = workflowInstanceRepository.findByInitiatorIdAndIsTest(userId, isTest);
-        } else {
-            instances = workflowInstanceRepository.findByInitiatorIdAndIsTest(userId, false);
-        }
-        instances = filterPlatformInstances(instances);
-        populateAppNames(instances);
-        return instances;
-    }
-
-    public List<WorkflowInstance> listMyInstances(Long userId, Boolean isTest, Long applicationId) {
+    public List<WorkflowInstance> listMyInstances(Long userId, Long applicationId) {
         List<WorkflowInstance> instances;
         if (applicationId != null) {
-            instances = workflowInstanceRepository.findByInitiatorIdAndIsTestAndApplicationId(userId, isTest != null ? isTest : false, applicationId);
+            instances = workflowInstanceRepository.findByInitiatorIdAndApplicationId(userId, applicationId);
+            instances = filterPlatformInstances(instances);
+            populateAppNames(instances);
+            instances.forEach(this::populatePendingTasks);
         } else {
-            instances = listMyInstances(userId, isTest);
+            instances = listMyInstances(userId);
         }
-        populateAppNames(instances);
         return instances;
     }
 
@@ -249,7 +267,7 @@ public class ProcessService {
         if (instances == null || instances.isEmpty()) return instances;
         return instances.stream().filter(inst -> {
             WorkflowDefinition def = workflowDefinitionRepository.findById(inst.getWorkflowId()).orElse(null);
-            return def == null || !"PLATFORM".equals(def.getScope());
+            return def == null || WorkflowScope.PLATFORM != def.getScope();
         }).collect(Collectors.toList());
     }
 
@@ -261,28 +279,58 @@ public class ProcessService {
         return instances;
     }
 
-    public WorkflowInstance getInstance(Long id) {
+    public WorkflowInstance getInstance(Long id, Long userId) {
         WorkflowInstance instance = workflowInstanceRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + id));
+        checkViewPermission(instance, userId);
         populateInitiatorNames(List.of(instance));
-        AgentLogger.bug("bug-formId-zero.log",
-            String.format("getInstance id=%d, workflowId=%d, formId=%d, formData=%s",
-                id, instance.getWorkflowId(), instance.getFormId(), instance.getFormData()));
+        populatePendingTasks(instance);
         return instance;
     }
 
-    public List<WorkflowHistory> getInstanceHistory(Long instanceId) {
+    public List<WorkflowHistory> getInstanceHistory(Long instanceId, Long userId) {
+        WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
+        checkViewPermission(instance, userId);
         List<WorkflowHistory> histories = workflowHistoryRepository.findByInstanceIdOrderByCreatedAtAsc(instanceId);
         populateHistoryOperatorNames(histories);
         return histories;
     }
 
+    private void checkViewPermission(WorkflowInstance instance, Long userId) {
+        if (instance.getInitiatorId().equals(userId)) return;
+        List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeIdAndInstanceId(userId, instance.getId());
+        if (!tasks.isEmpty()) return;
+        throw new RuntimeException("无权查看该流程实例");
+    }
+
     private void populateHistoryOperatorNames(List<WorkflowHistory> histories) {
         if (histories == null || histories.isEmpty()) return;
         for (WorkflowHistory h : histories) {
-            memberRepository.findById(h.getOperatorId())
-                    .ifPresent(member -> h.setOperatorName(member.getName()));
+            userRepository.findById(h.getOperatorId())
+                    .ifPresent(u -> h.setOperatorName(u.getName()));
         }
+    }
+
+    private void populatePendingTasks(WorkflowInstance instance) {
+        if (!"RUNNING".equals(instance.getStatus())) {
+            instance.setPendingTasks(List.of());
+            return;
+        }
+        List<WorkflowTask> pendingTasks = workflowTaskRepository.findByInstanceIdAndStatus(
+                instance.getId(), "PENDING");
+        populateTaskNodeNames(pendingTasks);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (WorkflowTask task : pendingTasks) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("nodeId", task.getNodeId());
+            map.put("nodeName", task.getNodeName());
+            map.put("assigneeId", task.getAssigneeId());
+            userRepository.findById(task.getAssigneeId())
+                    .ifPresent(u -> map.put("assigneeName", u.getName()));
+            result.add(map);
+        }
+        instance.setPendingTasks(result);
     }
 
     public List<WorkflowTask> getPendingTasks(Long userId) {
@@ -304,24 +352,20 @@ public class ProcessService {
         return tasks;
     }
 
-    public List<WorkflowTask> getPendingTasks(Long userId, Long applicationId, Boolean isTest) {
-        List<WorkflowTask> tasks;
-        if (isTest != null) {
-            if (applicationId != null) {
-                tasks = workflowTaskRepository.findByAssigneeIdAndStatusAndApplicationIdAndIsTest(userId, "PENDING", applicationId, isTest);
-            } else {
-                tasks = workflowTaskRepository.findByAssigneeIdAndStatusAndIsTest(userId, "PENDING", isTest);
-            }
-        } else {
-            tasks = getPendingTasks(userId, applicationId);
-        }
-        populateTaskAppNames(tasks);
-        populateTaskNodeNames(tasks);
-        return tasks;
-    }
-
     public List<WorkflowTask> getCompletedTasks(Long userId) {
         List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeId(userId);
+        tasks = tasks.stream()
+                .filter(t -> !"PENDING".equals(t.getStatus()))
+                .collect(java.util.stream.Collectors.collectingAndThen(
+                        java.util.stream.Collectors.toMap(
+                                WorkflowTask::getInstanceId,
+                                t -> t,
+                                (a, b) -> a.getCompletedAt() != null && b.getCompletedAt() != null
+                                        ? (a.getCompletedAt().isAfter(b.getCompletedAt()) ? a : b)
+                                        : a.getId() > b.getId() ? a : b
+                        ),
+                        m -> new java.util.ArrayList<>(m.values())
+                ));
         populateTaskAppNames(tasks);
         populateTaskNodeNames(tasks);
         return tasks;
@@ -339,45 +383,24 @@ public class ProcessService {
         return tasks;
     }
 
-    public List<WorkflowTask> getCompletedTasks(Long userId, Long applicationId, Boolean isTest) {
-        List<WorkflowTask> tasks;
-        if (isTest != null) {
-            if (applicationId != null) {
-                tasks = workflowTaskRepository.findCompletedByAssigneeIdAndApplicationIdAndIsTest(userId, applicationId, isTest);
-            } else {
-                tasks = workflowTaskRepository.findCompletedByAssigneeIdAndIsTest(userId, isTest);
-            }
-        } else {
-            tasks = getCompletedTasks(userId, applicationId);
-        }
-        populateTaskAppNames(tasks);
-        populateTaskNodeNames(tasks);
-        return tasks;
-    }
-
     public long getPendingTaskCount(Long userId) {
         return workflowTaskRepository.countByAssigneeIdAndStatus(userId, "PENDING");
     }
 
     @Transactional
     public WorkflowInstance startProcess(Long definitionId, String formData, Long userId, String userName) {
-        return startProcess(definitionId, formData, userId, userName, false);
-    }
-
-    @Transactional
-    public WorkflowInstance startProcess(Long definitionId, String formData, Long userId, String userName, boolean isTest) {
         WorkflowDefinition definition = getDefinition(definitionId);
 
-        if (!isTest && !"PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("流程定义未发布，无法发起正式流程");
+        if (!"PUBLISHED".equals(definition.getStatus())) {
+            throw new RuntimeException("流程定义未发布，无法发起流程");
         }
 
-        if (isTest && "PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("已发布流程不能发起测试，请使用草稿版本");
+        if (!applicationService.canSubmitWorkflow(userId, definitionId)) {
+            throw new RuntimeException("无权限发起此流程");
         }
 
         Long effectiveDefinitionId = definitionId;
-        if (!isTest && definition.getPublishedVersionId() != null) {
+        if (definition.getPublishedVersionId() != null) {
             WorkflowDefinition published = workflowDefinitionRepository
                     .findById(definition.getPublishedVersionId()).orElse(null);
             if (published != null) {
@@ -385,7 +408,7 @@ public class ProcessService {
             }
         }
 
-        return processEngine.startProcess(effectiveDefinitionId, formData, userId, userName, isTest);
+        return processEngine.startProcess(effectiveDefinitionId, formData, userId, userName);
     }
 
     @Transactional
@@ -426,18 +449,33 @@ public class ProcessService {
         processEngine.forceJump(instanceId, targetNodeId, comment, userId, userName);
     }
 
+    private void checkInitiator(WorkflowInstance instance, Long userId) {
+        if (!instance.getInitiatorId().equals(userId)) {
+            throw new RuntimeException("仅流程发起人可执行此操作");
+        }
+    }
+
     @Transactional
     public void cancelProcess(Long instanceId, Long userId, String userName) {
+        WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
+        checkInitiator(instance, userId);
         processEngine.cancelProcess(instanceId, userId, userName);
     }
 
     @Transactional
     public void freezeProcess(Long instanceId, Long userId, String userName) {
+        WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
+        checkInitiator(instance, userId);
         processEngine.freezeProcess(instanceId, userId, userName);
     }
 
     @Transactional
     public void unfreezeProcess(Long instanceId, Long userId, String userName) {
+        WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
+                .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
+        checkInitiator(instance, userId);
         processEngine.unfreezeProcess(instanceId, userId, userName);
     }
 
@@ -470,7 +508,9 @@ public class ProcessService {
     }
 
     @Transactional
-    public WorkflowDefinition copyDefinition(Long id) {
+    public WorkflowDefinition copyDefinition(Long id, Long userId) {
+        WorkflowDefinition definition = getDefinition(id);
+        checkAppOwner(definition, userId);
         return processEngine.copyDefinition(id);
     }
 
@@ -526,9 +566,9 @@ public class ProcessService {
                         List<Object> memberIds = (List<Object>) config.get("approverIds");
                         if (memberIds != null) {
                             for (Object id : memberIds) {
-                                Long memberId = Long.valueOf(id.toString());
-                                if (!memberRepository.existsById(memberId)) {
-                                    errors.add("节点「" + nodeName + "」中的人员 ID " + memberId + " 不存在");
+                                Long userId = Long.valueOf(id.toString());
+                                if (!userRepository.existsById(userId)) {
+                                    errors.add("节点「" + nodeName + "」中的人员 ID " + userId + " 不存在");
                                 }
                             }
                         }
