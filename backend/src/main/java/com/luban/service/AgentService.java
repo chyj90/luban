@@ -489,6 +489,20 @@ public class AgentService {
             }
 
             @SuppressWarnings("unchecked")
+            Set<Long> drilledConcepts = (Set<Long>) data.getOrDefault("drilled_concepts", new HashSet<>());
+            @SuppressWarnings("unchecked")
+            List<Long> currentConceptIds = (List<Long>) data.getOrDefault("concept_ids", List.of());
+            if (sqlExecCount > 0 && !currentConceptIds.isEmpty()) {
+                boolean allDrilled = currentConceptIds.stream().allMatch(drilledConcepts::contains);
+                if (allDrilled) {
+                    log.info("All concepts already drilled, suggesting final answer");
+                    data.put("next_action", "final_answer");
+                    data.put("final_answer", "所有相关维度已完成下钻分析，请查看之前的分析结果。");
+                    return CompletableFuture.completedFuture(data);
+                }
+            }
+
+            @SuppressWarnings("unchecked")
             List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
             String sessionId = (String) data.get("session_id");
             Long userId = data.get("user_id") instanceof Number ? ((Number) data.get("user_id")).longValue() : null;
@@ -1473,6 +1487,11 @@ public class AgentService {
                 } else {
                     String resultSummary = formatNl2sqlResult(queryResult);
                     messages.add(Map.of("role", "tool", "content", resultSummary, "tool_name", "nl2sql_executor"));
+
+                    @SuppressWarnings("unchecked")
+                    Set<Long> drilled = new HashSet<>((Set<Long>) data.getOrDefault("drilled_concepts", Set.of()));
+                    drilled.addAll(conceptIds);
+                    data.put("drilled_concepts", drilled);
                 }
                 data.put("next_action", "continue");
             }
@@ -1685,7 +1704,17 @@ public class AgentService {
             } else {
                 String stderr = (String) result.getOrDefault("stderr", "未知错误");
                 log.warn("Code execution failed: {}", stderr);
-                messages.add(Map.of("role", "tool", "content", "代码执行失败:\n" + stderr, "tool_name", "code_executor"));
+                int codeRetry = (int) data.getOrDefault("code_retry_count", 0);
+                if (codeRetry < 1) {
+                    data.put("code_retry_count", codeRetry + 1);
+                    messages.add(Map.of("role", "tool", "content",
+                            "代码执行失败: " + stderr + "\n请改用 SQL 查询重试，或直接给出 final_answer。",
+                            "tool_name", "code_executor"));
+                } else {
+                    messages.add(Map.of("role", "tool", "content",
+                            "代码执行再次失败，请直接给出分析结论。",
+                            "tool_name", "code_executor"));
+                }
             }
 
             data.put("next_action", "continue");
