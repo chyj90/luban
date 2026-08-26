@@ -843,7 +843,7 @@ public class AgentService {
         }
 
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
-                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions);
+                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, messages);
 
         log.info("buildUnifiedContext TOTAL: {}ms, concepts={}, tools={}, tables={}",
                 System.currentTimeMillis() - t0, conceptIds.size(), apiTools.size(), tableMappings.size());
@@ -1119,6 +1119,31 @@ public class AgentService {
         return map;
     }
 
+    private String buildPreviousAnalysisContext(List<Map<String, Object>> messages) {
+        if (messages == null || messages.size() < 2) return "";
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Map<String, Object> msg = messages.get(i);
+            String role = (String) msg.get("role");
+            String content = (String) msg.get("content");
+
+            if ("assistant".equals(role) && content != null && content.contains("\"type\": \"nl2sql\"")) {
+                sb.append("上一轮已生成 SQL 查询，请基于查询结果继续下钻分析。\n");
+                break;
+            }
+            if ("assistant".equals(role) && content != null && content.contains("\"type\": \"code_mode\"")) {
+                sb.append("上一轮已执行 Python 代码分析，请基于代码执行结果继续下钻分析。\n");
+                break;
+            }
+            if ("user".equals(role) && content != null && content.contains("SQL 查询结果") || (content != null && content.contains("代码执行结果"))) {
+                sb.append("上轮分析结果已返回（见上方用户消息），请结合结果继续分析：\n");
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
     private String buildUnifiedContextPrompt(String userQuery,
                                              List<Map<String, Object>> conceptTrace,
                                              List<ToolDefinition> apiTools,
@@ -1126,7 +1151,8 @@ public class AgentService {
                                              List<ConceptJoinMapping> joinMappings,
                                              Set<Long> authorizedConceptIds,
                                              Map<Long, String> groupNameMap,
-                                             Map<Long, List<Map<String, Object>>> drillDimensions) {
+                                             Map<Long, List<Map<String, Object>>> drillDimensions,
+                                             List<Map<String, Object>> messages) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("## 用户问题\n");
@@ -1180,6 +1206,13 @@ public class AgentService {
                 }
                 sb.append("\n");
             }
+        }
+
+        String previousAnalysis = buildPreviousAnalysisContext(messages);
+        if (!previousAnalysis.isEmpty()) {
+            sb.append("## 上轮分析回顾\n");
+            sb.append(previousAnalysis);
+            sb.append("\n");
         }
 
         if (tableMappings != null && !tableMappings.isEmpty()) {
@@ -1260,16 +1293,46 @@ public class AgentService {
         sb.append("   - 请使用上面提供的表名和字段名\n");
         sb.append("   - 如有 JOIN 条件，请使用提供的 JOIN 条件\n");
         sb.append("   - 如果没有合适的表和字段，不要生成 SQL\n\n");
-        sb.append("3. **直接回答**：如果无法通过工具或 SQL 回答，请直接回复：\n");
+        sb.append("3. **执行 Python 代码**：当 SQL 无法直接表达复杂计算逻辑（如统计检验、离群值检测、时间序列分解）时，使用 code_mode：\n");
+        sb.append("   ```json\n");
+        sb.append("   {\"type\": \"code_mode\", \"reasoning\": \"为什么需要代码分析\", ");
+        sb.append("\"code\": \"import pandas as pd\\n# 你的分析代码\\n\", \"input_data\": {\"sql\": \"SELECT ...\", \"concept_ids\": [1, 2]}}\n");
+        sb.append("   ```\n");
+        sb.append("   - code 为完整 Python 脚本，系统会执行并返回 stdout/stderr\n");
+        sb.append("   - input_data.sql 为前置 SQL 查询，结果会以 DataFrame 形式传入\n");
+        sb.append("   - 仅用于统计计算，不得执行系统命令、文件操作\n\n");
+        sb.append("4. **直接回答**：如果无法通过工具或 SQL 回答，请直接回复：\n");
         sb.append("   ```json\n");
         sb.append("   {\"type\": \"final_answer\", \"reasoning\": \"你的推理过程\", \"answer\": \"你的回答\", \"concept_ids\": [匹配的概念ID列表]}\n");
         sb.append("   ```\n");
         sb.append("   - concept_ids 必须填写：从上方语义层匹配概念表格中，列出你认为回答此问题所涉及的概念ID\n");
-        sb.append("## 回答规范\n\n");
+        sb.append("   - 当完成下钻分析确定根因时，使用 root_cause 格式（见下方「根因分析输出规范」）\n\n");
         sb.append("当 SQL 查询成功返回结果后，在 final_answer 中必须遵守以下规范：\n");
         sb.append("- 在答案开头明确写出本次查询的具体条件，让用户能验证证据链\n");
         sb.append("- 如果结果以表格呈现，表格中必须包含与查询条件直接相关的字段，不能只展示 ID\n");
-        sb.append("请务必严格按照上述 JSON 格式回复，不要添加额外文本。");
+        sb.append("请务必严格按照上述 JSON 格式回复，不要添加额外文本。\n\n");
+        sb.append("## 根因分析输出规范\n\n");
+        sb.append("当经过多轮下钻分析确定根因后，final_answer 必须使用以下 JSON Schema：\n");
+        sb.append("```json\n");
+        sb.append("{\n");
+        sb.append("  \"type\": \"final_answer\",\n");
+        sb.append("  \"answer_type\": \"root_cause\",\n");
+        sb.append("  \"reasoning\": \"完整推理链，包含每轮下钻的SQL和关键发现\",\n");
+        sb.append("  \"answer\": \"根因结论的自然语言描述\",\n");
+        sb.append("  \"evidence\": [\n");
+        sb.append("    {\"step\": 1, \"dimension\": \"分析维度\", \"sql\": \"执行的SQL\", \"finding\": \"关键发现\", \"anomaly\": true/false}\n");
+        sb.append("  ],\n");
+        sb.append("  \"root_cause\": \"根因总结\",\n");
+        sb.append("  \"suggestion\": \"建议措施\",\n");
+        sb.append("  \"concept_ids\": [1, 2, 3]\n");
+        sb.append("}\n");
+        sb.append("```\n\n");
+        sb.append("## 异常阈值检测规则\n\n");
+        sb.append("如果上方「可下钻维度」表格中某个维度标注了异常阈值，且当前查询结果显示该维度值触发了阈值：\n");
+        sb.append("1. 在 answer 中明确标注异常：「⚠️ 异常：维度名 当前值 X%，超过阈值 Y%」\n");
+        sb.append("2. 在 [drill_suggestions] 中将该维度排在首位，并标注 [异常] 标记\n");
+        sb.append("3. 如果阈值是「< 80% 计划值」等下限阈值，数值低于阈值视为异常\n");
+        sb.append("示例：「订单量环比下降 15%，超过 10% 阈值，建议按渠道下钻分析」");
 
         return sb.toString();
     }
