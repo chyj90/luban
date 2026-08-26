@@ -3,6 +3,7 @@ package com.luban.service;
 import com.luban.dto.*;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
+import com.luban.entity.OntologyGroup;
 import com.luban.entity.ToolConcept;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptRelationRepository;
@@ -10,6 +11,8 @@ import com.luban.repository.ConceptRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptEmbeddingTaskRepository;
+import com.luban.repository.IndustryRelationRepository;
+import com.luban.repository.OntologyGroupRepository;
 import com.luban.repository.ToolConceptRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +33,8 @@ public class ConceptService {
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
+    private final IndustryRelationRepository industryRelationRepository;
+    private final OntologyGroupRepository ontologyGroupRepository;
     private final ToolConceptRepository toolConceptRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final OntologyService ontologyService;
@@ -245,6 +250,7 @@ public class ConceptService {
 
     @Transactional
     public ConceptRelation createRelation(Long sourceConceptId, CreateRelationRequest request) {
+        validateRelationType(sourceConceptId, request.getRelationType());
         ConceptRelation relation = new ConceptRelation();
         relation.setSourceConceptId(sourceConceptId);
         relation.setTargetConceptId(request.getTargetConceptId());
@@ -260,6 +266,7 @@ public class ConceptService {
     public ConceptRelation updateRelation(Long relationId, CreateRelationRequest request) {
         ConceptRelation relation = conceptRelationRepository.findById(relationId)
                 .orElseThrow(() -> new NoSuchElementException("Relation not found: " + relationId));
+        validateRelationType(relation.getSourceConceptId(), request.getRelationType());
         relation.setTargetConceptId(request.getTargetConceptId());
         relation.setRelationType(request.getRelationType());
         relation.setExpression(request.getExpression());
@@ -267,6 +274,26 @@ public class ConceptService {
         ConceptRelation saved = conceptRelationRepository.save(relation);
         ontologyService.reload();
         return saved;
+    }
+
+    private void validateRelationType(Long conceptId, String relationType) {
+        Concept concept = conceptRepository.findById(conceptId)
+                .orElseThrow(() -> new NoSuchElementException("Concept not found: " + conceptId));
+        Long industryId = null;
+        if (concept.getGroupId() != null) {
+            OntologyGroup group = ontologyGroupRepository.findById(concept.getGroupId()).orElse(null);
+            if (group != null) {
+                industryId = group.getIndustryId();
+            }
+        }
+        if (industryId != null) {
+            boolean registered = industryRelationRepository
+                    .findByIndustryIdAndRelationType(industryId, relationType).isPresent();
+            if (!registered) {
+                throw new IllegalArgumentException(
+                        "关系类型 '" + relationType + "' 未在行业 " + industryId + " 中注册，请先在行业关系管理中注册");
+            }
+        }
     }
 
     @Transactional

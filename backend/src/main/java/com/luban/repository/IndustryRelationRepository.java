@@ -9,4 +9,5 @@ public interface IndustryRelationRepository extends JpaRepository<IndustryRelati
     List<IndustryRelation> findByIndustryIdOrderBySortOrder(Long industryId);
     void deleteByIndustryId(Long industryId);
     Optional<IndustryRelation> findByIndustryIdAndRelationTypeAndIsBuiltin(Long industryId, String relationType, Boolean isBuiltin);
+    Optional<IndustryRelation> findByIndustryIdAndRelationType(Long industryId, String relationType);
 }

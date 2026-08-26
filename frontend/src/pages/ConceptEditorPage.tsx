@@ -53,6 +53,7 @@ import {
   rejectOntologyChange,
   batchApproveOntologyChanges,
   type OntologyChangeLog,
+  getIndustryRelations,
 } from '@/api/concept';
 import { listToolDefinitions, listToolGroups } from '@/api/tool';
 import { listDatasources } from '@/api/datasource';
@@ -66,6 +67,7 @@ import type {
   ConceptJoinMapping,
   OntologyGroup,
   Industry,
+  IndustryRelation,
 } from '@/types/concept';
 import {
   RELATION_TYPE_LABELS,
@@ -164,18 +166,6 @@ function ConceptNode({ data }: { data: { label: string; description: string; nod
 
 const nodeTypes = { conceptNode: ConceptNode };
 
-const RELATION_OPTIONS = [
-  { type: 'COMPUTED_FROM', title: '由...计算得出', desc: '此概念通过公式由其他概念计算而来', dot: RELATION_TYPE_COLORS.COMPUTED_FROM, autoKeywords: ['率', '比例', 'OEE', '齐套', '利用率'] },
-  { type: 'PARENT_OF', title: '包含', desc: '此概念包含子概念，是层级关系', dot: RELATION_TYPE_COLORS.PARENT_OF, autoKeywords: ['总数', '清单', '层级', '指标'] },
-  { type: 'EQUIVALENT_TO', title: '等同于', desc: '两个概念表示同一个东西（跨系统同义）', dot: RELATION_TYPE_COLORS.EQUIVALENT_TO, autoKeywords: ['MES.', 'QMS.', 'SAP.', 'ERP.'] },
-  { type: 'PREREQUISITE_OF', title: '前提条件', desc: '需要先有当前概念才能计算目标概念', dot: RELATION_TYPE_COLORS.PREREQUISITE_OF, autoKeywords: ['排产', '计划', '工单'] },
-  { type: 'UPPER_STREAM_OF', title: '上游产出', desc: '上游工序的产出流入下游工序', dot: RELATION_TYPE_COLORS.UPPER_STREAM_OF, autoKeywords: ['工序', '产出', '投入'] },
-  { type: 'DERIVED_FROM', title: '条件触发', desc: '满足条件后推导出的状态', dot: RELATION_TYPE_COLORS.DERIVED_FROM, autoKeywords: ['状态', '异常', '紧张', '告警'] },
-  { type: 'DRILLS_INTO', title: '可下钻', desc: '下钻到子维度分析（平台内置）', dot: RELATION_TYPE_COLORS.DRILLS_INTO, autoKeywords: [], builtin: true },
-  { type: 'DRILLED_FROM', title: '上卷', desc: '从子维度上卷（DRILLS_INTO 逆关系，自动推导）', dot: RELATION_TYPE_COLORS.DRILLED_FROM, autoKeywords: [], builtin: true },
-  { type: 'CORRELATED', title: '关联', desc: '关联维度，交叉分析提示（平台内置）', dot: RELATION_TYPE_COLORS.CORRELATED, autoKeywords: [], builtin: true },
-];
-
 function getRelationTypeDirection(type: string): 'source_to_target' | 'target_to_source' {
   if (type === 'COMPUTED_FROM' || type === 'PARENT_OF' || type === 'PREREQUISITE_OF') return 'source_to_target';
   return 'target_to_source';
@@ -185,7 +175,7 @@ function suggestRelationType(sourceName: string, targetName: string): string {
   const combined = `${sourceName} ${targetName}`;
   let bestType = 'PARENT_OF';
   let bestScore = 0;
-  for (const opt of RELATION_OPTIONS) {
+  for (const opt of relationOptions) {
     let score = 0;
     for (const kw of opt.autoKeywords) { if (combined.includes(kw)) score += 1; }
     if (sourceName.includes('产出') && targetName.includes('投入')) score += opt.type === 'UPPER_STREAM_OF' ? 5 : 0;
@@ -371,6 +361,26 @@ export default function ConceptEditorPage() {
   const domainGroupsFetchedRef = useRef<number | null>(null);
   const [industryConceptGroupMap, setIndustryConceptGroupMap] = useState<Map<number, number>>(new Map());
   const [industryAllRelations, setIndustryAllRelations] = useState<ConceptRelation[]>([]);
+  const [industryRelationTypes, setIndustryRelationTypes] = useState<IndustryRelation[]>([]);
+
+  const relationOptions = useMemo(() => {
+    const AUTO_KEYWORD_MAP: Record<string, string[]> = {
+      'COMPUTED_FROM': ['率', '比例', 'OEE', '齐套', '利用率'],
+      'PARENT_OF': ['总数', '清单', '层级', '指标'],
+      'EQUIVALENT_TO': ['MES.', 'QMS.', 'SAP.', 'ERP.'],
+      'PREREQUISITE_OF': ['排产', '计划', '工单'],
+      'UPPER_STREAM_OF': ['工序', '产出', '投入'],
+      'DERIVED_FROM': ['状态', '异常', '紧张', '告警'],
+    };
+    return industryRelationTypes.map((ir) => ({
+      type: ir.relationType,
+      title: RELATION_TYPE_LABELS[ir.relationType] || ir.relationType,
+      desc: ir.description || '',
+      dot: RELATION_TYPE_COLORS[ir.relationType] || '#999',
+      autoKeywords: AUTO_KEYWORD_MAP[ir.relationType] || [],
+      builtin: ir.isBuiltin,
+    }));
+  }, [industryRelationTypes]);
 
   const [showChangeReview, setShowChangeReview] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<OntologyChangeLog[]>([]);
@@ -616,6 +626,11 @@ export default function ConceptEditorPage() {
   useEffect(() => {
     if (selectedIndustryId !== null) {
       fetchDomainGroups(selectedIndustryId);
+      getIndustryRelations(selectedIndustryId).then((res) => {
+        setIndustryRelationTypes(res.data);
+      }).catch(() => {});
+    } else {
+      setIndustryRelationTypes([]);
     }
   }, [fetchDomainGroups, selectedIndustryId]);
 
@@ -1801,7 +1816,7 @@ export default function ConceptEditorPage() {
               「{concepts.find((c) => String(c.id) === pendingConnection.target)?.name}」
               是什么关系？
             </div>
-            {RELATION_OPTIONS.map((opt) => (
+            {relationOptions.map((opt) => (
               <button
                 key={opt.type}
                 className={`relationOption ${selectedRelationType === opt.type ? 'relationOptionSelected' : ''}`}
@@ -2077,7 +2092,7 @@ export default function ConceptEditorPage() {
                 <div className="dialogSubtitle" style={{ marginTop: 12 }}>
                   选择关系类型
                 </div>
-                {RELATION_OPTIONS.map((opt) => (
+                {relationOptions.map((opt) => (
                   <button
                     key={opt.type}
                     className={`relationOption ${searchRelType === opt.type ? 'relationOptionSelected' : ''}`}
