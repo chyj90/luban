@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Network, RefreshCw, GitBranch } from 'lucide-react';
+import { Network, RefreshCw, GitBranch, ShieldCheck } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import {
   ReactFlow,
@@ -48,6 +48,11 @@ import {
   getOntologyGroup,
   listIndustries,
   getConceptTree,
+  listPendingOntologyChanges,
+  approveOntologyChange,
+  rejectOntologyChange,
+  batchApproveOntologyChanges,
+  type OntologyChangeLog,
 } from '@/api/concept';
 import { listToolDefinitions, listToolGroups } from '@/api/tool';
 import { listDatasources } from '@/api/datasource';
@@ -81,6 +86,15 @@ const DOMAIN_COLORS = [
   '#13c2c2', '#f5222d', '#faad14', '#2f54eb', '#a0d911',
   '#fa541c', '#1890ff', '#7cb305', '#531dab', '#c41d7f',
 ];
+
+function safeJsonParse(str: string | null): Record<string, unknown> | null {
+  if (!str) return null;
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+}
 
 function getNodeType(concept: Concept, concepts: Concept[], relations: ConceptRelation[]): string {
   if (relations.some((r) => r.sourceConceptId === concept.id && r.relationType === 'COMPUTED_FROM')) return 'computed';
@@ -356,6 +370,11 @@ export default function ConceptEditorPage() {
   const domainGroupsFetchedRef = useRef<number | null>(null);
   const [industryConceptGroupMap, setIndustryConceptGroupMap] = useState<Map<number, number>>(new Map());
   const [industryAllRelations, setIndustryAllRelations] = useState<ConceptRelation[]>([]);
+
+  const [showChangeReview, setShowChangeReview] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState<OntologyChangeLog[]>([]);
+  const [changesLoading, setChangesLoading] = useState(false);
+  const [selectedChangeIds, setSelectedChangeIds] = useState<Set<number>>(new Set());
 
   const crossDomainStats = useMemo(() => {
     const domainIdToName = new Map<number, string>();
@@ -836,6 +855,65 @@ export default function ConceptEditorPage() {
     }
   };
 
+  const loadPendingChanges = async () => {
+    setChangesLoading(true);
+    try {
+      const data = await listPendingOntologyChanges();
+      setPendingChanges(data);
+      setSelectedChangeIds(new Set());
+    } catch {
+      toast('加载变更记录失败', 'error');
+    } finally {
+      setChangesLoading(false);
+    }
+  };
+
+  const handleApproveChange = async (changeId: number) => {
+    try {
+      await approveOntologyChange(changeId);
+      setPendingChanges((prev) => prev.map((c) => c.id === changeId ? { ...c, status: 'APPROVED' as const } : c));
+      toast('变更已通过', 'success');
+    } catch {
+      toast('操作失败', 'error');
+    }
+  };
+
+  const handleRejectChange = async (changeId: number) => {
+    try {
+      await rejectOntologyChange(changeId);
+      setPendingChanges((prev) => prev.map((c) => c.id === changeId ? { ...c, status: 'REJECTED' as const } : c));
+      toast('变更已拒绝', 'success');
+    } catch {
+      toast('操作失败', 'error');
+    }
+  };
+
+  const handleBatchApprove = async () => {
+    if (selectedChangeIds.size === 0) return;
+    try {
+      await batchApproveOntologyChanges(Array.from(selectedChangeIds));
+      setPendingChanges((prev) => prev.map((c) =>
+        selectedChangeIds.has(c.id) ? { ...c, status: 'APPROVED' as const } : c
+      ));
+      setSelectedChangeIds(new Set());
+      toast(`已通过 ${selectedChangeIds.size} 条变更`, 'success');
+    } catch {
+      toast('批量操作失败', 'error');
+    }
+  };
+
+  const toggleChangeSelection = (changeId: number) => {
+    setSelectedChangeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(changeId)) {
+        next.delete(changeId);
+      } else {
+        next.add(changeId);
+      }
+      return next;
+    });
+  };
+
   const handleUpdateConcept = async () => {
     if (!selectedConcept) return;
     pushUndo();
@@ -1266,6 +1344,16 @@ export default function ConceptEditorPage() {
             <div className="toolbarActions">
               <button className="toolbarBtn" onClick={handleAutoMatch}>⚡ 自动映射</button>
               <button className="toolbarBtn" onClick={handleRebuildIndex}>重建索引</button>
+              <button
+                className="toolbarBtn"
+                onClick={() => {
+                  setShowChangeReview(true);
+                  loadPendingChanges();
+                }}
+              >
+                <ShieldCheck size={14} style={{ marginRight: 4 }} />
+                变更审核
+              </button>
             </div>
           </div>
         }
@@ -2175,6 +2263,132 @@ export default function ConceptEditorPage() {
             <div className="formActions">
               <button className="btnPrimary" onClick={handleAutoMatchConfirm}>开始匹配</button>
               <button className="btn" onClick={() => setShowDatasourceModal(false)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChangeReview && (
+        <div className="modalOverlay" onClick={() => setShowChangeReview(false)}>
+          <div className="changeReviewPanel" onClick={(e) => e.stopPropagation()}>
+            <div className="changeReviewHeader">
+              <h3 className="changeReviewTitle">
+                <ShieldCheck size={18} />
+                本体变更审核
+              </h3>
+              <button className="changeReviewClose" onClick={() => setShowChangeReview(false)}>✕</button>
+            </div>
+
+            <div className="changeReviewBody">
+              {changesLoading ? (
+                <div className="changeReviewLoading">加载中...</div>
+              ) : pendingChanges.length === 0 ? (
+                <div className="changeReviewEmpty">暂无待审核的变更</div>
+              ) : (
+                <>
+                  <div className="changeReviewToolbar">
+                    <span className="changeReviewCount">
+                      共 {pendingChanges.length} 条变更，已选 {selectedChangeIds.size} 条
+                    </span>
+                    <button
+                      className="changeReviewBatchBtn"
+                      disabled={selectedChangeIds.size === 0}
+                      onClick={handleBatchApprove}
+                    >
+                      批量通过
+                    </button>
+                  </div>
+                  <div className="changeReviewList">
+                    {pendingChanges.map((change) => {
+                      const isSelected = selectedChangeIds.has(change.id);
+                      const opLabel = change.operation.replace(/_/g, ' ');
+                      const beforeObj = change.beforeSnapshot ? safeJsonParse(change.beforeSnapshot) : null;
+                      const afterObj = change.afterSnapshot ? safeJsonParse(change.afterSnapshot) : null;
+
+                      return (
+                        <div
+                          key={change.id}
+                          className={`changeReviewItem ${change.status === 'APPROVED' ? 'approved' : change.status === 'REJECTED' ? 'rejected' : ''}`}
+                        >
+                          <div className="changeReviewItemHeader">
+                            <label className="changeReviewCheckbox">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={change.status !== 'PENDING'}
+                                onChange={() => toggleChangeSelection(change.id)}
+                              />
+                            </label>
+                            <span className="changeReviewOpTag">{opLabel}</span>
+                            <span className="changeReviewEntityType">{change.entityType}</span>
+                            <span className={`changeReviewStatusTag ${change.status.toLowerCase()}`}>
+                              {change.status === 'PENDING' ? '待审核' : change.status === 'APPROVED' ? '已通过' : '已拒绝'}
+                            </span>
+                          </div>
+
+                          {change.reasoning && (
+                            <div className="changeReviewReasoning">{change.reasoning}</div>
+                          )}
+
+                          {beforeObj || afterObj ? (
+                            <div className="changeReviewDiff">
+                              {beforeObj ? (
+                                <div className="changeReviewDiffCol before">
+                                  <div className="changeReviewDiffLabel">变更前</div>
+                                  <pre className="changeReviewDiffPre before">
+                                    {JSON.stringify(beforeObj, null, 2)}
+                                  </pre>
+                                </div>
+                              ) : (
+                                <div className="changeReviewDiffCol before">
+                                  <div className="changeReviewDiffLabel">变更前</div>
+                                  <pre className="changeReviewDiffPre before empty">（新建）</pre>
+                                </div>
+                              )}
+                              {afterObj ? (
+                                <div className="changeReviewDiffCol after">
+                                  <div className="changeReviewDiffLabel">变更后</div>
+                                  <pre className="changeReviewDiffPre after">
+                                    {JSON.stringify(afterObj, null, 2)}
+                                  </pre>
+                                </div>
+                              ) : (
+                                <div className="changeReviewDiffCol after">
+                                  <div className="changeReviewDiffLabel">变更后</div>
+                                  <pre className="changeReviewDiffPre after empty">（删除）</pre>
+                                </div>
+                              )}
+                            </div>
+                          ) : null}
+
+                          <div className="changeReviewMeta">
+                            <span>操作人：{change.operatorName}</span>
+                            <span>触发方式：{change.triggerType === 'user_request' ? '用户请求' : '自动检测'}</span>
+                            <span>{new Date(change.createdAt).toLocaleString()}</span>
+                          </div>
+
+                          {change.status === 'PENDING' && (
+                            <div className="changeReviewActions">
+                              <button
+                                className="changeReviewApproveBtn"
+                                onClick={() => handleApproveChange(change.id)}
+                              >
+                                ✓ 通过
+                              </button>
+                              <button
+                                className="changeReviewRejectBtn"
+                                onClick={() => handleRejectChange(change.id)}
+                              >
+                                ✕ 拒绝
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
