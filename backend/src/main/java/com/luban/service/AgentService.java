@@ -834,8 +834,16 @@ public class AgentService {
 
         Map<Long, String> groupNameMap = buildGroupNameMap(conceptTrace);
 
+        Map<Long, List<Map<String, Object>>> drillDimensions = new LinkedHashMap<>();
+        for (Long cid : conceptIds) {
+            List<Map<String, Object>> dims = ontologyService.getDrillDimensions(cid);
+            if (!dims.isEmpty()) {
+                drillDimensions.put(cid, dims);
+            }
+        }
+
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
-                tableMappings, joinMappings, authorizedConceptIds, groupNameMap);
+                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions);
 
         log.info("buildUnifiedContext TOTAL: {}ms, concepts={}, tools={}, tables={}",
                 System.currentTimeMillis() - t0, conceptIds.size(), apiTools.size(), tableMappings.size());
@@ -1117,7 +1125,8 @@ public class AgentService {
                                              List<ConceptMapping> tableMappings,
                                              List<ConceptJoinMapping> joinMappings,
                                              Set<Long> authorizedConceptIds,
-                                             Map<Long, String> groupNameMap) {
+                                             Map<Long, String> groupNameMap,
+                                             Map<Long, List<Map<String, Object>>> drillDimensions) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("## 用户问题\n");
@@ -1147,6 +1156,30 @@ public class AgentService {
                         .append(" |\n");
             }
             sb.append("\n");
+        }
+
+        if (drillDimensions != null && !drillDimensions.isEmpty()) {
+            sb.append("## 可下钻维度\n");
+            sb.append("下方列出各概念可进一步下钻分析的子维度，LLM 生成 SQL 后可据此提示用户下钻。\n\n");
+            for (Map.Entry<Long, List<Map<String, Object>>> entry : drillDimensions.entrySet()) {
+                Long conceptId = entry.getKey();
+                String conceptName = conceptTrace.stream()
+                        .filter(t -> conceptId.equals(t.get("conceptId")))
+                        .map(t -> String.valueOf(t.get("conceptName")))
+                        .findFirst().orElse("概念" + conceptId);
+                sb.append("### ").append(conceptName).append(" (ID: ").append(conceptId).append(") 的下钻维度\n");
+                sb.append("| 维度ID | 维度名 | 描述 | 异常阈值 |\n");
+                sb.append("|--------|--------|------|----------|\n");
+                for (Map<String, Object> dim : entry.getValue()) {
+                    sb.append("| ").append(dim.get("conceptId"))
+                            .append(" | ").append(dim.get("conceptName"))
+                            .append(" | ").append(dim.getOrDefault("description", "-"))
+                            .append(" | ").append(dim.containsKey("anomalyThresholdExpr")
+                                    ? dim.get("anomalyThresholdDesc") : "-")
+                            .append(" |\n");
+                }
+                sb.append("\n");
+            }
         }
 
         if (tableMappings != null && !tableMappings.isEmpty()) {
@@ -1680,7 +1713,16 @@ public class AgentService {
                 "1. 调用 API 工具获取数据\n" +
                 "2. 生成 SQL 查询数据库（仅限 SELECT）\n" +
                 "3. 直接回答（如果无法通过工具或 SQL 回答）\n\n" +
-                "请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。";
+                "请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n\n" +
+                "## 下钻分析规则\n" +
+                "上文中出现「可下钻维度」表格时，说明当前查询结果可进一步按子维度拆解分析。\n" +
+                "在 final_answer 末尾，必须以 `[drill_suggestions]` 为标记，列出可下钻的维度建议：\n" +
+                "```\n" +
+                "[drill_suggestions]\n" +
+                "- 维度名 (维度ID): 下钻原因\n" +
+                "```\n" +
+                "如果维度有异常阈值，且当前查询结果触发了阈值，必须在原因中明确指出异常。\n" +
+                "例如：「订单量环比下降15%，超过10%阈值，建议按渠道下钻分析」。";
     }
 
     /**
