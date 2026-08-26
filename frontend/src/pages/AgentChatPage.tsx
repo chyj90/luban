@@ -6,6 +6,7 @@ import { fetchAgentChatStream } from '@/api/agent';
 import { quickConceptFeedback, listConcepts, listConceptFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
+import { fixMarkdownTable } from '@/lib/markdown';
 import ConceptTracePanel from '@/components/ConceptTracePanel';
 import './AgentChatPage.css';
 
@@ -103,6 +104,14 @@ interface RootCauseEvidence {
   anomaly?: boolean;
 }
 
+interface DatasourceInfo {
+  id: number;
+  name: string;
+  type: string;
+  slug: string;
+  tables: { name: string; columns: string[] }[];
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -124,6 +133,7 @@ interface ChatMessage {
     evidence: RootCauseEvidence[];
     suggestion: string;
   };
+  selectDatasources?: DatasourceInfo[];
   timestamp: string;
 }
 
@@ -152,43 +162,6 @@ function parseRootCause(content: string | undefined): ChatMessage['rootCause'] {
   return undefined;
 }
 
-function fixMarkdownTable(text: string): string {
-  // Insert newlines before mid-line headings so they render correctly
-  // and don't get swallowed by the table regex
-  text = text.replace(/([^\n])(#{2,3}\s)/g, '$1\n\n$2');
-  // Insert newline after heading text that runs directly into a table (### 标题|)
-  text = text.replace(/(#{2,3}\s[^#|\n]+?)(\|)/g, '$1\n$2');
-  // Insert newline between heading text and trailing **bold** on same line
-  text = text.replace(/(#{2,3}\s[^\n]+?)(\*\*[^*]+\*\*)/g, '$1\n$2');
-  return text.replace(
-    /\|(?:[^|\n]*\|)+/g,
-    (match) => {
-      const cells = match.split('|').filter(s => s.trim() !== '');
-      const sepStart = cells.findIndex(c => /^[-:\s]+$/.test(c.trim()));
-      if (sepStart === -1) return match;
-
-      const headerCells = cells.slice(0, sepStart);
-      const colCount = headerCells.length;
-      if (colCount === 0) return match;
-
-      let sepEnd = sepStart;
-      while (sepEnd < cells.length && /^[-:\s]+$/.test(cells[sepEnd].trim())) {
-        sepEnd++;
-      }
-      const sepCells = cells.slice(sepStart, sepEnd);
-      const bodyCells = cells.slice(sepEnd);
-
-      const rows: string[] = [];
-      for (let i = 0; i < bodyCells.length; i += colCount) {
-        const row = bodyCells.slice(i, i + colCount).map(c => c.trim()).join(' | ');
-        if (row) rows.push('| ' + row + ' |');
-      }
-
-      return '\n\n| ' + headerCells.map(c => c.trim()).join(' | ') + ' |\n| ' + sepCells.map(c => c.trim()).join(' | ') + ' |\n' + rows.join('\n') + '\n\n';
-    }
-  );
-}
-
 export default function AgentChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
@@ -212,6 +185,9 @@ export default function AgentChatPage() {
   const [dislikeSelectedConcept, setDislikeSelectedConcept] = useState<{ id: number; name: string } | null>(null);
   const [dislikeConcepts, setDislikeConcepts] = useState<{ id: number; name: string }[]>([]);
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [selectedDatasources, setSelectedDatasources] = useState<Record<number, Set<string>>>({});
+  const [expandedDatasources, setExpandedDatasources] = useState<Set<number>>(new Set());
+  const [confirmedDatasources, setConfirmedDatasources] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const toast = useToastStore((s) => s.show);
   const user = useAuthStore((s) => s.user);
@@ -359,6 +335,28 @@ export default function AgentChatPage() {
     });
   }, [activeSessionId]);
 
+  const handleSelectDatasourcesConfirm = (datasources: DatasourceInfo[], msgId: string) => {
+    const selection = datasources
+      .filter((ds) => {
+        const sel = selectedDatasources[ds.id];
+        return sel && sel.size > 0;
+      })
+      .map((ds) => ({
+        id: ds.id,
+        name: ds.name,
+        tables: Array.from(selectedDatasources[ds.id]),
+      }));
+    if (selection.length === 0) {
+      toast('请至少选择一个数据源', 'error');
+      return;
+    }
+    setConfirmedDatasources((prev) => new Set(prev).add(msgId));
+    const msg = '已选择数据源:\n' + selection.map((s) =>
+      '  - ' + s.name + ' [表: ' + s.tables.join(', ') + ']'
+    ).join('\n');
+    handleSend(msg);
+  };
+
   const handleSend = useCallback(async (message?: string) => {
     const text = (message ?? input).trim();
     if (!text || sending) return;
@@ -399,6 +397,7 @@ export default function AgentChatPage() {
     let streamUsedConcepts: ChatMessage['usedConcepts'] = undefined;
     let streamDrillDimensions: ChatMessage['drillDimensions'] = undefined;
     let streamOntologyChanges: ChatMessage['ontologyChanges'] = undefined;
+    let streamSelectDatasources: ChatMessage['selectDatasources'] = undefined;
     let streamMessageId: string | undefined;
     let isFirstDelta = true;
 
@@ -418,6 +417,7 @@ export default function AgentChatPage() {
                   queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
                   messageId: streamMessageId,
+                  selectDatasources: streamSelectDatasources,
                 }
               : m,
           );
@@ -477,6 +477,11 @@ export default function AgentChatPage() {
                 streamOntologyChanges = JSON.parse(data);
               } catch { /* ignore */ }
               break;
+            case 'select_datasources':
+              try {
+                streamSelectDatasources = JSON.parse(data);
+              } catch { /* ignore */ }
+              break;
             case 'delta':
               if (isFirstDelta) {
                 streamContent = data;
@@ -527,6 +532,7 @@ export default function AgentChatPage() {
                   ontologyChanges: streamOntologyChanges,
                   rootCause: parseRootCause(streamContent),
                   messageId: streamMessageId,
+                  selectDatasources: streamSelectDatasources,
                 }
               : m,
           );
@@ -690,7 +696,107 @@ export default function AgentChatPage() {
                     <span className="agent-chat-timestamp">{msg.timestamp}</span>
                   </div>
                   <div className="agent-chat-bubble">
-                    {msg.role === 'assistant' && !msg.isStreaming ? (
+                    {msg.role === 'assistant' && msg.selectDatasources && msg.selectDatasources.length > 0 ? (
+                      <>
+                        <div className="agent-chat-message-content" style={{ color: '#666', fontSize: '13px' }}>请选择需要使用的数据源和表</div>
+                        {!confirmedDatasources.has(msg.id) ? (
+                          <div className="agent-chat-datasource-select">
+                            {msg.selectDatasources.map((ds) => (
+                              <div key={ds.id} className="agent-chat-datasource-group">
+                                <label className="agent-chat-datasource-label">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!selectedDatasources[ds.id]?.size}
+                                    onChange={() => {
+                                      const isSelected = !!selectedDatasources[ds.id]?.size;
+                                      setExpandedDatasources((prev) => {
+                                        const next = new Set(prev);
+                                        if (isSelected) {
+                                          next.delete(ds.id);
+                                        } else {
+                                          next.add(ds.id);
+                                        }
+                                        return next;
+                                      });
+                                      setSelectedDatasources((prev) => {
+                                        const next = { ...prev };
+                                        if (isSelected) {
+                                          delete next[ds.id];
+                                        } else {
+                                          next[ds.id] = new Set(ds.tables.map((t) => t.name));
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                  <strong>{ds.name}</strong>
+                                  <span className="agent-chat-datasource-type">({ds.type})</span>
+                                </label>
+                                {expandedDatasources.has(ds.id) && (
+                                  <div className="agent-chat-datasource-tables">
+                                    {ds.tables.map((t) => (
+                                      <label key={t.name} className="agent-chat-table-label">
+                                        <input
+                                          type="checkbox"
+                                          checked={selectedDatasources[ds.id]?.has(t.name) ?? false}
+                                          onChange={() => {
+                                            setSelectedDatasources((prev) => {
+                                              const next = { ...prev };
+                                              const sel = new Set(next[ds.id] || []);
+                                              if (sel.has(t.name)) {
+                                                sel.delete(t.name);
+                                              } else {
+                                                sel.add(t.name);
+                                              }
+                                              if (sel.size > 0) {
+                                                next[ds.id] = sel;
+                                              } else {
+                                                delete next[ds.id];
+                                              }
+                                              return next;
+                                            });
+                                          }}
+                                        />
+                                        <span>{t.name}</span>
+                                        <span className="agent-chat-table-columns">
+                                          ({t.columns.slice(0, 5).join(', ')}{t.columns.length > 5 ? '...' : ''})
+                                        </span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            <button
+                              className="agent-chat-datasource-confirm"
+                              disabled={!Object.values(selectedDatasources).some((s) => s.size > 0)}
+                              onClick={() => handleSelectDatasourcesConfirm(msg.selectDatasources!, msg.id)}
+                            >
+                              确认选择
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="agent-chat-datasource-summary">
+                            {msg.selectDatasources
+                              .filter((ds) => selectedDatasources[ds.id]?.size)
+                              .map((ds) => {
+                                const tables = Array.from(selectedDatasources[ds.id] || []);
+                                return (
+                                  <div key={ds.id} className="agent-chat-datasource-summary-item">
+                                    <div className="agent-chat-datasource-summary-header">
+                                      <span className="agent-chat-datasource-summary-check">✓</span>
+                                      <strong>{ds.name}</strong>
+                                    </div>
+                                    <div className="agent-chat-datasource-summary-tables">
+                                      {tables.join(', ')}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
+                      </>
+                    ) : msg.role === 'assistant' && !msg.isStreaming ? (
                       <div className="agent-chat-message-content md-content">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{fixMarkdownTable(msg.content)}</ReactMarkdown>
                       </div>
