@@ -4,6 +4,8 @@ export interface Concept {
   parentId: number | null;
   groupId: number | null;
   description: string;
+  anomalyThresholdExpr: string | null;
+  anomalyThresholdDesc: string | null;
   createdAt: string;
   updatedAt: string;
   mapped?: boolean;
@@ -81,6 +83,8 @@ export interface CreateConceptRequest {
   parentId?: number;
   groupId?: number;
   description?: string;
+  anomalyThresholdExpr?: string;
+  anomalyThresholdDesc?: string;
 }
 
 export interface CreateRelationRequest {

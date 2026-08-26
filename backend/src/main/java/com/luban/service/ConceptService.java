@@ -103,6 +103,8 @@ public class ConceptService {
         concept.setParentId(request.getParentId());
         concept.setGroupId(request.getGroupId());
         concept.setDescription(request.getDescription());
+        concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
+        concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
         Concept saved = conceptRepository.save(concept);
         ontologyService.reload();
         return saved;
@@ -116,6 +118,8 @@ public class ConceptService {
         concept.setParentId(request.getParentId());
         concept.setGroupId(request.getGroupId());
         concept.setDescription(request.getDescription());
+        concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
+        concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
         concept.setUpdatedAt(java.time.LocalDateTime.now());
         Concept saved = conceptRepository.save(concept);
         ontologyService.reload();

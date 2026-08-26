@@ -309,7 +309,7 @@ export default function ConceptEditorPage() {
   const [selectedConcept, setSelectedConcept] = useState<Concept | null>(null);
   const [selectedRelations, setSelectedRelations] = useState<ConceptRelation[]>([]);
   const [selectedTools, setSelectedTools] = useState<ToolBindingInfo[]>([]);
-  const [editingForm, setEditingForm] = useState({ name: '', description: '' });
+  const [editingForm, setEditingForm] = useState({ name: '', description: '', anomalyThresholdExpr: '', anomalyThresholdDesc: '' });
   const [inlineEditing, setInlineEditing] = useState<string | null>(null);
   const [inlineName, setInlineName] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -601,7 +601,7 @@ export default function ConceptEditorPage() {
     const concept = concepts.find((c) => String(c.id) === conceptId);
     if (!concept) return;
     setSelectedConcept(concept);
-    setEditingForm({ name: concept.name, description: concept.description || '' });
+    setEditingForm({ name: concept.name, description: concept.description || '', anomalyThresholdExpr: concept.anomalyThresholdExpr || '', anomalyThresholdDesc: concept.anomalyThresholdDesc || '' });
     setSelectedEdge(null);
 
     try {
@@ -843,6 +843,8 @@ export default function ConceptEditorPage() {
       await updateConcept(selectedConcept.id, {
         name: editingForm.name,
         description: editingForm.description,
+        anomalyThresholdExpr: editingForm.anomalyThresholdExpr || undefined,
+        anomalyThresholdDesc: editingForm.anomalyThresholdDesc || undefined,
       });
       toast('概念更新成功', 'success');
       fetchData();
@@ -1405,6 +1407,24 @@ export default function ConceptEditorPage() {
                   value={editingForm.description}
                   onChange={(e) => setEditingForm((f) => ({ ...f, description: e.target.value }))}
                   rows={3}
+                />
+              </div>
+              <div className="formGroup">
+                <label className="formLabel">异常阈值表达式</label>
+                <input
+                  className="formInput"
+                  placeholder="如: > 5%, < 80% 计划值"
+                  value={editingForm.anomalyThresholdExpr}
+                  onChange={(e) => setEditingForm((f) => ({ ...f, anomalyThresholdExpr: e.target.value }))}
+                />
+              </div>
+              <div className="formGroup">
+                <label className="formLabel">异常阈值说明</label>
+                <input
+                  className="formInput"
+                  placeholder="如: 退货率超过5%判定为异常"
+                  value={editingForm.anomalyThresholdDesc}
+                  onChange={(e) => setEditingForm((f) => ({ ...f, anomalyThresholdDesc: e.target.value }))}
                 />
               </div>
               <div className="formActions">

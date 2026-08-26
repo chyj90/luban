@@ -10,4 +10,6 @@ public class CreateConceptRequest {
     private Long parentId;
     private Long groupId;
     private String description;
+    private String anomalyThresholdExpr;
+    private String anomalyThresholdDesc;
 }
