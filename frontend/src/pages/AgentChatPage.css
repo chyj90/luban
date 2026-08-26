@@ -890,3 +890,319 @@
   color: #999;
   padding: 8px 0;
 }
+
+/* ===== 下钻维度时间线 ===== */
+.agent-chat-drill-timeline {
+  padding: 8px 0;
+  position: relative;
+}
+
+.agent-chat-drill-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  position: relative;
+}
+
+.agent-chat-drill-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 24px;
+  bottom: -8px;
+  width: 2px;
+  background: #e8e8e8;
+}
+
+.agent-chat-drill-step.done .agent-chat-drill-dot {
+  background: #52c41a;
+  border-color: #52c41a;
+}
+
+.agent-chat-drill-step.executing .agent-chat-drill-dot {
+  background: #1677ff;
+  border-color: #1677ff;
+  animation: drill-pulse 1s ease-in-out infinite;
+}
+
+.agent-chat-drill-step.pending .agent-chat-drill-dot {
+  background: #fff;
+  border-color: #d9d9d9;
+}
+
+@keyframes drill-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.6; }
+}
+
+.agent-chat-drill-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #d9d9d9;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.agent-chat-drill-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-chat-drill-round {
+  font-size: 11px;
+  color: #999;
+  margin-right: 8px;
+  background: #f5f5f5;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.agent-chat-drill-dim {
+  font-size: 13px;
+  color: #333;
+  font-weight: 500;
+}
+
+/* ===== 根因分析卡片 ===== */
+.agent-chat-root-cause-card {
+  margin: 12px 0;
+  border: 1px solid #ffd591;
+  border-radius: 8px;
+  background: #fffbe6;
+  overflow: hidden;
+}
+
+.agent-chat-root-cause-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #fff1b8;
+  font-size: 14px;
+  font-weight: 600;
+  color: #ad6800;
+}
+
+.agent-chat-root-cause-body {
+  padding: 14px;
+}
+
+.agent-chat-root-cause-finding {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.agent-chat-root-cause-finding strong {
+  color: #ad6800;
+}
+
+.agent-chat-root-cause-evidence {
+  margin-bottom: 12px;
+}
+
+.agent-chat-root-cause-evidence > strong {
+  font-size: 13px;
+  color: #666;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.agent-chat-root-cause-evidence-item {
+  padding: 4px 0 4px 8px;
+  border-left: 2px solid #ffd591;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: #555;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.agent-chat-evidence-round {
+  font-size: 11px;
+  color: #ad6800;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.agent-chat-evidence-anomaly {
+  font-size: 10px;
+  color: #ff4d4f;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  padding: 0 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.agent-chat-root-cause-suggestion {
+  font-size: 13px;
+  color: #333;
+  padding: 10px;
+  background: #e6f7ff;
+  border-radius: 4px;
+  border: 1px solid #91d5ff;
+  line-height: 1.5;
+}
+
+.agent-chat-root-cause-suggestion strong {
+  color: #1677ff;
+}
+
+/* ===== 本体变更建议卡片 ===== */
+.agent-chat-ontology-change-card {
+  margin: 12px 0;
+  border: 1px solid #d3adf7;
+  border-radius: 8px;
+  background: #f9f0ff;
+  overflow: hidden;
+}
+
+.agent-chat-ontology-change-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #efdbff;
+  font-size: 14px;
+  font-weight: 600;
+  color: #531dab;
+}
+
+.agent-chat-ontology-change-badge {
+  font-size: 11px;
+  font-weight: 400;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: #d3adf7;
+  color: #531dab;
+  margin-left: auto;
+}
+
+.agent-chat-ontology-change-reasoning {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #555;
+  line-height: 1.5;
+  border-bottom: 1px solid #efdbff;
+}
+
+.agent-chat-ontology-change-list {
+  padding: 8px 14px 14px;
+}
+
+.agent-chat-ontology-change-item {
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+  background: #fff;
+}
+
+.agent-chat-ontology-change-item:last-child {
+  margin-bottom: 0;
+}
+
+.agent-chat-ontology-change-op {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-chat-ontology-change-op-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: #f5f5f5;
+  color: #333;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.agent-chat-ontology-change-status-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.agent-chat-ontology-change-item.status-pending .agent-chat-ontology-change-status-tag {
+  background: #fff7e6;
+  color: #d46b08;
+  border: 1px solid #ffd591;
+}
+
+.agent-chat-ontology-change-item.status-approved .agent-chat-ontology-change-status-tag {
+  background: #f6ffed;
+  color: #389e0d;
+  border: 1px solid #b7eb8f;
+}
+
+.agent-chat-ontology-change-item.status-rejected .agent-chat-ontology-change-status-tag {
+  background: #fff1f0;
+  color: #cf1322;
+  border: 1px solid #ffa39e;
+}
+
+.agent-chat-ontology-change-diff {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.agent-chat-ontology-change-before,
+.agent-chat-ontology-change-after {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-chat-ontology-change-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #999;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.agent-chat-ontology-change-before pre {
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #cf1322;
+  overflow-x: auto;
+  max-height: 120px;
+  margin: 0;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.agent-chat-ontology-change-after pre {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #389e0d;
+  overflow-x: auto;
+  max-height: 120px;
+  margin: 0;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.agent-chat-ontology-change-reason {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.agent-chat-ontology-change-impact {
+  font-size: 12px;
+  color: #999;
+  font-style: italic;
+}

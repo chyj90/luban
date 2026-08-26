@@ -71,6 +71,37 @@ interface QueryResult {
   error?: string;
 }
 
+interface DrillDimension {
+  conceptId: number;
+  dimension: string;
+  round: number;
+  sql?: string;
+  status: 'pending' | 'executing' | 'done';
+}
+
+interface OntologyChangeItem {
+  changeId: string;
+  operation: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  reasoning: string;
+  impact: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+}
+
+interface OntologyChangeEvent {
+  changes: OntologyChangeItem[];
+  reasoning: string;
+  trigger: 'user_request' | 'auto_detect';
+}
+
+interface RootCauseEvidence {
+  round: number;
+  finding: string;
+  sql?: string;
+  anomaly?: boolean;
+}
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -84,6 +115,14 @@ interface ChatMessage {
   queryResult?: QueryResult;
   usedConcepts?: { conceptId: number; conceptName: string }[];
   messageId?: string;
+  drillDimensions?: DrillDimension[];
+  ontologyChanges?: OntologyChangeEvent;
+  rootCause?: {
+    reasoning: string;
+    root_cause: string;
+    evidence: RootCauseEvidence[];
+    suggestion: string;
+  };
   timestamp: string;
 }
 
@@ -92,6 +131,24 @@ interface ChatSession {
   title: string;
   messages: ChatMessage[];
   updatedAt: string;
+}
+
+function parseRootCause(content: string | undefined): ChatMessage['rootCause'] {
+  if (!content) return undefined;
+  try {
+    const jsonMatch = content.match(/\{[\s\S]*"answer_type"\s*:\s*"root_cause"[\s\S]*\}/);
+    if (!jsonMatch) return undefined;
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (parsed.answer_type === 'root_cause' && parsed.root_cause) {
+      return {
+        reasoning: parsed.reasoning || '',
+        root_cause: parsed.root_cause || '',
+        evidence: parsed.evidence || [],
+        suggestion: parsed.suggestion || '',
+      };
+    }
+  } catch { /* ignore */ }
+  return undefined;
 }
 
 function fixMarkdownTable(text: string): string {
@@ -337,6 +394,8 @@ export default function AgentChatPage() {
     let streamNl2sql: ChatMessage['nl2sql'] = undefined;
     let streamQueryResult: ChatMessage['queryResult'] = undefined;
     let streamUsedConcepts: ChatMessage['usedConcepts'] = undefined;
+    let streamDrillDimensions: ChatMessage['drillDimensions'] = undefined;
+    let streamOntologyChanges: ChatMessage['ontologyChanges'] = undefined;
     let streamMessageId: string | undefined;
     let isFirstDelta = true;
 
@@ -404,6 +463,17 @@ export default function AgentChatPage() {
             case 'used_concepts':
               streamUsedConcepts = JSON.parse(data);
               break;
+            case 'drill_dimension':
+              try {
+                const drill = JSON.parse(data);
+                streamDrillDimensions = [...(streamDrillDimensions || []), drill];
+              } catch { /* ignore */ }
+              break;
+            case 'ontology_change':
+              try {
+                streamOntologyChanges = JSON.parse(data);
+              } catch { /* ignore */ }
+              break;
             case 'delta':
               if (isFirstDelta) {
                 streamContent = data;
@@ -450,6 +520,9 @@ export default function AgentChatPage() {
                   nl2sql: streamNl2sql,
                   queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
+                  drillDimensions: streamDrillDimensions,
+                  ontologyChanges: streamOntologyChanges,
+                  rootCause: parseRootCause(streamContent),
                   messageId: streamMessageId,
                 }
               : m,
@@ -622,7 +695,7 @@ export default function AgentChatPage() {
                       <div className="agent-chat-message-content">{msg.content}</div>
                     )}
                   </div>
-                  {msg.role === 'assistant' && (msg.messageId || msg.nl2sql || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary') || (msg.toolCalls && msg.toolCalls.length > 0) || msg.thinking || msg.reasoning) && (
+                  {msg.role === 'assistant' && (msg.messageId || msg.nl2sql || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary') || (msg.toolCalls && msg.toolCalls.length > 0) || msg.thinking || msg.reasoning || (msg.drillDimensions && msg.drillDimensions.length > 0) || msg.ontologyChanges) && (
                     <>
                     <div className="agent-chat-actions">
                       <div className="agent-chat-actions-left">
@@ -664,6 +737,17 @@ export default function AgentChatPage() {
                               <line x1="4" y1="4" x2="9" y2="9" />
                             </svg>
                             工具
+                          </button>
+                        )}
+                        {msg.drillDimensions && msg.drillDimensions.length > 0 && (
+                          <button
+                            className={`agent-chat-action-btn ${expandedSection[msg.id] === 'drill' ? 'active' : ''}`}
+                            onClick={() => setExpandedSection(prev => ({ ...prev, [msg.id]: prev[msg.id] === 'drill' ? null : 'drill' }))}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                            下钻
                           </button>
                         )}
                         {(msg.thinking || msg.reasoning) && (
@@ -908,6 +992,105 @@ export default function AgentChatPage() {
                             <pre className="agent-chat-tool-call-result">{tc.result}</pre>
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {/* 下钻维度展开 */}
+                    {expandedSection[msg.id] === 'drill' && msg.drillDimensions && msg.drillDimensions.length > 0 && (
+                      <div className="agent-chat-detail">
+                        <div className="agent-chat-drill-timeline">
+                          {msg.drillDimensions.map((d, i) => (
+                            <div key={i} className={`agent-chat-drill-step ${d.status}`}>
+                              <div className="agent-chat-drill-dot" />
+                              <div className="agent-chat-drill-info">
+                                <span className="agent-chat-drill-round">第 {d.round} 轮</span>
+                                <span className="agent-chat-drill-dim">{d.dimension}</span>
+                                {d.sql && <pre className="agent-chat-nl2sql-code">{d.sql}</pre>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 根因分析卡片 */}
+                    {msg.rootCause && (
+                      <div className="agent-chat-root-cause-card">
+                        <div className="agent-chat-root-cause-header">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="8" x2="12" y2="12" />
+                            <line x1="12" y1="16" x2="12.01" y2="16" />
+                          </svg>
+                          根因分析
+                        </div>
+                        <div className="agent-chat-root-cause-body">
+                          <div className="agent-chat-root-cause-finding">
+                            <strong>根因：</strong>{msg.rootCause.root_cause}
+                          </div>
+                          {msg.rootCause.evidence.length > 0 && (
+                            <div className="agent-chat-root-cause-evidence">
+                              <strong>证据链：</strong>
+                              {msg.rootCause.evidence.map((e, i) => (
+                                <div key={i} className="agent-chat-root-cause-evidence-item">
+                                  <span className="agent-chat-evidence-round">[{e.round}]</span>
+                                  {e.anomaly && <span className="agent-chat-evidence-anomaly">异常</span>}
+                                  <span>{e.finding}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {msg.rootCause.suggestion && (
+                            <div className="agent-chat-root-cause-suggestion">
+                              <strong>建议：</strong>{msg.rootCause.suggestion}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 本体变更建议卡片 */}
+                    {msg.ontologyChanges && (
+                      <div className="agent-chat-ontology-change-card">
+                        <div className="agent-chat-ontology-change-header">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="3" />
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                          </svg>
+                          本体变更建议
+                          <span className="agent-chat-ontology-change-badge">
+                            {msg.ontologyChanges.trigger === 'auto_detect' ? '自动检测' : '用户请求'}
+                          </span>
+                        </div>
+                        <div className="agent-chat-ontology-change-reasoning">
+                          {msg.ontologyChanges.reasoning}
+                        </div>
+                        <div className="agent-chat-ontology-change-list">
+                          {msg.ontologyChanges.changes.map((c, i) => (
+                            <div key={i} className={`agent-chat-ontology-change-item status-${c.status.toLowerCase()}`}>
+                              <div className="agent-chat-ontology-change-op">
+                                <span className="agent-chat-ontology-change-op-tag">{c.operation}</span>
+                                <span className="agent-chat-ontology-change-status-tag">{c.status}</span>
+                              </div>
+                              <div className="agent-chat-ontology-change-diff">
+                                {c.before && (
+                                  <div className="agent-chat-ontology-change-before">
+                                    <div className="agent-chat-ontology-change-label">变更前</div>
+                                    <pre>{JSON.stringify(c.before, null, 2)}</pre>
+                                  </div>
+                                )}
+                                {c.after && (
+                                  <div className="agent-chat-ontology-change-after">
+                                    <div className="agent-chat-ontology-change-label">变更后</div>
+                                    <pre>{JSON.stringify(c.after, null, 2)}</pre>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="agent-chat-ontology-change-reason">{c.reasoning}</div>
+                              {c.impact && <div className="agent-chat-ontology-change-impact">影响：{c.impact}</div>}
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                 </div>
