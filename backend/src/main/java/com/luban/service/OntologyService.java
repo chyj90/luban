@@ -505,4 +505,98 @@ public class OntologyService {
     private String unescapeUri(String uri) {
         return uri.replace("_", " ");
     }
+
+    /**
+     * 获取概念的所有直接下钻维度（DRILLS_INTO 关系），包含异常阈值信息。
+     */
+    public List<Map<String, Object>> getDrillDimensions(Long conceptId) {
+        Concept concept = conceptRepository.findById(conceptId).orElse(null);
+        if (concept == null) return Collections.emptyList();
+
+        List<ConceptRelation> drillRelations = conceptRelationRepository
+                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
+
+        List<Map<String, Object>> dimensions = new ArrayList<>();
+        for (ConceptRelation relation : drillRelations) {
+            Concept target = conceptRepository.findById(relation.getTargetConceptId()).orElse(null);
+            if (target == null) continue;
+
+            Map<String, Object> dim = new LinkedHashMap<>();
+            dim.put("conceptId", target.getId());
+            dim.put("conceptName", target.getName());
+            dim.put("description", target.getDescription());
+            if (target.getAnomalyThresholdExpr() != null) {
+                dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
+                dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+            }
+            dimensions.add(dim);
+        }
+        return dimensions;
+    }
+
+    /**
+     * 获取概念的完整下钻路径树（递归获取所有 DRILLS_INTO 链）。
+     * 返回树形结构，LLM 据此判断应该按什么顺序下钻。
+     */
+    public Map<String, Object> getDrillPath(Long conceptId) {
+        Concept concept = conceptRepository.findById(conceptId).orElse(null);
+        if (concept == null) return Collections.emptyMap();
+
+        Map<String, Object> path = new LinkedHashMap<>();
+        path.put("conceptId", concept.getId());
+        path.put("conceptName", concept.getName());
+        path.put("description", concept.getDescription());
+        if (concept.getAnomalyThresholdExpr() != null) {
+            path.put("anomalyThresholdExpr", concept.getAnomalyThresholdExpr());
+            path.put("anomalyThresholdDesc", concept.getAnomalyThresholdDesc());
+        }
+
+        List<Map<String, Object>> children = new ArrayList<>();
+        List<ConceptRelation> drillRelations = conceptRelationRepository
+                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
+        Set<Long> visited = new HashSet<>();
+        visited.add(conceptId);
+
+        for (ConceptRelation relation : drillRelations) {
+            if (!visited.contains(relation.getTargetConceptId())) {
+                Map<String, Object> childPath = getDrillPathRecursive(
+                        relation.getTargetConceptId(), visited, 1);
+                if (!childPath.isEmpty()) {
+                    children.add(childPath);
+                }
+            }
+        }
+        path.put("children", children);
+        return path;
+    }
+
+    private Map<String, Object> getDrillPathRecursive(Long conceptId, Set<Long> visited, int depth) {
+        if (depth > 5 || !visited.add(conceptId)) {
+            return Collections.emptyMap();
+        }
+
+        Concept concept = conceptRepository.findById(conceptId).orElse(null);
+        if (concept == null) return Collections.emptyMap();
+
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("conceptId", concept.getId());
+        node.put("conceptName", concept.getName());
+        if (concept.getAnomalyThresholdExpr() != null) {
+            node.put("anomalyThresholdExpr", concept.getAnomalyThresholdExpr());
+        }
+
+        List<Map<String, Object>> children = new ArrayList<>();
+        List<ConceptRelation> drillRelations = conceptRelationRepository
+                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
+
+        for (ConceptRelation relation : drillRelations) {
+            Map<String, Object> child = getDrillPathRecursive(
+                    relation.getTargetConceptId(), new HashSet<>(visited), depth + 1);
+            if (!child.isEmpty()) {
+                children.add(child);
+            }
+        }
+        node.put("children", children);
+        return node;
+    }
 }
