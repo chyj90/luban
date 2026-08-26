@@ -127,6 +127,7 @@ export interface IndustryRelation {
   isTransitive: boolean;
   isSymmetric: boolean;
   sortOrder: number;
+  isBuiltin: boolean;
   createdAt: string;
 }
 
@@ -195,6 +196,9 @@ export const RELATION_TYPE_LABELS: Record<string, string> = {
   PREREQUISITE_OF: '前提条件',
   DERIVED_FROM: '条件触发',
   UPPER_STREAM_OF: '上游产出',
+  DRILLS_INTO: '可下钻',
+  DRILLED_FROM: '上卷',
+  CORRELATED: '关联',
 };
 
 export const RELATION_TYPE_COLORS: Record<string, string> = {
@@ -204,6 +208,9 @@ export const RELATION_TYPE_COLORS: Record<string, string> = {
   PREREQUISITE_OF: '#fa8c16',
   DERIVED_FROM: '#eb2f96',
   UPPER_STREAM_OF: '#13c2c2',
+  DRILLS_INTO: '#1677ff',
+  DRILLED_FROM: '#8c8c8c',
+  CORRELATED: '#faad14',
 };
 
 export const RELATION_TYPE_PRIORITY: Record<string, number> = {
@@ -213,6 +220,9 @@ export const RELATION_TYPE_PRIORITY: Record<string, number> = {
   PREREQUISITE_OF: 3,
   DERIVED_FROM: 4,
   UPPER_STREAM_OF: 5,
+  DRILLS_INTO: 6,
+  DRILLED_FROM: 7,
+  CORRELATED: 8,
 };
 
 export const CONCEPT_NODE_ICONS: Record<string, string> = {

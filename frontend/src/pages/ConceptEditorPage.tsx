@@ -156,6 +156,9 @@ const RELATION_OPTIONS = [
   { type: 'PREREQUISITE_OF', title: '前提条件', desc: '需要先有当前概念才能计算目标概念', dot: RELATION_TYPE_COLORS.PREREQUISITE_OF, autoKeywords: ['排产', '计划', '工单'] },
   { type: 'UPPER_STREAM_OF', title: '上游产出', desc: '上游工序的产出流入下游工序', dot: RELATION_TYPE_COLORS.UPPER_STREAM_OF, autoKeywords: ['工序', '产出', '投入'] },
   { type: 'DERIVED_FROM', title: '条件触发', desc: '满足条件后推导出的状态', dot: RELATION_TYPE_COLORS.DERIVED_FROM, autoKeywords: ['状态', '异常', '紧张', '告警'] },
+  { type: 'DRILLS_INTO', title: '可下钻', desc: '下钻到子维度分析（平台内置）', dot: RELATION_TYPE_COLORS.DRILLS_INTO, autoKeywords: [], builtin: true },
+  { type: 'DRILLED_FROM', title: '上卷', desc: '从子维度上卷（DRILLS_INTO 逆关系，自动推导）', dot: RELATION_TYPE_COLORS.DRILLED_FROM, autoKeywords: [], builtin: true },
+  { type: 'CORRELATED', title: '关联', desc: '关联维度，交叉分析提示（平台内置）', dot: RELATION_TYPE_COLORS.CORRELATED, autoKeywords: [], builtin: true },
 ];
 
 function getRelationTypeDirection(type: string): 'source_to_target' | 'target_to_source' {
@@ -1691,12 +1694,14 @@ export default function ConceptEditorPage() {
                 className={`relationOption ${selectedRelationType === opt.type ? 'relationOptionSelected' : ''}`}
                 onClick={() => setSelectedRelationType(opt.type)}
               >
+                {opt.builtin && <div className="relationOptionSeparator" />}
                 <div className="relationOptionTitle">
                   <span className="relationOptionDot" style={{ background: opt.dot }} />
                   {opt.title}
                   {opt.autoKeywords.some((kw) =>
                     `${pendingConnection.source}${pendingConnection.target}`.includes(kw)
                   ) && <span className="autoTag">推荐</span>}
+                  {opt.builtin && <span className="builtinTag">内置</span>}
                 </div>
                 <div className="relationOptionDesc">{opt.desc}</div>
               </button>
