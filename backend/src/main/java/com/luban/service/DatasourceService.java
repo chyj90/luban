@@ -275,4 +275,18 @@ public class DatasourceService {
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + type);
         };
     }
+
+    public List<Map<String, Object>> getAvailableDatasources() {
+        List<Datasource> all = datasourceRepository.findAll();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Datasource ds : all) {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("id", ds.getId());
+            info.put("name", ds.getName());
+            info.put("type", ds.getType());
+            info.put("slug", ds.getSlug());
+            result.add(info);
+        }
+        return result;
+    }
 }

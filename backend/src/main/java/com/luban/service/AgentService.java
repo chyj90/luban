@@ -19,6 +19,7 @@ import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.entity.ConceptRelation;
+import com.luban.entity.OntologyChangeLog;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.OntologyGroupRepository;
 import com.luban.repository.ToolConceptRepository;
@@ -74,6 +75,8 @@ public class AgentService {
     private final Nl2sqlConnectionPool nl2sqlConnectionPool;
     private final ChatMessageRepository chatMessageRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
+    private final CodeExecutorService codeExecutorService;
+    private final OntologyChangeService ontologyChangeService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -107,6 +110,7 @@ public class AgentService {
     private static final int NL2SQL_MAX_RESULT_BYTES = 10 * 1024 * 1024;
     private static final int NL2SQL_MAX_RETRIES = 2;
     private static final double CONCEPT_INTERSECTION_THRESHOLD = 0.5;
+    private static final int MAX_DRILL_ROUNDS = 5;
 
     @Value("${luban.agent.rate-limit.max-requests}")
     private int rateLimitMaxRequests;
@@ -134,7 +138,9 @@ public class AgentService {
                         AgentMetricsService agentMetricsService,
                         Nl2sqlConnectionPool nl2sqlConnectionPool,
                         ChatMessageRepository chatMessageRepository,
-                        OntologyGroupRepository ontologyGroupRepository) {
+                        OntologyGroupRepository ontologyGroupRepository,
+                        CodeExecutorService codeExecutorService,
+                        OntologyChangeService ontologyChangeService) {
         this.agentConfigRepository = agentConfigRepository;
         this.agentConfigService = agentConfigService;
         this.toolDefinitionRepository = toolDefinitionRepository;
@@ -156,6 +162,8 @@ public class AgentService {
         this.nl2sqlConnectionPool = nl2sqlConnectionPool;
         this.chatMessageRepository = chatMessageRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
+        this.codeExecutorService = codeExecutorService;
+        this.ontologyChangeService = ontologyChangeService;
     }
 
     public Map<String, Object> chat(String sessionId, String userMessage, Long userId) {
@@ -435,6 +443,8 @@ public class AgentService {
         graph.addNode("agent", buildAgentNode(config));
         graph.addNode("tool_executor", buildToolExecutorNode());
         graph.addNode("nl2sql_executor", buildNl2sqlExecutorNode());
+        graph.addNode("code_executor", buildCodeExecutorNode());
+        graph.addNode("ontology_advisor", buildOntologyAdvisorNode());
         graph.addNode("final_answer", buildFinalAnswerNode());
 
         graph.addEdge("__START__", "agent");
@@ -442,12 +452,16 @@ public class AgentService {
         graph.addConditionalEdges("agent", buildRouterEdge(), Map.of(
                 "tool_call", "tool_executor",
                 "nl2sql", "nl2sql_executor",
+                "code_mode", "code_executor",
+                "ontology_action", "ontology_advisor",
                 "final_answer", "final_answer",
                 "continue", "agent"
         ));
 
         graph.addEdge("tool_executor", "agent");
         graph.addEdge("nl2sql_executor", "agent");
+        graph.addEdge("code_executor", "agent");
+        graph.addEdge("ontology_advisor", "agent");
 
         graph.addEdge("final_answer", "__END__");
 
@@ -464,6 +478,13 @@ public class AgentService {
             if (iteration >= MAX_ITERATIONS) {
                 data.put("next_action", "final_answer");
                 data.put("final_answer", "已达到最大迭代次数，请重试。");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
+            if (sqlExecCount >= MAX_DRILL_ROUNDS) {
+                data.put("next_action", "final_answer");
+                data.put("final_answer", "已达到最大下钻轮数（" + MAX_DRILL_ROUNDS + "），请基于已有分析结果总结根因。");
                 return CompletableFuture.completedFuture(data);
             }
 
@@ -530,6 +551,25 @@ public class AgentService {
                 String prevReasoning = (String) data.getOrDefault("reasoning", "");
                 data.put("next_action", "nl2sql");
                 data.put("pending_nl2sql", parsed);
+                data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
+                messages.add(Map.of("role", "assistant", "content", llmResponse));
+            } else if ("code_mode".equals(type)) {
+                String code = (String) parsed.get("code");
+                String reasoning = (String) parsed.getOrDefault("reasoning", "");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> inputData = (Map<String, Object>) parsed.getOrDefault("input_data", Map.of());
+                String prevReasoning = (String) data.getOrDefault("reasoning", "");
+                data.put("next_action", "code_mode");
+                data.put("pending_code", Map.of("code", code, "input_data", inputData));
+                data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
+                messages.add(Map.of("role", "assistant", "content", llmResponse));
+            } else if ("ontology_action".equals(type)) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> changes = (List<Map<String, Object>>) parsed.getOrDefault("changes", List.of());
+                String reasoning = (String) parsed.getOrDefault("reasoning", "");
+                String prevReasoning = (String) data.getOrDefault("reasoning", "");
+                data.put("next_action", "ontology_action");
+                data.put("pending_ontology_changes", changes);
                 data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
                 messages.add(Map.of("role", "assistant", "content", llmResponse));
             } else {
@@ -842,8 +882,10 @@ public class AgentService {
             }
         }
 
+        List<Map<String, Object>> availableDatasources = datasourceService.getAvailableDatasources();
+
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
-                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, messages);
+                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, messages, availableDatasources);
 
         log.info("buildUnifiedContext TOTAL: {}ms, concepts={}, tools={}, tables={}",
                 System.currentTimeMillis() - t0, conceptIds.size(), apiTools.size(), tableMappings.size());
@@ -1152,11 +1194,26 @@ public class AgentService {
                                              Set<Long> authorizedConceptIds,
                                              Map<Long, String> groupNameMap,
                                              Map<Long, List<Map<String, Object>>> drillDimensions,
-                                             List<Map<String, Object>> messages) {
+                                             List<Map<String, Object>> messages,
+                                             List<Map<String, Object>> availableDatasources) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("## 用户问题\n");
         sb.append(userQuery).append("\n\n");
+
+        if (availableDatasources != null && !availableDatasources.isEmpty()) {
+            sb.append("## 可用数据源\n");
+            sb.append("| 数据源ID | 名称 | 类型 | 所属 |\n");
+            sb.append("|----------|------|------|------|\n");
+            for (Map<String, Object> ds : availableDatasources) {
+                sb.append("| ").append(ds.get("id"))
+                        .append(" | ").append(ds.get("name"))
+                        .append(" | ").append(ds.get("type"))
+                        .append(" | ").append(ds.getOrDefault("slug", "-"))
+                        .append(" |\n");
+            }
+            sb.append("\n");
+        }
 
         if (conceptTrace != null && !conceptTrace.isEmpty()) {
             sb.append("## 语义层匹配的概念\n");
@@ -1601,6 +1658,80 @@ public class AgentService {
             data.put("next_action", "continue");
             data.remove("pending_tool_call");
 
+            return CompletableFuture.completedFuture(data);
+        };
+    }
+
+    private AsyncNodeAction<AgentState> buildCodeExecutorNode() {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> codeCall = (Map<String, Object>) data.get("pending_code");
+            String code = (String) codeCall.get("code");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> inputData = (Map<String, Object>) codeCall.getOrDefault("input_data", Map.of());
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
+
+            log.info("Code executor: executing code length={}", code.length());
+            Map<String, Object> result = codeExecutorService.execute(code, inputData);
+
+            Boolean success = (Boolean) result.getOrDefault("success", false);
+            if (success) {
+                String stdout = (String) result.getOrDefault("stdout", "");
+                messages.add(Map.of("role", "tool", "content", "代码执行成功:\n" + stdout, "tool_name", "code_executor"));
+            } else {
+                String stderr = (String) result.getOrDefault("stderr", "未知错误");
+                log.warn("Code execution failed: {}", stderr);
+                messages.add(Map.of("role", "tool", "content", "代码执行失败:\n" + stderr, "tool_name", "code_executor"));
+            }
+
+            data.put("next_action", "continue");
+            data.remove("pending_code");
+            return CompletableFuture.completedFuture(data);
+        };
+    }
+
+    private AsyncNodeAction<AgentState> buildOntologyAdvisorNode() {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> changes = (List<Map<String, Object>>) data.get("pending_ontology_changes");
+            String sessionId = (String) data.get("session_id");
+            Long userId = data.get("user_id") instanceof Number ? ((Number) data.get("user_id")).longValue() : null;
+            String userName = (String) data.getOrDefault("user_name", "unknown");
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
+
+            List<Map<String, Object>> recorded = new ArrayList<>();
+            for (Map<String, Object> change : changes) {
+                String operation = (String) change.getOrDefault("operation", "UNKNOWN");
+                String entityType = (String) change.getOrDefault("entity_type", "UNKNOWN");
+                String reasoning = (String) change.getOrDefault("reasoning", "");
+                String beforeSnapshot = change.containsKey("before") ? change.get("before").toString() : null;
+                String afterSnapshot = change.containsKey("after") ? change.get("after").toString() : change.toString();
+
+                try {
+                    OntologyChangeLog log = ontologyChangeService.recordChange(
+                            sessionId, operation, entityType, null,
+                            beforeSnapshot, afterSnapshot,
+                            userId != null ? userId : 0L, userName,
+                            "auto_detect", reasoning);
+                    recorded.add(Map.of("changeId", log.getChangeId(), "status", log.getStatus()));
+                } catch (Exception e) {
+                    log.error("Failed to record ontology change: {}", e.getMessage());
+                }
+            }
+
+            String summary = "本体变更已记录，共 " + recorded.size() + " 条，等待管理员审核";
+            messages.add(Map.of("role", "tool", "content", summary, "tool_name", "ontology_advisor"));
+
+            data.put("next_action", "continue");
+            data.remove("pending_ontology_changes");
             return CompletableFuture.completedFuture(data);
         };
     }

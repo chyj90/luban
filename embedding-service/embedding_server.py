@@ -364,6 +364,63 @@ def parse_file():
         return jsonify({"error": f"Execution error: {e}"}), 500
 
 
+@app.route("/v1/execute-code", methods=["POST"])
+def execute_code():
+    """Execute LLM-generated Python code for data analysis.
+    Request: { "code": "import pandas as pd\\n...", "input_data": { "sql": "SELECT ...", "concept_ids": [1, 2] } }
+    Response: { "stdout": "...", "stderr": "...", "success": true }
+    The SQL result is passed as a JSON string via INPUT_DATA environment variable.
+    """
+    data = request.get_json()
+    if not data or "code" not in data:
+        return jsonify({"error": "Missing 'code' field"}), 400
+
+    code = data["code"]
+    input_data = data.get("input_data", {})
+
+    script = (
+        "import sys, json, traceback, os\n"
+        "import pandas as pd\n"
+        "import numpy as np\n"
+        "_INPUT_DATA = json.loads(os.environ.get('INPUT_DATA', '{}'))\n"
+        "try:\n"
+        + "\n".join("    " + line for line in code.split("\n")) +
+        "\n"
+        "except Exception as e:\n"
+        "    print(json.dumps({'error': str(e), 'traceback': traceback.format_exc()}), file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+    )
+
+    try:
+        env = os.environ.copy()
+        env["INPUT_DATA"] = json.dumps(input_data)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(script)
+            script_path = f.name
+
+        proc = subprocess.run(
+            ["python3", script_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        os.unlink(script_path)
+
+        return jsonify({
+            "success": proc.returncode == 0,
+            "stdout": proc.stdout[-5000:] if proc.stdout else "",
+            "stderr": proc.stderr[-2000:] if proc.stderr else "",
+            "exit_code": proc.returncode,
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "Code execution timed out (30s)", "success": False}), 500
+    except Exception as e:
+        return jsonify({"error": f"Execution error: {e}", "success": False}), 500
+
+
 if __name__ == "__main__":
     load_model()
     port = int(os.environ.get("EMBEDDING_PORT", 8765))
