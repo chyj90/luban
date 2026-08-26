@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { fetchAgentChatStream } from '@/api/agent';
+import { fetchAgentChatStream, getSessionMessages, clearChatSession } from '@/api/agent';
 import { quickConceptFeedback, listConcepts, listConceptFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -189,6 +189,7 @@ export default function AgentChatPage() {
   const [expandedDatasources, setExpandedDatasources] = useState<Set<number>>(new Set());
   const [confirmedDatasources, setConfirmedDatasources] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const skipFetchRef = useRef(false);
   const toast = useToastStore((s) => s.show);
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.superAdmin === true;
@@ -198,9 +199,78 @@ export default function AgentChatPage() {
   }, [sessions]);
 
   useEffect(() => {
-    const session = sessions.find((s) => s.id === activeSessionId);
-    setMessages(session?.messages ?? []);
-  }, [activeSessionId, sessions]);
+    if (!activeSessionId) {
+      setMessages([]);
+      return;
+    }
+    if (skipFetchRef.current) {
+      skipFetchRef.current = false;
+      return;
+    }
+    getSessionMessages(activeSessionId).then(res => {
+      const msgs = ((res as any).messages || []).map((item: any) => ({
+        id: item.id || item.messageId || '',
+        role: item.role,
+        content: item.content,
+        messageId: item.messageId,
+        reasoning: item.reasoning,
+        nl2sql: item.nl2sql,
+        conceptTrace: item.conceptTrace,
+        selectDatasources: item.selectDatasources,
+        timestamp: item.timestamp,
+      })) as ChatMessage[];
+      setMessages(msgs);
+    }).catch(() => {
+      setMessages([]);
+    });
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    const confirmed = new Set<string>();
+    const restoredSelections: Record<number, Set<string>> = {};
+    messages.forEach((msg, i) => {
+      if (msg.role === 'assistant' && msg.selectDatasources?.length) {
+        const nextMsg = messages[i + 1];
+        if (nextMsg?.role === 'user' && nextMsg.content.startsWith('已选择数据源:')) {
+          confirmed.add(msg.id);
+          const lines = nextMsg.content.split('\n').slice(1);
+          for (const line of lines) {
+            const match = line.match(/^\s*-\s+(.+?)\s+\[表:\s*(.+?)\]$/);
+            if (match) {
+              const dsName = match[1].trim();
+              const tablesStr = match[2].trim();
+              const tables = tablesStr.split(/\s*,\s*/).map((t) => t.trim()).filter(Boolean);
+              const dsInfo = msg.selectDatasources!.find((ds) => ds.name === dsName);
+              if (dsInfo && tables.length > 0) {
+                restoredSelections[dsInfo.id] = new Set(tables);
+              }
+            }
+          }
+        }
+      }
+    });
+    if (confirmed.size > 0) {
+      setConfirmedDatasources((prev) => {
+        const merged = new Set(prev);
+        let changed = false;
+        confirmed.forEach((id) => {
+          if (!merged.has(id)) { merged.add(id); changed = true; }
+        });
+        return changed ? merged : prev;
+      });
+    }
+    if (Object.keys(restoredSelections).length > 0) {
+      setSelectedDatasources((prev) => {
+        const hasChanges = Object.entries(restoredSelections).some(([id, tables]) => {
+          const existing = prev[Number(id)];
+          if (!existing || existing.size !== tables.size) return true;
+          return !Array.from(tables).every((t) => existing.has(t));
+        });
+        if (!hasChanges) return prev;
+        return { ...prev, ...restoredSelections };
+      });
+    }
+  }, [messages]);
 
   useEffect(() => {
     if (!activeSessionId) return;
@@ -320,6 +390,7 @@ export default function AgentChatPage() {
 
   const deleteSession = useCallback((e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
+    clearChatSession(sessionId).catch(() => {});
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== sessionId);
       if (sessionId === activeSessionId) {
@@ -373,6 +444,7 @@ export default function AgentChatPage() {
 
     const sessionId = activeSessionId || Date.now().toString();
     if (!activeSessionId) {
+      skipFetchRef.current = true;
       setActiveSessionId(sessionId);
     }
 

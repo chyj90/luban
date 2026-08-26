@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.entity.AgentConfig;
 import com.luban.entity.AgentQueryLog;
 import com.luban.entity.ChatMessage;
+import com.luban.entity.ChatDatasourceSelection;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
@@ -15,6 +16,7 @@ import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
 import com.luban.repository.AgentConfigRepository;
 import com.luban.repository.ChatMessageRepository;
+import com.luban.repository.ChatDatasourceSelectionRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRepository;
@@ -74,6 +76,7 @@ public class AgentService {
     private final AgentMetricsService agentMetricsService;
     private final Nl2sqlConnectionPool nl2sqlConnectionPool;
     private final ChatMessageRepository chatMessageRepository;
+    private final ChatDatasourceSelectionRepository chatDatasourceSelectionRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final CodeExecutorService codeExecutorService;
     private final OntologyChangeService ontologyChangeService;
@@ -140,6 +143,7 @@ public class AgentService {
                         AgentMetricsService agentMetricsService,
                         Nl2sqlConnectionPool nl2sqlConnectionPool,
                         ChatMessageRepository chatMessageRepository,
+                        ChatDatasourceSelectionRepository chatDatasourceSelectionRepository,
                         OntologyGroupRepository ontologyGroupRepository,
                         CodeExecutorService codeExecutorService,
                         OntologyChangeService ontologyChangeService,
@@ -164,6 +168,7 @@ public class AgentService {
         this.agentMetricsService = agentMetricsService;
         this.nl2sqlConnectionPool = nl2sqlConnectionPool;
         this.chatMessageRepository = chatMessageRepository;
+        this.chatDatasourceSelectionRepository = chatDatasourceSelectionRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.codeExecutorService = codeExecutorService;
         this.ontologyChangeService = ontologyChangeService;
@@ -315,6 +320,7 @@ public class AgentService {
         compiledGraphs.remove(sessionId);
         try {
             chatMessageRepository.deleteBySessionId(sessionId);
+            chatDatasourceSelectionRepository.deleteBySessionId(sessionId);
         } catch (Exception e) {
             log.warn("Failed to delete chat messages from DB for session={}: {}", sessionId, e.getMessage());
         }
@@ -361,6 +367,16 @@ public class AgentService {
                     .nl2sql(nl2sqlJson)
                     .build();
             chatMessageRepository.save(assistantMsg);
+
+            Object selectDatasources = finalAnswer.get("select_datasources");
+            if (selectDatasources instanceof List && !((List<?>) selectDatasources).isEmpty()) {
+                ChatDatasourceSelection ds = ChatDatasourceSelection.builder()
+                        .messageId(messageId)
+                        .sessionId(sessionId)
+                        .datasources(objectMapper.writeValueAsString(selectDatasources))
+                        .build();
+                chatDatasourceSelectionRepository.save(ds);
+            }
         } catch (Exception e) {
             log.warn("Failed to persist chat history for session={}: {}", sessionId, e.getMessage());
         }
@@ -381,6 +397,41 @@ public class AgentService {
             log.warn("Failed to load chat history from DB for session={}: {}", sessionId, e.getMessage());
             return null;
         }
+    }
+
+    public List<Map<String, Object>> getSessionMessages(String sessionId) {
+        List<ChatMessage> messages = chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
+        List<ChatDatasourceSelection> selections = chatDatasourceSelectionRepository.findBySessionId(sessionId);
+        Map<String, String> selectionMap = new java.util.HashMap<>();
+        for (ChatDatasourceSelection sel : selections) {
+            selectionMap.put(sel.getMessageId(), sel.getDatasources());
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ChatMessage msg : messages) {
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("id", String.valueOf(msg.getId()));
+            item.put("role", msg.getRole());
+            item.put("content", msg.getContent());
+            item.put("messageId", msg.getMessageId());
+            item.put("reasoning", msg.getReasoning());
+            item.put("nl2sql", msg.getNl2sql());
+            item.put("conceptTrace", msg.getConceptTrace());
+            item.put("timestamp", msg.getCreatedAt() != null ? msg.getCreatedAt().toString() : null);
+
+            if ("assistant".equals(msg.getRole())) {
+                String dsJson = selectionMap.get(msg.getMessageId());
+                if (dsJson != null) {
+                    try {
+                        item.put("selectDatasources", objectMapper.readValue(dsJson, List.class));
+                    } catch (Exception e) {
+                        log.warn("Failed to parse selectDatasources for message={}", msg.getMessageId());
+                    }
+                }
+            }
+            result.add(item);
+        }
+        return result;
     }
 
     private void asyncRecordMetrics(String sessionId, Map<String, Object> finalAnswer,

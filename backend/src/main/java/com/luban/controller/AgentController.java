@@ -226,6 +226,14 @@ public class AgentController {
         return "unknown";
     }
 
+    @GetMapping("/sessions/{sessionId}/messages")
+    public ResponseEntity<?> getSessionMessages(@PathVariable String sessionId) {
+        return ResponseEntity.ok(Map.of(
+                "sessionId", sessionId,
+                "messages", agentService.getSessionMessages(sessionId)
+        ));
+    }
+
     private byte[] buildSSEBytes(String event, Object data) {
         StringBuilder sb = new StringBuilder();
         sb.append("event: ").append(event).append("\n");
