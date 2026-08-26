@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { fetchAgentChatStream } from '@/api/agent';
 import { quickConceptFeedback, listConcepts, listConceptFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
+import { useAuthStore } from '@/stores/authStore';
 import ConceptTracePanel from '@/components/ConceptTracePanel';
 import './AgentChatPage.css';
 
@@ -213,6 +214,8 @@ export default function AgentChatPage() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const toast = useToastStore((s) => s.show);
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.superAdmin === true;
 
   useEffect(() => {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions));
@@ -1049,8 +1052,8 @@ export default function AgentChatPage() {
                       </div>
                     )}
 
-                    {/* 本体变更建议卡片 */}
-                    {msg.ontologyChanges && (
+                    {/* 本体变更建议卡片 - 仅超管可见 */}
+                    {msg.ontologyChanges && isSuperAdmin && (
                       <div className="agent-chat-ontology-change-card">
                         <div className="agent-chat-ontology-change-header">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

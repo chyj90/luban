@@ -75,6 +75,7 @@ import {
 } from '@/types/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
+import { useAuthStore } from '@/stores/authStore';
 import Select from '@/components/Select';
 import './ConceptEditorPage.css';
 
@@ -427,6 +428,8 @@ export default function ConceptEditorPage() {
 
   const reactFlow = useReactFlow();
   const toast = useToastStore((s) => s.show);
+  const user = useAuthStore((s) => s.user);
+  const isSuperAdmin = user?.superAdmin === true;
   const confirm = useConfirmStore((s) => s.confirm);
   const selectedIndustryIdRef = useRef<number | null>(null);
   const undoStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -1344,16 +1347,18 @@ export default function ConceptEditorPage() {
             <div className="toolbarActions">
               <button className="toolbarBtn" onClick={handleAutoMatch}>⚡ 自动映射</button>
               <button className="toolbarBtn" onClick={handleRebuildIndex}>重建索引</button>
-              <button
-                className="toolbarBtn"
-                onClick={() => {
-                  setShowChangeReview(true);
-                  loadPendingChanges();
-                }}
-              >
-                <ShieldCheck size={14} style={{ marginRight: 4 }} />
-                变更审核
-              </button>
+              {isSuperAdmin && (
+                <button
+                  className="toolbarBtn"
+                  onClick={() => {
+                    setShowChangeReview(true);
+                    loadPendingChanges();
+                  }}
+                >
+                  <ShieldCheck size={14} style={{ marginRight: 4 }} />
+                  变更审核
+                </button>
+              )}
             </div>
           </div>
         }
