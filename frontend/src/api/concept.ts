@@ -363,3 +363,41 @@ export function previewConceptImport(data: { sourceType: string; content?: strin
 export function executeConceptImport(data: { sourceType: string; content?: string; url?: string; industryId?: number; groupId?: number; selectedItems: Array<Record<string, unknown>> }) {
   return post<{ created: number; skipped: number; imported: Array<Record<string, unknown>>; newRelationTypes?: string[] }>('/concepts/import/execute', data);
 }
+
+export interface OntologyChangeLog {
+  id: number;
+  sessionId: string;
+  changeId: string;
+  operation: string;
+  entityType: string;
+  entityId: number | null;
+  beforeSnapshot: string | null;
+  afterSnapshot: string | null;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXECUTED' | 'FAILED';
+  operatorId: number;
+  operatorName: string;
+  triggerType: string;
+  reasoning: string | null;
+  executedAt: string | null;
+  createdAt: string;
+}
+
+export function listOntologyChangeLogsBySession(sessionId: string) {
+  return get<OntologyChangeLog[]>(`/ontology/changes/session/${sessionId}`);
+}
+
+export function listPendingOntologyChanges(sessionId?: string) {
+  return get<OntologyChangeLog[]>('/ontology/changes/pending', sessionId ? { params: { sessionId } } : undefined);
+}
+
+export function approveOntologyChange(changeId: number) {
+  return post<{ success: boolean; status: string }>(`/ontology/changes/${changeId}/approve`);
+}
+
+export function rejectOntologyChange(changeId: number) {
+  return post<{ success: boolean; status: string }>(`/ontology/changes/${changeId}/reject`);
+}
+
+export function batchApproveOntologyChanges(changeIds: number[]) {
+  return post<{ success: boolean; approved: number }>('/ontology/changes/batch', { changeIds });
+}

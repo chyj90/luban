@@ -63,4 +63,8 @@ public class OntologyChangeService {
     public List<OntologyChangeLog> getPendingChanges(String sessionId) {
         return changeLogRepository.findBySessionIdAndStatus(sessionId, "PENDING");
     }
+
+    public List<OntologyChangeLog> getAllPendingChanges() {
+        return changeLogRepository.findByStatusOrderByCreatedAt("PENDING");
+    }
 }

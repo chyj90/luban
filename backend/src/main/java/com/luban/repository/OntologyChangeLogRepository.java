@@ -7,4 +7,5 @@ import java.util.List;
 public interface OntologyChangeLogRepository extends JpaRepository<OntologyChangeLog, Long> {
     List<OntologyChangeLog> findBySessionIdOrderByCreatedAt(String sessionId);
     List<OntologyChangeLog> findBySessionIdAndStatus(String sessionId, String status);
+    List<OntologyChangeLog> findByStatusOrderByCreatedAt(String status);
 }
