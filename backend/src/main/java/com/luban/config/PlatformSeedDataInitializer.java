@@ -26,6 +26,8 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
     private final RolePermissionRepository rolePermissionRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final AgentConfigRepository agentConfigRepository;
+    private final IndustryRepository industryRepository;
+    private final IndustryRelationRepository industryRelationRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -36,6 +38,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         initRootUser();
         initPlatformWorkflows();
         initDefaultAgentConfig();
+        initBuiltinRelations();
     }
 
     private void initPlatformRoles() {
@@ -189,6 +192,44 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             agentConfigRepository.save(config);
 
             log.info("默认 Agent 配置初始化完成");
+        }
+    }
+
+    private void initBuiltinRelations() {
+        List<Industry> industries = industryRepository.findAll();
+        if (industries.isEmpty()) {
+            return;
+        }
+
+        String[][] builtins = {
+            {"DRILLS_INTO", "可下钻到子维度，纯分析导航", "true", "false", "0"},
+            {"DRILLED_FROM", "上卷维度，DRILLS_INTO 的逆，自动推导", "true", "false", "1"},
+            {"CORRELATED", "关联维度，交叉分析提示", "false", "false", "2"}
+        };
+
+        int totalInserted = 0;
+        for (Industry industry : industries) {
+            for (String[] def : builtins) {
+                String relationType = def[0];
+                if (industryRelationRepository.findByIndustryIdAndRelationTypeAndIsBuiltin(
+                        industry.getId(), relationType, true).isEmpty()) {
+                    IndustryRelation relation = new IndustryRelation();
+                    relation.setIndustryId(industry.getId());
+                    relation.setRelationType(relationType);
+                    relation.setDescription(def[1]);
+                    relation.setIsTransitive(Boolean.parseBoolean(def[2]));
+                    relation.setIsSymmetric(Boolean.parseBoolean(def[3]));
+                    relation.setSortOrder(Integer.parseInt(def[4]));
+                    relation.setIsBuiltin(true);
+                    industryRelationRepository.save(relation);
+                    totalInserted++;
+                }
+            }
+        }
+
+        if (totalInserted > 0) {
+            log.info("平台内置关系初始化完成：{} 个行业 × {} 种关系类型 = {} 条",
+                    industries.size(), builtins.length, totalInserted);
         }
     }
 }

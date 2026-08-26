@@ -35,6 +35,9 @@ public class IndustryRelation {
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder = 0;
 
+    @Column(name = "is_builtin", nullable = false)
+    private Boolean isBuiltin = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

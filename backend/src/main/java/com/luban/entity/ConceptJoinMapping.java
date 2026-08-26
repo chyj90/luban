@@ -50,6 +50,10 @@ public class ConceptJoinMapping {
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
+    @Version
+    @Column(name = "version")
+    private Integer version = 0;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

@@ -41,6 +41,16 @@ public class Concept {
     @Column(name = "embedding_version", length = 32)
     private String embeddingVersion;
 
+    @Column(name = "anomaly_threshold_expr", length = 64)
+    private String anomalyThresholdExpr;
+
+    @Column(name = "anomaly_threshold_desc", length = 256)
+    private String anomalyThresholdDesc;
+
+    @Version
+    @Column(name = "version")
+    private Integer version = 0;
+
     @Transient
     private Boolean mapped;
 
