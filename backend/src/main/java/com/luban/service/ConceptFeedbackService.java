@@ -394,6 +394,8 @@ public class ConceptFeedbackService {
                     return (String) message.get("content");
                 }
             }
+            log.error("LLM API error: status={}, url={}, model={}, body={}",
+                    response.statusCode(), config.getModelEndpoint(), config.getModelName(), response.body());
             throw new RuntimeException("LLM API 返回状态码: " + response.statusCode());
         } catch (Exception e) {
             log.error("LLM call failed", e);

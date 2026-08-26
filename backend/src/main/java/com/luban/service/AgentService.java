@@ -77,6 +77,7 @@ public class AgentService {
     private final OntologyGroupRepository ontologyGroupRepository;
     private final CodeExecutorService codeExecutorService;
     private final OntologyChangeService ontologyChangeService;
+    private final IndustryService industryService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -96,6 +97,7 @@ public class AgentService {
 
     private static final ThreadLocal<java.util.function.Consumer<String>> PROGRESS_CALLBACK = new ThreadLocal<>();
     private static final ThreadLocal<java.util.function.Consumer<String>> STREAM_CALLBACK = new ThreadLocal<>();
+    private static final ThreadLocal<java.util.function.Consumer<String>> REASONING_CALLBACK = new ThreadLocal<>();
 
     private static final int MAX_ITERATIONS = 10;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
@@ -140,7 +142,8 @@ public class AgentService {
                         ChatMessageRepository chatMessageRepository,
                         OntologyGroupRepository ontologyGroupRepository,
                         CodeExecutorService codeExecutorService,
-                        OntologyChangeService ontologyChangeService) {
+                        OntologyChangeService ontologyChangeService,
+                        IndustryService industryService) {
         this.agentConfigRepository = agentConfigRepository;
         this.agentConfigService = agentConfigService;
         this.toolDefinitionRepository = toolDefinitionRepository;
@@ -164,20 +167,22 @@ public class AgentService {
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.codeExecutorService = codeExecutorService;
         this.ontologyChangeService = ontologyChangeService;
+        this.industryService = industryService;
     }
 
-    public Map<String, Object> chat(String sessionId, String userMessage, Long userId) {
-        return chat(sessionId, userMessage, userId, null, null);
+    public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName) {
+        return chat(sessionId, userMessage, userId, userName, null, null, null);
     }
 
-    public Map<String, Object> chat(String sessionId, String userMessage, Long userId,
+    public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
                                     java.util.function.Consumer<String> onProgress) {
-        return chat(sessionId, userMessage, userId, onProgress, null);
+        return chat(sessionId, userMessage, userId, userName, onProgress, null, null);
     }
 
-    public Map<String, Object> chat(String sessionId, String userMessage, Long userId,
+    public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
                                     java.util.function.Consumer<String> onProgress,
-                                    java.util.function.Consumer<String> onChunk) {
+                                    java.util.function.Consumer<String> onChunk,
+                                    java.util.function.Consumer<String> onReasoning) {
         String rateLimitKey = sessionId.substring(0, Math.min(sessionId.length(), 8));
         if (!checkRateLimit(rateLimitKey)) {
             Map<String, Object> limited = new LinkedHashMap<>();
@@ -215,15 +220,18 @@ public class AgentService {
             initialState.put("llm_call_count", 0);
             initialState.put("tool_call_count", 0);
             initialState.put("user_id", userId);
+            initialState.put("user_name", userName != null ? userName : "unknown");
 
             Optional<AgentState> result;
             try {
                 PROGRESS_CALLBACK.set(onProgress);
                 STREAM_CALLBACK.set(onChunk);
+                REASONING_CALLBACK.set(onReasoning);
                 result = graph.invoke(initialState);
             } finally {
                 PROGRESS_CALLBACK.remove();
                 STREAM_CALLBACK.remove();
+                REASONING_CALLBACK.remove();
             }
 
             Map<String, Object> finalData = result.map(AgentState::data).orElse(Map.of());
@@ -279,6 +287,7 @@ public class AgentService {
             finalAnswer.put("sqlExecCount", finalData.getOrDefault("sql_exec_count", 0));
             finalAnswer.put("messageId", finalData.getOrDefault("message_id", UUID.randomUUID().toString()));
             finalAnswer.put("usedConcepts", usedConcepts);
+            finalAnswer.put("select_datasources", finalData.getOrDefault("select_datasources", null));
 
             long duration = System.currentTimeMillis() - startTime;
             totalCallCount.incrementAndGet();
@@ -445,6 +454,7 @@ public class AgentService {
         graph.addNode("nl2sql_executor", buildNl2sqlExecutorNode());
         graph.addNode("code_executor", buildCodeExecutorNode());
         graph.addNode("ontology_advisor", buildOntologyAdvisorNode());
+        graph.addNode("select_datasources", buildSelectDatasourcesNode());
         graph.addNode("final_answer", buildFinalAnswerNode());
 
         graph.addEdge("__START__", "agent");
@@ -454,6 +464,7 @@ public class AgentService {
                 "nl2sql", "nl2sql_executor",
                 "code_mode", "code_executor",
                 "ontology_action", "ontology_advisor",
+                "select_datasources", "select_datasources",
                 "final_answer", "final_answer",
                 "continue", "agent"
         ));
@@ -462,6 +473,7 @@ public class AgentService {
         graph.addEdge("nl2sql_executor", "agent");
         graph.addEdge("code_executor", "agent");
         graph.addEdge("ontology_advisor", "agent");
+        graph.addEdge("select_datasources", "final_answer");
 
         graph.addEdge("final_answer", "__END__");
 
@@ -523,6 +535,7 @@ public class AgentService {
 
             data.put("concept_trace", conceptTrace);
             data.put("concept_ids", conceptIds);
+            data.put("availableDatasources", unifiedContext.get("availableDatasources"));
 
             long tLlm = System.currentTimeMillis();
             String llmResponse = callLlm(config, messages, unifiedPrompt);
@@ -555,39 +568,126 @@ public class AgentService {
             } else if ("tool_call".equals(type)) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> toolCall = (Map<String, Object>) parsed.get("tool_call");
+                String toolName = (String) toolCall.get("name");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> toolArgs = (Map<String, Object>) toolCall.getOrDefault("arguments", Map.of());
+                String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+                toolCall.put("tool_call_id", toolCallId);
                 String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 String prevReasoning = (String) data.getOrDefault("reasoning", "");
                 data.put("next_action", "tool_call");
                 data.put("pending_tool_call", toolCall);
                 data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
-                messages.add(Map.of("role", "assistant", "content", llmResponse));
+                Map<String, Object> func = new LinkedHashMap<>();
+                func.put("name", toolName);
+                func.put("arguments", toJsonString(toolArgs));
+                Map<String, Object> tc = new LinkedHashMap<>();
+                tc.put("id", toolCallId);
+                tc.put("type", "function");
+                tc.put("function", func);
+                Map<String, Object> assistantMsg = new LinkedHashMap<>();
+                assistantMsg.put("role", "assistant");
+                assistantMsg.put("content", null);
+                assistantMsg.put("tool_calls", List.of(tc));
+                messages.add(assistantMsg);
             } else if ("nl2sql".equals(type)) {
                 String sql = (String) parsed.get("sql");
+                String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+                Map<String, Object> pendingNl2sql = new LinkedHashMap<>(parsed);
+                pendingNl2sql.put("tool_call_id", toolCallId);
                 String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 String prevReasoning = (String) data.getOrDefault("reasoning", "");
                 data.put("next_action", "nl2sql");
-                data.put("pending_nl2sql", parsed);
+                data.put("pending_nl2sql", pendingNl2sql);
                 data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
-                messages.add(Map.of("role", "assistant", "content", llmResponse));
+                Map<String, Object> func = new LinkedHashMap<>();
+                func.put("name", "nl2sql_executor");
+                func.put("arguments", toJsonString(Map.of("sql", sql)));
+                Map<String, Object> tc = new LinkedHashMap<>();
+                tc.put("id", toolCallId);
+                tc.put("type", "function");
+                tc.put("function", func);
+                Map<String, Object> asstMsg = new LinkedHashMap<>();
+                asstMsg.put("role", "assistant");
+                asstMsg.put("content", null);
+                asstMsg.put("tool_calls", List.of(tc));
+                messages.add(asstMsg);
             } else if ("code_mode".equals(type)) {
                 String code = (String) parsed.get("code");
-                String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 @SuppressWarnings("unchecked")
                 Map<String, Object> inputData = (Map<String, Object>) parsed.getOrDefault("input_data", Map.of());
+                String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+                String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 String prevReasoning = (String) data.getOrDefault("reasoning", "");
                 data.put("next_action", "code_mode");
-                data.put("pending_code", Map.of("code", code, "input_data", inputData));
+                data.put("pending_code", Map.of("code", code, "input_data", inputData, "tool_call_id", toolCallId));
                 data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
-                messages.add(Map.of("role", "assistant", "content", llmResponse));
+                Map<String, Object> func = new LinkedHashMap<>();
+                func.put("name", "code_executor");
+                func.put("arguments", toJsonString(Map.of("code", code)));
+                Map<String, Object> tc = new LinkedHashMap<>();
+                tc.put("id", toolCallId);
+                tc.put("type", "function");
+                tc.put("function", func);
+                Map<String, Object> asstMsg = new LinkedHashMap<>();
+                asstMsg.put("role", "assistant");
+                asstMsg.put("content", null);
+                asstMsg.put("tool_calls", List.of(tc));
+                messages.add(asstMsg);
             } else if ("ontology_action".equals(type)) {
+                boolean alreadyRecorded = false;
+                for (int i = messages.size() - 1; i >= 0; i--) {
+                    Map<String, Object> msg = messages.get(i);
+                    if ("tool".equals(msg.get("role"))) {
+                        String content = (String) msg.get("content");
+                        if (content != null && content.contains("本体变更已记录")) {
+                            alreadyRecorded = true;
+                            break;
+                        }
+                    }
+                }
+                if (alreadyRecorded) {
+                    data.put("next_action", "final_answer");
+                    data.put("final_answer", "本体变更已记录，无需重复提交。请等待管理员审核。");
+                    return CompletableFuture.completedFuture(data);
+                }
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> changes = (List<Map<String, Object>>) parsed.getOrDefault("changes", List.of());
+                String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
                 String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 String prevReasoning = (String) data.getOrDefault("reasoning", "");
                 data.put("next_action", "ontology_action");
                 data.put("pending_ontology_changes", changes);
+                data.put("pending_ontology_tool_call_id", toolCallId);
                 data.put("reasoning", prevReasoning.isEmpty() ? reasoning : prevReasoning + "\n\n---\n\n" + reasoning);
-                messages.add(Map.of("role", "assistant", "content", llmResponse));
+                Map<String, Object> func = new LinkedHashMap<>();
+                func.put("name", "ontology_advisor");
+                func.put("arguments", toJsonString(Map.of("changes", changes.size())));
+                Map<String, Object> tc = new LinkedHashMap<>();
+                tc.put("id", toolCallId);
+                tc.put("type", "function");
+                tc.put("function", func);
+                Map<String, Object> asstMsg = new LinkedHashMap<>();
+                asstMsg.put("role", "assistant");
+                asstMsg.put("content", null);
+                asstMsg.put("tool_calls", List.of(tc));
+                messages.add(asstMsg);
+            } else if ("request_context".equals(type)) {
+                @SuppressWarnings("unchecked")
+                List<String> conceptNames = (List<String>) parsed.getOrDefault("concept_names", List.of());
+                String requestType = (String) parsed.getOrDefault("request", "all");
+                String context = buildMappingsForConcepts(conceptNames, requestType);
+                messages.add(Map.of("role", "user", "content", "以下是你请求的映射信息：\n" + context
+                        + "\n请继续使用 ontology_action 输出完整的本体变更建议。"));
+                data.put("next_action", "agent");
+                data.put("iteration", iteration);
+                return CompletableFuture.completedFuture(data);
+            } else if ("select_datasources".equals(type)) {
+                String reasoning = (String) parsed.getOrDefault("reasoning", "");
+                data.put("next_action", "select_datasources");
+                data.put("select_datasources_reasoning", reasoning);
+                messages.add(Map.of("role", "assistant", "content", "请选择需要使用的数据源和表"));
+                return CompletableFuture.completedFuture(data);
             } else {
                 data.put("next_action", "final_answer");
                 data.put("final_answer", llmResponse);
@@ -900,8 +1000,10 @@ public class AgentService {
 
         List<Map<String, Object>> availableDatasources = datasourceService.getAvailableDatasources();
 
+        String availableRelations = buildAvailableRelationsPrompt(conceptTrace);
+
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
-                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, messages, availableDatasources);
+                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, messages, availableDatasources, availableRelations);
 
         log.info("buildUnifiedContext TOTAL: {}ms, concepts={}, tools={}, tables={}",
                 System.currentTimeMillis() - t0, conceptIds.size(), apiTools.size(), tableMappings.size());
@@ -912,6 +1014,7 @@ public class AgentService {
         result.put("tableMappings", tableMappings);
         result.put("joinMappings", joinMappings);
         result.put("prompt", prompt);
+        result.put("availableDatasources", availableDatasources);
         return result;
     }
 
@@ -1202,6 +1305,43 @@ public class AgentService {
         return sb.toString();
     }
 
+    private String buildAvailableRelationsPrompt(List<Map<String, Object>> conceptTrace) {
+        if (conceptTrace == null || conceptTrace.isEmpty()) {
+            return "";
+        }
+        Set<Long> groupIds = conceptTrace.stream()
+                .filter(c -> c.get("groupId") instanceof Number)
+                .map(c -> ((Number) c.get("groupId")).longValue())
+                .collect(Collectors.toSet());
+        if (groupIds.isEmpty()) {
+            return "";
+        }
+        Set<Long> industryIds = new LinkedHashSet<>();
+        for (Long gid : groupIds) {
+            ontologyGroupRepository.findById(gid).ifPresent(g -> {
+                if (g.getIndustryId() != null) {
+                    industryIds.add(g.getIndustryId());
+                }
+            });
+        }
+        if (industryIds.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Long industryId : industryIds) {
+            List<com.luban.entity.IndustryRelation> relations = industryService.getRelations(industryId);
+            if (relations.isEmpty()) continue;
+            for (com.luban.entity.IndustryRelation r : relations) {
+                sb.append("     - ").append(r.getRelationType());
+                if (r.getDescription() != null && !r.getDescription().isEmpty()) {
+                    sb.append(": ").append(r.getDescription());
+                }
+                sb.append("\n");
+            }
+        }
+        return sb.toString();
+    }
+
     private String buildUnifiedContextPrompt(String userQuery,
                                              List<Map<String, Object>> conceptTrace,
                                              List<ToolDefinition> apiTools,
@@ -1211,39 +1351,71 @@ public class AgentService {
                                              Map<Long, String> groupNameMap,
                                              Map<Long, List<Map<String, Object>>> drillDimensions,
                                              List<Map<String, Object>> messages,
-                                             List<Map<String, Object>> availableDatasources) {
+                                             List<Map<String, Object>> availableDatasources,
+                                             String availableRelations) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("## 用户问题\n");
         sb.append(userQuery).append("\n\n");
 
-        if (availableDatasources != null && !availableDatasources.isEmpty()) {
-            sb.append("## 可用数据源\n");
-            sb.append("| 数据源ID | 名称 | 类型 | 所属 |\n");
-            sb.append("|----------|------|------|------|\n");
-            for (Map<String, Object> ds : availableDatasources) {
-                sb.append("| ").append(ds.get("id"))
-                        .append(" | ").append(ds.get("name"))
-                        .append(" | ").append(ds.get("type"))
-                        .append(" | ").append(ds.getOrDefault("slug", "-"))
-                        .append(" |\n");
-            }
-            sb.append("\n");
-            for (Map<String, Object> ds : availableDatasources) {
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> tables = (List<Map<String, Object>>) ds.get("tables");
-                if (tables != null && !tables.isEmpty()) {
-                    sb.append("### ").append(ds.get("name")).append(" 表结构\n");
-                    for (Map<String, Object> table : tables) {
-                        sb.append("- **").append(table.get("name")).append("**: ");
+        sb.append("## 意图分类（由你自行判断）\n");
+        sb.append("请先判断用户意图属于以下哪类：\n");
+        sb.append("- **数据查询**：用户想查数据、分析指标、下钻根因。走正常查询流程（tool_call/nl2sql/code_mode/final_answer）。\n");
+        sb.append("- **本体管理**：用户想配置本体（添加概念、关系、映射、表连接）。请严格按照下方「本体创建思维链」操作，使用 ontology_action 输出。\n\n");
+        sb.append(buildOntologyThinkingChain());
+        String fullContext = buildFullOntologyContext();
+        if (!fullContext.isEmpty()) {
+            sb.append(fullContext);
+        }
+
+        Map<String, Object> dsSelection = parseSelectedDatasources(messages);
+        if (dsSelection != null) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> selected = (List<Map<String, Object>>) dsSelection.get("selected");
+            if (selected != null && !selected.isEmpty() && availableDatasources != null) {
+                sb.append("## 用户选择的数据源\n");
+                sb.append("| 数据源ID | 名称 | 选择的数据表 |\n");
+                sb.append("|----------|------|-------------|\n");
+                for (Map<String, Object> sel : selected) {
+                    Object selId = sel.get("id");
+                    String selName = (String) sel.get("name");
+                    @SuppressWarnings("unchecked")
+                    List<String> selTables = (List<String>) sel.get("tables");
+                    sb.append("| ").append(selId)
+                            .append(" | ").append(selName)
+                            .append(" | ").append(selTables != null ? String.join(", ", selTables) : "全部")
+                            .append(" |\n");
+                }
+                sb.append("\n");
+                for (Map<String, Object> sel : selected) {
+                    Object selId = sel.get("id");
+                    String selName = (String) sel.get("name");
+                    @SuppressWarnings("unchecked")
+                    List<String> selTables = (List<String>) sel.get("tables");
+                    Map<String, Object> ds = availableDatasources.stream()
+                            .filter(d -> selId.equals(d.get("id")))
+                            .findFirst().orElse(null);
+                    if (ds != null) {
                         @SuppressWarnings("unchecked")
-                        List<String> columns = (List<String>) table.get("columns");
-                        if (columns != null) {
-                            sb.append(String.join(", ", columns));
+                        List<Map<String, Object>> tables = (List<Map<String, Object>>) ds.get("tables");
+                        if (tables != null && !tables.isEmpty()) {
+                            sb.append("### ").append(selName != null ? selName : ds.get("name")).append(" 表结构\n");
+                            for (Map<String, Object> table : tables) {
+                                String tableName = (String) table.get("name");
+                                if (selTables != null && !selTables.isEmpty() && !selTables.contains(tableName)) {
+                                    continue;
+                                }
+                                sb.append("- **").append(tableName).append("**: ");
+                                @SuppressWarnings("unchecked")
+                                List<String> columns = (List<String>) table.get("columns");
+                                if (columns != null) {
+                                    sb.append(String.join(", ", columns));
+                                }
+                                sb.append("\n");
+                            }
+                            sb.append("\n");
                         }
-                        sb.append("\n");
                     }
-                    sb.append("\n");
                 }
             }
         }
@@ -1397,20 +1569,35 @@ public class AgentService {
             sb.append("   - 仅用于统计计算，不得执行系统命令、文件操作\n\n");
             optionNum++;
         }
-        sb.append(optionNum).append(". **本体管理建议**：当用户明确要求管理本体（如\"帮我加一个概念\"、\"配置下钻关系\"），或分析过程中发现本体配置缺陷（概念缺失、关系不完整、映射错误），可使用 ontology_action 生成本体变更建议：\n");
+        sb.append(optionNum).append(". **选择数据源（本体管理前置步骤）**：当用户意图涉及本体管理（创建概念、配置映射、表连接），但上方没有「用户选择的数据源」章节时，说明用户尚未选择数据源，你**必须**先输出 select_datasources 让用户选择，**禁止**直接生成本体变更：\n");
+        sb.append("   ```json\n");
+        sb.append("   {\"type\": \"select_datasources\", \"reasoning\": \"为什么需要选择数据源\"}\n");
+        sb.append("   ```\n");
+        sb.append("   - 用户选择后，系统会将选中的数据源和表结构反馈给你（此时上方会出现「用户选择的数据源」章节），你再使用 ontology_action 生成本体变更\n\n");
+        optionNum++;
+        sb.append(optionNum).append(". **本体管理建议**：只有当上方出现「用户选择的数据源」章节，说明用户已明确数据源范围，或分析过程中发现本体配置缺陷（概念缺失、关系不完整、映射错误），才可使用 ontology_action 生成本体变更建议：\n");
         sb.append("   ```json\n");
         sb.append("   {\"type\": \"ontology_action\", \"action\": \"suggest\", \"reasoning\": \"为什么需要变更\", ");
         sb.append("\"trigger\": \"user_request\", \"changes\": [\n");
         sb.append("     {\"operation\": \"ADD_CONCEPT\", \"concept\": {\"name\": \"概念名\", \"description\": \"描述\", \"industryId\": 1}},\n");
         sb.append("     {\"operation\": \"ADD_RELATION\", \"relation\": {\"sourceConceptName\": \"源概念\", \"targetConceptName\": \"目标概念\", \"relationType\": \"DRILLS_INTO\"}},\n");
-        sb.append("     {\"operation\": \"ADD_MAPPING\", \"mapping\": {\"conceptName\": \"概念名\", \"tableName\": \"表名\", \"columnName\": \"列名\", \"mappingType\": \"direct\"}}\n");
+        sb.append("     {\"operation\": \"ADD_MAPPING\", \"mapping\": {\"conceptName\": \"概念名\", \"tableName\": \"表名\", \"columnName\": \"列名\", \"mappingType\": \"direct\", \"dataSourceId\": 1}},\n");
+        sb.append("     {\"operation\": \"ADD_JOIN_MAPPING\", \"joinMapping\": {\"leftTable\": \"orders\", \"rightTable\": \"returns\", \"leftColumn\": \"order_id\", \"rightColumn\": \"order_id\", \"joinType\": \"LEFT\"}}\n");
         sb.append("   ]}\n");
         sb.append("   ```\n");
         sb.append("   - 支持操作：ADD_CONCEPT、UPDATE_CONCEPT、DELETE_CONCEPT、ADD_RELATION、DELETE_RELATION、ADD_MAPPING、UPDATE_MAPPING、DELETE_MAPPING、ADD_JOIN_MAPPING、UPDATE_JOIN_MAPPING、DELETE_JOIN_MAPPING\n");
         sb.append("   - trigger 可选 user_request（用户明确要求）或 auto_detect（分析过程中自动发现）\n");
-        sb.append("   - 每次最多建议 5 条变更，每条变更必须附带 reasoning\n");
+        sb.append("   - 变更数量不做限制，按实际需求完整配置，每条变更必须附带 reasoning\n");
         sb.append("   - 变更不会自动生效，需管理员审核确认\n");
-        sb.append("   - 仅超管可用，普通用户触发时返回权限不足提示\n\n");
+        sb.append("   - 仅超管可用，普通用户触发时返回权限不足提示\n");
+        sb.append("   - **可用关系类型**：创建关系时必须使用以下已注册的关系类型之一，如果现有类型不满足需求，可先在 ADD_RELATION 中使用新类型名（管理员审核时会自动注册）\n");
+        if (availableRelations != null && !availableRelations.isEmpty()) {
+            sb.append(availableRelations);
+        } else {
+            sb.append("     - DRILLS_INTO: 可下钻到子维度，纯分析导航\n");
+            sb.append("     - CORRELATED: 关联维度，交叉分析提示\n");
+        }
+        sb.append("\n\n");
         optionNum++;
         sb.append(optionNum).append(". **直接回答**：如果无法通过工具或 SQL 回答，请直接回复：\n");
         sb.append("   ```json\n");
@@ -1473,6 +1660,7 @@ public class AgentService {
             @SuppressWarnings("unchecked")
             Map<String, Object> nl2sqlCall = (Map<String, Object>) data.get("pending_nl2sql");
             String sql = (String) nl2sqlCall.get("sql");
+            String nl2sqlToolCallId = (String) nl2sqlCall.get("tool_call_id");
             @SuppressWarnings("unchecked")
             List<?> rawConceptIds = (List<?>) nl2sqlCall.getOrDefault("concept_ids", List.of());
             List<Long> conceptIds = new ArrayList<>();
@@ -1518,9 +1706,8 @@ public class AgentService {
             if (executed != null && !executed && retryCount < NL2SQL_MAX_RETRIES && !isAuthError) {
                 data.put("nl2sql_retry_count", retryCount + 1);
                 data.put("nl2sql_last_error", error);
-                messages.add(Map.of("role", "tool", "content",
-                        "SQL 验证失败: " + error + "。请根据错误信息修正 SQL 并重试（第 " + (retryCount + 1) + "/" + NL2SQL_MAX_RETRIES + " 次重试）。",
-                        "tool_name", "nl2sql_executor"));
+                messages.add(Map.of("role", "tool", "tool_call_id", nl2sqlToolCallId != null ? nl2sqlToolCallId : "", "content",
+                        "SQL 验证失败: " + error + "。请根据错误信息修正 SQL 并重试（第 " + (retryCount + 1) + "/" + NL2SQL_MAX_RETRIES + " 次重试）。"));
                 data.put("next_action", "continue");
             } else {
                 data.put("nl2sql_retry_count", 0);
@@ -1528,10 +1715,10 @@ public class AgentService {
                 if (isAuthError) {
                     // 授权错误：直接提示用户申请权限，不让 LLM 继续尝试
                     String authMsg = "SQL 执行失败: " + error + "。请申请对应域的概念查询权限后再试。";
-                    messages.add(Map.of("role", "tool", "content", authMsg, "tool_name", "nl2sql_executor"));
+                    messages.add(Map.of("role", "tool", "tool_call_id", nl2sqlToolCallId != null ? nl2sqlToolCallId : "", "content", authMsg));
                 } else {
                     String resultSummary = formatNl2sqlResult(queryResult);
-                    messages.add(Map.of("role", "tool", "content", resultSummary, "tool_name", "nl2sql_executor"));
+                    messages.add(Map.of("role", "tool", "tool_call_id", nl2sqlToolCallId != null ? nl2sqlToolCallId : "", "content", resultSummary));
 
                     @SuppressWarnings("unchecked")
                     Set<Long> drilled = new HashSet<>((Set<Long>) data.getOrDefault("drilled_concepts", Set.of()));
@@ -1713,11 +1900,12 @@ public class AgentService {
             int toolCallCount = (int) data.getOrDefault("tool_call_count", 0);
             data.put("tool_call_count", toolCallCount + 1);
 
+            String toolCallId = (String) toolCall.get("tool_call_id");
             String toolResult = executeTool(toolName, toolArgs);
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
-            messages.add(Map.of("role", "tool", "content", toolResult, "tool_name", toolName));
+            messages.add(Map.of("role", "tool", "tool_call_id", toolCallId != null ? toolCallId : "", "content", toolResult));
 
             data.put("next_action", "continue");
             data.remove("pending_tool_call");
@@ -1733,6 +1921,7 @@ public class AgentService {
             @SuppressWarnings("unchecked")
             Map<String, Object> codeCall = (Map<String, Object>) data.get("pending_code");
             String code = (String) codeCall.get("code");
+            String codeToolCallId = (String) codeCall.get("tool_call_id");
             @SuppressWarnings("unchecked")
             Map<String, Object> inputData = (Map<String, Object>) codeCall.getOrDefault("input_data", Map.of());
 
@@ -1745,20 +1934,18 @@ public class AgentService {
             Boolean success = (Boolean) result.getOrDefault("success", false);
             if (success) {
                 String stdout = (String) result.getOrDefault("stdout", "");
-                messages.add(Map.of("role", "tool", "content", "代码执行成功:\n" + stdout, "tool_name", "code_executor"));
+                messages.add(Map.of("role", "tool", "tool_call_id", codeToolCallId != null ? codeToolCallId : "", "content", "代码执行成功:\n" + stdout));
             } else {
                 String stderr = (String) result.getOrDefault("stderr", "未知错误");
                 log.warn("Code execution failed: {}", stderr);
                 int codeRetry = (int) data.getOrDefault("code_retry_count", 0);
                 if (codeRetry < 1) {
                     data.put("code_retry_count", codeRetry + 1);
-                    messages.add(Map.of("role", "tool", "content",
-                            "代码执行失败: " + stderr + "\n请改用 SQL 查询重试，或直接给出 final_answer。",
-                            "tool_name", "code_executor"));
+                    messages.add(Map.of("role", "tool", "tool_call_id", codeToolCallId != null ? codeToolCallId : "", "content",
+                            "代码执行失败: " + stderr + "\n请改用 SQL 查询重试，或直接给出 final_answer。"));
                 } else {
-                    messages.add(Map.of("role", "tool", "content",
-                            "代码执行再次失败，请直接给出分析结论。",
-                            "tool_name", "code_executor"));
+                    messages.add(Map.of("role", "tool", "tool_call_id", codeToolCallId != null ? codeToolCallId : "", "content",
+                            "代码执行再次失败，请直接给出分析结论。"));
                 }
             }
 
@@ -1766,6 +1953,51 @@ public class AgentService {
             data.remove("pending_code");
             return CompletableFuture.completedFuture(data);
         };
+    }
+
+    private String inferEntityType(String operation) {
+        if (operation == null) return "UNKNOWN";
+        String upper = operation.toUpperCase();
+        if (upper.contains("CONCEPT") && !upper.contains("JOIN") && !upper.contains("MAPPING") && !upper.contains("RELATION")) return "CONCEPT";
+        if (upper.contains("JOIN")) return "JOIN_MAPPING";
+        if (upper.contains("MAPPING")) return "MAPPING";
+        if (upper.contains("RELATION")) return "RELATION";
+        return "UNKNOWN";
+    }
+
+    private Map<String, Object> parseSelectedDatasources(List<Map<String, Object>> messages) {
+        if (messages == null) return null;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Map<String, Object> msg = messages.get(i);
+            if ("user".equals(msg.get("role"))) {
+                String content = (String) msg.get("content");
+                if (content != null && content.contains("已选择数据源")) {
+                    try {
+                        int jsonStart = content.indexOf("[");
+                        int jsonEnd = content.lastIndexOf("]");
+                        if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                            String jsonStr = content.substring(jsonStart, jsonEnd + 1);
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> selected = objectMapper.readValue(jsonStr,
+                                    new TypeReference<List<Map<String, Object>>>() {});
+                            return Map.of("selected", selected);
+                        }
+                    } catch (Exception e) {
+                        log.warn("Failed to parse selected datasources: {}", e.getMessage());
+                    }
+                }
+                break;
+            }
+        }
+        return null;
+    }
+
+    private String toJsonString(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            return obj != null ? obj.toString() : "{}";
+        }
     }
 
     private AsyncNodeAction<AgentState> buildOntologyAdvisorNode() {
@@ -1784,10 +2016,12 @@ public class AgentService {
             List<Map<String, Object>> recorded = new ArrayList<>();
             for (Map<String, Object> change : changes) {
                 String operation = (String) change.getOrDefault("operation", "UNKNOWN");
-                String entityType = (String) change.getOrDefault("entity_type", "UNKNOWN");
+                String entityType = (String) change.getOrDefault("entity_type", inferEntityType(operation));
                 String reasoning = (String) change.getOrDefault("reasoning", "");
                 String beforeSnapshot = change.containsKey("before") ? change.get("before").toString() : null;
-                String afterSnapshot = change.containsKey("after") ? change.get("after").toString() : change.toString();
+                String afterSnapshot = change.containsKey("after")
+                        ? change.get("after").toString()
+                        : toJsonString(change);
 
                 try {
                     OntologyChangeLog log = ontologyChangeService.recordChange(
@@ -1802,10 +2036,26 @@ public class AgentService {
             }
 
             String summary = "本体变更已记录，共 " + recorded.size() + " 条，等待管理员审核";
-            messages.add(Map.of("role", "tool", "content", summary, "tool_name", "ontology_advisor"));
+            String ontologyToolCallId = (String) data.get("pending_ontology_tool_call_id");
+            messages.add(Map.of("role", "tool", "tool_call_id", ontologyToolCallId != null ? ontologyToolCallId : "", "content", summary));
 
             data.put("next_action", "continue");
             data.remove("pending_ontology_changes");
+            data.remove("pending_ontology_tool_call_id");
+            return CompletableFuture.completedFuture(data);
+        };
+    }
+
+    private AsyncNodeAction<AgentState> buildSelectDatasourcesNode() {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> available = (List<Map<String, Object>>) data.get("availableDatasources");
+            log.info("select_datasources node: availableDatasources={}",
+                    available != null ? available.size() : "null");
+            data.put("select_datasources", available != null ? available : List.of());
+            data.put("final_answer", "请选择需要使用的数据源和表：");
+            data.put("next_action", "final_answer");
             return CompletableFuture.completedFuture(data);
         };
     }
@@ -1829,6 +2079,7 @@ public class AgentService {
 
     private String callLlm(AgentConfig config, List<Map<String, Object>> messages, String toolsPrompt) {
         java.util.function.Consumer<String> onChunk = STREAM_CALLBACK.get();
+        java.util.function.Consumer<String> onReasoning = REASONING_CALLBACK.get();
         int maxRetries = 3;
         for (int attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -1851,6 +2102,8 @@ public class AgentService {
             body.put("stream", true);
 
             String chatUrl = normalizeChatUrl(config.getModelEndpoint());
+            log.info("LLM call: url={}, model={}, stream=true, messagesCount={}",
+                    chatUrl, config.getModelName(), fullMessages.size());
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(chatUrl))
                     .header("Content-Type", "application/json")
@@ -1881,6 +2134,10 @@ public class AgentService {
                     .thenAccept(response -> {
                         try {
                             if (response.statusCode() != 200) {
+                                StringBuilder errorBody = new StringBuilder();
+                                response.body().forEach(line -> errorBody.append(line).append("\n"));
+                                log.error("LLM API error: status={}, url={}, model={}, body={}",
+                                        response.statusCode(), chatUrl, config.getModelName(), errorBody.toString().trim());
                                 resultFuture.completeExceptionally(
                                         new RuntimeException("LLM streaming API 返回 " + response.statusCode()));
                                 return;
@@ -1909,7 +2166,11 @@ public class AgentService {
                                         Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
                                         if (delta != null) {
                                             String content = (String) delta.get("content");
-                                            if (content != null) {
+                                            String reasoningContent = (String) delta.get("reasoning_content");
+                                            if (reasoningContent != null && !reasoningContent.isEmpty() && onReasoning != null) {
+                                                onReasoning.accept(reasoningContent);
+                                            }
+                                            if (content != null && !content.isEmpty()) {
                                                 if (!firstTokenLogged.getAndSet(true)) {
                                                     long ttft = System.currentTimeMillis() - startTime;
                                                     log.info("LLM TTFT: {}ms", ttft);
@@ -1977,14 +2238,27 @@ public class AgentService {
         return "你是鲁班核心 Agent，一个企业数据查询助手。\n" +
                 "你的职责是帮助用户查询企业数据，并在必要时自动发现本体配置缺陷。\n" +
                 "请用中文回答。回答要简洁、准确、专业。\n\n" +
-                "你有五种方式回答用户问题：\n" +
+                "你有六种方式回答用户问题：\n" +
                 "1. 调用 API 工具获取数据\n" +
                 "2. 生成 SQL 查询数据库（仅限 SELECT）\n" +
                 "3. 执行 Python 代码分析数据（code_mode）\n" +
-                "4. 生成本体管理建议（ontology_action，仅超管可用）\n" +
-                "5. 直接回答（final_answer）\n\n" +
+                "4. 选择数据源（select_datasources，本体管理前置步骤，在生成本体变更前必须执行）\n" +
+                "5. 生成本体管理建议（ontology_action，仅超管可用，必须在 select_datasources 之后）\n" +
+                "6. 直接回答（final_answer）\n\n" +
                 "请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n" +
                 "所有回复必须严格按照 JSON 格式，不要添加额外文本。\n\n" +
+                "## 表格格式规范（重要）\n" +
+                "在 final_answer 的 answer 字段或 ontology_action 的 reasoning 中需要展示表格数据时，必须使用标准 Markdown 表格格式（管道符 | 分隔），禁止使用 Tab 字符分隔列。\n" +
+                "正确格式示例：\n" +
+                "| 表头1 | 表头2 | 表头3 |\n" +
+                "|-------|-------|-------|\n" +
+                "| 数据1 | 数据2 | 数据3 |\n" +
+                "| 数据4 | 数据5 | 数据6 |\n" +
+                "规则：\n" +
+                "- 表头行和分隔行必须完整，列数与表头一致\n" +
+                "- 每行必须以 | 开头，以 | 结尾\n" +
+                "- 禁止使用 Tab 字符分隔列，禁止在表格中使用 Tab\n" +
+                "- 多个表格之间必须空一行\n\n" +
                 "## 下钻分析规则\n" +
                 "上文中出现「可下钻维度」表格时，说明当前查询结果可进一步按子维度拆解分析。\n" +
                 "在 final_answer 末尾，必须以 `[drill_suggestions]` 为标记，列出可下钻的维度建议：\n" +
@@ -2004,19 +2278,19 @@ public class AgentService {
                 "## 本体管理规则\n" +
                 "当用户明确要求管理本体，或分析过程中发现概念缺失/关系不完整/映射错误时，可使用 ontology_action。\n" +
                 "支持操作：ADD_CONCEPT、UPDATE_CONCEPT、DELETE_CONCEPT、ADD_RELATION、DELETE_RELATION、ADD_MAPPING、UPDATE_MAPPING、DELETE_MAPPING、ADD_JOIN_MAPPING、UPDATE_JOIN_MAPPING、DELETE_JOIN_MAPPING。\n" +
-                "变更不会自动生效，需管理员审核确认。每次最多 5 条变更。";
+                "变更不会自动生效，需管理员审核确认。变更数量不做限制，按实际需求完整配置。";
     }
 
     /**
      * 规范化 chat completions URL。
-     * 如果已包含 /chat/completions 则直接使用，否则拼接 /v1/chat/completions。
+     * 如果已包含 /chat/completions 则直接使用，否则拼接 /chat/completions。
      */
     private String normalizeChatUrl(String endpoint) {
         String url = endpoint.replaceAll("/+$", "");
         if (url.endsWith("/chat/completions")) {
             return url;
         }
-        if (!url.endsWith("/v1")) {
+        if (!url.matches(".*/v\\d+$")) {
             url += "/v1";
         }
         return url + "/chat/completions";
@@ -2025,8 +2299,11 @@ public class AgentService {
     private Map<String, Object> parseResponse(String response) {
         try {
             String json = extractJson(response);
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            log.info("parseResponse success: type={}, jsonLen={}", result.get("type"), json.length());
+            return result;
         } catch (Exception e) {
+            log.warn("parseResponse failed, falling back to final_answer: {}", e.getMessage());
             return Map.of("type", "final_answer", "answer", response);
         }
     }
@@ -2035,6 +2312,9 @@ public class AgentService {
         response = response.trim();
         int start = response.indexOf('{');
         int end = response.lastIndexOf('}');
+        log.info("extractJson: responseLen={}, start={}, end={}, preview={}",
+                response.length(), start, end,
+                response.length() > 100 ? response.substring(0, 100) : response);
         if (start >= 0 && end > start) {
             String json = response.substring(start, end + 1);
             try {
@@ -2049,6 +2329,132 @@ public class AgentService {
             }
         }
         return response;
+    }
+
+    private String buildFullOntologyContext() {
+        StringBuilder sb = new StringBuilder();
+        List<Concept> allConcepts = conceptRepository.findAll();
+        if (allConcepts.isEmpty()) return "";
+
+        sb.append("## 已有概念列表（避免重复创建）\n");
+        sb.append("| 概念ID | 概念名 | 描述 | 父概念ID |\n");
+        sb.append("|--------|--------|------|----------|\n");
+        for (Concept c : allConcepts) {
+            sb.append("| ").append(c.getId())
+                    .append(" | ").append(c.getName())
+                    .append(" | ").append(c.getDescription() != null ? c.getDescription() : "-")
+                    .append(" | ").append(c.getParentId() != null ? c.getParentId() : "-")
+                    .append(" |\n");
+        }
+        sb.append("\n");
+
+        List<ConceptRelation> allRelations = conceptRelationRepository.findAll();
+        if (!allRelations.isEmpty()) {
+            sb.append("## 已有关系列表（避免重复创建）\n");
+            sb.append("| 源概念 | 目标概念 | 关系类型 |\n");
+            sb.append("|--------|----------|----------|\n");
+            Set<String> seen = new HashSet<>();
+            for (ConceptRelation r : allRelations) {
+                String key = r.getSourceConceptId() + "->" + r.getTargetConceptId() + ":" + r.getRelationType();
+                if (seen.add(key)) {
+                    String src = conceptRepository.findById(r.getSourceConceptId()).map(Concept::getName).orElse("?");
+                    String tgt = conceptRepository.findById(r.getTargetConceptId()).map(Concept::getName).orElse("?");
+                    sb.append("| ").append(src).append(" | ").append(tgt).append(" | ").append(r.getRelationType()).append(" |\n");
+                }
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    private String buildMappingsForConcepts(List<String> conceptNames, String requestType) {
+        StringBuilder sb = new StringBuilder();
+        Set<Long> conceptIds = new HashSet<>();
+        for (String name : conceptNames) {
+            List<Concept> found = conceptRepository.findByName(name);
+            for (Concept c : found) {
+                conceptIds.add(c.getId());
+            }
+        }
+        if (conceptIds.isEmpty()) {
+            return "未找到指定概念的映射信息。";
+        }
+        boolean needMappings = "all".equals(requestType) || "mappings".equals(requestType);
+        boolean needJoins = "all".equals(requestType) || "join_mappings".equals(requestType);
+        if (needMappings) {
+            List<ConceptMapping> mappings = conceptMappingRepository.findByConceptIdIn(new ArrayList<>(conceptIds));
+            if (!mappings.isEmpty()) {
+                sb.append("## 映射详情\n");
+                sb.append("| 概念 | 表名 | 列名 | 映射类型 |\n");
+                sb.append("|------|------|------|----------|\n");
+                for (ConceptMapping m : mappings) {
+                    String cname = conceptRepository.findById(m.getConceptId()).map(Concept::getName).orElse("?");
+                    sb.append("| ").append(cname).append(" | ").append(m.getTableName())
+                            .append(" | ").append(m.getColumnName())
+                            .append(" | ").append(m.getMappingType() != null ? m.getMappingType() : "-").append(" |\n");
+                }
+                sb.append("\n");
+            } else {
+                sb.append("## 映射详情\n暂无映射。\n\n");
+            }
+        }
+        if (needJoins) {
+            List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptIdIn(new ArrayList<>(conceptIds));
+            if (!joins.isEmpty()) {
+                sb.append("## 表连接详情\n");
+                sb.append("| 概念 | 连接表 | 连接条件 | 连接类型 |\n");
+                sb.append("|------|--------|----------|----------|\n");
+                for (ConceptJoinMapping j : joins) {
+                    String cname = conceptRepository.findById(j.getConceptId()).map(Concept::getName).orElse("?");
+                    sb.append("| ").append(cname).append(" | ").append(j.getJoinTable())
+                            .append(" | ").append(j.getJoinCondition())
+                            .append(" | ").append(j.getRelationType() != null ? j.getRelationType() : "LEFT JOIN").append(" |\n");
+                }
+                sb.append("\n");
+            } else {
+                sb.append("## 表连接详情\n暂无表连接。\n\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    private String buildOntologyThinkingChain() {
+        return "## 本体创建思维链（必须严格遵守）\n\n"
+                + "请严格按照以下步骤逐条思考，每步验证通过后再进入下一步：\n\n"
+                + "**第一步：解析用户需求**\n"
+                + "- 列出所有需要的概念（根概念、维度概念、关联概念）\n"
+                + "- 列出所有需要的关系（下钻、关联）\n"
+                + "- 列出所有需要的映射（概念→表字段）\n"
+                + "- 列出所有需要的表连接\n\n"
+                + "**第二步：检查已有概念（避免重复）**\n"
+                + "- 逐一对照上方「已有概念列表」，确认哪些概念已存在\n"
+                + "- 已存在的概念：不要重复创建，直接在后续关系/映射中引用\n"
+                + "- 不存在的概念：加入待创建列表\n\n"
+                + "**第三步：规划概念**\n"
+                + "- 先创建根概念，再创建子概念\n"
+                + "- 每个概念必须有 name、description\n"
+                + "- 根概念可设置异常阈值（如 >5%）\n"
+                + "- 父概念创建后，子概念才能引用\n\n"
+                + "**第四步：规划关系**\n"
+                + "- 下钻维度用 DRILLS_INTO\n"
+                + "- 关联维度用 CORRELATED 或其他已注册的关系类型\n"
+                + "- 每个关系必须有 sourceConceptName、targetConceptName、relationType\n\n"
+                + "**第五步：规划映射**\n"
+                + "- 每个概念需映射到数据库表字段\n"
+                + "- **必须先检查上方是否有「用户选择的数据源」章节，如果没有，必须输出 select_datasources 让用户选择**\n"
+                + "- 映射时 dataSourceId 必须使用「用户选择的数据源」中提供的 数据源ID\n"
+                + "- 概念名映射到表名，columnName 是具体字段\n"
+                + "- mappingType：direct（直接映射）、computed（计算字段）、derived（派生字段）\n"
+                + "- **如果你需要查询某些概念的已有映射/表连接，先输出 request_context，系统会返回详细信息**\n"
+                + "- request_context 格式：{\"type\": \"request_context\", \"concept_names\": [\"概念名1\", \"概念名2\"], \"request\": \"all|mappings|join_mappings\"}\n\n"
+                + "**第六步：规划表连接**\n"
+                + "- 多表查询需 JOIN 条件\n"
+                + "- leftTable=主表，rightTable=关联表，leftColumn/rightColumn=关联字段，joinType=LEFT/RIGHT/INNER\n\n"
+                + "**第七步：自检清单**\n"
+                + "- 逐一核对：概念是否完整？关系是否闭环？映射是否覆盖所有概念？\n"
+                + "- 确认无重复创建（对照上方已有列表）\n"
+                + "- 确认每个操作都有 reasoning 说明原因\n"
+                + "确认变更数量合理（通常 15-25 条为正常范围，超过 40 条需检查是否有重复）\n\n";
     }
 
     private String executeTool(String toolName, Map<String, Object> arguments) {

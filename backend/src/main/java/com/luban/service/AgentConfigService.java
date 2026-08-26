@@ -94,14 +94,14 @@ public class AgentConfigService {
     @SuppressWarnings("unchecked")
     public Map<String, Object> testConnection(String modelEndpoint, String secretKey) {
         try {
-            String url = modelEndpoint;
-            if (url.endsWith("/")) {
-                url = url.substring(0, url.length() - 1);
+            String base = modelEndpoint.replaceAll("/+$", "");
+            if (base.endsWith("/chat/completions")) {
+                base = base.substring(0, base.length() - "/chat/completions".length());
             }
-            if (!url.endsWith("/v1")) {
-                url += "/v1";
+            if (!base.matches(".*/v\\d+$")) {
+                base += "/v1";
             }
-            url += "/models";
+            String url = base + "/models";
 
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()

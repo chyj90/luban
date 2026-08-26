@@ -625,7 +625,7 @@ public class ConceptMappingService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                log.warn("[auto-match] LLM响应异常: HTTP {}", response.statusCode());
+                log.warn("[auto-match] LLM响应异常: HTTP {}, body={}", response.statusCode(), response.body());
                 return null;
             }
 

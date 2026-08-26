@@ -107,7 +107,7 @@ public class QueryService {
 
         Datasource ds = datasourceRepository.findById(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
-        if (!"MySQL".equals(ds.getType()) && !"PostgreSQL".equals(ds.getType())) return;
+        if (!"mysql".equalsIgnoreCase(ds.getType()) && !"postgresql".equalsIgnoreCase(ds.getType())) return;
 
         Map<String, Object> validationParams = buildValidationParams(paramsDef);
         Map<String, Object> authParams = new HashMap<>();
@@ -213,9 +213,9 @@ public class QueryService {
         String finalBody = resolveTemplate(query.getBody(), mergedParams, authParams);
         Map<String, Object> config = fromJsonMap(ds.getConfig());
 
-        return switch (ds.getType()) {
-            case "MySQL", "PostgreSQL" -> runJdbcQuery(ds.getType(), config, finalBody);
-            case "REST_API" -> runRestApiQuery(config, finalBody, mergedParams);
+        return switch (ds.getType().toLowerCase()) {
+            case "mysql", "postgresql" -> runJdbcQuery(ds.getType(), config, finalBody);
+            case "rest_api" -> runRestApiQuery(config, finalBody, mergedParams);
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
         };
     }
@@ -650,12 +650,15 @@ public class QueryService {
     }
 
     private String buildJdbcUrl(String type, Map<String, Object> config) {
+        if (config.containsKey("jdbcUrl") && config.get("jdbcUrl") != null) {
+            return String.valueOf(config.get("jdbcUrl"));
+        }
         String host = String.valueOf(config.get("host"));
         String port = String.valueOf(config.getOrDefault("port", "3306"));
         String database = String.valueOf(config.get("database"));
-        return switch (type) {
-            case "MySQL" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
-            case "PostgreSQL" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
+        return switch (type.toLowerCase()) {
+            case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
+            case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + type);
         };
     }

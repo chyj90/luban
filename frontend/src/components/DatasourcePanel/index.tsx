@@ -25,7 +25,17 @@ const DS_TYPES: { value: DatasourceType; label: string; color: string }[] = [
   { value: 'PostgreSQL', label: 'PostgreSQL', color: '#336791' },
 ];
 
-const isJdbcType = (type: string) => type === 'MySQL' || type === 'PostgreSQL';
+const normalizeType = (t: string): DatasourceType => {
+  const lower = t.toLowerCase();
+  if (lower === 'mysql') return 'MySQL';
+  if (lower === 'postgresql') return 'PostgreSQL';
+  return 'MySQL';
+};
+
+const isJdbcType = (type: string) => {
+  const t = type.toLowerCase();
+  return t === 'mysql' || t === 'postgresql';
+};
 
 const EMPTY_FORM = {
   name: '', type: 'MySQL' as DatasourceType,
@@ -104,7 +114,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     const config = ds.config || {};
     setForm({
       name: ds.name,
-      type: ds.type as DatasourceType,
+      type: normalizeType(ds.type),
       host: String(config.host || ''),
       port: String(config.port || ''),
       database: String(config.database || ''),
@@ -156,7 +166,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     toast.success('数据源已删除');
   };
 
-  const getDsInfo = (type: DatasourceType) => DS_TYPES.find((t) => t.value === type) || DS_TYPES[0];
+  const getDsInfo = (type: DatasourceType) => DS_TYPES.find((t) => t.value.toLowerCase() === type.toLowerCase()) || DS_TYPES[0];
 
   return (
     <div className="ds-panel">
@@ -307,7 +317,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
               <span className="ds-section-count">{keyDatasources.length}</span>
             </div>
             {keyDatasources.map((kd) => {
-              const info = DS_TYPES.find((t) => t.value === kd.type) || DS_TYPES[0];
+              const info = DS_TYPES.find((t) => t.value.toLowerCase() === kd.type?.toLowerCase()) || DS_TYPES[0];
               return (
                 <div key={kd.id} className="ds-card ds-card-key">
                   <div className="ds-card-main">

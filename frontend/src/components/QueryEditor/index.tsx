@@ -311,16 +311,17 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
   };
 
   const dsTypeLabel = (type: string) => {
-    switch (type) {
-      case 'MYSQL': return { label: 'MySQL' };
-      case 'POSTGRESQL': return { label: 'PostgreSQL' };
-      case 'REST_API': return { label: 'REST API' };
+    const t = type?.toLowerCase();
+    switch (t) {
+      case 'mysql': return { label: 'MySQL' };
+      case 'postgresql': return { label: 'PostgreSQL' };
+      case 'rest_api': return { label: 'REST API' };
       default: return { label: type };
     }
   };
 
-  const isRestApi = selectedDs?.type === 'REST_API';
-  const isSql = selectedDs?.type === 'MySQL' || selectedDs?.type === 'PostgreSQL';
+  const isRestApi = selectedDs?.type?.toLowerCase() === 'rest_api';
+  const isSql = selectedDs?.type?.toLowerCase() === 'mysql' || selectedDs?.type?.toLowerCase() === 'postgresql';
 
   const paramsPlaceholder = isSql
     ? '{ "name": "张三", "age": 25 }'

@@ -16,38 +16,86 @@ echo "TOKEN=$TOKEN"
 ### 1.2 导入测试数据库
 
 ```bash
-mysql -u root -p luban < backend/sql/test-data.sql
+mysql -u root -p < backend/sql/test-data.sql
 ```
 
-### 1.3 创建行业（如尚未创建）
+### 1.3 创建系统（ToolGroup）
+
+系统管理页面展示的系统，数据源挂载到系统下。
 
 ```bash
-# 创建零售电商行业
-curl -s -X POST 'http://localhost:8080/api/v1/industries' \
+# 创建零售电商系统
+RETAIL_SYS=$(curl -s -X POST 'http://localhost:8080/api/v1/tool-groups' \
   -H 'Authorization: Bearer '"$TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"retail_ecommerce","displayName":"零售电商","description":"零售电商行业数据分析"}'
+  -d '{"name":"零售电商系统","code":"retail_ecommerce","description":"零售电商业务系统","sortOrder":1}' | jq -r '.data.id')
+echo "RETAIL_SYS=$RETAIL_SYS"
 
-# 创建运营商网络行业
-curl -s -X POST 'http://localhost:8080/api/v1/industries' \
+# 创建运营商网络系统
+CARRIER_SYS=$(curl -s -X POST 'http://localhost:8080/api/v1/tool-groups' \
   -H 'Authorization: Bearer '"$TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"carrier_network","displayName":"运营商网络","description":"运营商网络运维分析"}'
+  -d '{"name":"运营商网络系统","code":"carrier_network","description":"运营商网络运维系统","sortOrder":2}' | jq -r '.data.id')
+echo "CARRIER_SYS=$CARRIER_SYS"
 ```
 
-### 1.4 创建数据源（test-data.sql 已包含，验证用）
+### 1.4 创建数据源
+
+将数据库连接注册到对应系统下。
 
 ```bash
-# 验证数据源
-curl -s 'http://localhost:8080/api/v1/datasources' \
-  -H 'Authorization: Bearer '"$TOKEN" | jq '.data[] | {id, slug, name}'
+# 零售电商数据源
+curl -s -X POST 'http://localhost:8080/api/v1/datasources' \
+  -H 'Authorization: Bearer '"$TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "slug": "PLATFORM",
+    "ownerId": '"$RETAIL_SYS"',
+    "name": "零售电商库",
+    "type": "mysql",
+    "config": {
+      "host": "localhost",
+      "port": 3306,
+      "database": "luban_retail",
+      "username": "root",
+      "password": "cyj2625130"
+    }
+  }'
+
+# 运营商网络数据源
+curl -s -X POST 'http://localhost:8080/api/v1/datasources' \
+  -H 'Authorization: Bearer '"$TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "slug": "PLATFORM",
+    "ownerId": '"$CARRIER_SYS"',
+    "name": "运营商网络库",
+    "type": "mysql",
+    "config": {
+      "host": "localhost",
+      "port": 3306,
+      "database": "luban_carrier",
+      "username": "root",
+      "password": "cyj2625130"
+    }
+  }'
 ```
 
-**预期输出**：
-```json
-{"id":1,"slug":"retail_ecommerce","name":"零售电商库"}
-{"id":2,"slug":"carrier_network","name":"运营商网络库"}
+### 1.5 验证数据源
+
+```bash
+# 验证零售电商数据源
+curl -s 'http://localhost:8080/api/v1/datasources?slug=PLATFORM&ownerId='"$RETAIL_SYS" \
+  -H 'Authorization: Bearer '"$TOKEN" | jq '.data[] | {id, name, type}'
+
+# 验证运营商网络数据源
+curl -s 'http://localhost:8080/api/v1/datasources?slug=PLATFORM&ownerId='"$CARRIER_SYS" \
+  -H 'Authorization: Bearer '"$TOKEN" | jq '.data[] | {id, name, type}'
 ```
+
+**预期输出**：两个数据源均返回，状态为 `pending`。
+
+### 1.6 创建行业（如尚未创建）
 
 ---
 

@@ -378,7 +378,8 @@ export default function ToolListPage() {
   const openDsEdit = (ds: Datasource) => {
     setDsEditingId(ds.id);
     const cfg = ds.config as Record<string, unknown>;
-    setDsForm({ name: ds.name, type: ds.type as DatasourceType, host: String(cfg.host || ''), port: String(cfg.port || '3306'), database: String(cfg.database || ''), username: String(cfg.username || ''), password: '', baseUrl: '' });
+    const normalizedType = (ds.type?.toLowerCase() === 'mysql' ? 'MySQL' : ds.type?.toLowerCase() === 'postgresql' ? 'PostgreSQL' : 'MySQL') as DatasourceType;
+    setDsForm({ name: ds.name, type: normalizedType, host: String(cfg.host || ''), port: String(cfg.port || '3306'), database: String(cfg.database || ''), username: String(cfg.username || ''), password: '', baseUrl: '' });
     setDsShowForm(true);
   };
 
@@ -1220,7 +1221,7 @@ export default function ToolListPage() {
                     <tr key={ds.id}>
                       <td className="tool-list-name-cell">{ds.name}</td>
                       <td>
-                        <span className={`tool-list-ds-type-badge ds-type-${ds.type.toLowerCase()}`}>{ds.type}</span>
+                        <span className={`tool-list-ds-type-badge ds-type-${ds.type.toLowerCase()}`}>{(ds.type as string).toLowerCase() === 'mysql' ? 'MySQL' : (ds.type as string).toLowerCase() === 'postgresql' ? 'PostgreSQL' : ds.type}</span>
                       </td>
                       <td>
                         <span className={`tool-list-ds-status ${ds.status === 'connected' ? 'connected' : ds.status === 'error' ? 'error' : ''}`}>

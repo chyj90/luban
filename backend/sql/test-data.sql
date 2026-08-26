@@ -1,27 +1,25 @@
 -- ============================================================
 -- 自动洞察 Phase 2 测试数据
 -- 用途：为 5 个零售场景 + 1 个运营商场景创建测试表和数据
--- 执行方式：mysql -u root -p luban < test-data.sql
+-- 库结构：
+--   luban_retail    - 零售电商库（场景 1-5）
+--   luban_carrier   - 运营商网络库（场景 6）
+-- 注意：数据源连接需要通过 API 创建，不在 SQL 中插入
+-- 执行方式：mysql -u root -p < test-data.sql
 -- ============================================================
 
 -- ============================================================
--- 数据源配置（在 luban 平台中注册）
+-- 创建数据库
 -- ============================================================
 
--- 删除旧数据源（如果存在）
-DELETE FROM datasources WHERE slug IN ('retail_ecommerce', 'carrier_network');
+CREATE DATABASE IF NOT EXISTS luban_retail DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS luban_carrier DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- 零售电商库（场景 1-5）
-INSERT INTO datasources (id, slug, name, type, config, status, created_at, updated_at) VALUES
-(1, 'retail_ecommerce', '零售电商库', 'mysql',
- '{"jdbcUrl":"jdbc:mysql://localhost:3306/luban?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC","username":"root","password":"cyj2625130"}',
- 'active', NOW(), NOW());
+-- ============================================================
+-- 零售电商库：场景 1-5
+-- ============================================================
 
--- 运营商网络库（场景 6）
-INSERT INTO datasources (id, slug, name, type, config, status, created_at, updated_at) VALUES
-(2, 'carrier_network', '运营商网络库', 'mysql',
- '{"jdbcUrl":"jdbc:mysql://localhost:3306/luban?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC","username":"root","password":"cyj2625130"}',
- 'active', NOW(), NOW());
+USE luban_retail;
 
 -- ============================================================
 -- 场景 1：退货率异常
@@ -210,8 +208,10 @@ CREATE TABLE IF NOT EXISTS defect_records (
 );
 
 -- ============================================================
--- 场景 6：跨省专线故障定位（运营商）
+-- 运营商库：场景 6
 -- ============================================================
+
+USE luban_carrier;
 
 CREATE TABLE IF NOT EXISTS dedicated_lines (
     line_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -295,8 +295,10 @@ CREATE TABLE IF NOT EXISTS network_topology (
 );
 
 -- ============================================================
--- 基础数据插入
+-- 基础数据插入：零售电商库
 -- ============================================================
+
+USE luban_retail;
 
 -- 清空已有数据（按外键依赖顺序）
 DELETE FROM defect_records;
@@ -311,14 +313,6 @@ DELETE FROM inventory;
 DELETE FROM complaints;
 DELETE FROM returns;
 DELETE FROM orders;
-DELETE FROM network_topology;
-DELETE FROM alarms;
-DELETE FROM ports;
-DELETE FROM ip_links;
-DELETE FROM transmission_segments;
-DELETE FROM fiber_segments;
-DELETE FROM dedicated_lines;
-DELETE FROM stations;
 DELETE FROM logistics;
 DELETE FROM sales_channels;
 DELETE FROM equipment;
@@ -361,8 +355,8 @@ INSERT INTO materials (material_id, name, type, safety_stock) VALUES
 (3, '电子元件C', '电子', 300),
 (4, '包装材料D', '包装', 800);
 
-INSERT INTO raw_materials (material_id, name, unit_price, price_date) VALUES
-(1, '钢材A', 3500.00, '2024-07-01');
+INSERT INTO raw_materials (name, unit_price, price_date) VALUES
+('钢材A', 3500.00, '2024-07-01');
 
 INSERT INTO suppliers (supplier_id, name) VALUES
 (1, '供应商X'),
@@ -578,12 +572,12 @@ INSERT INTO inventory (inv_id, material_id, qty, inbound_date) VALUES
 -- 场景 5：成本异常
 -- ============================================================
 
-INSERT INTO raw_materials (material_id, name, unit_price, price_date) VALUES
-(1, '钢材A', 4025.00, '2024-08-01'),
-(2, '塑料粒子B', 1200.00, '2024-07-01'),
-(2, '塑料粒子B', 1200.00, '2024-08-01'),
-(3, '电子元件C', 8500.00, '2024-07-01'),
-(3, '电子元件C', 8500.00, '2024-08-01');
+INSERT INTO raw_materials (name, unit_price, price_date) VALUES
+('钢材A', 4025.00, '2024-08-01'),
+('塑料粒子B', 1200.00, '2024-07-01'),
+('塑料粒子B', 1200.00, '2024-08-01'),
+('电子元件C', 8500.00, '2024-07-01'),
+('电子元件C', 8500.00, '2024-08-01');
 
 INSERT INTO cost_records (record_id, item_id, line_id, actual_amount, record_date) VALUES
 (1, 1, 1, 575000.00, '2024-08-31'),
@@ -598,8 +592,20 @@ INSERT INTO defect_records (record_id, line_id, wo_id, produced_qty, defect_qty,
 (4, 1, 26, 1000, 52, '2024-08-17');
 
 -- ============================================================
--- 场景 6：运营商专线故障
+-- 基础数据插入：运营商库
 -- ============================================================
+
+USE luban_carrier;
+
+-- 清空已有数据（按外键依赖顺序）
+DELETE FROM network_topology;
+DELETE FROM alarms;
+DELETE FROM ports;
+DELETE FROM ip_links;
+DELETE FROM transmission_segments;
+DELETE FROM fiber_segments;
+DELETE FROM dedicated_lines;
+DELETE FROM stations;
 
 INSERT INTO stations (station_id, name, province) VALUES
 (1, '北京站', '北京'),

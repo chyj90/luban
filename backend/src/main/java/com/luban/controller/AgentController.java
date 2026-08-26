@@ -50,7 +50,8 @@ public class AgentController {
         }
 
         Long userId = getCurrentUserId();
-        Map<String, Object> result = agentService.chat(sessionId, message, userId);
+        String userName = getCurrentUserName();
+        Map<String, Object> result = agentService.chat(sessionId, message, userId, userName);
         result.put("sessionId", sessionId);
         return ResponseEntity.ok(result);
     }
@@ -61,6 +62,7 @@ public class AgentController {
         final String sessionId = (String) params.getOrDefault("sessionId", UUID.randomUUID().toString());
         final String message = (String) params.get("message");
         final Long userId = getCurrentUserId();
+        final String userName = getCurrentUserName();
 
         if (message == null || message.isEmpty()) {
             response.setStatus(400);
@@ -87,7 +89,7 @@ public class AgentController {
                 out.write(buildSSEBytes("thinking", "正在分析您的问题..."));
                 out.flush();
 
-                Map<String, Object> result = agentService.chat(sessionId, message, userId, progress -> {
+                Map<String, Object> result = agentService.chat(sessionId, message, userId, userName, progress -> {
                     try {
                         out.write(buildSSEBytes("progress", progress));
                         out.flush();
@@ -100,6 +102,13 @@ public class AgentController {
                         out.flush();
                     } catch (IOException e) {
                         log.warn("Failed to send llm_chunk event", e);
+                    }
+                }, reasoning -> {
+                    try {
+                        out.write(buildSSEBytes("reasoning", reasoning));
+                        out.flush();
+                    } catch (IOException e) {
+                        log.warn("Failed to send reasoning event", e);
                     }
                 });
                 result.put("sessionId", sessionId);
@@ -137,6 +146,12 @@ public class AgentController {
                 Object queryResult = result.get("queryResult");
                 if (queryResult != null) {
                     out.write(buildSSEBytes("query_result", queryResult));
+                    out.flush();
+                }
+
+                Object selectDatasources = result.get("select_datasources");
+                if (selectDatasources != null) {
+                    out.write(buildSSEBytes("select_datasources", selectDatasources));
                     out.flush();
                 }
 
@@ -200,6 +215,15 @@ public class AgentController {
             return user.getId();
         }
         return 1L;
+    }
+
+    private String getCurrentUserName() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof com.luban.entity.User user) {
+            String name = user.getName();
+            return (name != null && !name.isEmpty()) ? name : user.getAccount();
+        }
+        return "unknown";
     }
 
     private byte[] buildSSEBytes(String event, Object data) {

@@ -3,10 +3,11 @@ package com.luban.controller;
 import com.luban.entity.OntologyChangeLog;
 import com.luban.entity.User;
 import com.luban.service.OntologyChangeService;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -14,11 +15,19 @@ import java.util.Map;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/ontology/changes")
+@RequestMapping("/api/v1/ontology/changes")
 @RequiredArgsConstructor
 public class OntologyChangeController {
 
     private final OntologyChangeService changeService;
+
+    private User getCurrentUser() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof User user) {
+            return user;
+        }
+        return null;
+    }
 
     @GetMapping("/session/{sessionId}")
     public ResponseEntity<List<OntologyChangeLog>> listBySession(@PathVariable String sessionId) {
@@ -35,10 +44,8 @@ public class OntologyChangeController {
     }
 
     @PostMapping("/{changeId}/approve")
-    public ResponseEntity<Map<String, Object>> approveChange(
-            @PathVariable Long changeId,
-            HttpServletRequest request) {
-        User user = (User) request.getAttribute("user");
+    public ResponseEntity<Map<String, Object>> approveChange(@PathVariable Long changeId) {
+        User user = getCurrentUser();
         if (user == null) {
             return ResponseEntity.status(401).body(Map.of("error", "未登录"));
         }
@@ -48,10 +55,8 @@ public class OntologyChangeController {
     }
 
     @PostMapping("/{changeId}/reject")
-    public ResponseEntity<Map<String, Object>> rejectChange(
-            @PathVariable Long changeId,
-            HttpServletRequest request) {
-        User user = (User) request.getAttribute("user");
+    public ResponseEntity<Map<String, Object>> rejectChange(@PathVariable Long changeId) {
+        User user = getCurrentUser();
         if (user == null) {
             return ResponseEntity.status(401).body(Map.of("error", "未登录"));
         }
@@ -61,10 +66,8 @@ public class OntologyChangeController {
     }
 
     @PostMapping("/batch")
-    public ResponseEntity<Map<String, Object>> batchApprove(
-            @RequestBody Map<String, Object> body,
-            HttpServletRequest request) {
-        User user = (User) request.getAttribute("user");
+    public ResponseEntity<Map<String, Object>> batchApprove(@RequestBody Map<String, Object> body) {
+        User user = getCurrentUser();
         if (user == null) {
             return ResponseEntity.status(401).body(Map.of("error", "未登录"));
         }
@@ -73,12 +76,26 @@ public class OntologyChangeController {
         if (changeIds == null || changeIds.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "changeIds 不能为空"));
         }
-        int count = 0;
-        for (Integer id : changeIds) {
-            changeService.approveChange(id.longValue());
-            count++;
+        List<Long> ids = changeIds.stream().map(Integer::longValue).toList();
+        changeService.batchApproveChanges(ids);
+        log.info("Batch approved {} ontology changes by user {}", ids.size(), user.getId());
+        return ResponseEntity.ok(Map.of("success", true, "approved", ids.size()));
+    }
+
+    @PostMapping("/batch/reject")
+    public ResponseEntity<Map<String, Object>> batchReject(@RequestBody Map<String, Object> body) {
+        User user = getCurrentUser();
+        if (user == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "未登录"));
         }
-        log.info("Batch approved {} ontology changes by user {}", count, user.getId());
-        return ResponseEntity.ok(Map.of("success", true, "approved", count));
+        @SuppressWarnings("unchecked")
+        List<Integer> changeIds = (List<Integer>) body.get("changeIds");
+        if (changeIds == null || changeIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "changeIds 不能为空"));
+        }
+        List<Long> ids = changeIds.stream().map(Integer::longValue).toList();
+        changeService.batchRejectChanges(ids);
+        log.info("Batch rejected {} ontology changes by user {}", ids.size(), user.getId());
+        return ResponseEntity.ok(Map.of("success", true, "rejected", ids.size()));
     }
 }

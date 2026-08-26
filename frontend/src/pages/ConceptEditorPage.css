@@ -1298,30 +1298,96 @@
 .changeReviewToolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid #f0f0f0;
 }
 
+.changeReviewSelectAll {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #666;
+  cursor: pointer;
+  user-select: none;
+}
+
+.changeReviewSelectAll input {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
 .changeReviewCount {
   font-size: 13px;
   color: #666;
+  flex: 1;
+}
+
+.changeReviewBreakdown {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #888;
+  margin-right: 16px;
+}
+
+.breakdownItem {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #f5f5f5;
+}
+
+.breakdownItem.concept { color: #1890ff; }
+.breakdownItem.relation { color: #722ed1; }
+.breakdownItem.mapping { color: #13c2c2; }
+.breakdownItem.join { color: #fa8c16; }
+
+.changeReviewBatchActions {
+  display: flex;
+  gap: 8px;
 }
 
 .changeReviewBatchBtn {
   padding: 6px 16px;
-  border: 1px solid #52c41a;
   border-radius: 6px;
-  background: #f6ffed;
-  color: #52c41a;
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
 }
 
-.changeReviewBatchBtn:hover:not(:disabled) {
-  background: #52c41a;
+.changeReviewBatchBtn.approve {
+  border: 1px solid #5b8def;
+  background: #f4f8fd;
+  color: #5b8def;
+}
+
+.changeReviewBatchBtn.approve:hover:not(:disabled) {
+  background: #5b8def;
+  color: #fff;
+}
+
+.changeReviewBatchBtn.reject {
+  border: 1px solid #d9d9d9;
+  background: #fafafa;
+  color: #999;
+}
+
+.changeReviewBatchBtn.reject:hover:not(:disabled) {
+  background: #bfbfbf;
+  color: #fff;
+}
+
+.changeReviewBatchBtn.delete {
+  border: 1px solid #ff4d4f;
+  background: #fff2f0;
+  color: #ff4d4f;
+}
+
+.changeReviewBatchBtn.delete:hover:not(:disabled) {
+  background: #ff4d4f;
   color: #fff;
 }
 
@@ -1345,13 +1411,13 @@
 }
 
 .changeReviewItem.approved {
-  border-color: #b7eb8f;
-  background: #f6ffed;
+  border-color: #b7cef0;
+  background: #f8fafd;
 }
 
 .changeReviewItem.rejected {
-  border-color: #ffa39e;
-  background: #fff1f0;
+  border-color: #e8e8e8;
+  background: #fafafa;
 }
 
 .changeReviewItemHeader {
@@ -1408,15 +1474,15 @@
 }
 
 .changeReviewStatusTag.approved {
-  background: #f6ffed;
-  color: #389e0d;
-  border: 1px solid #b7eb8f;
+  background: #f4f8fd;
+  color: #5b8def;
+  border: 1px solid #b7cef0;
 }
 
 .changeReviewStatusTag.rejected {
-  background: #fff1f0;
-  color: #cf1322;
-  border: 1px solid #ffa39e;
+  background: #fafafa;
+  color: #999;
+  border: 1px solid #e8e8e8;
 }
 
 .changeReviewReasoning {
@@ -1462,15 +1528,15 @@
 }
 
 .changeReviewDiffPre.before {
-  background: #fff1f0;
-  border: 1px solid #ffa39e;
-  color: #cf1322;
+  background: #f5f6f8;
+  border: 1px solid #d9dde3;
+  color: #787f8a;
 }
 
 .changeReviewDiffPre.after {
-  background: #f6ffed;
-  border: 1px solid #b7eb8f;
-  color: #389e0d;
+  background: #f4f8fd;
+  border: 1px solid #b7cef0;
+  color: #3d5a80;
 }
 
 .changeReviewDiffPre.empty {
@@ -1494,32 +1560,48 @@
 
 .changeReviewApproveBtn {
   padding: 5px 14px;
-  border: 1px solid #52c41a;
+  border: 1px solid #5b8def;
   border-radius: 4px;
-  background: #f6ffed;
-  color: #52c41a;
+  background: #f4f8fd;
+  color: #5b8def;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
 
 .changeReviewApproveBtn:hover {
-  background: #52c41a;
+  background: #5b8def;
   color: #fff;
 }
 
 .changeReviewRejectBtn {
   padding: 5px 14px;
-  border: 1px solid #ff4d4f;
+  border: 1px solid #e8e8e8;
   border-radius: 4px;
-  background: #fff1f0;
-  color: #ff4d4f;
+  background: #fafafa;
+  color: #999;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
 
 .changeReviewRejectBtn:hover {
+  background: #bfbfbf;
+  color: #fff;
+}
+
+.changeReviewDeleteBtn {
+  padding: 5px 14px;
+  border: 1px solid #ff4d4f;
+  border-radius: 4px;
+  background: #fff2f0;
+  color: #ff4d4f;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.changeReviewDeleteBtn:hover {
   background: #ff4d4f;
   color: #fff;
 }

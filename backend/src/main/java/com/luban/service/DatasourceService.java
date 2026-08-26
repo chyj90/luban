@@ -94,9 +94,9 @@ public class DatasourceService {
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
         try {
             Map<String, Object> config = fromJsonMap(ds.getConfig());
-            boolean ok = switch (ds.getType()) {
-                case "MySQL", "PostgreSQL" -> testJdbc(ds.getType(), config);
-                case "REST_API" -> testApi(config);
+            boolean ok = switch (ds.getType().toLowerCase()) {
+                case "mysql", "postgresql" -> testJdbc(ds.getType(), config);
+                case "rest_api" -> testApi(config);
                 default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
             };
             if (ok) {
@@ -152,9 +152,9 @@ public class DatasourceService {
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
         Map<String, Object> config = fromJsonMap(ds.getConfig());
 
-        return switch (ds.getType()) {
-            case "MySQL", "PostgreSQL" -> getJdbcStructure(ds.getType(), config);
-            case "REST_API" -> getApiStructure(config);
+        return switch (ds.getType().toLowerCase()) {
+            case "mysql", "postgresql" -> getJdbcStructure(ds.getType(), config);
+            case "rest_api" -> getApiStructure(config);
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
         };
     }
@@ -268,13 +268,16 @@ public class DatasourceService {
     }
 
     public String buildJdbcUrl(String type, Map<String, Object> config) {
+        if (config.containsKey("jdbcUrl") && config.get("jdbcUrl") != null) {
+            return String.valueOf(config.get("jdbcUrl"));
+        }
         String host = String.valueOf(config.get("host"));
         Object portObj = config.get("port");
         String port = portObj != null ? String.valueOf(portObj) : "3306";
         String database = String.valueOf(config.get("database"));
-        return switch (type) {
-            case "MySQL" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
-            case "PostgreSQL" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
+        return switch (type.toLowerCase()) {
+            case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
+            case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
             default -> throw new IllegalArgumentException("不支持的数据源类型: " + type);
         };
     }

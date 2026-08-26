@@ -52,6 +52,7 @@ import {
   approveOntologyChange,
   rejectOntologyChange,
   batchApproveOntologyChanges,
+  batchRejectOntologyChanges,
   type OntologyChangeLog,
   getIndustryRelations,
 } from '@/api/concept';
@@ -97,6 +98,45 @@ function safeJsonParse(str: string | null): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+function formatSnapshot(obj: Record<string, unknown> | null, entityType: string): React.ReactNode {
+  if (!obj) return null;
+
+  const inner = (obj as Record<string, unknown>).concept || (obj as Record<string, unknown>).relation || (obj as Record<string, unknown>).mapping || (obj as Record<string, unknown>).joinMapping || obj;
+  const data = inner as Record<string, unknown>;
+
+  const extract = (keys: string[]) => keys.map((k) => {
+    const v = data[k];
+    return v !== undefined && v !== null ? String(v) : null;
+  }).filter(Boolean);
+
+  if (entityType === 'CONCEPT') {
+    const fields = extract(['name', 'description', 'calculationFormula', 'threshold', 'industryId', 'industryName']);
+    return fields.length > 0 ? fields.join(' | ') : JSON.stringify(data);
+  }
+  if (entityType === 'RELATION') {
+    const source = data.sourceConceptName || data.sourceConceptId || '?';
+    const target = data.targetConceptName || data.targetConceptId || '?';
+    const type = data.relationType || '?';
+    return <span>{source} <strong>{type}</strong> {target}</span>;
+  }
+  if (entityType === 'MAPPING') {
+    const cn = data.conceptName || data.conceptId || '?';
+    const tbl = data.tableName || '?';
+    const col = data.columnName || data.columnId || '?';
+    const mt = data.mappingType || '?';
+    return <span>{cn} → {tbl}.{col} <em>({mt})</em></span>;
+  }
+  if (entityType === 'JOIN_MAPPING') {
+    const lt = data.leftTable || '?';
+    const lc = data.leftColumn || '?';
+    const rt = data.rightTable || '?';
+    const rc = data.rightColumn || '?';
+    const jt = data.joinType || '?';
+    return <span>{lt}.{lc} → {rt}.{rc} <em>({jt})</em></span>;
+  }
+  return JSON.stringify(data);
 }
 
 function getNodeType(concept: Concept, concepts: Concept[], relations: ConceptRelation[]): string {
@@ -899,7 +939,12 @@ export default function ConceptEditorPage() {
   const handleRejectChange = async (changeId: number) => {
     try {
       await rejectOntologyChange(changeId);
-      setPendingChanges((prev) => prev.map((c) => c.id === changeId ? { ...c, status: 'REJECTED' as const } : c));
+      setPendingChanges((prev) => prev.filter((c) => c.id !== changeId));
+      setSelectedChangeIds((prev) => {
+        const next = new Set(prev);
+        next.delete(changeId);
+        return next;
+      });
       toast('变更已拒绝', 'success');
     } catch {
       toast('操作失败', 'error');
@@ -917,6 +962,27 @@ export default function ConceptEditorPage() {
       toast(`已通过 ${selectedChangeIds.size} 条变更`, 'success');
     } catch {
       toast('批量操作失败', 'error');
+    }
+  };
+
+  const handleBatchReject = async () => {
+    if (selectedChangeIds.size === 0) return;
+    try {
+      await batchRejectOntologyChanges(Array.from(selectedChangeIds));
+      setPendingChanges((prev) => prev.filter((c) => !selectedChangeIds.has(c.id)));
+      setSelectedChangeIds(new Set());
+      toast(`已拒绝 ${selectedChangeIds.size} 条变更`, 'success');
+    } catch {
+      toast('批量操作失败', 'error');
+    }
+  };
+
+  const toggleSelectAll = () => {
+    const pendingOnly = pendingChanges.filter((c) => c.status === 'PENDING');
+    if (selectedChangeIds.size === pendingOnly.length) {
+      setSelectedChangeIds(new Set());
+    } else {
+      setSelectedChangeIds(new Set(pendingOnly.map((c) => c.id)));
     }
   };
 
@@ -2307,16 +2373,39 @@ export default function ConceptEditorPage() {
               ) : (
                 <>
                   <div className="changeReviewToolbar">
+                    <label className="changeReviewSelectAll">
+                      <input
+                        type="checkbox"
+                        checked={pendingChanges.filter((c) => c.status === 'PENDING').length > 0 && selectedChangeIds.size === pendingChanges.filter((c) => c.status === 'PENDING').length}
+                        onChange={toggleSelectAll}
+                      />
+                      <span>全选</span>
+                    </label>
                     <span className="changeReviewCount">
                       共 {pendingChanges.length} 条变更，已选 {selectedChangeIds.size} 条
                     </span>
-                    <button
-                      className="changeReviewBatchBtn"
-                      disabled={selectedChangeIds.size === 0}
-                      onClick={handleBatchApprove}
-                    >
-                      批量通过
-                    </button>
+                    <span className="changeReviewBreakdown">
+                      <span className="breakdownItem concept">概念 {pendingChanges.filter((c) => c.entityType === 'CONCEPT').length}</span>
+                      <span className="breakdownItem relation">关系 {pendingChanges.filter((c) => c.entityType === 'RELATION').length}</span>
+                      <span className="breakdownItem mapping">映射 {pendingChanges.filter((c) => c.entityType === 'MAPPING').length}</span>
+                      <span className="breakdownItem join">连接 {pendingChanges.filter((c) => c.entityType === 'JOIN_MAPPING').length}</span>
+                    </span>
+                    <div className="changeReviewBatchActions">
+                      <button
+                        className="changeReviewBatchBtn approve"
+                        disabled={selectedChangeIds.size === 0}
+                        onClick={handleBatchApprove}
+                      >
+                        批量通过
+                      </button>
+                      <button
+                        className="changeReviewBatchBtn reject"
+                        disabled={selectedChangeIds.size === 0}
+                        onClick={handleBatchReject}
+                      >
+                        批量拒绝
+                      </button>
+                    </div>
                   </div>
                   <div className="changeReviewList">
                     {pendingChanges.map((change) => {
@@ -2356,7 +2445,7 @@ export default function ConceptEditorPage() {
                                 <div className="changeReviewDiffCol before">
                                   <div className="changeReviewDiffLabel">变更前</div>
                                   <pre className="changeReviewDiffPre before">
-                                    {JSON.stringify(beforeObj, null, 2)}
+                                    {formatSnapshot(beforeObj, change.entityType)}
                                   </pre>
                                 </div>
                               ) : (
@@ -2369,7 +2458,7 @@ export default function ConceptEditorPage() {
                                 <div className="changeReviewDiffCol after">
                                   <div className="changeReviewDiffLabel">变更后</div>
                                   <pre className="changeReviewDiffPre after">
-                                    {JSON.stringify(afterObj, null, 2)}
+                                    {formatSnapshot(afterObj, change.entityType)}
                                   </pre>
                                 </div>
                               ) : (

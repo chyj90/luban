@@ -811,7 +811,7 @@ public class ConceptImportService {
             log.info("[import] → 规范化LLM响应: HTTP {} ({}ms)", response.statusCode(), elapsed);
 
             if (response.statusCode() != 200) {
-                log.warn("[import] → LLM调用失败: HTTP {}", response.statusCode());
+                log.warn("[import] → LLM调用失败: HTTP {}, body={}", response.statusCode(), response.body());
                 return rawConcepts;
             }
 

@@ -208,15 +208,6 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             {"CORRELATED", "关联维度，交叉分析提示", "false", "false", "2"}
         };
 
-        String[][] industryDefaults = {
-            {"COMPUTED_FROM", "由...计算得出，通过公式由其他概念计算而来", "false", "false", "3"},
-            {"PARENT_OF", "包含，此概念包含子概念，层级关系", "true", "false", "4"},
-            {"EQUIVALENT_TO", "等同于，两个概念表示同一个东西（跨系统同义）", "true", "true", "5"},
-            {"PREREQUISITE_OF", "前提条件，需要先有当前概念才能计算目标概念", "false", "false", "6"},
-            {"UPPER_STREAM_OF", "上游产出，上游工序的产出流入下游工序", "true", "false", "7"},
-            {"DERIVED_FROM", "条件触发，满足条件后推导出的状态", "false", "false", "8"}
-        };
-
         int totalInserted = 0;
         for (Industry industry : industries) {
             for (String[] def : builtins) {
@@ -235,27 +226,11 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
                     totalInserted++;
                 }
             }
-            for (String[] def : industryDefaults) {
-                String relationType = def[0];
-                if (industryRelationRepository.findByIndustryIdAndRelationType(
-                        industry.getId(), relationType).isEmpty()) {
-                    IndustryRelation relation = new IndustryRelation();
-                    relation.setIndustryId(industry.getId());
-                    relation.setRelationType(relationType);
-                    relation.setDescription(def[1]);
-                    relation.setIsTransitive(Boolean.parseBoolean(def[2]));
-                    relation.setIsSymmetric(Boolean.parseBoolean(def[3]));
-                    relation.setSortOrder(Integer.parseInt(def[4]));
-                    relation.setIsBuiltin(false);
-                    industryRelationRepository.save(relation);
-                    totalInserted++;
-                }
-            }
         }
 
         if (totalInserted > 0) {
             log.info("平台关系类型初始化完成：{} 个行业 × {} 种关系类型 = {} 条",
-                    industries.size(), builtins.length + industryDefaults.length, totalInserted);
+                    industries.size(), builtins.length, totalInserted);
         }
     }
 }

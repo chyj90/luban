@@ -525,19 +525,24 @@ export default function OntologyGroupPage() {
                               <tbody>
                                 {industryRelations[ind.id]?.map((rel) => (
                                   <tr key={rel.id}>
-                                    <td className="og-page__rel-type">{rel.relationType}</td>
+                                    <td className="og-page__rel-type">
+                                      {rel.relationType}
+                                      {rel.isBuiltin && <span className="og-page__rel-tag yes" style={{ marginLeft: 6 }}>内置</span>}
+                                    </td>
                                     <td className="og-page__rel-desc">{rel.description || '-'}</td>
                                     <td>{rel.isTransitive ? <span className="og-page__rel-tag yes">是</span> : <span className="og-page__rel-tag">否</span>}</td>
                                     <td>{rel.isSymmetric ? <span className="og-page__rel-tag yes">是</span> : <span className="og-page__rel-tag">否</span>}</td>
                                     <td>{rel.sortOrder}</td>
                                     <td>
-                                      <button
-                                        className="og-page__action-btn og-page__action-btn--danger"
-                                        onClick={() => handleDeleteRelation(rel.id)}
-                                        title="删除关系类型"
-                                      >
-                                        <Trash2 size={14} />
-                                      </button>
+                                      {!rel.isBuiltin && (
+                                        <button
+                                          className="og-page__action-btn og-page__action-btn--danger"
+                                          onClick={() => handleDeleteRelation(rel.id)}
+                                          title="删除关系类型"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      )}
                                     </td>
                                   </tr>
                                 ))}

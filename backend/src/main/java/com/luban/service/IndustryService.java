@@ -31,12 +31,35 @@ public class IndustryService {
                 .orElseThrow(() -> new NoSuchElementException("行业不存在: " + id));
     }
 
+    private static final String[][] DEFAULT_RELATIONS = {
+        {"DRILLS_INTO", "可下钻到子维度，纯分析导航", "true", "false", "0", "true"},
+        {"DRILLED_FROM", "上卷维度，DRILLS_INTO 的逆，自动推导", "true", "false", "1", "true"},
+        {"CORRELATED", "关联维度，交叉分析提示", "false", "false", "2", "true"},
+    };
+
     @Transactional
     public Industry create(Industry industry) {
         if (industryRepository.existsByName(industry.getName())) {
             throw new IllegalArgumentException("行业名称已存在: " + industry.getName());
         }
-        return industryRepository.save(industry);
+        Industry saved = industryRepository.save(industry);
+        createDefaultRelations(saved.getId());
+        return saved;
+    }
+
+    private void createDefaultRelations(Long industryId) {
+        for (String[] def : DEFAULT_RELATIONS) {
+            IndustryRelation relation = new IndustryRelation();
+            relation.setIndustryId(industryId);
+            relation.setRelationType(def[0]);
+            relation.setDescription(def[1]);
+            relation.setIsTransitive(Boolean.parseBoolean(def[2]));
+            relation.setIsSymmetric(Boolean.parseBoolean(def[3]));
+            relation.setSortOrder(Integer.parseInt(def[4]));
+            relation.setIsBuiltin(Boolean.parseBoolean(def[5]));
+            industryRelationRepository.save(relation);
+        }
+        log.info("为行业 {} 创建默认关系类型 {} 种", industryId, DEFAULT_RELATIONS.length);
     }
 
     @Transactional
@@ -67,15 +90,27 @@ public class IndustryService {
 
     @Transactional
     public List<IndustryRelation> saveRelations(Long industryId, List<IndustryRelation> relations) {
-        industryRelationRepository.deleteByIndustryId(industryId);
-        industryRelationRepository.flush();
+        List<IndustryRelation> existing = getRelations(industryId);
+        List<IndustryRelation> builtins = existing.stream()
+                .filter(r -> Boolean.TRUE.equals(r.getIsBuiltin()))
+                .toList();
+        List<IndustryRelation> nonBuiltins = existing.stream()
+                .filter(r -> !Boolean.TRUE.equals(r.getIsBuiltin()))
+                .toList();
+        if (!nonBuiltins.isEmpty()) {
+            industryRelationRepository.deleteAll(nonBuiltins);
+            industryRelationRepository.flush();
+        }
         for (int i = 0; i < relations.size(); i++) {
             relations.get(i).setIndustryId(industryId);
             if (relations.get(i).getSortOrder() == null) {
                 relations.get(i).setSortOrder(i);
             }
         }
-        return industryRelationRepository.saveAll(relations);
+        List<IndustryRelation> saved = industryRelationRepository.saveAll(relations);
+        List<IndustryRelation> result = new java.util.ArrayList<>(builtins);
+        result.addAll(saved);
+        return result;
     }
 
     @Transactional
@@ -90,7 +125,12 @@ public class IndustryService {
 
     @Transactional
     public void deleteRelation(Long relationId) {
-        industryRelationRepository.deleteById(relationId);
+        IndustryRelation relation = industryRelationRepository.findById(relationId)
+                .orElseThrow(() -> new NoSuchElementException("关系不存在: " + relationId));
+        if (Boolean.TRUE.equals(relation.getIsBuiltin())) {
+            throw new IllegalArgumentException("内置关系不允许删除: " + relation.getRelationType());
+        }
+        industryRelationRepository.delete(relation);
     }
 
     public String toPromptString(Long industryId) {

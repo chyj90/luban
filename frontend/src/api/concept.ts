@@ -401,3 +401,7 @@ export function rejectOntologyChange(changeId: number) {
 export function batchApproveOntologyChanges(changeIds: number[]) {
   return post<{ success: boolean; approved: number }>('/ontology/changes/batch', { changeIds });
 }
+
+export function batchRejectOntologyChanges(changeIds: number[]) {
+  return post<{ success: boolean; rejected: number }>('/ontology/changes/batch/reject', { changeIds });
+}
