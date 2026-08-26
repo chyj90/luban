@@ -110,7 +110,7 @@ public class AgentService {
     private static final int NL2SQL_MAX_RESULT_BYTES = 10 * 1024 * 1024;
     private static final int NL2SQL_MAX_RETRIES = 2;
     private static final double CONCEPT_INTERSECTION_THRESHOLD = 0.5;
-    private static final int MAX_DRILL_ROUNDS = 5;
+    private static final int MAX_DRILL_ROUNDS = 3;
 
     @Value("${luban.agent.rate-limit.max-requests}")
     private int rateLimitMaxRequests;
@@ -510,6 +510,8 @@ public class AgentService {
             String userQuery = extractLatestUserQuery(messages);
             if (iteration == 0) {
                 sendProgress("正在检索相关概念和数据库表...");
+            } else if (sqlExecCount > 0) {
+                sendProgress("🔍 正在分析第 " + sqlExecCount + " 轮下钻结果...");
             }
             Map<String, Object> unifiedContext = buildUnifiedContext(sessionId, userQuery, messages, userId);
 
@@ -1227,6 +1229,23 @@ public class AgentService {
                         .append(" |\n");
             }
             sb.append("\n");
+            for (Map<String, Object> ds : availableDatasources) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> tables = (List<Map<String, Object>>) ds.get("tables");
+                if (tables != null && !tables.isEmpty()) {
+                    sb.append("### ").append(ds.get("name")).append(" 表结构\n");
+                    for (Map<String, Object> table : tables) {
+                        sb.append("- **").append(table.get("name")).append("**: ");
+                        @SuppressWarnings("unchecked")
+                        List<String> columns = (List<String>) table.get("columns");
+                        if (columns != null) {
+                            sb.append(String.join(", ", columns));
+                        }
+                        sb.append("\n");
+                    }
+                    sb.append("\n");
+                }
+            }
         }
 
         if (conceptTrace != null && !conceptTrace.isEmpty()) {
@@ -1364,15 +1383,36 @@ public class AgentService {
         sb.append("   - 请使用上面提供的表名和字段名\n");
         sb.append("   - 如有 JOIN 条件，请使用提供的 JOIN 条件\n");
         sb.append("   - 如果没有合适的表和字段，不要生成 SQL\n\n");
-        sb.append("3. **执行 Python 代码**：当 SQL 无法直接表达复杂计算逻辑（如统计检验、离群值检测、时间序列分解）时，使用 code_mode：\n");
+
+        boolean codeModeAvailable = codeExecutorService.isHealthy();
+        int optionNum = 3;
+        if (codeModeAvailable) {
+            sb.append(optionNum).append(". **执行 Python 代码**：当 SQL 无法直接表达复杂计算逻辑（如统计检验、离群值检测、时间序列分解）时，使用 code_mode：\n");
+            sb.append("   ```json\n");
+            sb.append("   {\"type\": \"code_mode\", \"reasoning\": \"为什么需要代码分析\", ");
+            sb.append("\"code\": \"import pandas as pd\\n# 你的分析代码\\n\", \"input_data\": {\"sql\": \"SELECT ...\", \"concept_ids\": [1, 2]}}\n");
+            sb.append("   ```\n");
+            sb.append("   - code 为完整 Python 脚本，系统会执行并返回 stdout/stderr\n");
+            sb.append("   - input_data.sql 为前置 SQL 查询，结果会以 DataFrame 形式传入\n");
+            sb.append("   - 仅用于统计计算，不得执行系统命令、文件操作\n\n");
+            optionNum++;
+        }
+        sb.append(optionNum).append(". **本体管理建议**：当用户明确要求管理本体（如\"帮我加一个概念\"、\"配置下钻关系\"），或分析过程中发现本体配置缺陷（概念缺失、关系不完整、映射错误），可使用 ontology_action 生成本体变更建议：\n");
         sb.append("   ```json\n");
-        sb.append("   {\"type\": \"code_mode\", \"reasoning\": \"为什么需要代码分析\", ");
-        sb.append("\"code\": \"import pandas as pd\\n# 你的分析代码\\n\", \"input_data\": {\"sql\": \"SELECT ...\", \"concept_ids\": [1, 2]}}\n");
+        sb.append("   {\"type\": \"ontology_action\", \"action\": \"suggest\", \"reasoning\": \"为什么需要变更\", ");
+        sb.append("\"trigger\": \"user_request\", \"changes\": [\n");
+        sb.append("     {\"operation\": \"ADD_CONCEPT\", \"concept\": {\"name\": \"概念名\", \"description\": \"描述\", \"industryId\": 1}},\n");
+        sb.append("     {\"operation\": \"ADD_RELATION\", \"relation\": {\"sourceConceptName\": \"源概念\", \"targetConceptName\": \"目标概念\", \"relationType\": \"DRILLS_INTO\"}},\n");
+        sb.append("     {\"operation\": \"ADD_MAPPING\", \"mapping\": {\"conceptName\": \"概念名\", \"tableName\": \"表名\", \"columnName\": \"列名\", \"mappingType\": \"direct\"}}\n");
+        sb.append("   ]}\n");
         sb.append("   ```\n");
-        sb.append("   - code 为完整 Python 脚本，系统会执行并返回 stdout/stderr\n");
-        sb.append("   - input_data.sql 为前置 SQL 查询，结果会以 DataFrame 形式传入\n");
-        sb.append("   - 仅用于统计计算，不得执行系统命令、文件操作\n\n");
-        sb.append("4. **直接回答**：如果无法通过工具或 SQL 回答，请直接回复：\n");
+        sb.append("   - 支持操作：ADD_CONCEPT、UPDATE_CONCEPT、DELETE_CONCEPT、ADD_RELATION、DELETE_RELATION、ADD_MAPPING、UPDATE_MAPPING、DELETE_MAPPING、ADD_JOIN_MAPPING、UPDATE_JOIN_MAPPING、DELETE_JOIN_MAPPING\n");
+        sb.append("   - trigger 可选 user_request（用户明确要求）或 auto_detect（分析过程中自动发现）\n");
+        sb.append("   - 每次最多建议 5 条变更，每条变更必须附带 reasoning\n");
+        sb.append("   - 变更不会自动生效，需管理员审核确认\n");
+        sb.append("   - 仅超管可用，普通用户触发时返回权限不足提示\n\n");
+        optionNum++;
+        sb.append(optionNum).append(". **直接回答**：如果无法通过工具或 SQL 回答，请直接回复：\n");
         sb.append("   ```json\n");
         sb.append("   {\"type\": \"final_answer\", \"reasoning\": \"你的推理过程\", \"answer\": \"你的回答\", \"concept_ids\": [匹配的概念ID列表]}\n");
         sb.append("   ```\n");
@@ -1457,6 +1497,11 @@ public class AgentService {
             data.put("nl2sql", Map.of("sql", sql, "conceptIds", conceptIds));
             int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
             data.put("sql_exec_count", sqlExecCount + 1);
+            if (sqlExecCount == 0) {
+                sendProgress("🔍 正在执行数据分析查询...");
+            } else {
+                sendProgress("🔍 正在下钻分析第 " + sqlExecCount + " 轮...");
+            }
             Long userId = data.get("user_id") instanceof Number
                     ? ((Number) data.get("user_id")).longValue() : null;
             log.info("NL2SQL executor #{}: executing SQL={}", sqlExecCount + 1, sql.length() > 200 ? sql.substring(0, 200) : sql);
@@ -1930,13 +1975,16 @@ public class AgentService {
 
     private String buildSystemPrompt() {
         return "你是鲁班核心 Agent，一个企业数据查询助手。\n" +
-                "你的职责是帮助用户查询企业数据。\n" +
+                "你的职责是帮助用户查询企业数据，并在必要时自动发现本体配置缺陷。\n" +
                 "请用中文回答。回答要简洁、准确、专业。\n\n" +
-                "你有三种方式回答用户问题：\n" +
+                "你有五种方式回答用户问题：\n" +
                 "1. 调用 API 工具获取数据\n" +
                 "2. 生成 SQL 查询数据库（仅限 SELECT）\n" +
-                "3. 直接回答（如果无法通过工具或 SQL 回答）\n\n" +
-                "请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n\n" +
+                "3. 执行 Python 代码分析数据（code_mode）\n" +
+                "4. 生成本体管理建议（ontology_action，仅超管可用）\n" +
+                "5. 直接回答（final_answer）\n\n" +
+                "请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n" +
+                "所有回复必须严格按照 JSON 格式，不要添加额外文本。\n\n" +
                 "## 下钻分析规则\n" +
                 "上文中出现「可下钻维度」表格时，说明当前查询结果可进一步按子维度拆解分析。\n" +
                 "在 final_answer 末尾，必须以 `[drill_suggestions]` 为标记，列出可下钻的维度建议：\n" +
@@ -1945,7 +1993,18 @@ public class AgentService {
                 "- 维度名 (维度ID): 下钻原因\n" +
                 "```\n" +
                 "如果维度有异常阈值，且当前查询结果触发了阈值，必须在原因中明确指出异常。\n" +
-                "例如：「订单量环比下降15%，超过10%阈值，建议按渠道下钻分析」。";
+                "例如：「订单量环比下降15%，超过10%阈值，建议按渠道下钻分析」。\n\n" +
+                "## 异常阈值检测规则\n" +
+                "如果「可下钻维度」表格中某个维度标注了异常阈值，且当前查询结果显示该维度值触发了阈值：\n" +
+                "1. 在 answer 中明确标注异常：「⚠️ 异常：维度名 当前值 X%，超过阈值 Y%」\n" +
+                "2. 在 [drill_suggestions] 中将该维度排在首位，并标注 [异常] 标记\n" +
+                "3. 如果阈值是「< 80% 计划值」等下限阈值，数值低于阈值视为异常\n\n" +
+                "## 根因分析输出规范\n" +
+                "当经过多轮下钻分析确定根因后，final_answer 必须包含 evidence 证据链和 root_cause 根因总结。\n\n" +
+                "## 本体管理规则\n" +
+                "当用户明确要求管理本体，或分析过程中发现概念缺失/关系不完整/映射错误时，可使用 ontology_action。\n" +
+                "支持操作：ADD_CONCEPT、UPDATE_CONCEPT、DELETE_CONCEPT、ADD_RELATION、DELETE_RELATION、ADD_MAPPING、UPDATE_MAPPING、DELETE_MAPPING、ADD_JOIN_MAPPING、UPDATE_JOIN_MAPPING、DELETE_JOIN_MAPPING。\n" +
+                "变更不会自动生效，需管理员审核确认。每次最多 5 条变更。";
     }
 
     /**

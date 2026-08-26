@@ -285,6 +285,32 @@ public class DatasourceService {
             info.put("name", ds.getName());
             info.put("type", ds.getType());
             info.put("slug", ds.getSlug());
+            try {
+                Map<String, Object> structure = getStructure(ds.getId());
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> tables = (List<Map<String, Object>>) structure.get("tables");
+                if (tables != null) {
+                    List<Map<String, Object>> simplified = new ArrayList<>();
+                    for (Map<String, Object> table : tables) {
+                        Map<String, Object> t = new LinkedHashMap<>();
+                        t.put("name", table.get("name"));
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> columns = (List<Map<String, Object>>) table.get("columns");
+                        if (columns != null) {
+                            List<String> colNames = new ArrayList<>();
+                            for (Map<String, Object> col : columns) {
+                                colNames.add((String) col.get("name"));
+                            }
+                            t.put("columns", colNames);
+                        }
+                        simplified.add(t);
+                    }
+                    info.put("tables", simplified);
+                }
+            } catch (Exception e) {
+                log.warn("获取数据源 {} 结构失败: {}", ds.getName(), e.getMessage());
+                info.put("tables", List.of());
+            }
             result.add(info);
         }
         return result;
