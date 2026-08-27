@@ -1968,6 +1968,7 @@ public class AgentService {
             sb.append("     {\"operation\": \"UPDATE_CONCEPT\", \"concept\": {\"id\": 70, \"name\": \"新名称\", \"description\": \"更新后的描述\", \"anomalyThresholdExpr\": \">5%\", \"anomalyThresholdDesc\": \"超过5%判定为异常\"}},\n");
             sb.append("     {\"operation\": \"ADD_RELATION\", \"relation\": {\"sourceConceptName\": \"源概念\", \"targetConceptName\": \"目标概念\", \"relationType\": \"DRILLS_INTO\"}},\n");
             sb.append("     {\"operation\": \"ADD_MAPPING\", \"mapping\": {\"conceptName\": \"概念名\", \"tableName\": \"表名\", \"columnName\": \"列名\", \"mappingType\": \"direct\", \"dataSourceId\": 1}},\n");
+            sb.append("     {\"operation\": \"ADD_MAPPING\", \"mapping\": {\"conceptName\": \"计算指标\", \"mappingType\": \"computed\", \"computedExpr\": \"COUNT(...) / COUNT(...)\", \"dataSourceId\": 1}},\n");
             sb.append("     {\"operation\": \"ADD_JOIN_MAPPING\", \"joinMapping\": {\"leftTable\": \"orders\", \"rightTable\": \"returns\", \"leftColumn\": \"order_id\", \"rightColumn\": \"order_id\", \"joinType\": \"LEFT\", \"dataSourceId\": 1, \"targetConcept\": \"退货记录\", \"conceptName\": \"订单量\"}}\n");
             sb.append("   ]}\n");
             sb.append("   ```\n");
@@ -2210,7 +2211,7 @@ public class AgentService {
         }
 
         SqlSecurityValidator.ValidationResult validation = sqlSecurityValidator.validate(
-                sql, null, allowedMappings.isEmpty() ? null : allowedMappings);
+                sql, null);
         if (!validation.isValid()) {
             result.put("executed", false);
             result.put("error", String.join("; ", validation.getErrors()));
@@ -2219,8 +2220,15 @@ public class AgentService {
         }
 
         Long datasourceId = null;
-        if (!allowedMappings.isEmpty()) {
+        // 使用 LLM 指定的概念 ID 直接查找数据源，不依赖概念扩展
+        // 概念在创建时已绑定数据源和表，从概念映射直接获取即可，避免跨域场景取到其他数据源
+        List<ConceptMapping> conceptMappings = conceptMappingRepository.findByConceptIdIn(conceptIds);
+        if (!conceptMappings.isEmpty()) {
+            datasourceId = conceptMappings.get(0).getDatasourceId();
+        } else if (!allowedMappings.isEmpty()) {
             datasourceId = allowedMappings.get(0).getDatasourceId();
+            log.warn("NL2SQL: 概念 {} 无直接映射，降级使用扩展映射的数据源 datasourceId={}",
+                    conceptIds, datasourceId);
         }
 
         if (datasourceId == null) {

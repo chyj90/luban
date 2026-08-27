@@ -51,7 +51,7 @@ public class Nl2SqlController {
                 .orElse(null);
 
         SqlSecurityValidator.ValidationResult validation = sqlSecurityValidator.validate(
-                generated.getSql(), datasourceId, generated.getMappings());
+                generated.getSql(), datasourceId);
 
         Map<String, Object> result = Map.of(
                 "sql", generated.getSql(),
@@ -86,7 +86,7 @@ public class Nl2SqlController {
                 ? Long.valueOf(body.get("datasourceId").toString())
                 : null;
 
-        SqlSecurityValidator.ValidationResult result = sqlSecurityValidator.validate(sql, datasourceId, null);
+        SqlSecurityValidator.ValidationResult result = sqlSecurityValidator.validate(sql, datasourceId);
 
         return ApiResponse.ok(Map.of(
                 "valid", result.isValid(),

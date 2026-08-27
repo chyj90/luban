@@ -475,8 +475,18 @@ public class OntologyChangeService {
         String columnName = (String) mappingData.get("columnName");
         String mappingType = (String) mappingData.getOrDefault("mappingType", "direct");
 
-        if (conceptName == null || tableName == null || columnName == null) {
-            throw new RuntimeException("ADD_MAPPING 缺少必填字段");
+        if (conceptName == null) {
+            throw new RuntimeException("ADD_MAPPING 缺少必填字段 conceptName");
+        }
+
+        boolean isComputed = "computed".equals(mappingType);
+        if (isComputed) {
+            if (tableName == null || tableName.isEmpty()) tableName = "_computed_";
+            if (columnName == null || columnName.isEmpty()) columnName = "_computed_";
+        } else {
+            if (tableName == null || columnName == null) {
+                throw new RuntimeException("ADD_MAPPING 缺少必填字段");
+            }
         }
 
         List<Concept> concepts = conceptRepository.findByName(conceptName);
@@ -493,6 +503,13 @@ public class OntologyChangeService {
         } else {
             throw new RuntimeException("ADD_MAPPING 缺少 dataSourceId 字段，请确保在生成本体变更前先选择数据源");
         }
+        if (isComputed) {
+            String expr = (String) mappingData.getOrDefault("computedExpr",
+                    mappingData.get("expression"));
+            if (expr != null && !expr.isEmpty()) {
+                mapping.setComputedExpr(expr);
+            }
+        }
 
         List<ConceptMapping> existing = conceptMappingRepository
                 .findByConceptIdAndColumnNameAndDatasourceId(
@@ -504,7 +521,7 @@ public class OntologyChangeService {
         }
 
         conceptMappingRepository.save(mapping);
-        log.info("ADD_MAPPING executed: {} -> {}.{}", conceptName, tableName, columnName);
+        log.info("ADD_MAPPING executed: {} -> {}.{} (type={})", conceptName, tableName, columnName, mappingType);
     }
 
     @SuppressWarnings("unchecked")

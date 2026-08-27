@@ -335,6 +335,14 @@ curl -s -X POST 'http://localhost:8080/api/v1/concepts/1/relations' \
 
 **目的**：验证跨数据源分析和运营商场景。
 
+**前置条件**：TC-03 仅配置了零售电商退货率本体，需先通过问数补充运营商专线故障本体。
+
+**前置步骤**：在 Chat 页面输入以下提示词生成本体：
+```
+帮我配置专线故障分析本体，数据源"运营商网络库"。根概念"专线故障率"，异常阈值 > 0 CRITICAL级别告警，下钻维度：专线 → 光缆段/传输段/IP链路 → 端口，关联维度：网络拓扑承载关系。需要用到 dedicated_lines、alarms、fiber_segments、transmission_segments、ip_links、ports、network_topology、stations 表，请配置完整的 ConceptMapping、ConceptJoinMapping、ConceptRelation。
+```
+等待 AI 返回 ontology_action 后，进入本体编辑器审核通过变更。
+
 **步骤**：
 1. 在 Chat 页面输入：
 

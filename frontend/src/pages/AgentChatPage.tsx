@@ -1311,7 +1311,7 @@ export default function AgentChatPage() {
             />
             <button
               className="agent-chat-send-btn"
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={sending || !input.trim()}
             >
               {sending ? (

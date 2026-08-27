@@ -570,8 +570,9 @@ export default function ConceptEditorPage() {
     }
   }, []);
 
-  const fetchData = useCallback(async () => {
-    if (selectedDomainId === undefined) return;
+  const fetchData = useCallback(async (forceDomainId?: number | null) => {
+    const targetDomainId = forceDomainId !== undefined ? forceDomainId : selectedDomainId;
+    if (targetDomainId === undefined) return;
     const industryId = selectedIndustryIdRef.current;
     if (industryId === null) return;
     try {
@@ -580,10 +581,10 @@ export default function ConceptEditorPage() {
       let visibleConcepts: Concept[] = [];
       let allRelations: ConceptRelation[] = [];
 
-      if (selectedDomainId) {
+      if (targetDomainId) {
         const [conceptsRes, relationsRes] = await Promise.all([
-          listConcepts(selectedDomainId),
-          listAllRelations(selectedDomainId),
+          listConcepts(targetDomainId),
+          listAllRelations(targetDomainId),
         ]);
         visibleConcepts = conceptsRes.data;
         allRelations = relationsRes.data;
@@ -926,12 +927,42 @@ export default function ConceptEditorPage() {
     }
   };
 
+  const getDomainIdFromChange = (change: OntologyChangeLog): number | null => {
+    const snapshot = safeJsonParse(change.afterSnapshot) || safeJsonParse(change.beforeSnapshot);
+    if (!snapshot) return null;
+
+    const inner = (snapshot as Record<string, unknown>).concept
+      || (snapshot as Record<string, unknown>).relation
+      || (snapshot as Record<string, unknown>).mapping
+      || (snapshot as Record<string, unknown>).joinMapping
+      || snapshot;
+    const data = inner as Record<string, unknown>;
+
+    if (change.entityType === 'CONCEPT') {
+      const groupId = data.groupId;
+      return groupId != null ? Number(groupId) : null;
+    }
+
+    const conceptId = data.sourceConceptId ?? data.conceptId;
+    if (conceptId != null) {
+      const concept = concepts.find((c) => c.id === Number(conceptId));
+      return concept?.groupId ?? null;
+    }
+
+    return null;
+  };
+
   const handleApproveChange = async (changeId: number) => {
     try {
       await approveOntologyChange(changeId);
       setPendingChanges((prev) => prev.map((c) => c.id === changeId ? { ...c, status: 'APPROVED' as const } : c));
       toast('变更已通过', 'success');
-      fetchData();
+      const change = pendingChanges.find((c) => c.id === changeId);
+      const domainId = change ? getDomainIdFromChange(change) : null;
+      if (domainId != null) {
+        setSelectedDomainId(domainId);
+      }
+      fetchData(domainId ?? undefined);
     } catch {
       toast('操作失败', 'error');
     }
@@ -961,8 +992,13 @@ export default function ConceptEditorPage() {
       ));
       setSelectedChangeIds(new Set());
       toast(`已通过 ${selectedChangeIds.size} 条变更`, 'success');
+      const firstChange = pendingChanges.find((c) => selectedChangeIds.has(c.id));
+      const domainId = firstChange ? getDomainIdFromChange(firstChange) : null;
+      if (domainId != null) {
+        setSelectedDomainId(domainId);
+      }
       setShowChangeReview(false);
-      fetchData();
+      fetchData(domainId ?? undefined);
     } catch {
       toast('批量操作失败', 'error');
     }
