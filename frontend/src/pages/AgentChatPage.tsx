@@ -98,7 +98,8 @@ interface OntologyChangeEvent {
 }
 
 interface RootCauseEvidence {
-  round: number;
+  step: number;
+  dimension: string;
   finding: string;
   sql?: string;
   anomaly?: boolean;
@@ -201,12 +202,18 @@ export default function AgentChatPage() {
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
+      setSelectedDatasources({});
+      setExpandedDatasources(new Set());
+      setConfirmedDatasources(new Set());
       return;
     }
     if (skipFetchRef.current) {
       skipFetchRef.current = false;
       return;
     }
+    setSelectedDatasources({});
+    setExpandedDatasources(new Set());
+    setConfirmedDatasources(new Set());
     getSessionMessages(activeSessionId).then(res => {
       const msgs = ((res as any).messages || []).map((item: any) => ({
         id: item.id || item.messageId || '',
@@ -214,9 +221,16 @@ export default function AgentChatPage() {
         content: item.content,
         messageId: item.messageId,
         reasoning: item.reasoning,
+        thinking: item.thinking,
         nl2sql: item.nl2sql,
         conceptTrace: item.conceptTrace,
         selectDatasources: item.selectDatasources,
+        rootCause: item.rootCause ? {
+          reasoning: item.reasoning || '',
+          root_cause: item.rootCause.root_cause || '',
+          evidence: item.rootCause.evidence || [],
+          suggestion: item.rootCause.suggestion || '',
+        } : undefined,
         timestamp: item.timestamp,
       })) as ChatMessage[];
       setMessages(msgs);
@@ -471,6 +485,9 @@ export default function AgentChatPage() {
     let streamOntologyChanges: ChatMessage['ontologyChanges'] = undefined;
     let streamSelectDatasources: ChatMessage['selectDatasources'] = undefined;
     let streamMessageId: string | undefined;
+    let streamRootCause: string | undefined;
+    let streamSuggestion: string | undefined;
+    let streamEvidence: RootCauseEvidence[] | undefined;
     let isFirstDelta = true;
 
     const updateAssistant = () => {
@@ -483,13 +500,21 @@ export default function AgentChatPage() {
                   content: streamContent || '思考中...',
                   toolCalls: streamToolCalls,
                   conceptTrace: streamConceptTrace,
-                  reasoning: streamReasoning,
-                  thinking: streamThinking,
+                  reasoning: streamReasoning !== undefined ? streamReasoning : m.reasoning,
+                  thinking: streamThinking !== undefined ? streamThinking : m.thinking,
                   nl2sql: streamNl2sql,
                   queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
                   messageId: streamMessageId,
                   selectDatasources: streamSelectDatasources,
+                  rootCause: (streamRootCause || streamSuggestion || streamEvidence)
+                    ? {
+                        reasoning: streamReasoning || '',
+                        root_cause: streamRootCause || '',
+                        evidence: streamEvidence || [],
+                        suggestion: streamSuggestion || '',
+                      }
+                    : undefined,
                 }
               : m,
           );
@@ -554,6 +579,17 @@ export default function AgentChatPage() {
                 streamSelectDatasources = JSON.parse(data);
               } catch { /* ignore */ }
               break;
+            case 'root_cause':
+              streamRootCause = (streamRootCause || '') + data;
+              break;
+            case 'suggestion':
+              streamSuggestion = (streamSuggestion || '') + data;
+              break;
+            case 'evidence':
+              try {
+                streamEvidence = JSON.parse(data);
+              } catch { /* ignore */ }
+              break;
             case 'delta':
               if (isFirstDelta) {
                 streamContent = data;
@@ -595,14 +631,21 @@ export default function AgentChatPage() {
                   isStreaming: false,
                   toolCalls: streamToolCalls,
                   conceptTrace: streamConceptTrace,
-                  reasoning: streamReasoning,
-                  thinking: streamThinking,
+                  reasoning: streamReasoning !== undefined ? streamReasoning : m.reasoning,
+                  thinking: streamThinking !== undefined ? streamThinking : m.thinking,
                   nl2sql: streamNl2sql,
                   queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
                   drillDimensions: streamDrillDimensions,
                   ontologyChanges: streamOntologyChanges,
-                  rootCause: parseRootCause(streamContent),
+                  rootCause: (streamRootCause || streamSuggestion || streamEvidence)
+                    ? {
+                        reasoning: streamReasoning || '',
+                        root_cause: streamRootCause || '',
+                        evidence: streamEvidence || [],
+                        suggestion: streamSuggestion || '',
+                      }
+                    : parseRootCause(streamContent),
                   messageId: streamMessageId,
                   selectDatasources: streamSelectDatasources,
                 }
@@ -751,10 +794,27 @@ export default function AgentChatPage() {
         <div className="agent-chat-messages">
           {messages.length === 0 ? (
               <div className="agent-chat-welcome">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ccc" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-                <p>输入自然语言问题，AI 将自动调用工具查询</p>
+                <h1 className="agent-chat-welcome-title">AI 数据洞察助手</h1>
+                <p className="agent-chat-welcome-subtitle">自动分析数据，定位指标异常根因</p>
+                <div className="agent-chat-templates">
+                  {user?.superAdmin && (
+                    <div
+                      className="agent-chat-template-card"
+                      onClick={() => handleSend('帮我配置库存积压分析本体，数据源"零售电商库"。根概念"库存周转天数"，异常阈值 > 60 天，下钻维度：物料 → 供应商 → 采购订单，关联维度：生产计划。需要用到 materials、inventory、suppliers、purchase_orders、production_plans 表')}
+                    >
+                      <span className="agent-chat-template-label">建本体</span>
+                      <span className="agent-chat-template-desc">配置库存积压分析本体</span>
+                    </div>
+                  )}
+                  <div
+                    className="agent-chat-template-card"
+                    onClick={() => handleSend('最近客诉率为什么超 3%？')}
+                  >
+                    <span className="agent-chat-template-label">问数据</span>
+                    <span className="agent-chat-template-desc">客诉率异常根因分析</span>
+                  </div>
+                </div>
+                <p className="agent-chat-welcome-hint">选择一个模版开始，或直接输入问题</p>
               </div>
             ) : (
               <div style={{ display: 'contents' }}>
@@ -875,24 +935,57 @@ export default function AgentChatPage() {
                     ) : (
                       <div className="agent-chat-message-content">{msg.content}</div>
                     )}
+                  {/* 根因分析 - 融入气泡内 */}
+                  {msg.rootCause && (msg.rootCause.root_cause || msg.rootCause.evidence.length > 0 || msg.rootCause.suggestion) && (
+                    <div className="agent-chat-root-cause-inline">
+                      <div className="agent-chat-root-cause-inline-header">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="12" y1="8" x2="12" y2="12" />
+                          <line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                        根因分析
+                      </div>
+                      <div className="agent-chat-root-cause-inline-body">
+                        <div className="agent-chat-root-cause-inline-finding">
+                          <strong>根因：</strong>{msg.rootCause.root_cause}
+                        </div>
+                        {msg.rootCause.evidence.length > 0 && (
+                          <div className="agent-chat-root-cause-inline-evidence">
+                            <strong>证据链：</strong>
+                            {msg.rootCause.evidence.map((e, i) => (
+                              <div key={i} className="agent-chat-root-cause-inline-evidence-item">
+                                <span className="agent-chat-evidence-inline-round">[{e.step}] {e.dimension}</span>
+                                {e.anomaly && <span className="agent-chat-evidence-inline-anomaly">异常</span>}
+                                <span>{e.finding}</span>
+                                {e.sql && (
+                                  <span className="agent-chat-evidence-sql-badge">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <polyline points="16 18 22 12 16 6" />
+                                      <polyline points="8 6 2 12 8 18" />
+                                    </svg>
+                                    <span className="agent-chat-evidence-sql-tooltip">
+                                      <code>{e.sql}</code>
+                                    </span>
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {msg.rootCause.suggestion && (
+                          <div className="agent-chat-root-cause-inline-suggestion">
+                            <strong>建议：</strong>{msg.rootCause.suggestion}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   </div>
-                  {msg.role === 'assistant' && (msg.messageId || msg.nl2sql || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary') || (msg.toolCalls && msg.toolCalls.length > 0) || msg.thinking || msg.reasoning || (msg.drillDimensions && msg.drillDimensions.length > 0) || msg.ontologyChanges) && (
+                  {msg.role === 'assistant' && (msg.messageId || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary') || (msg.toolCalls && msg.toolCalls.length > 0) || msg.thinking || msg.reasoning || (msg.drillDimensions && msg.drillDimensions.length > 0) || msg.ontologyChanges) && (
                     <>
                     <div className="agent-chat-actions">
                       <div className="agent-chat-actions-left">
-                        {msg.nl2sql && (
-                          <button
-                            className={`agent-chat-action-btn ${expandedSection[msg.id] === 'nl2sql' ? 'active' : ''}`}
-                            onClick={() => setExpandedSection(prev => ({ ...prev, [msg.id]: prev[msg.id] === 'nl2sql' ? null : 'nl2sql' }))}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <ellipse cx="12" cy="5" rx="9" ry="3" />
-                              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-                              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
-                            </svg>
-                            SQL
-                          </button>
-                        )}
                         {msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary' && (
                           <button
                             className={`agent-chat-action-btn ${expandedSection[msg.id] === 'concept' ? 'active' : ''}`}
@@ -1094,58 +1187,13 @@ export default function AgentChatPage() {
                     {/* 推理过程展开 */}
                     {(expandedSection[msg.id] === 'thinking' || msg.isStreaming) && (msg.thinking || msg.reasoning) && (
                       <div className="agent-chat-thinking-content">
-                        {msg.reasoning || msg.thinking}
+                        {msg.thinking || msg.reasoning}
                       </div>
                     )}
                   </>  
                   )}
 
                     {/* 展开的详情内容 */}
-                    {expandedSection[msg.id] === 'nl2sql' && msg.nl2sql && (
-                      <div className="agent-chat-detail">
-                        <pre className="agent-chat-nl2sql-code">{msg.nl2sql.sql}</pre>
-                        {msg.queryResult && (
-                          <div className="agent-chat-query-result">
-                            {msg.queryResult.executed ? (
-                              <Fragment>
-                                <div className="agent-chat-query-result-header">
-                                  <span>查询结果</span>
-                                  <span className="agent-chat-query-result-count">
-                                    {msg.queryResult.rowCount ?? 0} 行
-                                    {msg.queryResult.truncated ? '（已截断）' : ''}
-                                  </span>
-                                </div>
-                                <div className="agent-chat-query-result-table-wrap">
-                                  <table className="agent-chat-query-result-table">
-                                    <thead>
-                                      <tr>
-                                        {(msg.queryResult.columnNames ?? []).map((col, i) => (
-                                          <th key={i}>{col}</th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {(msg.queryResult.data ?? []).map((row, i) => (
-                                        <tr key={i}>
-                                          {(msg.queryResult.columnNames ?? []).map((col, j) => (
-                                            <td key={j}>{String(row[col] ?? '')}</td>
-                                          ))}
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </Fragment>
-                            ) : (
-                              <div className="agent-chat-query-result-error">
-                                {msg.queryResult.error ?? '查询执行失败'}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     {expandedSection[msg.id] === 'concept' && msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary' && (
                       <div className="agent-chat-detail">
                         <ConceptTracePanel
@@ -1190,42 +1238,6 @@ export default function AgentChatPage() {
                               </div>
                             </div>
                           ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* 根因分析卡片 */}
-                    {msg.rootCause && (
-                      <div className="agent-chat-root-cause-card">
-                        <div className="agent-chat-root-cause-header">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="10" />
-                            <line x1="12" y1="8" x2="12" y2="12" />
-                            <line x1="12" y1="16" x2="12.01" y2="16" />
-                          </svg>
-                          根因分析
-                        </div>
-                        <div className="agent-chat-root-cause-body">
-                          <div className="agent-chat-root-cause-finding">
-                            <strong>根因：</strong>{msg.rootCause.root_cause}
-                          </div>
-                          {msg.rootCause.evidence.length > 0 && (
-                            <div className="agent-chat-root-cause-evidence">
-                              <strong>证据链：</strong>
-                              {msg.rootCause.evidence.map((e, i) => (
-                                <div key={i} className="agent-chat-root-cause-evidence-item">
-                                  <span className="agent-chat-evidence-round">[{e.round}]</span>
-                                  {e.anomaly && <span className="agent-chat-evidence-anomaly">异常</span>}
-                                  <span>{e.finding}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                          {msg.rootCause.suggestion && (
-                            <div className="agent-chat-root-cause-suggestion">
-                              <strong>建议：</strong>{msg.rootCause.suggestion}
-                            </div>
-                          )}
                         </div>
                       </div>
                     )}

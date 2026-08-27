@@ -126,11 +126,17 @@ export function fetchAgentChatStream(
 
   const parseNewData = (fullText: string) => {
     const newText = fullText.slice(lastProcessedIndex);
-    lastProcessedIndex = fullText.length;
-
     const lines = newText.split('\n');
-    for (const line of lines) {
-      const trimmed = line.trim();
+    const hasTrailingNewline = newText.endsWith('\n');
+    const processCount = hasTrailingNewline ? lines.length : lines.length - 1;
+
+    lastProcessedIndex = fullText.length;
+    if (!hasTrailingNewline && processCount >= 0) {
+      lastProcessedIndex -= lines[processCount].length;
+    }
+
+    for (let i = 0; i < processCount; i++) {
+      const trimmed = lines[i].trim();
       if (trimmed === '') {
         flushEvent();
       } else if (trimmed.startsWith('event:')) {

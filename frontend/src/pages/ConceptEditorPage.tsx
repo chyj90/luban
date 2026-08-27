@@ -931,6 +931,7 @@ export default function ConceptEditorPage() {
       await approveOntologyChange(changeId);
       setPendingChanges((prev) => prev.map((c) => c.id === changeId ? { ...c, status: 'APPROVED' as const } : c));
       toast('变更已通过', 'success');
+      fetchData();
     } catch {
       toast('操作失败', 'error');
     }
@@ -960,6 +961,8 @@ export default function ConceptEditorPage() {
       ));
       setSelectedChangeIds(new Set());
       toast(`已通过 ${selectedChangeIds.size} 条变更`, 'success');
+      setShowChangeReview(false);
+      fetchData();
     } catch {
       toast('批量操作失败', 'error');
     }

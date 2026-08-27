@@ -155,6 +155,22 @@ public class AgentController {
                     out.flush();
                 }
 
+                Object rootCause = result.get("rootCause");
+                if (rootCause != null && !rootCause.toString().isEmpty()) {
+                    out.write(buildSSEBytes("root_cause", rootCause));
+                    out.flush();
+                }
+                Object suggestion = result.get("suggestion");
+                if (suggestion != null && !suggestion.toString().isEmpty()) {
+                    out.write(buildSSEBytes("suggestion", suggestion));
+                    out.flush();
+                }
+                Object evidence = result.get("evidence");
+                if (evidence instanceof java.util.List && !((java.util.List<?>) evidence).isEmpty()) {
+                    out.write(buildSSEBytes("evidence", evidence));
+                    out.flush();
+                }
+
                 String answer = (String) result.getOrDefault("answer",
                         result.getOrDefault("content", ""));
                 if (answer != null && !answer.isEmpty()) {

@@ -43,6 +43,9 @@ public class ChatMessage {
     @Column(name = "reasoning", columnDefinition = "TEXT")
     private String reasoning;
 
+    @Column(name = "thinking", columnDefinition = "TEXT")
+    private String thinking;
+
     @Column(name = "nl2sql", columnDefinition = "JSON")
     private String nl2sql;
 

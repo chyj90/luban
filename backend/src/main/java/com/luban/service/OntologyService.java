@@ -525,6 +525,37 @@ public class OntologyService {
             dim.put("conceptId", target.getId());
             dim.put("conceptName", target.getName());
             dim.put("description", target.getDescription());
+            dim.put("relationType", "DRILLS_INTO");
+            if (target.getAnomalyThresholdExpr() != null) {
+                dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
+                dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+            }
+            dimensions.add(dim);
+        }
+        return dimensions;
+    }
+
+    /**
+     * 获取概念的关联维度（CORRELATED 关系），用于交叉验证根因。
+     * 例如客诉率与订单量的 CORRELATED 关系，用于确认客诉率上升是否由订单量暴涨导致。
+     */
+    public List<Map<String, Object>> getCorrelatedDimensions(Long conceptId) {
+        Concept concept = conceptRepository.findById(conceptId).orElse(null);
+        if (concept == null) return Collections.emptyList();
+
+        List<ConceptRelation> correlatedRelations = conceptRelationRepository
+                .findBySourceConceptIdAndRelationType(conceptId, "CORRELATED");
+
+        List<Map<String, Object>> dimensions = new ArrayList<>();
+        for (ConceptRelation relation : correlatedRelations) {
+            Concept target = conceptRepository.findById(relation.getTargetConceptId()).orElse(null);
+            if (target == null) continue;
+
+            Map<String, Object> dim = new LinkedHashMap<>();
+            dim.put("conceptId", target.getId());
+            dim.put("conceptName", target.getName());
+            dim.put("description", target.getDescription());
+            dim.put("relationType", "CORRELATED");
             if (target.getAnomalyThresholdExpr() != null) {
                 dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
                 dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());

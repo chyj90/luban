@@ -242,6 +242,14 @@ curl -s -X POST 'http://localhost:8080/api/v1/concepts/1/relations' \
 
 **目的**：验证异常阈值（< 80%）触发自动下钻。
 
+**前置条件**：TC-03 仅配置了退货率本体，需先通过问数补充产能本体。
+
+**前置步骤**：在 Chat 页面输入以下提示词生成本体：
+```
+帮我配置产能分析本体，数据源"零售电商库"。根概念"产能"，异常阈值 < 80% 计划值，下钻维度：产线 → 设备。需要用到 production_lines、equipment、work_orders、equipment_logs 表，请配置完整的 ConceptMapping、ConceptJoinMapping、ConceptRelation。
+```
+等待 AI 返回 ontology_action 后，进入本体编辑器审核通过变更。
+
 **步骤**：
 1. 在 Chat 页面输入：
 
@@ -260,6 +268,14 @@ curl -s -X POST 'http://localhost:8080/api/v1/concepts/1/relations' \
 ### TC-06：自动洞察-客诉上升
 
 **目的**：验证多轮下钻 + 关联维度分析。
+
+**前置条件**：TC-03 仅配置了退货率本体，需先通过问数补充客诉本体。
+
+**前置步骤**：在 Chat 页面输入以下提示词生成本体：
+```
+帮我配置客诉分析本体，数据源"零售电商库"。根概念"客诉率"，异常阈值 > 3%，下钻维度：销售渠道 → 物流商，关联维度：订单量。需要用到 complaints、sales_channels、logistics、orders 表，请配置完整的 ConceptMapping、ConceptJoinMapping、ConceptRelation。
+```
+等待 AI 返回 ontology_action 后，进入本体编辑器审核通过变更。
 
 **步骤**：
 1. 在 Chat 页面输入：

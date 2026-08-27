@@ -9,6 +9,7 @@ public interface ConceptMappingRepository extends JpaRepository<ConceptMapping, 
     List<ConceptMapping> findByConceptId(Long conceptId);
     List<ConceptMapping> findByConceptIdAndDatasourceId(Long conceptId, Long datasourceId);
     List<ConceptMapping> findByDatasourceId(Long datasourceId);
+    List<ConceptMapping> findByConceptIdAndColumnNameAndDatasourceId(Long conceptId, String columnName, Long datasourceId);
     void deleteByConceptIdAndDatasourceId(Long conceptId, Long datasourceId);
 
     @Query("SELECT m FROM ConceptMapping m WHERE m.conceptId IN :conceptIds")

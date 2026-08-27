@@ -180,6 +180,8 @@ public class DatasourceService {
                                 col.put("type", colRs.getString("TYPE_NAME"));
                                 col.put("nullable", colRs.getInt("NULLABLE") == DatabaseMetaData.columnNullable);
                                 col.put("primaryKey", false);
+                                String remarks = colRs.getString("REMARKS");
+                                col.put("comment", remarks != null && !remarks.isEmpty() ? remarks : "");
                                 columns.add(col);
                             }
                         }
@@ -303,11 +305,16 @@ public class DatasourceService {
                         @SuppressWarnings("unchecked")
                         List<Map<String, Object>> columns = (List<Map<String, Object>>) table.get("columns");
                         if (columns != null) {
-                            List<String> colNames = new ArrayList<>();
+                            List<Map<String, Object>> cols = new ArrayList<>();
                             for (Map<String, Object> col : columns) {
-                                colNames.add((String) col.get("name"));
+                                Map<String, Object> c = new LinkedHashMap<>();
+                                c.put("name", col.get("name"));
+                                c.put("type", col.getOrDefault("type", "UNKNOWN"));
+                                c.put("nullable", col.getOrDefault("nullable", true));
+                                c.put("comment", col.getOrDefault("comment", ""));
+                                cols.add(c);
                             }
-                            t.put("columns", colNames);
+                            t.put("columns", cols);
                         }
                         simplified.add(t);
                     }

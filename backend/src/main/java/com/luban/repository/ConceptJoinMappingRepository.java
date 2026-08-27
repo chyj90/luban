@@ -11,5 +11,7 @@ public interface ConceptJoinMappingRepository extends JpaRepository<ConceptJoinM
     List<ConceptJoinMapping> findByDatasourceId(Long datasourceId);
     List<ConceptJoinMapping> findByConceptIdInAndJoinTable(List<Long> conceptIds, String joinTable);
     List<ConceptJoinMapping> findByConceptIdInAndDatasourceIdIn(List<Long> conceptIds, List<Long> datasourceIds);
+    List<ConceptJoinMapping> findByConceptIdAndTargetConceptAndRelationTypeAndDatasourceId(
+            Long conceptId, String targetConcept, String relationType, Long datasourceId);
     void deleteByConceptIdIn(List<Long> conceptIds);
 }

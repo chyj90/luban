@@ -192,13 +192,68 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  gap: 16px;
+  gap: 12px;
   color: #999;
+  padding: 40px 0;
 }
 
-.agent-chat-welcome p {
-  font-size: 14px;
+.agent-chat-welcome-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a2e;
   margin: 0;
+  letter-spacing: 1px;
+}
+
+.agent-chat-welcome-subtitle {
+  font-size: 15px;
+  color: #888;
+  margin: 0 0 16px 0;
+}
+
+.agent-chat-welcome-hint {
+  font-size: 13px;
+  color: #aaa;
+  margin: 16px 0 0 0;
+}
+
+.agent-chat-templates {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.agent-chat-template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 32px;
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #fff;
+  min-width: 160px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.agent-chat-template-card:hover {
+  border-color: #4f6ef6;
+  box-shadow: 0 4px 16px rgba(79, 110, 246, 0.12);
+  transform: translateY(-1px);
+}
+
+.agent-chat-template-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+}
+
+.agent-chat-template-desc {
+  font-size: 12px;
+  color: #999;
 }
 
 .agent-chat-message {
@@ -967,6 +1022,157 @@
 }
 
 /* ===== 根因分析卡片 ===== */
+/* ===== 根因分析 - 融入气泡内 ===== */
+.agent-chat-root-cause-inline {
+  margin-top: 12px;
+  border: 1px solid #ffd591;
+  border-radius: 8px;
+  background: #fffbe6;
+}
+
+.agent-chat-root-cause-inline-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fff1b8;
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #ad6800;
+}
+
+.agent-chat-root-cause-inline-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-chat-root-cause-inline-finding {
+  font-size: 13px;
+  color: #333;
+  line-height: 1.5;
+}
+
+.agent-chat-root-cause-inline-finding strong {
+  color: #ad6800;
+  font-size: 12px;
+}
+
+.agent-chat-root-cause-inline-evidence {
+  font-size: 12px;
+}
+
+.agent-chat-root-cause-inline-evidence > strong {
+  color: #999;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.agent-chat-root-cause-inline-evidence-item {
+  padding: 3px 0 3px 6px;
+  border-left: 2px solid #ffd591;
+  margin-bottom: 2px;
+  font-size: 12px;
+  color: #666;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.agent-chat-evidence-inline-round {
+  font-size: 11px;
+  color: #ad6800;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.agent-chat-evidence-inline-anomaly {
+  font-size: 10px;
+  color: #ff4d4f;
+  background: #fff1f0;
+  border: 1px solid #ffa39e;
+  padding: 0 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.agent-chat-evidence-sql-badge {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  color: #bbb;
+  margin-left: 4px;
+  flex-shrink: 0;
+  position: relative;
+  padding: 2px;
+  border-radius: 3px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.agent-chat-evidence-sql-badge:hover {
+  color: #1677ff;
+  background: #e6f4ff;
+}
+
+.agent-chat-evidence-sql-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: 650px;
+  min-width: 300px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+  line-height: 1.6;
+}
+
+.agent-chat-evidence-sql-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 8px;
+  border: 5px solid transparent;
+  border-top-color: #1e1e1e;
+}
+
+.agent-chat-evidence-sql-badge:hover .agent-chat-evidence-sql-tooltip {
+  display: block;
+}
+
+.agent-chat-evidence-sql-tooltip code {
+  background: none;
+  color: #569cd6;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.agent-chat-root-cause-inline-suggestion {
+  font-size: 12px;
+  color: #333;
+  padding: 8px 10px;
+  background: #e6f7ff;
+  border-radius: 4px;
+  border: 1px solid #91d5ff;
+  line-height: 1.5;
+}
+
+.agent-chat-root-cause-inline-suggestion strong {
+  color: #1677ff;
+  font-size: 12px;
+}
+
+/* ===== 旧根因卡片（保留兼容） ===== */
 .agent-chat-root-cause-card {
   margin: 12px 0;
   border: 1px solid #ffd591;

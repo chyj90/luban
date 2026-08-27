@@ -92,6 +92,7 @@ public class OntologyChangeService {
             log.error("Failed to execute ontology change {}: {}", changeId, e.getMessage(), e);
             throw new RuntimeException("变更执行失败: " + e.getMessage(), e);
         }
+        ontologyService.reload();
     }
 
     @Transactional
@@ -117,23 +118,101 @@ public class OntologyChangeService {
     }
 
     public List<OntologyChangeLog> getSessionChanges(String sessionId) {
-        return changeLogRepository.findBySessionIdOrderByCreatedAt(sessionId);
+        List<OntologyChangeLog> logs = changeLogRepository.findBySessionIdOrderByCreatedAt(sessionId);
+        logs.forEach(this::populateBeforeSnapshot);
+        return logs;
     }
 
     public List<OntologyChangeLog> getPendingChanges(String sessionId) {
-        return changeLogRepository.findBySessionIdAndStatus(sessionId, "PENDING");
+        List<OntologyChangeLog> logs = changeLogRepository.findBySessionIdAndStatus(sessionId, "PENDING");
+        logs.forEach(this::populateBeforeSnapshot);
+        return logs;
     }
 
     public List<OntologyChangeLog> getAllPendingChanges() {
-        return changeLogRepository.findByStatusOrderByCreatedAt("PENDING");
+        List<OntologyChangeLog> logs = changeLogRepository.findByStatusOrderByCreatedAt("PENDING");
+        logs.forEach(this::populateBeforeSnapshot);
+        return logs;
     }
 
-    private void executeChange(OntologyChangeLog log) {
-        String operation = log.getOperation();
-        Map<String, Object> data = parseSnapshot(log.getAfterSnapshot());
+    private void populateBeforeSnapshot(OntologyChangeLog changeLog) {
+        if (changeLog.getBeforeSnapshot() != null && !changeLog.getBeforeSnapshot().isEmpty()) return;
+        String operation = changeLog.getOperation();
+        if (!operation.startsWith("UPDATE_")) return;
+
+        try {
+            Map<String, Object> data = parseSnapshot(changeLog.getAfterSnapshot());
+            if (data == null) return;
+
+            switch (operation) {
+                case "UPDATE_CONCEPT": {
+                    Map<String, Object> conceptData = (Map<String, Object>) data.get("concept");
+                    if (conceptData == null) break;
+                    Object idObj = conceptData.get("id");
+                    if (idObj instanceof Number) {
+                        Concept concept = conceptRepository.findById(((Number) idObj).longValue()).orElse(null);
+                        if (concept != null) {
+                            changeLog.setBeforeSnapshot(objectMapper.writeValueAsString(Map.of(
+                                    "id", concept.getId(),
+                                    "name", concept.getName(),
+                                    "description", concept.getDescription() != null ? concept.getDescription() : "",
+                                    "anomalyThresholdExpr", concept.getAnomalyThresholdExpr() != null ? concept.getAnomalyThresholdExpr() : "",
+                                    "anomalyThresholdDesc", concept.getAnomalyThresholdDesc() != null ? concept.getAnomalyThresholdDesc() : ""
+                            )));
+                        }
+                    }
+                    break;
+                }
+                case "UPDATE_MAPPING": {
+                    Map<String, Object> mappingData = (Map<String, Object>) data.get("mapping");
+                    if (mappingData == null) break;
+                    Object idObj = mappingData.get("mappingId");
+                    if (idObj instanceof Number) {
+                        ConceptMapping mapping = conceptMappingRepository.findById(((Number) idObj).longValue()).orElse(null);
+                        if (mapping != null) {
+                            changeLog.setBeforeSnapshot(objectMapper.writeValueAsString(Map.of(
+                                    "id", mapping.getId(),
+                                    "tableName", mapping.getTableName(),
+                                    "columnName", mapping.getColumnName(),
+                                    "mappingType", mapping.getMappingType() != null ? mapping.getMappingType() : "",
+                                    "datasourceId", mapping.getDatasourceId()
+                            )));
+                        }
+                    }
+                    break;
+                }
+                case "UPDATE_JOIN_MAPPING": {
+                    Map<String, Object> joinData = (Map<String, Object>) data.get("joinMapping");
+                    if (joinData == null) break;
+                    Object idObj = joinData.get("joinMappingId");
+                    if (idObj instanceof Number) {
+                        ConceptJoinMapping join = conceptJoinMappingRepository.findById(((Number) idObj).longValue()).orElse(null);
+                        if (join != null) {
+                            changeLog.setBeforeSnapshot(objectMapper.writeValueAsString(Map.of(
+                                    "id", join.getId(),
+                                    "joinTable", join.getJoinTable(),
+                                    "joinCondition", join.getJoinCondition(),
+                                    "relationType", join.getRelationType() != null ? join.getRelationType() : "",
+                                    "targetConcept", join.getTargetConcept() != null ? join.getTargetConcept() : "",
+                                    "datasourceId", join.getDatasourceId()
+                            )));
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to populate beforeSnapshot for change {}: {}", changeLog.getId(), e.getMessage());
+        }
+    }
+
+    private void executeChange(OntologyChangeLog changeLog) {
+        String operation = changeLog.getOperation();
+        Map<String, Object> data = parseSnapshot(changeLog.getAfterSnapshot());
         if (data == null) {
             throw new RuntimeException("无法解析变更快照");
         }
+        log.info("executeChange: operation={}, afterSnapshotKeys={}", operation, data.keySet());
         switch (operation) {
             case "ADD_CONCEPT" -> executeAddConcept(data);
             case "UPDATE_CONCEPT" -> executeUpdateConcept(data);
@@ -180,11 +259,58 @@ public class OntologyChangeService {
         concept.setName(name);
         concept.setDescription(description);
 
+        if (conceptData.containsKey("anomalyThresholdExpr")) {
+            concept.setAnomalyThresholdExpr((String) conceptData.get("anomalyThresholdExpr"));
+        }
+        if (conceptData.containsKey("anomalyThresholdDesc")) {
+            concept.setAnomalyThresholdDesc((String) conceptData.get("anomalyThresholdDesc"));
+        }
+
         if (industryIdObj instanceof Number) {
             Long industryId = ((Number) industryIdObj).longValue();
             List<OntologyGroup> groups = ontologyGroupRepository.findByIndustryId(industryId);
             if (!groups.isEmpty()) {
                 concept.setGroupId(groups.get(0).getId());
+            }
+        }
+
+        // 优先使用 groupId（指定已有领域）
+        Object groupIdObj = conceptData.get("groupId");
+        if (groupIdObj instanceof Number) {
+            concept.setGroupId(((Number) groupIdObj).longValue());
+        } else if (conceptData.containsKey("groupName")) {
+            // 新建领域：groupName 指定领域显示名，需配合 industryId
+            String groupName = (String) conceptData.get("groupName");
+            if (groupName != null && !groupName.isEmpty() && industryIdObj instanceof Number) {
+                Long industryId = ((Number) industryIdObj).longValue();
+                // 检查是否已存在同名领域
+                List<OntologyGroup> existing = ontologyGroupRepository.findByIndustryId(industryId);
+                Optional<OntologyGroup> matched = existing.stream()
+                        .filter(g -> g.getDisplayName().equals(groupName))
+                        .findFirst();
+                if (matched.isPresent()) {
+                    concept.setGroupId(matched.get().getId());
+                } else {
+                    OntologyGroup newGroup = new OntologyGroup();
+                    String baseName = groupName.toLowerCase().replaceAll("[^a-z0-9_]", "_");
+                    if (baseName.isEmpty() || baseName.matches("^_+$")) {
+                        baseName = "group_" + industryId + "_" + (existing.size() + 1);
+                    }
+                    // 确保 name 唯一
+                    String uniqueName = baseName;
+                    int suffix = 1;
+                    while (ontologyGroupRepository.findByName(uniqueName).isPresent()) {
+                        uniqueName = baseName + "_" + suffix;
+                        suffix++;
+                    }
+                    newGroup.setName(uniqueName);
+                    newGroup.setDisplayName(groupName);
+                    newGroup.setIndustryId(industryId);
+                    newGroup.setSortOrder(existing.size());
+                    newGroup = ontologyGroupRepository.save(newGroup);
+                    concept.setGroupId(newGroup.getId());
+                    log.info("Auto-created OntologyGroup: id={}, name={}, industryId={}", newGroup.getId(), newGroup.getDisplayName(), industryId);
+                }
             }
         }
 
@@ -198,7 +324,7 @@ public class OntologyChangeService {
         }
 
         Concept saved = conceptRepository.save(concept);
-        log.info("ADD_CONCEPT executed: id={}, name={}", saved.getId(), saved.getName());
+        log.info("ADD_CONCEPT executed: id={}, name={}, groupId={}", saved.getId(), saved.getName(), saved.getGroupId());
     }
 
     @SuppressWarnings("unchecked")
@@ -207,17 +333,37 @@ public class OntologyChangeService {
         if (conceptData == null) {
             throw new RuntimeException("UPDATE_CONCEPT 缺少 concept 数据");
         }
-        String name = (String) conceptData.get("name");
-        if (name == null || name.isEmpty()) {
-            throw new RuntimeException("概念名称为空");
+
+        Concept concept = null;
+
+        Object idObj = conceptData.get("id");
+        if (idObj instanceof Number) {
+            concept = conceptRepository.findById(((Number) idObj).longValue()).orElse(null);
         }
-        List<Concept> concepts = conceptRepository.findByName(name);
-        if (concepts.isEmpty()) {
-            throw new RuntimeException("概念不存在: " + name);
+
+        if (concept == null) {
+            String name = (String) conceptData.get("name");
+            if (name == null || name.isEmpty()) {
+                throw new RuntimeException("UPDATE_CONCEPT 缺少 id 或 name");
+            }
+            List<Concept> concepts = conceptRepository.findByName(name);
+            if (concepts.isEmpty()) {
+                throw new RuntimeException("概念不存在: " + name);
+            }
+            concept = concepts.get(0);
         }
-        Concept concept = concepts.get(0);
+
+        if (conceptData.containsKey("name")) {
+            concept.setName((String) conceptData.get("name"));
+        }
         if (conceptData.containsKey("description")) {
             concept.setDescription((String) conceptData.get("description"));
+        }
+        if (conceptData.containsKey("anomalyThresholdExpr")) {
+            concept.setAnomalyThresholdExpr((String) conceptData.get("anomalyThresholdExpr"));
+        }
+        if (conceptData.containsKey("anomalyThresholdDesc")) {
+            concept.setAnomalyThresholdDesc((String) conceptData.get("anomalyThresholdDesc"));
         }
         concept.setUpdatedAt(LocalDateTime.now());
         conceptRepository.save(concept);
@@ -264,6 +410,13 @@ public class OntologyChangeService {
 
         // 确保关系类型在行业中注册，不存在则自动创建
         ensureRelationTypeRegistered(sourceId, relationType, description);
+
+        List<ConceptRelation> existingRelations = conceptRelationRepository
+                .findBySourceConceptIdAndTargetConceptIdAndRelationType(sourceId, targetId, relationType);
+        if (!existingRelations.isEmpty()) {
+            log.info("ADD_RELATION skipped (already exists): {} -[{}]-> {}", sourceName, relationType, targetName);
+            return;
+        }
 
         ConceptRelation relation = new ConceptRelation();
         relation.setSourceConceptId(sourceId);
@@ -340,6 +493,16 @@ public class OntologyChangeService {
         } else {
             throw new RuntimeException("ADD_MAPPING 缺少 dataSourceId 字段，请确保在生成本体变更前先选择数据源");
         }
+
+        List<ConceptMapping> existing = conceptMappingRepository
+                .findByConceptIdAndColumnNameAndDatasourceId(
+                        mapping.getConceptId(), mapping.getColumnName(), mapping.getDatasourceId());
+        if (!existing.isEmpty()) {
+            log.info("ADD_MAPPING skipped (already exists): conceptId={}, columnName={}, datasourceId={}",
+                    mapping.getConceptId(), mapping.getColumnName(), mapping.getDatasourceId());
+            return;
+        }
+
         conceptMappingRepository.save(mapping);
         log.info("ADD_MAPPING executed: {} -> {}.{}", conceptName, tableName, columnName);
     }
@@ -375,8 +538,14 @@ public class OntologyChangeService {
     private void executeAddJoinMapping(Map<String, Object> data) {
         Map<String, Object> joinData = (Map<String, Object>) data.get("joinMapping");
         if (joinData == null) {
+            log.error("ADD_JOIN_MAPPING failed: joinMapping is null, data keys={}", data.keySet());
             throw new RuntimeException("ADD_JOIN_MAPPING 缺少 joinMapping 数据");
         }
+
+        log.info("ADD_JOIN_MAPPING data: leftTable={}, rightTable={}, leftColumn={}, rightColumn={}, joinType={}, dataSourceId={}, targetConcept={}, conceptName={}",
+                joinData.get("leftTable"), joinData.get("rightTable"), joinData.get("leftColumn"),
+                joinData.get("rightColumn"), joinData.get("joinType"), joinData.get("dataSourceId"),
+                joinData.get("targetConcept"), joinData.get("conceptName"));
 
         String conceptName = (String) joinData.get("conceptName");
         String joinTable = (String) joinData.get("joinTable");
@@ -402,9 +571,19 @@ public class OntologyChangeService {
                     if (c != null) conceptName = c.getName();
                 }
             }
+            if (targetConcept == null) {
+                List<com.luban.entity.ConceptMapping> rightMappings = conceptMappingRepository.findByTableNameIn(List.of(rightTable));
+                if (!rightMappings.isEmpty()) {
+                    Long cid = rightMappings.get(0).getConceptId();
+                    var c = conceptRepository.findById(cid).orElse(null);
+                    if (c != null) targetConcept = c.getName();
+                }
+            }
         }
 
         if (conceptName == null || joinTable == null || joinCondition == null) {
+            log.error("ADD_JOIN_MAPPING missing required fields: conceptName={}, joinTable={}, joinCondition={}, leftTable={}, rightTable={}",
+                    conceptName, joinTable, joinCondition, leftTable, rightTable);
             throw new RuntimeException("ADD_JOIN_MAPPING 缺少必填字段");
         }
 
@@ -418,6 +597,21 @@ public class OntologyChangeService {
         join.setRelationType(relationType != null ? relationType : "LEFT JOIN");
         join.setJoinType("LEFT");
         if (targetConcept != null) join.setTargetConcept(targetConcept);
+        if (joinData.get("dataSourceId") instanceof Number dsId) {
+            join.setDatasourceId(dsId.longValue());
+        } else {
+            throw new RuntimeException("ADD_JOIN_MAPPING 缺少 dataSourceId 字段，请确保在生成本体变更前先选择数据源");
+        }
+
+        List<ConceptJoinMapping> existing = conceptJoinMappingRepository
+                .findByConceptIdAndTargetConceptAndRelationTypeAndDatasourceId(
+                        join.getConceptId(), join.getTargetConcept(), join.getRelationType(), join.getDatasourceId());
+        if (!existing.isEmpty()) {
+            log.info("ADD_JOIN_MAPPING skipped (already exists): conceptId={}, targetConcept={}, relationType={}, datasourceId={}",
+                    join.getConceptId(), join.getTargetConcept(), join.getRelationType(), join.getDatasourceId());
+            return;
+        }
+
         conceptJoinMappingRepository.save(join);
         log.info("ADD_JOIN_MAPPING executed: {} JOIN {} ON {}", conceptName, joinTable, joinCondition);
     }
