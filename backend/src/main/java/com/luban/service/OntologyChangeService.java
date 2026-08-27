@@ -13,6 +13,7 @@ import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.DatasourceRepository;
 import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyChangeLogRepository;
 import com.luban.repository.OntologyGroupRepository;
@@ -35,6 +36,7 @@ public class OntologyChangeService {
     private final IndustryRelationRepository industryRelationRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final OntologyService ontologyService;
+    private final DatasourceRepository datasourceRepository;
     private final ObjectMapper objectMapper;
 
     public OntologyChangeService(OntologyChangeLogRepository changeLogRepository,
@@ -45,6 +47,7 @@ public class OntologyChangeService {
                                   IndustryRelationRepository industryRelationRepository,
                                   OntologyGroupRepository ontologyGroupRepository,
                                   OntologyService ontologyService,
+                                  DatasourceRepository datasourceRepository,
                                   ObjectMapper objectMapper) {
         this.changeLogRepository = changeLogRepository;
         this.conceptRepository = conceptRepository;
@@ -54,6 +57,7 @@ public class OntologyChangeService {
         this.industryRelationRepository = industryRelationRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.ontologyService = ontologyService;
+        this.datasourceRepository = datasourceRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -503,6 +507,10 @@ public class OntologyChangeService {
         } else {
             throw new RuntimeException("ADD_MAPPING 缺少 dataSourceId 字段，请确保在生成本体变更前先选择数据源");
         }
+        if (!datasourceRepository.existsById(mapping.getDatasourceId())) {
+            throw new RuntimeException("ADD_MAPPING 失败：数据源 " + mapping.getDatasourceId()
+                    + " 不存在，请使用上方「数据源」章节中列出的 数据源ID");
+        }
         if (isComputed) {
             String expr = (String) mappingData.getOrDefault("computedExpr",
                     mappingData.get("expression"));
@@ -618,6 +626,10 @@ public class OntologyChangeService {
             join.setDatasourceId(dsId.longValue());
         } else {
             throw new RuntimeException("ADD_JOIN_MAPPING 缺少 dataSourceId 字段，请确保在生成本体变更前先选择数据源");
+        }
+        if (!datasourceRepository.existsById(join.getDatasourceId())) {
+            throw new RuntimeException("ADD_JOIN_MAPPING 失败：数据源 " + join.getDatasourceId()
+                    + " 不存在，请使用上方「数据源」章节中列出的 数据源ID");
         }
 
         List<ConceptJoinMapping> existing = conceptJoinMappingRepository

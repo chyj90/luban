@@ -612,6 +612,7 @@ public class AgentService {
     private CompiledGraph<AgentState> compileReActGraph(AgentConfig config) throws Exception {
         StateGraph<AgentState> graph = new StateGraph<>(AgentState::new);
 
+        graph.addNode("intent_recognition", buildIntentRecognitionNode(config));
         graph.addNode("agent", buildAgentNode(config));
         graph.addNode("tool_executor", buildToolExecutorNode());
         graph.addNode("nl2sql_executor", buildNl2sqlExecutorNode());
@@ -620,7 +621,8 @@ public class AgentService {
         graph.addNode("select_datasources", buildSelectDatasourcesNode());
         graph.addNode("final_answer", buildFinalAnswerNode());
 
-        graph.addEdge("__START__", "agent");
+        graph.addEdge("__START__", "intent_recognition");
+        graph.addEdge("intent_recognition", "agent");
 
         graph.addConditionalEdges("agent", buildRouterEdge(), Map.of(
                 "tool_call", "tool_executor",
@@ -641,6 +643,53 @@ public class AgentService {
         graph.addEdge("final_answer", "__END__");
 
         return graph.compile();
+    }
+
+    private AsyncNodeAction<AgentState> buildIntentRecognitionNode(AgentConfig config) {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
+            String userQuery = extractLatestUserQuery(messages);
+            String sessionId = (String) data.get("session_id");
+            Long userId = data.get("user_id") instanceof Number ? ((Number) data.get("user_id")).longValue() : null;
+
+            boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
+            String intent = "query";
+            if (isAdmin) {
+                String intentPrompt = "判断以下用户消息的意图，仅输出一个 JSON 对象，不要输出其他内容：\n"
+                        + "- 如果用户想查询数据、分析指标、下钻根因，输出 {\"intent\": \"query\"}\n"
+                        + "- 如果用户想配置本体（创建概念、添加映射、表连接、配置关系等），输出 {\"intent\": \"ontology\"}\n\n"
+                        + "用户消息：" + userQuery;
+                List<Map<String, Object>> intentMessages = new ArrayList<>();
+                intentMessages.add(Map.of("role", "system", "content", "你是一个意图分类器。只输出 JSON，不要输出任何其他内容。"));
+                intentMessages.add(Map.of("role", "user", "content", intentPrompt));
+                java.util.function.Consumer<String> savedCallback = STREAM_CALLBACK.get();
+                java.util.function.Consumer<String> savedReasoning = REASONING_CALLBACK.get();
+                STREAM_CALLBACK.set(null);
+                REASONING_CALLBACK.set(null);
+                try {
+                    String llmResponse = callLlm(config, intentMessages, null, isAdmin);
+                    try {
+                        String cleaned = llmResponse.trim();
+                        if (cleaned.startsWith("```")) {
+                            cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
+                        }
+                        Map<String, Object> parsed = objectMapper.readValue(cleaned, new TypeReference<>() {});
+                        intent = (String) parsed.getOrDefault("intent", "query");
+                    } catch (Exception e) {
+                        log.warn("Intent recognition parse failed, defaulting to query: {}", e.getMessage());
+                    }
+                } finally {
+                    STREAM_CALLBACK.set(savedCallback);
+                    REASONING_CALLBACK.set(savedReasoning);
+                }
+            }
+            data.put("intent", intent);
+            data.put("iteration", 0);
+            sendProgress("正在分析您的需求...");
+            return CompletableFuture.completedFuture(data);
+        };
     }
 
     private AsyncNodeAction<AgentState> buildAgentNode(AgentConfig config) {
@@ -686,7 +735,8 @@ public class AgentService {
                             "已完成 " + sqlExecCount + " 轮下钻分析。请基于以上所有查询结果，以 final_answer 格式给出最终根因分析总结，"
                             + "包含 evidence 证据链和 root_cause 根因。不要再生成新的 SQL。"));
                     String userQuery = extractLatestUserQuery(messages);
-                    Map<String, Object> unifiedContext = buildUnifiedContext(sessionId, userQuery, messages, userId);
+                    String intent = (String) data.getOrDefault("intent", "query");
+                    Map<String, Object> unifiedContext = buildUnifiedContext(sessionId, userQuery, messages, userId, intent);
                     boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> conceptTrace = (List<Map<String, Object>>) unifiedContext.get("conceptTrace");
@@ -729,7 +779,8 @@ public class AgentService {
                     } else if (sqlExecCount > 0) {
                         sendProgress("正在分析第 " + sqlExecCount + " 轮下钻结果...");
                     }
-                    Map<String, Object> unifiedContext = buildUnifiedContext(sessionId, userQuery, messages, userId);
+                    String intent = (String) data.getOrDefault("intent", "query");
+                    Map<String, Object> unifiedContext = buildUnifiedContext(sessionId, userQuery, messages, userId, intent);
 
                     boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
 
@@ -777,7 +828,7 @@ public class AgentService {
                                 messages.add(Map.of("role", "system", "content",
                                         "请停止继续生成 SQL，直接输出 final_answer 总结当前分析结果。"));
                                 try {
-                                    Map<String, Object> summaryContext = buildUnifiedContext(sessionId, userQuery, messages, userId);
+                                    Map<String, Object> summaryContext = buildUnifiedContext(sessionId, userQuery, messages, userId, intent);
                                     String summaryResponse = callLlm(config, messages, (String) summaryContext.get("prompt"), isAdmin);
                                     prevRaw = (String) data.getOrDefault("llm_raw_output", "");
                                     data.put("llm_raw_output", prevRaw.isEmpty() ? summaryResponse : prevRaw + "\n" + summaryResponse);
@@ -940,6 +991,17 @@ public class AgentService {
                 data.put("iteration", iteration);
                 return CompletableFuture.completedFuture(data);
             } else if ("select_datasources".equals(type)) {
+                // select_datasources 仅允许本体管理场景使用，问数阶段通过概念映射自动获取数据源
+                String intent = (String) data.getOrDefault("intent", "query");
+                if (!"ontology".equals(intent)) {
+                    log.warn("select_datasources rejected: intent is {}, not ontology", intent);
+                    messages.add(Map.of("role", "system", "content",
+                            "当前为数据查询场景，数据源已从概念映射中自动获取，无需手动选择。"
+                            + "请直接使用已有的表结构生成 SQL 或 final_answer。"));
+                    data.put("next_action", "continue");
+                    data.put("iteration", iteration);
+                    return CompletableFuture.completedFuture(data);
+                }
                 String reasoning = (String) parsed.getOrDefault("reasoning", "");
                 data.put("next_action", "select_datasources");
                 data.put("select_datasources_reasoning", reasoning);
@@ -1000,7 +1062,7 @@ public class AgentService {
     }
 
     private Map<String, Object> buildUnifiedContext(String sessionId, String userQuery,
-            List<Map<String, Object>> messages, Long userId) {
+            List<Map<String, Object>> messages, Long userId, String intent) {
         long t0 = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         List<Map<String, Object>> conceptTrace = new ArrayList<>();
@@ -1293,7 +1355,7 @@ public class AgentService {
 
         boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
-                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, correlatedDimensions, messages, availableDatasources, availableRelations, isAdmin);
+                tableMappings, joinMappings, authorizedConceptIds, groupNameMap, drillDimensions, correlatedDimensions, messages, availableDatasources, availableRelations, isAdmin, intent);
 
         log.info("buildUnifiedContext TOTAL: {}ms, concepts={}, tools={}, tables={}",
                 System.currentTimeMillis() - t0, conceptIds.size(), apiTools.size(), tableMappings.size());
@@ -1645,22 +1707,25 @@ public class AgentService {
                                              List<Map<String, Object>> messages,
                                              List<Map<String, Object>> availableDatasources,
                                              String availableRelations,
-                                             boolean isAdmin) {
+                                             boolean isAdmin,
+                                             String intent) {
         StringBuilder sb = new StringBuilder();
 
         sb.append("## 用户问题\n");
         sb.append(userQuery).append("\n\n");
 
-        sb.append("## 意图分类（由你自行判断）\n");
-        sb.append("请先判断用户意图属于以下哪类：\n");
-        sb.append("- **数据查询**：用户想查数据、分析指标、下钻根因。走正常查询流程（tool_call/nl2sql/code_mode/final_answer）。\n");
-        if (isAdmin) {
-            sb.append("- **本体管理**：用户想配置本体（添加概念、关系、映射、表连接）。请严格按照下方「本体创建思维链」操作，使用 ontology_action 输出。\n\n");
+        boolean isOntologyFlow = "ontology".equals(intent);
+        if (isAdmin && isOntologyFlow) {
+            sb.append("## 当前任务：本体管理\n");
+            sb.append("用户想配置本体（添加概念、关系、映射、表连接）。请严格按照下方「本体创建思维链」操作，使用 ontology_action 输出。\n\n");
             sb.append(buildOntologyThinkingChain());
             String fullContext = buildFullOntologyContext();
             if (!fullContext.isEmpty()) {
                 sb.append(fullContext);
             }
+        } else {
+            sb.append("## 当前任务：数据查询\n");
+            sb.append("用户想查数据、分析指标、下钻根因。请使用 tool_call/nl2sql/code_mode/final_answer 完成查询。\n");
         }
         sb.append("\n");
 
@@ -1955,7 +2020,7 @@ public class AgentService {
         }
         if (isAdmin) {
             sb.append(optionNum).append(". **本体管理建议**：⚠️ 仅当用户意图明确为本体管理（创建概念、配置映射、表连接）时才能使用此选项。数据查询场景下即使缺少表结构，也必须使用 final_answer，不要使用此选项。\n");
-            sb.append("   - **如果上方没有「数据源」章节**：说明当前没有可用的数据源信息，你必须先输出 select_datasources 让系统提供数据源：\n");
+            sb.append("   - **如果上方没有「数据源」章节**：说明当前没有可用的数据源信息，你必须先输出 select_datasources 让系统提供数据源（⚠️ 仅在本体管理场景有效，数据查询场景下 select_datasources 会被系统拒绝）：\n");
             sb.append("     ```json\n");
             sb.append("     {\"type\": \"select_datasources\", \"reasoning\": \"为什么需要选择数据源\"}\n");
             sb.append("     ```\n");
@@ -2578,6 +2643,35 @@ public class AgentService {
             List<String> validationErrors = new ArrayList<>();
             Map<Long, Map<String, Set<String>>> tableColumnCache = new HashMap<>();
 
+            // 用户已手选数据源，用其 ID 纠正 LLM 可能写错的 dataSourceId
+            Map<String, Object> dsSelection = parseSelectedDatasources(messages);
+            if (dsSelection != null) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> selected = (List<Map<String, Object>>) dsSelection.get("selected");
+                if (selected != null && !selected.isEmpty()) {
+                    Set<Long> validDsIds = new HashSet<>();
+                    for (Map<String, Object> sel : selected) {
+                        Object id = sel.get("id");
+                        if (id instanceof Number) validDsIds.add(((Number) id).longValue());
+                    }
+                    if (!validDsIds.isEmpty()) {
+                        Long defaultDsId = validDsIds.iterator().next();
+                        for (Map<String, Object> change : changes) {
+                            String op = (String) change.getOrDefault("operation", "");
+                            if ("ADD_MAPPING".equals(op) || "UPDATE_MAPPING".equals(op)) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> mapping = (Map<String, Object>) change.get("mapping");
+                                correctDatasourceId(mapping, validDsIds, defaultDsId, op);
+                            } else if ("ADD_JOIN_MAPPING".equals(op) || "UPDATE_JOIN_MAPPING".equals(op)) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> joinMapping = (Map<String, Object>) change.get("joinMapping");
+                                correctDatasourceId(joinMapping, validDsIds, defaultDsId, op);
+                            }
+                        }
+                    }
+                }
+            }
+
             Set<String> knownConcepts = collectKnownConceptNames(changes);
             for (Map<String, Object> change : changes) {
                 String operation = (String) change.getOrDefault("operation", "UNKNOWN");
@@ -2648,6 +2742,23 @@ public class AgentService {
             }
         }
         return names;
+    }
+
+    /**
+     * 用户已手选数据源，LLM 的 dataSourceId 若不在合法集合中，自动纠正为默认值。
+     * 避免 LLM 把 industryId 当作 dataSourceId 写入。
+     */
+    private void correctDatasourceId(Map<String, Object> data, Set<Long> validDsIds, Long defaultDsId, String operation) {
+        if (data == null) return;
+        Object dsIdObj = data.get("dataSourceId");
+        if (dsIdObj instanceof Number) {
+            long dsId = ((Number) dsIdObj).longValue();
+            if (!validDsIds.contains(dsId)) {
+                data.put("dataSourceId", defaultDsId);
+                log.warn("{}: corrected dataSourceId {} -> {} (not in selected datasources {})",
+                        operation, dsId, defaultDsId, validDsIds);
+            }
+        }
     }
 
     private boolean validateConceptReference(String operation, Map<String, Object> change,
@@ -3470,14 +3581,14 @@ public class AgentService {
                 + "**第六步：规划映射**\n"
                 + "- 每个概念需映射到数据库表字段\n"
                 + "- **上方「数据源」章节已自动提供可用数据源和表结构，直接使用其中的数据源ID和表名**\n"
-                + "- 映射时 dataSourceId 必须使用上方数据源表格中提供的 数据源ID\n"
+                + "- **⚠️ 数据源ID必须严格从上方的「数据源」表格中复制，禁止自行猜测或使用默认值（如 1）。使用不存在的 dataSourceId 会导致变更被系统拒绝**\n"
                 + "- 概念名映射到表名，columnName 是具体字段\n"
                 + "- mappingType：direct（直接映射）、computed（计算字段）、derived（派生字段）。如果是计算值，没有直接的表字段对应，则用 computed 并写计算表达式。禁止将 computed 概念映射到不存在的列\n"
                 + "- **对照上方「已有映射列表」，已存在的映射不要重复 ADD_MAPPING，直接跳过**\n\n"
                 + "**第七步：规划表连接**\n"
                 + "- 多表查询需 JOIN 条件\n"
                 + "- leftTable=主表，rightTable=关联表，leftColumn/rightColumn=关联字段，joinType=LEFT/RIGHT/INNER\n"
-                + "- **dataSourceId 必须使用上方数据源表格中提供的 数据源ID**\n"
+                + "- **⚠️ dataSourceId 必须从上方「数据源」表格中复制，禁止猜测。使用不存在的 dataSourceId 会导致变更被拒绝**\n"
                 + "- **对照上方「已有表连接列表」，已存在的连接不要重复 ADD_JOIN_MAPPING，直接跳过**\n"
                 + "- **JOIN 路径选择规则（按优先级）**：\n"
                 + "  1. **业务优先**：维度表应连接到与它有直接业务语义关联的事实表。例如客诉率分析中，销售渠道和物流商是客诉维度的下级概念，应通过 complaints 表连接，不是 orders\n"
