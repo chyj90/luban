@@ -638,7 +638,8 @@ INSERT INTO ports (port_id, device_id, port_type, owner_id, owner_type) VALUES
 (2, 102, 'OPTICAL', 2, 'TRANSMISSION_SEGMENT');
 
 INSERT INTO network_topology (topo_id, upper_id, upper_type, lower_id, lower_type, relation_type) VALUES
-(1, 2, 'VPN', 1, 'OTN', 'CARRIED_BY');
+(1, 1, 'OTN', 2, 'FIBER', 'CARRIED_BY'),
+(2, 1, 'VPN', 1, 'OTN', 'CARRIED_BY');
 
 INSERT INTO alarms (alarm_id, source_type, source_id, severity, alarm_type, alarm_time, clear_time, description) VALUES
 (1, 'FIBER', 2, 'CRITICAL', 'RX_POWER_LOW', '2024-08-20 14:30:00', NULL, '济南站收光功率-28dBm，低于阈值-22dBm'),

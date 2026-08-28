@@ -1049,15 +1049,58 @@
   gap: 8px;
 }
 
-.agent-chat-root-cause-inline-finding {
+.agent-chat-root-cause-inline-summary {
   font-size: 13px;
   color: #333;
   line-height: 1.5;
+  margin-bottom: 6px;
 }
 
-.agent-chat-root-cause-inline-finding strong {
-  color: #ad6800;
+.agent-chat-root-cause-inline-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.agent-chat-root-cause-inline-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 4px;
   font-size: 12px;
+}
+
+.agent-chat-root-cause-item-entity {
+  font-weight: 600;
+  color: #ad6800;
+  white-space: nowrap;
+}
+
+.agent-chat-root-cause-item-finding {
+  color: #333;
+  flex: 1;
+}
+
+.agent-chat-root-cause-item-refs {
+  color: #999;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+.agent-chat-root-cause-item-detail {
+  cursor: help;
+  color: #999;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.agent-chat-root-cause-item-detail:hover {
+  color: #1890ff;
 }
 
 .agent-chat-root-cause-inline-evidence {

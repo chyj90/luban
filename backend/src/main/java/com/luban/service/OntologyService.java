@@ -22,16 +22,20 @@ import org.apache.jena.ontology.*;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.util.iterator.ExtendedIterator;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 @Slf4j
 @Service
 public class OntologyService {
+
+    private final org.slf4j.Logger agentDebug = LoggerFactory.getLogger("agent-debug");
 
     private static final String NS = "http://luban.ai/ontology#";
 
@@ -402,6 +406,10 @@ public class OntologyService {
         result.put("tableMappings", tableMappings);
         result.put("joinMappings", joinMappings);
         result.put("relatedConcepts", relatedConcepts);
+
+        agentDebug.info("[ONTOLOGY] analyzeContext: input={}, expanded={}, trace={}, mappings={}, joins={}, relations={}",
+                conceptIds, allConceptIds.size(), trace.size(), tableMappings.size(), joinMappings.size(), relatedConcepts.size());
+
         return result;
     }
 
@@ -532,6 +540,13 @@ public class OntologyService {
             }
             dimensions.add(dim);
         }
+
+        if (!dimensions.isEmpty()) {
+            agentDebug.info("[ONTOLOGY] getDrillDimensions: conceptId={}, conceptName={}, drillCount={}, targets={}",
+                    conceptId, concept.getName(), dimensions.size(),
+                    dimensions.stream().map(d -> String.valueOf(d.get("conceptName"))).collect(Collectors.joining(", ")));
+        }
+
         return dimensions;
     }
 

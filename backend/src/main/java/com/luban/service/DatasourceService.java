@@ -22,6 +22,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.*;
 
@@ -214,6 +215,39 @@ public class DatasourceService {
         ));
     }
 
+    public Set<String> queryDistinctValues(Long datasourceId, String tableName, String columnName) {
+        Datasource ds = datasourceRepository.findById(datasourceId)
+                .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
+        Map<String, Object> config = fromJsonMap(ds.getConfig());
+        String type = ds.getType().toLowerCase();
+
+        if (!"mysql".equals(type) && !"postgresql".equals(type)) {
+            return Set.of();
+        }
+
+        String url = buildJdbcUrl(type, config);
+        String sql = "SELECT DISTINCT " + columnName + " FROM " + tableName + " LIMIT 1000";
+        Set<String> values = new HashSet<>();
+        try (Connection conn = DriverManager.getConnection(url,
+                String.valueOf(config.get("username")),
+                String.valueOf(config.get("password")));
+             Statement stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(10);
+            try (ResultSet rs = stmt.executeQuery(sql)) {
+                while (rs.next()) {
+                    String val = rs.getString(1);
+                    if (val != null) {
+                        values.add(val);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("queryDistinctValues failed: datasourceId={}, table={}, column={}, error={}",
+                    datasourceId, tableName, columnName, e.getMessage());
+        }
+        return values;
+    }
+
     public Datasource getById(Long id) {
         return datasourceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在: " + id));
@@ -252,7 +286,7 @@ public class DatasourceService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> fromJsonMap(String json) {
+    public Map<String, Object> fromJsonMap(String json) {
         if (json == null || json.isEmpty()) return Map.of();
         try {
             return objectMapper.readValue(json, Map.class);

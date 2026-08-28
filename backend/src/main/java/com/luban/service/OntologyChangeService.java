@@ -2,6 +2,7 @@ package com.luban.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.constant.OntologyOperationType;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
@@ -18,15 +19,19 @@ import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyChangeLogRepository;
 import com.luban.repository.OntologyGroupRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class OntologyChangeService {
+
+    private final org.slf4j.Logger agentDebug = LoggerFactory.getLogger("agent-debug");
 
     private final OntologyChangeLogRepository changeLogRepository;
     private final ConceptRepository conceptRepository;
@@ -104,16 +109,69 @@ public class OntologyChangeService {
         changeLogRepository.deleteById(changeId);
     }
 
+    private static final List<String> OPERATION_ORDER = Arrays.stream(OntologyOperationType.values())
+            .sorted(Comparator.comparingInt(OntologyOperationType::sortOrder))
+            .map(Enum::name)
+            .toList();
+
     @Transactional
     public void batchApproveChanges(List<Long> changeIds) {
         List<OntologyChangeLog> logs = changeLogRepository.findAllById(changeIds);
-        for (OntologyChangeLog log : logs) {
-            executeChange(log);
-            log.setStatus("APPROVED");
-            log.setExecutedAt(LocalDateTime.now());
+        logs.sort(Comparator.comparingInt(log -> {
+            int idx = OPERATION_ORDER.indexOf(log.getOperation());
+            return idx >= 0 ? idx : Integer.MAX_VALUE;
+        }));
+
+        agentDebug.info("[CHANGE] batchApprove: {} changes, operations={}",
+                logs.size(),
+                logs.stream().map(l -> l.getOperation() + "(id=" + l.getId() + ")")
+                        .collect(Collectors.joining(", ")));
+
+        for (OntologyChangeLog changeLog : logs) {
+            try {
+                executeChange(changeLog);
+                changeLog.setStatus("APPROVED");
+                changeLog.setExecutedAt(LocalDateTime.now());
+            } catch (Exception e) {
+                log.error("batchApproveChanges failed at changeId={}, operation={}, afterSnapshot={}",
+                        changeLog.getId(), changeLog.getOperation(), changeLog.getAfterSnapshot(), e);
+                throw new RuntimeException("变更 ID=" + changeLog.getId() + " (" + changeLog.getOperation() + ") 执行失败: " + e.getMessage(), e);
+            }
         }
         changeLogRepository.saveAll(logs);
+        validateConceptMappings(logs);
         ontologyService.reload();
+    }
+
+    private void validateConceptMappings(List<OntologyChangeLog> logs) {
+        Set<Long> conceptIdsInBatch = new HashSet<>();
+        Set<Long> mappedConceptIds = new HashSet<>();
+        for (OntologyChangeLog log : logs) {
+            String op = log.getOperation();
+            Map<String, Object> data = parseSnapshot(log.getAfterSnapshot());
+            if (data == null) continue;
+            if (op.startsWith("ADD_") || op.startsWith("UPDATE_")) {
+                if (data.containsKey("concept") && data.get("concept") instanceof Map) {
+                    Map<String, Object> c = (Map<String, Object>) data.get("concept");
+                    Object idObj = c.get("id");
+                    if (idObj instanceof Number) {
+                        conceptIdsInBatch.add(((Number) idObj).longValue());
+                    }
+                }
+            }
+            if (op.equals("ADD_MAPPING") || op.equals("UPDATE_MAPPING")) {
+                Map<String, Object> m = data.containsKey("mapping") ? (Map<String, Object>) data.get("mapping") : data;
+                Object cid = m.get("conceptId");
+                if (cid instanceof Number) mappedConceptIds.add(((Number) cid).longValue());
+            }
+        }
+        conceptIdsInBatch.removeAll(mappedConceptIds);
+        for (Long cid : conceptIdsInBatch) {
+            boolean hasExistingMapping = !conceptMappingRepository.findByConceptId(cid).isEmpty();
+            if (!hasExistingMapping) {
+                log.warn("本体校验: 概念 id={} 缺少表映射(ConceptMapping)，请为它添加 direct 或 computed 类型的映射", cid);
+            }
+        }
     }
 
     @Transactional
@@ -217,6 +275,8 @@ public class OntologyChangeService {
             throw new RuntimeException("无法解析变更快照");
         }
         log.info("executeChange: operation={}, afterSnapshotKeys={}", operation, data.keySet());
+        agentDebug.info("[CHANGE] executeChange: id={}, operation={}, dataKeys={}",
+                changeLog.getId(), operation, data.keySet());
         switch (operation) {
             case "ADD_CONCEPT" -> executeAddConcept(data);
             case "UPDATE_CONCEPT" -> executeUpdateConcept(data);
@@ -567,10 +627,9 @@ public class OntologyChangeService {
             throw new RuntimeException("ADD_JOIN_MAPPING 缺少 joinMapping 数据");
         }
 
-        log.info("ADD_JOIN_MAPPING data: leftTable={}, rightTable={}, leftColumn={}, rightColumn={}, joinType={}, dataSourceId={}, targetConcept={}, conceptName={}",
-                joinData.get("leftTable"), joinData.get("rightTable"), joinData.get("leftColumn"),
-                joinData.get("rightColumn"), joinData.get("joinType"), joinData.get("dataSourceId"),
-                joinData.get("targetConcept"), joinData.get("conceptName"));
+        log.info("ADD_JOIN_MAPPING data: conceptName={}, joinTable={}, joinCondition={}, relationType={}, dataSourceId={}, targetConcept={}",
+                joinData.get("conceptName"), joinData.get("joinTable"), joinData.get("joinCondition"),
+                joinData.get("relationType"), joinData.get("dataSourceId"), joinData.get("targetConcept"));
 
         String conceptName = (String) joinData.get("conceptName");
         String joinTable = (String) joinData.get("joinTable");
@@ -578,38 +637,14 @@ public class OntologyChangeService {
         String relationType = (String) joinData.get("relationType");
         String targetConcept = (String) joinData.get("targetConcept");
 
-        String leftTable = (String) joinData.get("leftTable");
-        String rightTable = (String) joinData.get("rightTable");
-        String leftColumn = (String) joinData.get("leftColumn");
-        String rightColumn = (String) joinData.get("rightColumn");
-        String joinType = (String) joinData.get("joinType");
-
-        if (leftTable != null && rightTable != null && leftColumn != null && rightColumn != null) {
-            if (joinTable == null) joinTable = rightTable;
-            if (joinCondition == null) joinCondition = leftTable + "." + leftColumn + " = " + rightTable + "." + rightColumn;
-            if (relationType == null && joinType != null) relationType = joinType + " JOIN";
-            if (conceptName == null) {
-                List<com.luban.entity.ConceptMapping> mappings = conceptMappingRepository.findByTableNameIn(List.of(leftTable));
-                if (!mappings.isEmpty()) {
-                    Long cid = mappings.get(0).getConceptId();
-                    var c = conceptRepository.findById(cid).orElse(null);
-                    if (c != null) conceptName = c.getName();
-                }
-            }
-            if (targetConcept == null) {
-                List<com.luban.entity.ConceptMapping> rightMappings = conceptMappingRepository.findByTableNameIn(List.of(rightTable));
-                if (!rightMappings.isEmpty()) {
-                    Long cid = rightMappings.get(0).getConceptId();
-                    var c = conceptRepository.findById(cid).orElse(null);
-                    if (c != null) targetConcept = c.getName();
-                }
-            }
-        }
-
-        if (conceptName == null || joinTable == null || joinCondition == null) {
-            log.error("ADD_JOIN_MAPPING missing required fields: conceptName={}, joinTable={}, joinCondition={}, leftTable={}, rightTable={}",
-                    conceptName, joinTable, joinCondition, leftTable, rightTable);
-            throw new RuntimeException("ADD_JOIN_MAPPING 缺少必填字段");
+        if (conceptName == null || joinTable == null || joinCondition == null || relationType == null || targetConcept == null) {
+            log.error("ADD_JOIN_MAPPING missing required fields: conceptName={}, joinTable={}, joinCondition={}, relationType={}, targetConcept={}, rawJoinData={}",
+                    conceptName, joinTable, joinCondition, relationType, targetConcept, joinData);
+            throw new RuntimeException("ADD_JOIN_MAPPING 缺少必填字段: conceptName=" + conceptName
+                    + ", joinTable=" + joinTable + ", joinCondition=" + joinCondition
+                    + ", relationType=" + relationType
+                    + ", targetConcept=" + targetConcept
+                    + "。LLM 提供的字段: " + joinData.keySet());
         }
 
         List<Concept> concepts = conceptRepository.findByName(conceptName);
@@ -621,7 +656,7 @@ public class OntologyChangeService {
         join.setJoinCondition(joinCondition);
         join.setRelationType(relationType != null ? relationType : "LEFT JOIN");
         join.setJoinType("LEFT");
-        if (targetConcept != null) join.setTargetConcept(targetConcept);
+        join.setTargetConcept(targetConcept);
         if (joinData.get("dataSourceId") instanceof Number dsId) {
             join.setDatasourceId(dsId.longValue());
         } else {

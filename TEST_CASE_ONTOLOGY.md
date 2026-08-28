@@ -347,7 +347,7 @@ curl -s -X POST 'http://localhost:8080/api/v1/concepts/1/relations' \
 1. 在 Chat 页面输入：
 
 ```
-昨天跨省专线为什么故障？
+昨天近期跨省专线为什么故障？
 ```
 
 **预期行为**：

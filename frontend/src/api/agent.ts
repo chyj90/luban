@@ -143,7 +143,7 @@ export function fetchAgentChatStream(
         flushEvent();
         eventName = trimmed.slice(6).trim();
       } else if (trimmed.startsWith('data:')) {
-        const data = trimmed.slice(5).trim();
+        const data = trimmed.slice(5).replace(/^ /, '');
         eventData = eventData ? eventData + '\n' + data : data;
       }
     }

@@ -130,7 +130,15 @@ interface ChatMessage {
   ontologyChanges?: OntologyChangeEvent;
   rootCause?: {
     reasoning: string;
-    root_cause: string;
+    root_cause: {
+      summary: string;
+      items: Array<{
+        entity: string;
+        finding: string;
+        evidence_refs?: number[];
+        detail?: string;
+      }>;
+    };
     evidence: RootCauseEvidence[];
     suggestion: string;
   };
@@ -152,9 +160,16 @@ function parseRootCause(content: string | undefined): ChatMessage['rootCause'] {
     if (!jsonMatch) return undefined;
     const parsed = JSON.parse(jsonMatch[0]);
     if (parsed.answer_type === 'root_cause' && parsed.root_cause) {
+      const rc = parsed.root_cause;
+      const isOldFormat = typeof rc === 'string';
       return {
         reasoning: parsed.reasoning || '',
-        root_cause: parsed.root_cause || '',
+        root_cause: isOldFormat
+          ? { summary: rc, items: [] }
+          : {
+              summary: rc.summary || '',
+              items: Array.isArray(rc.items) ? rc.items : [],
+            },
         evidence: parsed.evidence || [],
         suggestion: parsed.suggestion || '',
       };
@@ -227,7 +242,7 @@ export default function AgentChatPage() {
         selectDatasources: item.selectDatasources,
         rootCause: item.rootCause ? {
           reasoning: item.reasoning || '',
-          root_cause: item.rootCause.root_cause || '',
+          root_cause: item.rootCause.root_cause || { summary: '', items: [] },
           evidence: item.rootCause.evidence || [],
           suggestion: item.rootCause.suggestion || '',
         } : undefined,
@@ -485,7 +500,7 @@ export default function AgentChatPage() {
     let streamOntologyChanges: ChatMessage['ontologyChanges'] = undefined;
     let streamSelectDatasources: ChatMessage['selectDatasources'] = undefined;
     let streamMessageId: string | undefined;
-    let streamRootCause: string | undefined;
+    let streamRootCause: any = undefined;
     let streamSuggestion: string | undefined;
     let streamEvidence: RootCauseEvidence[] | undefined;
     let isFirstDelta = true;
@@ -510,7 +525,9 @@ export default function AgentChatPage() {
                   rootCause: (streamRootCause || streamSuggestion || streamEvidence)
                     ? {
                         reasoning: streamReasoning || '',
-                        root_cause: streamRootCause || '',
+                        root_cause: typeof streamRootCause === 'object' && streamRootCause !== null
+                          ? streamRootCause
+                          : { summary: streamRootCause || '', items: [] },
                         evidence: streamEvidence || [],
                         suggestion: streamSuggestion || '',
                       }
@@ -580,7 +597,11 @@ export default function AgentChatPage() {
               } catch { /* ignore */ }
               break;
             case 'root_cause':
-              streamRootCause = (streamRootCause || '') + data;
+              try {
+                streamRootCause = JSON.parse(data);
+              } catch {
+                streamRootCause = data;
+              }
               break;
             case 'suggestion':
               streamSuggestion = (streamSuggestion || '') + data;
@@ -641,7 +662,9 @@ export default function AgentChatPage() {
                   rootCause: (streamRootCause || streamSuggestion || streamEvidence)
                     ? {
                         reasoning: streamReasoning || '',
-                        root_cause: streamRootCause || '',
+                        root_cause: typeof streamRootCause === 'object' && streamRootCause !== null
+                          ? streamRootCause
+                          : { summary: streamRootCause || '', items: [] },
                         evidence: streamEvidence || [],
                         suggestion: streamSuggestion || '',
                       }
@@ -936,7 +959,7 @@ export default function AgentChatPage() {
                       <div className="agent-chat-message-content">{msg.content}</div>
                     )}
                   {/* 根因分析 - 融入气泡内 */}
-                  {msg.rootCause && (msg.rootCause.root_cause || msg.rootCause.evidence.length > 0 || msg.rootCause.suggestion) && (
+                  {msg.rootCause && (msg.rootCause.root_cause?.summary || msg.rootCause.root_cause?.items?.length > 0 || msg.rootCause.evidence.length > 0 || msg.rootCause.suggestion) && (
                     <div className="agent-chat-root-cause-inline">
                       <div className="agent-chat-root-cause-inline-header">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -947,9 +970,35 @@ export default function AgentChatPage() {
                         根因分析
                       </div>
                       <div className="agent-chat-root-cause-inline-body">
-                        <div className="agent-chat-root-cause-inline-finding">
-                          <strong>根因：</strong>{msg.rootCause.root_cause}
-                        </div>
+                        {msg.rootCause.root_cause?.summary && (
+                          <div className="agent-chat-root-cause-inline-summary">
+                            {msg.rootCause.root_cause.summary}
+                          </div>
+                        )}
+                        {msg.rootCause.root_cause?.items?.length > 0 && (
+                          <div className="agent-chat-root-cause-inline-items">
+                            {msg.rootCause.root_cause.items.map((item, i) => (
+                              <div key={i} className="agent-chat-root-cause-inline-item">
+                                <span className="agent-chat-root-cause-item-entity">{item.entity}</span>
+                                <span className="agent-chat-root-cause-item-finding">{item.finding}</span>
+                                {item.evidence_refs && item.evidence_refs.length > 0 && (
+                                  <span className="agent-chat-root-cause-item-refs">
+                                    {item.evidence_refs.map(r => `[${r}]`).join(' ')}
+                                  </span>
+                                )}
+                                {item.detail && (
+                                  <span className="agent-chat-root-cause-item-detail" title={item.detail}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <circle cx="12" cy="12" r="10" />
+                                      <line x1="12" y1="16" x2="12" y2="12" />
+                                      <line x1="12" y1="8" x2="12.01" y2="8" />
+                                    </svg>
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {msg.rootCause.evidence.length > 0 && (
                           <div className="agent-chat-root-cause-inline-evidence">
                             <strong>证据链：</strong>

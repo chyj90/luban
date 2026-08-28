@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -30,6 +31,7 @@ public class AgentController {
 
     private final AgentService agentService;
     private final ObjectMapper objectMapper;
+    private final org.slf4j.Logger agentDebug = LoggerFactory.getLogger("agent-debug");
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
@@ -139,6 +141,8 @@ public class AgentController {
 
                 Object nl2sql = result.get("nl2sql");
                 if (nl2sql != null) {
+                    String payload = objectMapper.writeValueAsString(nl2sql);
+                    agentDebug.info("[SSE] nl2sql event, payloadLen={}, payload=[{}]", payload.length(), payload);
                     out.write(buildSSEBytes("nl2sql", nl2sql));
                     out.flush();
                 }
