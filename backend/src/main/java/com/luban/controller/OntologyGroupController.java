@@ -1,6 +1,7 @@
 package com.luban.controller;
 
 import com.luban.annotation.RequirePermission;
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.OntologyGroup;
@@ -11,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/ontology-groups")
@@ -48,5 +50,10 @@ public class OntologyGroupController {
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         groupService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    @GetMapping("/builtin-relation-types")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> builtinRelationTypes() {
+        return ResponseEntity.ok(ApiResponse.ok(BuiltinRelation.toApiList()));
     }
 }

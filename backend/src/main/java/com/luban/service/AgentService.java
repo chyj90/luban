@@ -9,6 +9,7 @@ import com.luban.entity.ChatRootCause;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
+import com.luban.entity.ConceptRelation;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.ToolGroup;
 import com.luban.executor.HttpExecutor;
@@ -18,6 +19,7 @@ import com.luban.repository.ChatMessageRepository;
 import com.luban.repository.ChatRootCauseRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
+import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.constant.OntologyOperationType;
 import com.luban.entity.OntologyChangeLog;
@@ -57,6 +59,7 @@ public class AgentService {
     private final McpExecutor mcpExecutor;
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
+    private final ConceptRelationRepository conceptRelationRepository;
     private final ConceptRepository conceptRepository;
     private final RoleConceptPermissionService roleConceptPermissionService;
     private final DatasourceService datasourceService;
@@ -120,6 +123,7 @@ public class AgentService {
                         McpExecutor mcpExecutor,
                         ConceptMappingRepository conceptMappingRepository,
                         ConceptJoinMappingRepository conceptJoinMappingRepository,
+                        ConceptRelationRepository conceptRelationRepository,
                         ConceptRepository conceptRepository,
                         RoleConceptPermissionService roleConceptPermissionService,
                         DatasourceService datasourceService,
@@ -139,6 +143,7 @@ public class AgentService {
         this.mcpExecutor = mcpExecutor;
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
+        this.conceptRelationRepository = conceptRelationRepository;
         this.conceptRepository = conceptRepository;
         this.roleConceptPermissionService = roleConceptPermissionService;
         this.datasourceService = datasourceService;
@@ -335,6 +340,12 @@ public class AgentService {
             String answer = (String) finalAnswer.getOrDefault("answer",
                     finalData.getOrDefault("final_answer", ""));
             String messageId = (String) finalAnswer.get("messageId");
+            String debugFromFinalData = (String) finalData.getOrDefault("final_answer", "");
+            agentDebug.info("[PERSIST] answerLen={}, answerPreview={}",
+                    answer != null ? answer.length() : 0,
+                    answer != null ? answer.substring(0, Math.min(300, answer.length())) : "null");
+            agentDebug.info("[PERSIST] finalData.final_answer preview={}",
+                    debugFromFinalData != null ? debugFromFinalData.substring(0, Math.min(300, debugFromFinalData.length())) : "null");
 
             String conceptTraceJson = null;
             Object conceptTrace = finalAnswer.get("conceptTrace");
@@ -758,11 +769,14 @@ public class AgentService {
         data.put("iteration", iteration + 1);
 
         List<String> allJsons = extractJsons(llmResponse);
+        agentDebug.info("[NORMAL_ITER] extracted {} JSONs, llmResponseLen={}", allJsons.size(), llmResponse.length());
         Map<String, Object> parsed;
         if (allJsons.isEmpty()) {
             parsed = parseResponse(llmResponse);
+            agentDebug.info("[NORMAL_ITER] allJsons EMPTY, parsed type={}", parsed.get("type"));
         } else {
             parsed = parseResponse(allJsons.get(0));
+            agentDebug.info("[NORMAL_ITER] firstJson type={}, firstJsonLen={}", parsed.get("type"), allJsons.get(0).length());
             handleLoopDetection(data, messages, allJsons, parsed, config, sessionId, userId, intent, userQuery);
         }
         return parsed;
@@ -954,7 +968,27 @@ public class AgentService {
 
     private void routeFinalAnswer(Map<String, Object> data, List<Map<String, Object>> messages,
             Map<String, Object> parsed) {
+        List<?> rawIds = (List<?>) parsed.get("concept_ids");
+        List<Long> conceptIds = null;
+        if (rawIds != null && !rawIds.isEmpty()) {
+            conceptIds = rawIds.stream()
+                    .map(id -> id instanceof Number ? ((Number) id).longValue() : null)
+                    .filter(id -> id != null).collect(Collectors.toList());
+        }
+
+        if (conceptIds != null && !conceptIds.isEmpty()) {
+            String missingMsg = validateComputedFromChannels(conceptIds, messages);
+            if (missingMsg != null) {
+                messages.add(Map.of("role", "system", "content", missingMsg));
+                data.put("next_action", "continue");
+                return;
+            }
+        }
+
         String answer = (String) parsed.get("answer");
+        agentDebug.info("[ROUTE_FINAL] answerLen={}, answerPreview={}",
+                answer != null ? answer.length() : 0,
+                answer != null ? answer.substring(0, Math.min(300, answer.length())) : "null");
         String reasoning = (String) parsed.getOrDefault("reasoning", "");
         String prevReasoning = (String) data.getOrDefault("reasoning", "");
         data.put("next_action", "final_answer");
@@ -964,13 +998,93 @@ public class AgentService {
         data.put("root_cause", parsed.getOrDefault("root_cause", ""));
         data.put("suggestion", parsed.getOrDefault("suggestion", ""));
         data.put("evidence", parsed.getOrDefault("evidence", List.of()));
-        List<?> rawIds = (List<?>) parsed.get("concept_ids");
-        if (rawIds != null && !rawIds.isEmpty()) {
-            data.put("recognized_concept_ids", rawIds.stream()
-                    .map(id -> id instanceof Number ? ((Number) id).longValue() : null)
-                    .filter(id -> id != null).collect(Collectors.toList()));
+        if (conceptIds != null) {
+            data.put("recognized_concept_ids", conceptIds);
         }
         messages.add(Map.of("role", "assistant", "content", answer));
+    }
+
+    private String validateComputedFromChannels(List<Long> conceptIds, List<Map<String, Object>> messages) {
+        List<ConceptRelation> computedRelations = conceptRelationRepository
+                .findBySourceConceptIdInAndRelationTypeIn(conceptIds,
+                        List.of("COMPUTED_FROM", "DERIVED_FROM"));
+        if (computedRelations.isEmpty()) return null;
+
+        Set<String> requiredColumns = new LinkedHashSet<>();
+        Map<Long, String> conceptNames = new HashMap<>();
+        Map<Long, List<String>> factorColumns = new LinkedHashMap<>();
+
+        for (ConceptRelation rel : computedRelations) {
+            Long sourceId = rel.getSourceConceptId();
+            Long targetId = rel.getTargetConceptId();
+
+            conceptNames.putIfAbsent(sourceId, conceptRepository.findById(sourceId)
+                    .map(Concept::getName).orElse("概念" + sourceId));
+
+            List<ConceptMapping> sourceMappings = conceptMappingRepository.findByConceptId(sourceId);
+            for (ConceptMapping m : sourceMappings) {
+                requiredColumns.add(m.getColumnName().toLowerCase());
+            }
+
+            List<ConceptMapping> targetMappings = conceptMappingRepository.findByConceptId(targetId);
+            List<String> cols = targetMappings.stream()
+                    .map(m -> m.getColumnName().toLowerCase())
+                    .collect(Collectors.toList());
+            factorColumns.computeIfAbsent(sourceId, k -> new ArrayList<>()).addAll(cols);
+            requiredColumns.addAll(cols);
+        }
+
+        Set<String> queriedColumns = new LinkedHashSet<>();
+        for (Map<String, Object> msg : messages) {
+            if (!"assistant".equals(msg.get("role"))) continue;
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) msg.get("tool_calls");
+            if (toolCalls == null) continue;
+            for (Map<String, Object> tc : toolCalls) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> function = (Map<String, Object>) tc.get("function");
+                if (function == null) continue;
+                String funcName = (String) function.get("name");
+                if (!"nl2sql_executor".equals(funcName) && !"code_executor".equals(funcName)) continue;
+                String args = (String) function.get("arguments");
+                if (args == null) continue;
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> argsMap = objectMapper.readValue(args, Map.class);
+                    String text = (String) argsMap.get("sql");
+                    if (text == null) text = (String) argsMap.get("code");
+                    if (text != null) {
+                        String lower = text.toLowerCase();
+                        for (String col : requiredColumns) {
+                            if (lower.contains(col)) {
+                                queriedColumns.add(col);
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        Set<String> missing = new LinkedHashSet<>(requiredColumns);
+        missing.removeAll(queriedColumns);
+        if (missing.isEmpty()) return null;
+
+        StringBuilder sb = new StringBuilder("【双通道校验未通过】以下计算关系的必需列未被查询：\n");
+        for (ConceptRelation rel : computedRelations) {
+            Long sourceId = rel.getSourceConceptId();
+            String sourceName = conceptNames.get(sourceId);
+            String targetName = conceptRepository.findById(rel.getTargetConceptId())
+                    .map(Concept::getName).orElse("概念" + rel.getTargetConceptId());
+            sb.append("- ").append(sourceName).append(" 由 ").append(targetName).append(" 计算，公式：")
+                    .append(rel.getExpression() != null ? rel.getExpression() : "未设置").append("\n");
+        }
+        sb.append("\n缺失列：");
+        for (String col : missing) {
+            sb.append(col).append(" ");
+        }
+        sb.append("\n请补充查询这些列，完成双通道交叉验证后再输出 final_answer。");
+        return sb.toString();
     }
 
     private void routeToolCall(Map<String, Object> data, List<Map<String, Object>> messages,
@@ -2119,6 +2233,10 @@ public class AgentService {
             Map<String, Object> data = new LinkedHashMap<>(state.data());
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> finalMessages = (List<Map<String, Object>>) data.get("messages");
+            String faVal = (String) data.getOrDefault("final_answer", "");
+            agentDebug.info("[FINAL_ANSWER_NODE] final_answer from state: len={}, preview={}",
+                    faVal.length(),
+                    faVal.length() > 300 ? faVal.substring(0, 300) : faVal);
             log.info("FINAL_ANSWER node: messagesSize={}, lastMsgRole={}",
                     finalMessages != null ? finalMessages.size() : 0,
                     finalMessages != null && !finalMessages.isEmpty() ? finalMessages.get(finalMessages.size() - 1).get("role") : "null");

@@ -1,6 +1,7 @@
 package com.luban.config;
 
 import com.luban.constant.Permissions;
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.constant.WorkflowScope;
 import com.luban.entity.*;
 import com.luban.repository.*;
@@ -202,25 +203,24 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             return;
         }
 
-        String[][] builtins = {
-            {"DRILLS_INTO", "可下钻到子维度，纯分析导航", "true", "false", "0"},
-            {"DRILLED_FROM", "上卷维度，DRILLS_INTO 的逆，自动推导", "true", "false", "1"},
-            {"CORRELATED", "关联维度，交叉分析提示", "false", "false", "2"}
-        };
-
         int totalInserted = 0;
         for (Industry industry : industries) {
-            for (String[] def : builtins) {
-                String relationType = def[0];
+            for (BuiltinRelation def : BuiltinRelation.values()) {
+                String relationType = def.name();
                 if (industryRelationRepository.findByIndustryIdAndRelationTypeAndIsBuiltin(
                         industry.getId(), relationType, true).isEmpty()) {
                     IndustryRelation relation = new IndustryRelation();
                     relation.setIndustryId(industry.getId());
                     relation.setRelationType(relationType);
-                    relation.setDescription(def[1]);
-                    relation.setIsTransitive(Boolean.parseBoolean(def[2]));
-                    relation.setIsSymmetric(Boolean.parseBoolean(def[3]));
-                    relation.setSortOrder(Integer.parseInt(def[4]));
+                    relation.setDescription(def.description());
+                    relation.setLabel(def.label());
+                    relation.setColor(def.color());
+                    relation.setSourceRole(def.sourceRole());
+                    relation.setTargetRole(def.targetRole());
+                    relation.setSourceToTarget(def.sourceToTarget());
+                    relation.setIsTransitive(def.isTransitive());
+                    relation.setIsSymmetric(def.isSymmetric());
+                    relation.setSortOrder(def.sortOrder());
                     relation.setIsBuiltin(true);
                     industryRelationRepository.save(relation);
                     totalInserted++;
@@ -230,7 +230,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
 
         if (totalInserted > 0) {
             log.info("平台关系类型初始化完成：{} 个行业 × {} 种关系类型 = {} 条",
-                    industries.size(), builtins.length, totalInserted);
+                    industries.size(), BuiltinRelation.values().length, totalInserted);
         }
     }
 }

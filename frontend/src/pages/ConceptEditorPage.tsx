@@ -29,6 +29,7 @@ import {
   getConceptRelations,
   listAllRelations,
   createConceptRelation,
+  updateConceptRelation,
   deleteConceptRelation,
   bindToolConcept,
   unbindToolConcept,
@@ -71,11 +72,10 @@ import type {
   IndustryRelation,
 } from '@/types/concept';
 import {
-  RELATION_TYPE_LABELS,
-  RELATION_TYPE_COLORS,
   CONCEPT_NODE_ICONS,
   CONCEPT_NODE_COLORS,
 } from '@/types/concept';
+import { useRelationTypes } from '@/hooks/useRelationTypes';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -84,6 +84,13 @@ import './ConceptEditorPage.css';
 
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 64;
+
+const PARENT_OF_LABEL = '包含';
+const PARENT_OF_COLOR = '#8c8c8c';
+
+const RENDER_EDGE_TYPES = {
+  PARENT_OF: { label: PARENT_OF_LABEL, color: PARENT_OF_COLOR },
+};
 
 const DOMAIN_COLORS = [
   '#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96',
@@ -139,9 +146,17 @@ function formatSnapshot(obj: Record<string, unknown> | null, entityType: string)
   return JSON.stringify(data);
 }
 
-function getNodeType(concept: Concept, concepts: Concept[], relations: ConceptRelation[]): string {
-  if (relations.some((r) => r.sourceConceptId === concept.id && r.relationType === 'COMPUTED_FROM')) return 'computed';
-  if (relations.some((r) => r.targetConceptId === concept.id && r.relationType === 'DERIVED_FROM')) return 'condition';
+function getNodeType(
+  concept: Concept,
+  concepts: Concept[],
+  relations: ConceptRelation[],
+  sourceRoles: Record<string, string>,
+  targetRoles: Record<string, string>,
+): string {
+  for (const r of relations) {
+    if (r.sourceConceptId === concept.id && sourceRoles[r.relationType]?.includes('计算结果')) return 'computed';
+    if (r.targetConceptId === concept.id && targetRoles[r.relationType]?.includes('派生条件')) return 'condition';
+  }
   if (concept.groupId != null) return 'system';
   if (!concept.parentId && concepts.some((c) => c.parentId === concept.id)) return 'root';
   return 'default';
@@ -206,23 +221,17 @@ function ConceptNode({ data }: { data: { label: string; description: string; nod
 
 const nodeTypes = { conceptNode: ConceptNode };
 
-function getRelationTypeDirection(type: string): 'source_to_target' | 'target_to_source' {
-  if (type === 'COMPUTED_FROM' || type === 'PARENT_OF' || type === 'PREREQUISITE_OF') return 'source_to_target';
-  return 'target_to_source';
+function getRelationTypeDirection(
+  type: string,
+  sourceToTarget: Record<string, boolean>,
+): 'source_to_target' | 'target_to_source' {
+  if (type === 'PARENT_OF') return 'source_to_target';
+  return sourceToTarget[type] ? 'source_to_target' : 'target_to_source';
 }
 
-function suggestRelationType(sourceName: string, targetName: string): string {
-  const combined = `${sourceName} ${targetName}`;
-  let bestType = 'PARENT_OF';
-  let bestScore = 0;
-  for (const opt of relationOptions) {
-    let score = 0;
-    for (const kw of opt.autoKeywords) { if (combined.includes(kw)) score += 1; }
-    if (sourceName.includes('产出') && targetName.includes('投入')) score += opt.type === 'UPPER_STREAM_OF' ? 5 : 0;
-    if (sourceName.includes('比例') || sourceName.includes('率') || sourceName.includes('OEE')) score += opt.type === 'COMPUTED_FROM' ? 5 : 0;
-    if (score > bestScore) { bestScore = score; bestType = opt.type; }
-  }
-  return bestType;
+function suggestRelationType(sourceName: string, targetName: string, availableTypes: string[]): string {
+  if (availableTypes.length > 0) return availableTypes[0];
+  return 'PARENT_OF';
 }
 
 function layoutNodes(
@@ -230,6 +239,12 @@ function layoutNodes(
   relations: ConceptRelation[],
   getDomainName: (gid: number | null | undefined) => string,
   getDomainColor: (gid: number | null | undefined) => string | undefined,
+  labels: Record<string, string>,
+  colors: Record<string, string>,
+  sourceToTarget: Record<string, boolean>,
+  isSymmetric: (type: string) => boolean,
+  sourceRoles: Record<string, string>,
+  targetRoles: Record<string, string>,
 ): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
@@ -245,7 +260,7 @@ function layoutNodes(
   }
 
   const nodes: Node[] = concepts.map((c) => {
-    const nodeType = getNodeType(c, concepts, relations);
+    const nodeType = getNodeType(c, concepts, relations, sourceRoles, targetRoles);
     const domain = conceptDomainMap.get(c.id);
     return {
       id: String(c.id),
@@ -272,10 +287,10 @@ function layoutNodes(
         source: String(c.parentId),
         target: String(c.id),
         type: 'smoothstep',
-        style: { stroke: RELATION_TYPE_COLORS.PARENT_OF, strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: RELATION_TYPE_COLORS.PARENT_OF },
-        label: RELATION_TYPE_LABELS.PARENT_OF,
-        labelStyle: { fontSize: 10, fill: RELATION_TYPE_COLORS.PARENT_OF },
+        style: { stroke: PARENT_OF_COLOR, strokeWidth: 2 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: PARENT_OF_COLOR },
+        label: PARENT_OF_LABEL,
+        labelStyle: { fontSize: 10, fill: PARENT_OF_COLOR },
         labelBgStyle: { fill: '#fff', fillOpacity: 0.9 },
       });
     }
@@ -283,19 +298,21 @@ function layoutNodes(
 
   for (const r of relations) {
     if (r.relationType === 'PARENT_OF') continue;
-    const color = RELATION_TYPE_COLORS[r.relationType] || '#999';
-    const label = RELATION_TYPE_LABELS[r.relationType] || r.relationType;
-    const dir = getRelationTypeDirection(r.relationType);
-    const isBidirectional = r.relationType === 'EQUIVALENT_TO';
+    const color = colors[r.relationType] || '#999';
+    const label = labels[r.relationType] || r.relationType;
+    const dir = getRelationTypeDirection(r.relationType, sourceToTarget);
+    const bidirectional = isSymmetric(r.relationType);
 
     const srcDomain = conceptDomainMap.get(r.sourceConceptId);
     const tgtDomain = conceptDomainMap.get(r.targetConceptId);
     const isCrossDomain = srcDomain && tgtDomain && srcDomain.groupId !== tgtDomain.groupId;
 
+    const isComputedOrDerived = sourceRoles[r.relationType]?.includes('计算') || sourceRoles[r.relationType]?.includes('派生');
+
     const edgeStyle = {
       stroke: isCrossDomain ? '#8c8c8c' : color,
       strokeWidth: isCrossDomain ? 2.5 : 2,
-      strokeDasharray: isCrossDomain ? '8,4' : (r.relationType === 'DERIVED_FROM' || r.relationType === 'COMPUTED_FROM' ? '5,5' : 'none'),
+      strokeDasharray: isCrossDomain ? '8,4' : (isComputedOrDerived ? '5,5' : 'none'),
     };
 
     edges.push({
@@ -303,13 +320,13 @@ function layoutNodes(
       source: dir === 'source_to_target' ? String(r.sourceConceptId) : String(r.targetConceptId),
       target: dir === 'source_to_target' ? String(r.targetConceptId) : String(r.sourceConceptId),
       type: 'smoothstep',
-      animated: r.relationType === 'UPPER_STREAM_OF' || isCrossDomain,
+      animated: isCrossDomain,
       style: edgeStyle,
-      markerEnd: isBidirectional ? undefined : {
+      markerEnd: bidirectional ? undefined : {
         type: MarkerType.ArrowClosed,
         color: isCrossDomain ? '#8c8c8c' : color,
       },
-      markerStart: isBidirectional ? {
+      markerStart: bidirectional ? {
         type: MarkerType.ArrowClosed,
         color: isCrossDomain ? '#8c8c8c' : color,
       } : undefined,
@@ -346,6 +363,8 @@ export default function ConceptEditorPage() {
   const urlDomainId = Number(searchParams.get('domainId')) || null;
   const urlDomainIdRef = useRef<number | null>(urlDomainId);
 
+  const { labels, colors, sourceToTarget, sourceRoles, targetRoles, isSymmetric, types: relationTypes } = useRelationTypes();
+
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [relations, setRelations] = useState<ConceptRelation[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -375,6 +394,8 @@ export default function ConceptEditorPage() {
   const [treeMode, setTreeMode] = useState(false);
   const [treeData, setTreeData] = useState<ConceptTreeResponse[]>([]);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [editingRelationId, setEditingRelationId] = useState<number | null>(null);
+  const [editingExpression, setEditingExpression] = useState('');
 
   const [conceptMappings, setConceptMappings] = useState<ConceptMapping[]>([]);
   const [joinMappings, setJoinMappings] = useState<ConceptJoinMapping[]>([]);
@@ -404,23 +425,16 @@ export default function ConceptEditorPage() {
   const [industryRelationTypes, setIndustryRelationTypes] = useState<IndustryRelation[]>([]);
 
   const relationOptions = useMemo(() => {
-    const AUTO_KEYWORD_MAP: Record<string, string[]> = {
-      'COMPUTED_FROM': ['率', '比例', 'OEE', '齐套', '利用率'],
-      'PARENT_OF': ['总数', '清单', '层级', '指标'],
-      'EQUIVALENT_TO': ['MES.', 'QMS.', 'SAP.', 'ERP.'],
-      'PREREQUISITE_OF': ['排产', '计划', '工单'],
-      'UPPER_STREAM_OF': ['工序', '产出', '投入'],
-      'DERIVED_FROM': ['状态', '异常', '紧张', '告警'],
-    };
     return industryRelationTypes.map((ir) => ({
       type: ir.relationType,
-      title: RELATION_TYPE_LABELS[ir.relationType] || ir.relationType,
+      title: ir.label || labels[ir.relationType] || ir.relationType,
       desc: ir.description || '',
-      dot: RELATION_TYPE_COLORS[ir.relationType] || '#999',
-      autoKeywords: AUTO_KEYWORD_MAP[ir.relationType] || [],
+      dot: ir.color || colors[ir.relationType] || '#999',
       builtin: ir.isBuiltin,
+      sourceRole: ir.sourceRole || sourceRoles[ir.relationType] || '',
+      targetRole: ir.targetRole || targetRoles[ir.relationType] || '',
     }));
-  }, [industryRelationTypes]);
+  }, [industryRelationTypes, labels, colors, sourceRoles, targetRoles]);
 
   const [showChangeReview, setShowChangeReview] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<OntologyChangeLog[]>([]);
@@ -633,7 +647,7 @@ export default function ConceptEditorPage() {
       setConcepts(visibleConcepts);
       setRelations(allRelations);
 
-      const layout = layoutNodes(visibleConcepts, allRelations, getDomainName, getDomainColor);
+      const layout = layoutNodes(visibleConcepts, allRelations, getDomainName, getDomainColor, labels, colors, sourceToTarget, isSymmetric, sourceRoles, targetRoles);
       setNodes(layout.nodes);
       setEdges(layout.edges);
       reactFlow.fitView({ padding: 0.2 });
@@ -716,15 +730,23 @@ export default function ConceptEditorPage() {
   const handleInlineSave = useCallback(async (nodeId: string) => {
     if (!inlineName.trim()) return;
     const conceptId = Number(nodeId);
+    const existing = concepts.find((c) => c.id === conceptId);
     try {
-      await updateConcept(conceptId, { name: inlineName.trim() });
+      await updateConcept(conceptId, {
+        name: inlineName.trim(),
+        parentId: existing?.parentId ?? undefined,
+        groupId: existing?.groupId ?? undefined,
+        description: existing?.description ?? undefined,
+        anomalyThresholdExpr: existing?.anomalyThresholdExpr ?? undefined,
+        anomalyThresholdDesc: existing?.anomalyThresholdDesc ?? undefined,
+      });
       toast('名称已更新', 'success');
       setInlineEditing(null);
       fetchData();
     } catch {
       toast('更新失败', 'error');
     }
-  }, [inlineName, fetchData, toast]);
+  }, [inlineName, fetchData, toast, concepts]);
 
   const onPaneClick = useCallback(() => {
     setSelectedConcept(null);
@@ -750,12 +772,12 @@ export default function ConceptEditorPage() {
 
   const onPaneDoubleClick = useCallback((_event: React.MouseEvent) => {
     openCreateDialog('', (name) => {
-      createConcept({ name }).then(() => {
+      createConcept({ name, groupId: selectedDomainId ?? undefined }).then(() => {
         toast('概念创建成功', 'success');
         fetchData();
       }).catch(() => toast('概念创建失败', 'error'));
     });
-  }, [fetchData, toast, openCreateDialog]);
+  }, [fetchData, toast, openCreateDialog, selectedDomainId]);
 
   const onPaneDoubleClickHandler = useCallback((event: React.MouseEvent) => {
     onPaneDoubleClick(event);
@@ -779,15 +801,17 @@ export default function ConceptEditorPage() {
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
     pushUndo();
+    const availableTypes = relationOptions.map((o) => o.type);
     const suggested = suggestRelationType(
       concepts.find((c) => String(c.id) === connection.source)?.name || '',
-      concepts.find((c) => String(c.id) === connection.target)?.name || ''
+      concepts.find((c) => String(c.id) === connection.target)?.name || '',
+      availableTypes,
     );
     setPendingConnection({ source: connection.source, target: connection.target });
     setSelectedRelationType(suggested);
     setRelationExpression('');
     setShowRelationDialog(true);
-  }, [concepts, pushUndo]);
+  }, [concepts, pushUndo, relationOptions]);
 
   const onNodeDragStop = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
     // Check if dropped on another node to create PARENT_OF
@@ -812,7 +836,14 @@ export default function ConceptEditorPage() {
           message: `将「${source.name}」设为「${target.name}」的子概念？`,
         }).then((ok: boolean) => {
           if (ok) {
-            updateConcept(source.id, { name: source.name, parentId: target.id }).then(() => {
+            updateConcept(source.id, {
+              name: source.name,
+              parentId: target.id,
+              groupId: source.groupId ?? undefined,
+              description: source.description ?? undefined,
+              anomalyThresholdExpr: source.anomalyThresholdExpr ?? undefined,
+              anomalyThresholdDesc: source.anomalyThresholdDesc ?? undefined,
+            }).then(() => {
               toast('包含关系已建立', 'success');
               fetchData();
             }).catch(() => toast('操作失败', 'error'));
@@ -826,7 +857,7 @@ export default function ConceptEditorPage() {
     if (!pendingConnection) return;
     const sourceId = Number(pendingConnection.source);
     const targetId = Number(pendingConnection.target);
-    const dir = getRelationTypeDirection(selectedRelationType);
+    const dir = getRelationTypeDirection(selectedRelationType, sourceToTarget);
     try {
       await createConceptRelation(
         dir === 'source_to_target' ? sourceId : targetId,
@@ -874,7 +905,7 @@ export default function ConceptEditorPage() {
 
   const handleCreateSearchRelation = async () => {
     if (!searchRelSourceId || !searchRelTargetId) return;
-    const dir = getRelationTypeDirection(searchRelType);
+    const dir = getRelationTypeDirection(searchRelType, sourceToTarget);
     const sourceId = dir === 'source_to_target' ? searchRelSourceId : searchRelTargetId;
     const targetId = dir === 'source_to_target' ? searchRelTargetId : searchRelSourceId;
     try {
@@ -898,12 +929,12 @@ export default function ConceptEditorPage() {
   const handleCreateConcept = useCallback(() => {
     openCreateDialog('', (name) => {
       pushUndo();
-      createConcept({ name }).then(() => {
+      createConcept({ name, groupId: selectedDomainId ?? undefined }).then(() => {
         toast('概念创建成功', 'success');
         fetchData();
       }).catch(() => toast('概念创建失败', 'error'));
     });
-  }, [pushUndo, fetchData, toast, openCreateDialog]);
+  }, [pushUndo, fetchData, toast, openCreateDialog, selectedDomainId]);
 
   const handleRebuildIndex = async () => {
     try {
@@ -1044,6 +1075,7 @@ export default function ConceptEditorPage() {
       await updateConcept(selectedConcept.id, {
         name: editingForm.name,
         description: editingForm.description,
+        groupId: selectedConcept.groupId ?? undefined,
         anomalyThresholdExpr: editingForm.anomalyThresholdExpr || undefined,
         anomalyThresholdDesc: editingForm.anomalyThresholdDesc || undefined,
       });
@@ -1117,7 +1149,14 @@ export default function ConceptEditorPage() {
       try {
         const child = concepts.find((c) => c.id === childId);
         if (child) {
-          await updateConcept(childId, { name: child.name, parentId: undefined });
+          await updateConcept(childId, {
+            name: child.name,
+            parentId: undefined,
+            groupId: child.groupId ?? undefined,
+            description: child.description ?? undefined,
+            anomalyThresholdExpr: child.anomalyThresholdExpr ?? undefined,
+            anomalyThresholdDesc: child.anomalyThresholdDesc ?? undefined,
+          });
           toast('父子关系已移除', 'success');
           setSelectedEdge(null);
           fetchData();
@@ -1125,6 +1164,53 @@ export default function ConceptEditorPage() {
       } catch {
         toast('操作失败', 'error');
       }
+    }
+  };
+
+  const handleUpdateRelation = async () => {
+    if (!editingRelationId || !selectedEdge) return;
+    const relId = editingRelationId;
+    const rel = relations.find((r) => r.id === relId);
+    if (!rel) return;
+
+    // 同一 source 下同类型、尚未设置公式的兄弟关系，自动补充
+    const siblings = relations.filter(
+      (r) =>
+        r.sourceConceptId === rel.sourceConceptId &&
+        r.id !== relId &&
+        (sourceRoles[r.relationType] || '').includes('计算') &&
+        !r.expression
+    );
+
+    try {
+      await updateConceptRelation(rel.sourceConceptId, relId, {
+        targetConceptId: rel.targetConceptId,
+        relationType: rel.relationType,
+        expression: editingExpression || undefined,
+      });
+
+      // 同步更新所有兄弟关系的公式
+      await Promise.all(
+        siblings.map((sr) =>
+          updateConceptRelation(sr.sourceConceptId, sr.id, {
+            targetConceptId: sr.targetConceptId,
+            relationType: sr.relationType,
+            expression: editingExpression || undefined,
+          })
+        )
+      );
+
+      toast(
+        siblings.length > 0
+          ? `公式已保存，并自动补充 ${siblings.length} 条未设置公式的关系`
+          : '公式已保存',
+        'success'
+      );
+      setEditingRelationId(null);
+      setEditingExpression('');
+      fetchData();
+    } catch {
+      toast('关系更新失败', 'error');
     }
   };
 
@@ -1324,7 +1410,7 @@ export default function ConceptEditorPage() {
   const handleCopyNode = useCallback(() => {
     if (!selectedConcept) return;
     openCreateDialog(selectedConcept.name + ' (副本)', (name) => {
-      createConcept({ name, description: selectedConcept.description }).then(() => {
+      createConcept({ name, description: selectedConcept.description, groupId: selectedConcept.groupId ?? undefined }).then(() => {
         toast('概念已复制', 'success');
         fetchData();
       }).catch(() => toast('复制失败', 'error'));
@@ -1397,13 +1483,13 @@ export default function ConceptEditorPage() {
             if (node) reactFlow.setCenter(node.position.x, node.position.y, { zoom: 1.5, duration: 300 });
           }}
         >
-          <span className="treeIcon">{CONCEPT_NODE_ICONS[getNodeType(item as unknown as Concept, concepts, relations)] || CONCEPT_NODE_ICONS.default}</span>
+          <span className="treeIcon">{CONCEPT_NODE_ICONS[getNodeType(item as unknown as Concept, concepts, relations, sourceRoles, targetRoles)] || CONCEPT_NODE_ICONS.default}</span>
           <span className="treeName">{item.name}</span>
           {item.relations.length > 0 && (
             <span className="treeRelations">
               {item.relations.map((r) => (
-                <span key={r.id} className="treeRelationTag" style={{ background: RELATION_TYPE_COLORS[r.relationType] || '#999' }}>
-                  {RELATION_TYPE_LABELS[r.relationType] || r.relationType} → {r.targetConceptName}
+                <span key={r.id} className="treeRelationTag" style={{ background: colors[r.relationType] || '#999' }}>
+                  {labels[r.relationType] || r.relationType} → {r.targetConceptName}
                 </span>
               ))}
             </span>
@@ -1589,7 +1675,7 @@ export default function ConceptEditorPage() {
         {!treeMode && selectedConcept && (
           <div className="sidebar">
             <div className="sidebarHeader">
-              <span className="sidebarHeaderIcon">{CONCEPT_NODE_ICONS[getNodeType(selectedConcept, concepts, relations)] || CONCEPT_NODE_ICONS.default}</span>
+              <span className="sidebarHeaderIcon">{CONCEPT_NODE_ICONS[getNodeType(selectedConcept, concepts, relations, sourceRoles, targetRoles)] || CONCEPT_NODE_ICONS.default}</span>
               <div className="sidebarHeaderInfo">
                 <div className="sidebarHeaderName">{selectedConcept.name}</div>
                 <div className="sidebarHeaderMeta">
@@ -1598,7 +1684,7 @@ export default function ConceptEditorPage() {
                       {getDomainName(selectedConcept.groupId)}
                     </span>
                   )}
-                  <span className="sidebarHeaderType">{getNodeType(selectedConcept, concepts, relations)}</span>
+                  <span className="sidebarHeaderType">{getNodeType(selectedConcept, concepts, relations, sourceRoles, targetRoles)}</span>
                 </div>
               </div>
             </div>
@@ -1658,9 +1744,9 @@ export default function ConceptEditorPage() {
                   const isSource = r.sourceConceptId === selectedConcept.id;
                   const otherId = isSource ? r.targetConceptId : r.sourceConceptId;
                   const otherConcept = concepts.find((c) => c.id === otherId);
-                  const color = RELATION_TYPE_COLORS[r.relationType] || '#999';
-                  const label = RELATION_TYPE_LABELS[r.relationType] || r.relationType;
-                  const dir = getRelationTypeDirection(r.relationType);
+                  const color = colors[r.relationType] || '#999';
+                  const label = labels[r.relationType] || r.relationType;
+                  const dir = getRelationTypeDirection(r.relationType, sourceToTarget);
                   const arrow = (dir === 'source_to_target' && isSource) || (dir !== 'source_to_target' && !isSource) ? ' → ' : ' ← ';
                   const otherGroup = otherConcept ? getDomainName(otherConcept.groupId) : '';
                   return (
@@ -1775,38 +1861,157 @@ export default function ConceptEditorPage() {
           </div>
         )}
 
-        {!treeMode && !selectedConcept && selectedEdge && (
-          <div className="sidebar">
-            <div className="sidebarTitle">关系详情</div>
-            <div className="sidebarSection">
-              <div className="formGroup">
-                <label className="formLabel">关系 ID</label>
-                <div className="formValue">{selectedEdge.id}</div>
-              </div>
-              <div className="formGroup">
-                <label className="formLabel">来源</label>
-                <div className="formValue">
+        {!treeMode && !selectedConcept && selectedEdge && (() => {
+            const relId = Number(selectedEdge.id.replace('rel-', ''));
+            const rel = relations.find((r) => r.id === relId);
+            const isEditing = editingRelationId === relId;
+            const hasExpression = sourceRoles[rel?.relationType || '']?.includes('计算');
+            const sourceConcept = rel ? concepts.find((c) => c.id === rel.sourceConceptId) : null;
+            const sourceName = sourceConcept?.name || '?';
+            // 同源的所有计算因子（包括当前这条，用于展示完整公式的所有因子）
+            const allFactors = rel
+              ? relations.filter(
+                  (r) =>
+                    r.sourceConceptId === rel.sourceConceptId &&
+                    (sourceRoles[r.relationType] || '').includes('计算')
+                )
+              : [];
+            const currentFactor = rel ? concepts.find((c) => c.id === rel.targetConceptId) : null;
+            return (
+          <div className="relationPanel">
+            <div className="relationPanelHeader">
+              <span className="relationPanelTitle">关系详情</span>
+              <button className="relationPanelClose" onClick={() => setSelectedEdge(null)} title="关闭">×</button>
+            </div>
+
+            <div className="relationPanelBody">
+              {/* 方向指示 */}
+              <div className="relationDirection">
+                <span className="relationDirectionSource" title={concepts.find((c) => String(c.id) === selectedEdge.source)?.name}>
                   {concepts.find((c) => String(c.id) === selectedEdge.source)?.name || selectedEdge.source}
-                </div>
-              </div>
-              <div className="formGroup">
-                <label className="formLabel">目标</label>
-                <div className="formValue">
+                </span>
+                <span className="relationDirectionArrow">→</span>
+                <span className="relationDirectionTarget" title={concepts.find((c) => String(c.id) === selectedEdge.target)?.name}>
                   {concepts.find((c) => String(c.id) === selectedEdge.target)?.name || selectedEdge.target}
+                </span>
+                <span className="relationDirectionType" style={{ background: colors[rel?.relationType || ''] || '#999' }}>
+                  {labels[rel?.relationType || ''] || rel?.relationType || '未知'}
+                </span>
+              </div>
+
+              {/* 基本信息 */}
+              <div className="relationInfoCard">
+                <div className="relationInfoCardTitle">基本信息</div>
+                <div className="relationInfoRow">
+                  <span className="relationInfoLabel">关系 ID</span>
+                  <span className="relationInfoValue">{selectedEdge.id}</span>
+                </div>
+                <div className="relationInfoRow">
+                  <span className="relationInfoLabel">来源</span>
+                  <span className="relationInfoValue" style={{ color: '#1677ff', fontFamily: 'inherit' }}>
+                    {concepts.find((c) => String(c.id) === selectedEdge.source)?.name || selectedEdge.source}
+                  </span>
+                </div>
+                <div className="relationInfoRow">
+                  <span className="relationInfoLabel">目标</span>
+                  <span className="relationInfoValue" style={{ color: '#52c41a', fontFamily: 'inherit' }}>
+                    {concepts.find((c) => String(c.id) === selectedEdge.target)?.name || selectedEdge.target}
+                  </span>
+                </div>
+                <div className="relationInfoRow">
+                  <span className="relationInfoLabel">类型</span>
+                  <span className="relationInfoValue" style={{ fontFamily: 'inherit' }}>
+                    {labels[rel?.relationType || ''] || rel?.relationType || '未知'}
+                  </span>
                 </div>
               </div>
-              <div className="formGroup">
-                <label className="formLabel">关系类型</label>
-                <div className="formValue">{selectedEdge.label as string || '未知'}</div>
-              </div>
-              {relations.some(r => `rel-${r.id}` === selectedEdge.id) && (
-                <div className="formActions">
-                  <button className="btnDanger" onClick={handleDeleteEdge}>删除关系</button>
+
+              {/* 计算公式（仅 COMPUTED_FROM / DERIVED_FROM） */}
+              {rel && hasExpression && (
+                <div className="relationFormulaCard">
+                  <div className="relationFormulaCardTitle">计算公式</div>
+                  <div className="relationFormulaSource">
+                    <span className="relationFormulaSourceIcon">⚙</span>
+                    计算结果：{sourceName}
+                  </div>
+                  {isEditing ? (
+                    <>
+                      <input
+                        className="relationFormulaInput"
+                        value={editingExpression}
+                        onChange={(e) => setEditingExpression(e.target.value)}
+                        placeholder="如: 可用率 × 性能率 × 质量率"
+                        autoFocus
+                      />
+                      {allFactors.length > 0 && (
+                        <div className="relationChips">
+                          <span className="relationChipsLabel">所有因子</span>
+                          {allFactors.map((sr) => {
+                            const tgt = concepts.find((c) => c.id === sr.targetConceptId);
+                            const isCurrent = sr.id === relId;
+                            const name = tgt?.name || '?';
+                            return (
+                              <span
+                                key={sr.id}
+                                className={`relationChip${isCurrent ? ' relationChipCurrent' : ''}`}
+                                title={isCurrent ? `当前因子：${name}（公式中必须包含）` : `点击插入：${name}`}
+                                onClick={() => {
+                                  if (name && name !== '?') {
+                                    setEditingExpression((prev) => {
+                                      const trimmed = prev.trimEnd();
+                                      const needSep = trimmed.length > 0 && !trimmed.endsWith('×') && !trimmed.endsWith('+') && !trimmed.endsWith('-') && !trimmed.endsWith('÷') && !trimmed.endsWith('*') && !trimmed.endsWith(' ');
+                                      return (needSep ? trimmed + ' × ' : trimmed + ' ') + name;
+                                    });
+                                  }
+                                }}
+                              >
+                                {isCurrent ? (
+                                  <span className="relationChipCurrentBadge">当前</span>
+                                ) : (
+                                  <span className="relationChipPlus">+</span>
+                                )}
+                                {name}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="relationPanelActions">
+                        <button className="relationSaveBtn" onClick={handleUpdateRelation}>保存公式</button>
+                        <button className="relationCancelBtn" onClick={() => { setEditingRelationId(null); setEditingExpression(''); }}>取消</button>
+                        <div className="relationPanelActionsSpacer" />
+                        <button className="relationDeleteBtn" onClick={handleDeleteEdge}>删除关系</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="relationFormulaDisplay">
+                        {rel.expression ? rel.expression : <span className="relationFormulaEmpty">未设置</span>}
+                      </div>
+                      <div className="relationPanelActions">
+                        <button className="relationEditBtn" onClick={() => {
+                          setEditingRelationId(relId);
+                          setEditingExpression(rel.expression || '');
+                        }}>编辑公式</button>
+                        <div className="relationPanelActionsSpacer" />
+                        <button className="relationDeleteBtn" onClick={handleDeleteEdge}>删除关系</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 无公式时的操作按钮 */}
+              {rel && !hasExpression && (
+                <div className="relationPanelActions" style={{ padding: '12px 16px', background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                  <div className="relationPanelActionsSpacer" />
+                  <button className="relationDeleteBtn" onClick={handleDeleteEdge}>删除关系</button>
                 </div>
               )}
             </div>
           </div>
-        )}
+          );
+          })()}
       </div>
 
       {inlineEditing && (
@@ -1931,15 +2136,19 @@ export default function ConceptEditorPage() {
                 <div className="relationOptionTitle">
                   <span className="relationOptionDot" style={{ background: opt.dot }} />
                   {opt.title}
-                  {opt.autoKeywords.some((kw) =>
-                    `${pendingConnection.source}${pendingConnection.target}`.includes(kw)
-                  ) && <span className="autoTag">推荐</span>}
                   {opt.builtin && <span className="builtinTag">内置</span>}
                 </div>
-                <div className="relationOptionDesc">{opt.desc}</div>
+                <div className="relationOptionDesc">
+                  {opt.desc}
+                  {opt.sourceRole && opt.targetRole && (
+                    <span style={{ color: '#999', fontSize: 11 }}>
+                      {' '}起点={opt.sourceRole}，终点={opt.targetRole}
+                    </span>
+                  )}
+                </div>
               </button>
             ))}
-            {selectedRelationType === 'COMPUTED_FROM' && (
+            {sourceRoles[selectedRelationType]?.includes('计算') && (
               <div className="formGroup" style={{ marginTop: 12 }}>
                 <label className="formLabel">计算公式（可选）</label>
                 <input
@@ -2207,10 +2416,17 @@ export default function ConceptEditorPage() {
                       <span className="relationOptionDot" style={{ background: opt.dot }} />
                       {opt.title}
                     </div>
-                    <div className="relationOptionDesc">{opt.desc}</div>
+                    <div className="relationOptionDesc">
+                      {opt.desc}
+                      {opt.sourceRole && opt.targetRole && (
+                        <span style={{ color: '#999', fontSize: 11 }}>
+                          {' '}起点={opt.sourceRole}，终点={opt.targetRole}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 ))}
-                {searchRelType === 'COMPUTED_FROM' && (
+                {sourceRoles[searchRelType]?.includes('计算') && (
                   <div className="formGroup" style={{ marginTop: 12 }}>
                     <label className="formLabel">计算公式（可选）</label>
                     <input

@@ -1,6 +1,6 @@
 import { get, post, put, del } from './client';
 import { useAuthStore } from '@/stores/authStore';
-import type { Concept, ConceptDetailResponse, ConceptRelation, ConceptTreeResponse, ToolConcept, CreateConceptRequest, CreateRelationRequest, CreateToolConceptRequest, OntologyGroup, Industry, IndustryRelation, ConceptMapping, ConceptJoinMapping, ConceptToolBinding, ConceptFeedback } from '@/types/concept';
+import type { Concept, ConceptDetailResponse, ConceptRelation, ConceptTreeResponse, ToolConcept, CreateConceptRequest, CreateRelationRequest, CreateToolConceptRequest, OntologyGroup, Industry, IndustryRelation, ConceptMapping, ConceptJoinMapping, ConceptToolBinding, ConceptFeedback, RelationTypeMeta } from '@/types/concept';
 
 export function listConcepts(groupId?: number, keyword?: string) {
   const params = new URLSearchParams();
@@ -404,4 +404,8 @@ export function batchApproveOntologyChanges(changeIds: number[]) {
 
 export function batchRejectOntologyChanges(changeIds: number[]) {
   return post<{ success: boolean; rejected: number }>('/ontology/changes/batch/reject', { changeIds });
+}
+
+export function fetchBuiltinRelationTypes() {
+  return get<RelationTypeMeta[]>('/ontology-groups/builtin-relation-types');
 }

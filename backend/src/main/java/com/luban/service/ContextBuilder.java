@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.entity.*;
 import com.luban.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -244,7 +246,8 @@ public class ContextBuilder {
         boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
                 tableMappings, joinMappings, authorizedConceptIds, groupNameMap,
-                drillDimensions, correlatedDimensions, messages, availableDatasources,
+                drillDimensions, correlatedDimensions, ontologyRelations,
+                messages, availableDatasources,
                 availableRelations, isAdmin, intent);
 
         // ===== 构建概念追踪管道 =====
@@ -542,6 +545,9 @@ public class ContextBuilder {
                 sb.append("     - ").append(r.getRelationType());
                 if (r.getDescription() != null && !r.getDescription().isEmpty())
                     sb.append(": ").append(r.getDescription());
+                if (r.getSourceRole() != null && r.getTargetRole() != null)
+                    sb.append("。source=").append(r.getSourceRole())
+                            .append(", target=").append(r.getTargetRole());
                 sb.append("\n");
             }
         }
@@ -552,7 +558,9 @@ public class ContextBuilder {
             List<ToolDefinition> apiTools, List<ConceptMapping> tableMappings,
             List<ConceptJoinMapping> joinMappings, Set<Long> authorizedConceptIds,
             Map<Long, String> groupNameMap, Map<Long, List<Map<String, Object>>> drillDimensions,
-            Map<Long, List<Map<String, Object>>> correlatedDimensions, List<Map<String, Object>> messages,
+            Map<Long, List<Map<String, Object>>> correlatedDimensions,
+            Map<Long, List<Map<String, Object>>> ontologyRelations,
+            List<Map<String, Object>> messages,
             List<Map<String, Object>> availableDatasources, String availableRelations,
             boolean isAdmin, String intent) {
 
@@ -569,6 +577,8 @@ public class ContextBuilder {
         } else {
             sb.append("## 当前任务：数据查询\n");
             sb.append("用户想查数据、分析指标、下钻根因。请使用 tool_call/nl2sql/code_mode/final_answer 完成查询。\n");
+            sb.append("final_answer 必须展示证据链：先列出执行的 SQL 与关键查询结果，再给出结论。\n");
+            sb.append("禁止不引用任何查询数据就直接输出答案。\n");
         }
         sb.append("\n");
 
@@ -710,6 +720,37 @@ public class ContextBuilder {
             }
         }
 
+        if (ontologyRelations != null && !ontologyRelations.isEmpty()) {
+            sb.append("## 计算关系（COMPUTED_FROM/DERIVED_FROM）\n");
+            sb.append("以下概念由其他概念计算得出或派生。\n\n");
+            sb.append("**查询规则（双通道验证）：**\n");
+            sb.append("- 同时查询预计算字段和所有因子列，SQL 一条覆盖\n");
+            sb.append("- 按公式从因子计算，与预计算字段交叉验证\n");
+            sb.append("- 输出 final_answer 前自检：SQL 是否同时包含预计算字段和所有因子列？\n");
+            sb.append("- final_answer 展示证据链：公式 → 各因子值 → 计算结果 → 预计算字段值 → 一致性判定\n\n");
+            for (Map.Entry<Long, List<Map<String, Object>>> entry : ontologyRelations.entrySet()) {
+                Long sourceConceptId = entry.getKey();
+                String sourceName = conceptTrace.stream()
+                        .filter(t -> sourceConceptId.equals(t.get("conceptId")))
+                        .map(t -> String.valueOf(t.get("conceptName"))).findFirst().orElse("概念" + sourceConceptId);
+                for (Map<String, Object> rel : entry.getValue()) {
+                    String relType = String.valueOf(rel.getOrDefault("relation", ""));
+                    boolean isComputed = "COMPUTED_FROM".equals(relType);
+                    boolean isDerived = "DERIVED_FROM".equals(relType);
+                    if (!isComputed && !isDerived) continue;
+                    String targetName = String.valueOf(rel.getOrDefault("conceptName", "?"));
+                    String expression = rel.get("expression") != null ? String.valueOf(rel.get("expression")) : null;
+                    sb.append("- **").append(sourceName).append("** ").append(isComputed ? "由" : "派生自").append(" **").append(targetName).append("**");
+                    if (expression != null && !expression.isEmpty()) {
+                        String cleanExpr = expression.replaceFirst("^\\s*" + Pattern.quote(sourceName) + "\\s*=\\s*", "");
+                        sb.append("：`").append(sourceName).append(" = ").append(cleanExpr).append("`");
+                    }
+                    sb.append("\n");
+                }
+            }
+            sb.append("\n");
+        }
+
         String previousAnalysis = buildPreviousAnalysisContext(messages);
         if (!previousAnalysis.isEmpty()) {
             sb.append("## 上轮分析回顾\n").append(previousAnalysis).append("\n");
@@ -815,8 +856,7 @@ public class ContextBuilder {
             if (availableRelations != null && !availableRelations.isEmpty()) {
                 sb.append(availableRelations);
             } else {
-                sb.append("     - DRILLS_INTO: 可下钻到子维度\n");
-                sb.append("     - CORRELATED: 关联维度\n");
+                sb.append(BuiltinRelation.toPromptList());
             }
             sb.append("\n\n");
         }

@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.entity.Industry;
 import com.luban.entity.IndustryRelation;
 import com.luban.repository.IndustryRelationRepository;
@@ -31,12 +32,6 @@ public class IndustryService {
                 .orElseThrow(() -> new NoSuchElementException("行业不存在: " + id));
     }
 
-    private static final String[][] DEFAULT_RELATIONS = {
-        {"DRILLS_INTO", "可下钻到子维度，纯分析导航", "true", "false", "0", "true"},
-        {"DRILLED_FROM", "上卷维度，DRILLS_INTO 的逆，自动推导", "true", "false", "1", "true"},
-        {"CORRELATED", "关联维度，交叉分析提示", "false", "false", "2", "true"},
-    };
-
     @Transactional
     public Industry create(Industry industry) {
         if (industryRepository.existsByName(industry.getName())) {
@@ -48,18 +43,23 @@ public class IndustryService {
     }
 
     private void createDefaultRelations(Long industryId) {
-        for (String[] def : DEFAULT_RELATIONS) {
+        for (BuiltinRelation def : BuiltinRelation.values()) {
             IndustryRelation relation = new IndustryRelation();
             relation.setIndustryId(industryId);
-            relation.setRelationType(def[0]);
-            relation.setDescription(def[1]);
-            relation.setIsTransitive(Boolean.parseBoolean(def[2]));
-            relation.setIsSymmetric(Boolean.parseBoolean(def[3]));
-            relation.setSortOrder(Integer.parseInt(def[4]));
-            relation.setIsBuiltin(Boolean.parseBoolean(def[5]));
+            relation.setRelationType(def.name());
+            relation.setDescription(def.description());
+            relation.setLabel(def.label());
+            relation.setColor(def.color());
+            relation.setSourceRole(def.sourceRole());
+            relation.setTargetRole(def.targetRole());
+            relation.setSourceToTarget(def.sourceToTarget());
+            relation.setIsTransitive(def.isTransitive());
+            relation.setIsSymmetric(def.isSymmetric());
+            relation.setSortOrder(def.sortOrder());
+            relation.setIsBuiltin(true);
             industryRelationRepository.save(relation);
         }
-        log.info("为行业 {} 创建默认关系类型 {} 种", industryId, DEFAULT_RELATIONS.length);
+        log.info("为行业 {} 创建默认关系类型 {} 种", industryId, BuiltinRelation.values().length);
     }
 
     @Transactional

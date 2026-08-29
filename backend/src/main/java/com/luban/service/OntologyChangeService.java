@@ -282,6 +282,7 @@ public class OntologyChangeService {
             case "UPDATE_CONCEPT" -> executeUpdateConcept(data);
             case "DELETE_CONCEPT" -> executeDeleteConcept(data);
             case "ADD_RELATION" -> executeAddRelation(data);
+            case "UPDATE_RELATION" -> executeUpdateRelation(data);
             case "DELETE_RELATION" -> executeDeleteRelation(data);
             case "ADD_MAPPING" -> executeAddMapping(data);
             case "UPDATE_MAPPING" -> executeUpdateMapping(data);
@@ -459,6 +460,7 @@ public class OntologyChangeService {
         String targetName = (String) relationData.get("targetConceptName");
         String relationType = (String) relationData.get("relationType");
         String description = (String) relationData.get("description");
+        String expression = (String) relationData.get("expression");
 
         if (sourceName == null || targetName == null || relationType == null) {
             throw new RuntimeException("ADD_RELATION 缺少必填字段");
@@ -487,8 +489,65 @@ public class OntologyChangeService {
         relation.setTargetConceptId(targetId);
         relation.setRelationType(relationType);
         relation.setDescription(description);
+        relation.setExpression(expression);
         conceptRelationRepository.save(relation);
-        log.info("ADD_RELATION executed: {} -[{}]-> {}", sourceName, relationType, targetName);
+
+        // 如果设置了公式，补充到同一 source 下同类型、尚未设置公式的兄弟关系
+        if (expression != null && !expression.isBlank()) {
+            List<ConceptRelation> siblings = conceptRelationRepository
+                    .findBySourceConceptIdAndRelationType(sourceId, relationType);
+            int synced = 0;
+            for (ConceptRelation sr : siblings) {
+                if (!sr.getId().equals(relation.getId())
+                        && (sr.getExpression() == null || sr.getExpression().isBlank())) {
+                    sr.setExpression(expression);
+                    conceptRelationRepository.save(sr);
+                    synced++;
+                }
+            }
+            if (synced > 0) {
+                log.info("ADD_RELATION filled expression to {} sibling relations (existing expressions preserved)", synced);
+            }
+        }
+
+        log.info("ADD_RELATION executed: {} -[{}]-> {} (expression={})", sourceName, relationType, targetName, expression);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void executeUpdateRelation(Map<String, Object> data) {
+        Map<String, Object> relationData = (Map<String, Object>) data.get("relation");
+        if (relationData == null) {
+            throw new RuntimeException("UPDATE_RELATION 缺少 relation 数据");
+        }
+        Object idObj = relationData.get("id");
+        if (!(idObj instanceof Number)) {
+            throw new RuntimeException("UPDATE_RELATION 缺少 id 或 id 不是数字");
+        }
+        Long relationId = ((Number) idObj).longValue();
+        ConceptRelation relation = conceptRelationRepository.findById(relationId)
+                .orElseThrow(() -> new RuntimeException("关系不存在: " + relationId));
+
+        if (relationData.containsKey("sourceConceptName")) {
+            String sourceName = (String) relationData.get("sourceConceptName");
+            List<Concept> sources = conceptRepository.findByName(sourceName);
+            if (!sources.isEmpty()) relation.setSourceConceptId(sources.get(0).getId());
+        }
+        if (relationData.containsKey("targetConceptName")) {
+            String targetName = (String) relationData.get("targetConceptName");
+            List<Concept> targets = conceptRepository.findByName(targetName);
+            if (!targets.isEmpty()) relation.setTargetConceptId(targets.get(0).getId());
+        }
+        if (relationData.containsKey("relationType")) {
+            relation.setRelationType((String) relationData.get("relationType"));
+        }
+        if (relationData.containsKey("description")) {
+            relation.setDescription((String) relationData.get("description"));
+        }
+        if (relationData.containsKey("expression")) {
+            relation.setExpression((String) relationData.get("expression"));
+        }
+        conceptRelationRepository.save(relation);
+        log.info("UPDATE_RELATION executed: id={}", relationId);
     }
 
     private void ensureRelationTypeRegistered(Long conceptId, String relationType, String description) {
@@ -510,6 +569,11 @@ public class OntologyChangeService {
             ir.setIndustryId(industryId);
             ir.setRelationType(relationType);
             ir.setDescription(description != null ? description : "LLM自动生成的关系类型");
+            ir.setLabel(relationType);
+            ir.setColor("#999999");
+            ir.setSourceRole("源概念");
+            ir.setTargetRole("目标概念");
+            ir.setSourceToTarget(false);
             ir.setIsBuiltin(false);
             ir.setIsTransitive(false);
             ir.setIsSymmetric(false);

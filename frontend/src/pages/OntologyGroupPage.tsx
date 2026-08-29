@@ -50,7 +50,7 @@ export default function OntologyGroupPage() {
   const [industryRelations, setIndustryRelations] = useState<Record<number, IndustryRelation[]>>({});
   const [showRelationForm, setShowRelationForm] = useState(false);
   const [editingRelation, setEditingRelation] = useState<IndustryRelation | null>(null);
-  const [relationForm, setRelationForm] = useState({ relationType: '', description: '', isTransitive: false, isSymmetric: false, sortOrder: 0 });
+  const [relationForm, setRelationForm] = useState({ relationType: '', description: '', label: '', color: '#999999', sourceRole: '', targetRole: '', sourceToTarget: false, isTransitive: false, isSymmetric: false, sortOrder: 0 });
   const [relationSaving, setRelationSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<OntologyGroup | null>(null);
@@ -186,7 +186,7 @@ export default function OntologyGroupPage() {
 
   const openRelationCreate = (industryId: number) => {
     setEditingRelation(null);
-    setRelationForm({ relationType: '', description: '', isTransitive: false, isSymmetric: false, sortOrder: 0 });
+    setRelationForm({ relationType: '', description: '', label: '', color: '#999999', sourceRole: '', targetRole: '', sourceToTarget: false, isTransitive: false, isSymmetric: false, sortOrder: 0 });
     setShowRelationForm(true);
   };
 
@@ -518,6 +518,7 @@ export default function OntologyGroupPage() {
                                   <th>描述</th>
                                   <th>传递性</th>
                                   <th>对称性</th>
+                                  <th>方向</th>
                                   <th>排序</th>
                                   <th>操作</th>
                                 </tr>
@@ -532,6 +533,11 @@ export default function OntologyGroupPage() {
                                     <td className="og-page__rel-desc">{rel.description || '-'}</td>
                                     <td>{rel.isTransitive ? <span className="og-page__rel-tag yes">是</span> : <span className="og-page__rel-tag">否</span>}</td>
                                     <td>{rel.isSymmetric ? <span className="og-page__rel-tag yes">是</span> : <span className="og-page__rel-tag">否</span>}</td>
+                                    <td style={{ fontSize: 11, color: '#666' }}>
+                                      {rel.sourceRole && rel.targetRole
+                                        ? `${rel.sourceRole} → ${rel.targetRole}`
+                                        : '-'}
+                                    </td>
                                     <td>{rel.sortOrder}</td>
                                     <td>
                                       {!rel.isBuiltin && (
@@ -873,6 +879,24 @@ export default function OntologyGroupPage() {
                 />
               </div>
               <div className="og-page__form-group">
+                <label>显示标签</label>
+                <input
+                  type="text"
+                  placeholder="如：组成部分"
+                  value={relationForm.label}
+                  onChange={(e) => setRelationForm((prev) => ({ ...prev, label: e.target.value }))}
+                />
+              </div>
+              <div className="og-page__form-group">
+                <label>显示颜色</label>
+                <input
+                  type="color"
+                  value={relationForm.color}
+                  onChange={(e) => setRelationForm((prev) => ({ ...prev, color: e.target.value }))}
+                  style={{ width: 60, height: 32, padding: 2, border: '1px solid #d9d9d9', borderRadius: 4 }}
+                />
+              </div>
+              <div className="og-page__form-group">
                 <label>描述</label>
                 <textarea
                   placeholder="关系类型描述"
@@ -880,6 +904,40 @@ export default function OntologyGroupPage() {
                   value={relationForm.description}
                   onChange={(e) => setRelationForm((prev) => ({ ...prev, description: e.target.value }))}
                 />
+              </div>
+              <div className="og-page__form-group">
+                <label>起点角色（source 概念的角色）</label>
+                <input
+                  type="text"
+                  placeholder="如：组成部分"
+                  value={relationForm.sourceRole}
+                  onChange={(e) => setRelationForm((prev) => ({ ...prev, sourceRole: e.target.value }))}
+                />
+              </div>
+              <div className="og-page__form-group">
+                <label>终点角色（target 概念的角色）</label>
+                <input
+                  type="text"
+                  placeholder="如：整体"
+                  value={relationForm.targetRole}
+                  onChange={(e) => setRelationForm((prev) => ({ ...prev, targetRole: e.target.value }))}
+                />
+              </div>
+              <div className="og-page__form-group">
+                <div className="og-page__switch-label">
+                  <span className="og-page__switch-text">
+                    拖线方向=存储方向
+                    <span className="og-page__switch-hint">连线时起点作为 sourceConceptId</span>
+                  </span>
+                  <label className="og-page__switch">
+                    <input
+                      type="checkbox"
+                      checked={relationForm.sourceToTarget}
+                      onChange={(e) => setRelationForm((prev) => ({ ...prev, sourceToTarget: e.target.checked }))}
+                    />
+                    <span className="og-page__switch-slider" />
+                  </label>
+                </div>
               </div>
               <div className="og-page__form-group">
                 <div className="og-page__switch-label">

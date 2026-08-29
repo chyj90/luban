@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.entity.*;
 import com.luban.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -241,7 +242,7 @@ public class SqlExecutionService {
         if (ids.isEmpty() && !conceptIds.isEmpty()) {
             if (hasComputed) {
                 List<ConceptRelation> drillRelations = conceptRelationRepository.findBySourceConceptIdIn(conceptIds)
-                        .stream().filter(r -> "DRILLS_INTO".equals(r.getRelationType())).toList();
+                        .stream().filter(r -> BuiltinRelation.DRILLS_INTO.name().equals(r.getRelationType())).toList();
                 if (!drillRelations.isEmpty()) {
                     List<Long> childIds = drillRelations.stream()
                             .map(ConceptRelation::getTargetConceptId).distinct().toList();

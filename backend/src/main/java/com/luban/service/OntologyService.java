@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
@@ -20,6 +21,8 @@ import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.jena.ontology.*;
 import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.rdf.model.Resource;
+import org.apache.jena.rdf.model.Statement;
 import org.apache.jena.rdf.model.StmtIterator;
 import org.apache.jena.util.iterator.ExtendedIterator;
 import org.slf4j.LoggerFactory;
@@ -170,6 +173,7 @@ public class OntologyService {
             }
         }
 
+        Map<Long, Individual> conceptIndividuals = new HashMap<>();
         List<ConceptRelation> relations = conceptRelationRepository.findAll();
         for (ConceptRelation r : relations) {
             Long industryId = conceptIndustryMap.get(r.getSourceConceptId());
@@ -183,8 +187,13 @@ public class OntologyService {
             Set<String> symmetricTypes = industrySymmetricTypes.getOrDefault(industryId, Set.of());
             ObjectProperty prop = getOrCreateProperty(industryId, newModels.get(industryId), r.getRelationType(),
                     transitiveTypes, symmetricTypes);
-            Individual sourceInd = source.createIndividual(NS + "s_" + r.getId());
-            Individual targetInd = target.createIndividual(NS + "t_" + r.getId());
+
+            Long sourceConceptId = r.getSourceConceptId();
+            Long targetConceptId = r.getTargetConceptId();
+            Individual sourceInd = conceptIndividuals.computeIfAbsent(sourceConceptId,
+                    id -> source.createIndividual(NS + "c_" + id));
+            Individual targetInd = conceptIndividuals.computeIfAbsent(targetConceptId,
+                    id -> target.createIndividual(NS + "c_" + id));
             sourceInd.addProperty(prop, targetInd);
         }
 
@@ -267,35 +276,33 @@ public class OntologyService {
                                     changed = true;
                                 }
                             }
-                        }
-                    }
 
-                    List<ConceptRelation> computedFrom = conceptRelationRepository
-                            .findByTargetConceptIdAndRelationType(cid, "COMPUTED_FROM");
-                    for (ConceptRelation r : computedFrom) {
-                        if (expandedConceptIds.add(r.getSourceConceptId())) {
-                            newIds.add(r.getSourceConceptId());
-                            changed = true;
-                        }
-                    }
-
-                    List<ConceptRelation> derivedFrom = conceptRelationRepository
-                            .findByTargetConceptIdAndRelationType(cid, "DERIVED_FROM");
-                    for (ConceptRelation r : derivedFrom) {
-                        if (expandedConceptIds.add(r.getSourceConceptId())) {
-                            newIds.add(r.getSourceConceptId());
-                            changed = true;
-                        }
-                    }
-
-                    List<ConceptRelation> equivs = new ArrayList<>();
-                    equivs.addAll(conceptRelationRepository.findBySourceConceptIdAndRelationType(cid, "EQUIVALENT_TO"));
-                    equivs.addAll(conceptRelationRepository.findByTargetConceptIdAndRelationType(cid, "EQUIVALENT_TO"));
-                    for (ConceptRelation r : equivs) {
-                        Long otherId = r.getSourceConceptId().equals(cid) ? r.getTargetConceptId() : r.getSourceConceptId();
-                        if (expandedConceptIds.add(otherId)) {
-                            newIds.add(otherId);
-                            changed = true;
+                            for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
+                                Individual ind = it.next();
+                                for (StmtIterator sit = ind.listProperties(); sit.hasNext(); ) {
+                                    Statement stmt = sit.next();
+                                    String propName = stmt.getPredicate().getLocalName();
+                                    if (!BuiltinRelation.COMPUTED_FROM.name().equals(propName)
+                                            && !BuiltinRelation.DERIVED_FROM.name().equals(propName)
+                                            && !BuiltinRelation.EQUIVALENT_TO.name().equals(propName)) {
+                                        continue;
+                                    }
+                                    if (stmt.getObject().isResource()) {
+                                        Resource obj = stmt.getObject().asResource();
+                                        if (obj.canAs(Individual.class)) {
+                                            Individual targetInd = obj.as(Individual.class);
+                                            OntClass targetCls = targetInd.getOntClass();
+                                            if (targetCls != null && !targetCls.isAnon() && targetCls.getLocalName() != null) {
+                                                Long targetId = findConceptIdByName(unescapeUri(targetCls.getLocalName()));
+                                                if (targetId != null && expandedConceptIds.add(targetId)) {
+                                                    newIds.add(targetId);
+                                                    changed = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -329,6 +336,18 @@ public class OntologyService {
     private Long findConceptIdByName(String name) {
         List<Concept> concepts = conceptRepository.findByName(name);
         return concepts.isEmpty() ? null : concepts.get(0).getId();
+    }
+
+    /**
+     * 查询两个概念之间指定类型关系的 expression（计算公式/条件）。
+     */
+    private String getRelationExpression(Long sourceConceptId, Long targetConceptId, String relationType) {
+        List<ConceptRelation> rels = conceptRelationRepository
+                .findBySourceConceptIdAndTargetConceptIdAndRelationType(sourceConceptId, targetConceptId, relationType);
+        if (!rels.isEmpty() && rels.get(0).getExpression() != null) {
+            return rels.get(0).getExpression();
+        }
+        return null;
     }
 
     /**
@@ -473,9 +492,9 @@ public class OntologyService {
             for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
                 Individual ind = it.next();
                 for (StmtIterator sit = ind.listProperties(); sit.hasNext(); ) {
-                    org.apache.jena.rdf.model.Statement stmt = sit.next();
+                    Statement stmt = sit.next();
                     if (stmt.getObject().isResource()) {
-                        org.apache.jena.rdf.model.Resource obj = stmt.getObject().asResource();
+                        Resource obj = stmt.getObject().asResource();
                         if (obj.canAs(Individual.class)) {
                             Individual targetInd = obj.as(Individual.class);
                             OntClass targetCls = targetInd.getOntClass();
@@ -484,7 +503,18 @@ public class OntologyService {
                                 if (targetId != null) {
                                     double conf = Math.max(propagatedConfidence, confidenceMap.getOrDefault(targetId, 0.0));
                                     confidenceMap.put(targetId, conf);
-                                    related.add(Map.of("conceptId", targetId, "conceptName", unescapeUri(targetCls.getLocalName()), "relation", stmt.getPredicate().getLocalName(), "confidence", conf));
+                                    String propName = stmt.getPredicate().getLocalName();
+                                    Map<String, Object> relatedEntry = new LinkedHashMap<>();
+                                    relatedEntry.put("conceptId", targetId);
+                                    relatedEntry.put("conceptName", unescapeUri(targetCls.getLocalName()));
+                                    relatedEntry.put("relation", propName);
+                                    relatedEntry.put("confidence", conf);
+                                    // 查询该关系的 expression（计算公式/条件）
+                                    String expression = getRelationExpression(concept.getId(), targetId, propName);
+                                    if (expression != null) {
+                                        relatedEntry.put("expression", expression);
+                                    }
+                                    related.add(relatedEntry);
                                     if (visited.add(targetId)) {
                                         queue.add(targetId);
                                     }
@@ -515,74 +545,130 @@ public class OntologyService {
     }
 
     /**
-     * 获取概念的所有直接下钻维度（DRILLS_INTO 关系），包含异常阈值信息。
+     * 通过 Jena OWL 推理获取概念的所有下钻维度（DRILLS_INTO 关系），包含异常阈值信息。
+     * 若 DRILLS_INTO 标记为 transitive，Jena 自动推理传递链，返回直接+间接下钻目标。
      */
     public List<Map<String, Object>> getDrillDimensions(Long conceptId) {
         Concept concept = conceptRepository.findById(conceptId).orElse(null);
         if (concept == null) return Collections.emptyList();
 
-        List<ConceptRelation> drillRelations = conceptRelationRepository
-                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
+        lock.readLock().lock();
+        try {
+            Long industryId = resolveIndustryId(concept.getGroupId());
+            OntModel model = models.get(industryId);
+            if (model == null) return Collections.emptyList();
 
-        List<Map<String, Object>> dimensions = new ArrayList<>();
-        for (ConceptRelation relation : drillRelations) {
-            Concept target = conceptRepository.findById(relation.getTargetConceptId()).orElse(null);
-            if (target == null) continue;
+            OntClass cls = model.getOntClass(NS + escapeUri(concept.getName()));
+            if (cls == null) return Collections.emptyList();
 
-            Map<String, Object> dim = new LinkedHashMap<>();
-            dim.put("conceptId", target.getId());
-            dim.put("conceptName", target.getName());
-            dim.put("description", target.getDescription());
-            dim.put("relationType", "DRILLS_INTO");
-            if (target.getAnomalyThresholdExpr() != null) {
-                dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
-                dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+            ObjectProperty drillProp = model.getObjectProperty(NS + BuiltinRelation.DRILLS_INTO.name());
+            if (drillProp == null) return Collections.emptyList();
+
+            List<Map<String, Object>> dimensions = new ArrayList<>();
+            for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
+                Individual ind = it.next();
+                for (StmtIterator sit = ind.listProperties(drillProp); sit.hasNext(); ) {
+                    Statement stmt = sit.next();
+                    if (stmt.getObject().isResource()) {
+                        Resource obj = stmt.getObject().asResource();
+                        if (obj.canAs(Individual.class)) {
+                            Individual targetInd = obj.as(Individual.class);
+                            OntClass targetCls = targetInd.getOntClass();
+                            if (targetCls != null && !targetCls.isAnon() && targetCls.getLocalName() != null) {
+                                Long targetId = findConceptIdByName(unescapeUri(targetCls.getLocalName()));
+                                if (targetId != null && !targetId.equals(conceptId)) {
+                                    Concept target = conceptRepository.findById(targetId).orElse(null);
+                                    if (target != null) {
+                                        Map<String, Object> dim = new LinkedHashMap<>();
+                                        dim.put("conceptId", target.getId());
+                                        dim.put("conceptName", target.getName());
+                                        dim.put("description", target.getDescription());
+                                        dim.put("relationType", BuiltinRelation.DRILLS_INTO.name());
+                                        if (target.getAnomalyThresholdExpr() != null) {
+                                            dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
+                                            dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+                                        }
+                                        dimensions.add(dim);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            dimensions.add(dim);
-        }
 
-        if (!dimensions.isEmpty()) {
-            agentDebug.info("[ONTOLOGY] getDrillDimensions: conceptId={}, conceptName={}, drillCount={}, targets={}",
-                    conceptId, concept.getName(), dimensions.size(),
-                    dimensions.stream().map(d -> String.valueOf(d.get("conceptName"))).collect(Collectors.joining(", ")));
+            if (!dimensions.isEmpty()) {
+                agentDebug.info("[ONTOLOGY] getDrillDimensions(Jena): conceptId={}, conceptName={}, drillCount={}, targets={}",
+                        conceptId, concept.getName(), dimensions.size(),
+                        dimensions.stream().map(d -> String.valueOf(d.get("conceptName"))).collect(Collectors.joining(", ")));
+            }
+            return dimensions;
+        } finally {
+            lock.readLock().unlock();
         }
-
-        return dimensions;
     }
 
     /**
-     * 获取概念的关联维度（CORRELATED 关系），用于交叉验证根因。
-     * 例如客诉率与订单量的 CORRELATED 关系，用于确认客诉率上升是否由订单量暴涨导致。
+     * 通过 Jena OWL 推理获取概念的关联维度（CORRELATED 关系），用于交叉验证根因。
+     * 若 CORRELATED 标记为 symmetric，Jena 自动推理逆向关系，双向均可发现。
      */
     public List<Map<String, Object>> getCorrelatedDimensions(Long conceptId) {
         Concept concept = conceptRepository.findById(conceptId).orElse(null);
         if (concept == null) return Collections.emptyList();
 
-        List<ConceptRelation> correlatedRelations = conceptRelationRepository
-                .findBySourceConceptIdAndRelationType(conceptId, "CORRELATED");
+        lock.readLock().lock();
+        try {
+            Long industryId = resolveIndustryId(concept.getGroupId());
+            OntModel model = models.get(industryId);
+            if (model == null) return Collections.emptyList();
 
-        List<Map<String, Object>> dimensions = new ArrayList<>();
-        for (ConceptRelation relation : correlatedRelations) {
-            Concept target = conceptRepository.findById(relation.getTargetConceptId()).orElse(null);
-            if (target == null) continue;
+            OntClass cls = model.getOntClass(NS + escapeUri(concept.getName()));
+            if (cls == null) return Collections.emptyList();
 
-            Map<String, Object> dim = new LinkedHashMap<>();
-            dim.put("conceptId", target.getId());
-            dim.put("conceptName", target.getName());
-            dim.put("description", target.getDescription());
-            dim.put("relationType", "CORRELATED");
-            if (target.getAnomalyThresholdExpr() != null) {
-                dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
-                dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+            ObjectProperty correlatedProp = model.getObjectProperty(NS + BuiltinRelation.CORRELATED.name());
+            if (correlatedProp == null) return Collections.emptyList();
+
+            List<Map<String, Object>> dimensions = new ArrayList<>();
+            for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
+                Individual ind = it.next();
+                for (StmtIterator sit = ind.listProperties(correlatedProp); sit.hasNext(); ) {
+                    Statement stmt = sit.next();
+                    if (stmt.getObject().isResource()) {
+                        Resource obj = stmt.getObject().asResource();
+                        if (obj.canAs(Individual.class)) {
+                            Individual targetInd = obj.as(Individual.class);
+                            OntClass targetCls = targetInd.getOntClass();
+                            if (targetCls != null && !targetCls.isAnon() && targetCls.getLocalName() != null) {
+                                Long targetId = findConceptIdByName(unescapeUri(targetCls.getLocalName()));
+                                if (targetId != null && !targetId.equals(conceptId)) {
+                                    Concept target = conceptRepository.findById(targetId).orElse(null);
+                                    if (target != null) {
+                                        Map<String, Object> dim = new LinkedHashMap<>();
+                                        dim.put("conceptId", target.getId());
+                                        dim.put("conceptName", target.getName());
+                                        dim.put("description", target.getDescription());
+                                        dim.put("relationType", BuiltinRelation.CORRELATED.name());
+                                        if (target.getAnomalyThresholdExpr() != null) {
+                                            dim.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
+                                            dim.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+                                        }
+                                        dimensions.add(dim);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            dimensions.add(dim);
+            return dimensions;
+        } finally {
+            lock.readLock().unlock();
         }
-        return dimensions;
     }
 
     /**
-     * 获取概念的完整下钻路径树（递归获取所有 DRILLS_INTO 链）。
-     * 返回树形结构，LLM 据此判断应该按什么顺序下钻。
+     * 通过 Jena OWL 推理获取概念的完整下钻路径树（DRILLS_INTO 传递链）。
+     * Jena 自动处理 transitive 推理，返回树形结构供 LLM 判断下钻顺序。
      */
     public Map<String, Object> getDrillPath(Long conceptId) {
         Concept concept = conceptRepository.findById(conceptId).orElse(null);
@@ -597,52 +683,64 @@ public class OntologyService {
             path.put("anomalyThresholdDesc", concept.getAnomalyThresholdDesc());
         }
 
-        List<Map<String, Object>> children = new ArrayList<>();
-        List<ConceptRelation> drillRelations = conceptRelationRepository
-                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
         Set<Long> visited = new HashSet<>();
         visited.add(conceptId);
-
-        for (ConceptRelation relation : drillRelations) {
-            if (!visited.contains(relation.getTargetConceptId())) {
-                Map<String, Object> childPath = getDrillPathRecursive(
-                        relation.getTargetConceptId(), visited, 1);
-                if (!childPath.isEmpty()) {
-                    children.add(childPath);
-                }
-            }
-        }
+        List<Map<String, Object>> children = getDrillPathViaJena(concept, visited, 1);
         path.put("children", children);
         return path;
     }
 
-    private Map<String, Object> getDrillPathRecursive(Long conceptId, Set<Long> visited, int depth) {
-        if (depth > 5 || !visited.add(conceptId)) {
-            return Collections.emptyMap();
-        }
+    private List<Map<String, Object>> getDrillPathViaJena(Concept concept, Set<Long> visited, int depth) {
+        if (depth > 5) return Collections.emptyList();
 
-        Concept concept = conceptRepository.findById(conceptId).orElse(null);
-        if (concept == null) return Collections.emptyMap();
+        lock.readLock().lock();
+        try {
+            Long industryId = resolveIndustryId(concept.getGroupId());
+            OntModel model = models.get(industryId);
+            if (model == null) return Collections.emptyList();
 
-        Map<String, Object> node = new LinkedHashMap<>();
-        node.put("conceptId", concept.getId());
-        node.put("conceptName", concept.getName());
-        if (concept.getAnomalyThresholdExpr() != null) {
-            node.put("anomalyThresholdExpr", concept.getAnomalyThresholdExpr());
-        }
+            OntClass cls = model.getOntClass(NS + escapeUri(concept.getName()));
+            if (cls == null) return Collections.emptyList();
 
-        List<Map<String, Object>> children = new ArrayList<>();
-        List<ConceptRelation> drillRelations = conceptRelationRepository
-                .findBySourceConceptIdAndRelationType(conceptId, "DRILLS_INTO");
+            ObjectProperty drillProp = model.getObjectProperty(NS + BuiltinRelation.DRILLS_INTO.name());
+            if (drillProp == null) return Collections.emptyList();
 
-        for (ConceptRelation relation : drillRelations) {
-            Map<String, Object> child = getDrillPathRecursive(
-                    relation.getTargetConceptId(), new HashSet<>(visited), depth + 1);
-            if (!child.isEmpty()) {
-                children.add(child);
+            List<Map<String, Object>> children = new ArrayList<>();
+            for (ExtendedIterator<Individual> it = model.listIndividuals(cls); it.hasNext(); ) {
+                Individual ind = it.next();
+                for (StmtIterator sit = ind.listProperties(drillProp); sit.hasNext(); ) {
+                    Statement stmt = sit.next();
+                    if (stmt.getObject().isResource()) {
+                        Resource obj = stmt.getObject().asResource();
+                        if (obj.canAs(Individual.class)) {
+                            Individual targetInd = obj.as(Individual.class);
+                            OntClass targetCls = targetInd.getOntClass();
+                            if (targetCls != null && !targetCls.isAnon() && targetCls.getLocalName() != null) {
+                                Long targetId = findConceptIdByName(unescapeUri(targetCls.getLocalName()));
+                                if (targetId != null && visited.add(targetId)) {
+                                    Concept target = conceptRepository.findById(targetId).orElse(null);
+                                    if (target != null) {
+                                        Map<String, Object> child = new LinkedHashMap<>();
+                                        child.put("conceptId", target.getId());
+                                        child.put("conceptName", target.getName());
+                                        child.put("description", target.getDescription());
+                                        if (target.getAnomalyThresholdExpr() != null) {
+                                            child.put("anomalyThresholdExpr", target.getAnomalyThresholdExpr());
+                                            child.put("anomalyThresholdDesc", target.getAnomalyThresholdDesc());
+                                        }
+                                        List<Map<String, Object>> grandChildren = getDrillPathViaJena(target, new HashSet<>(visited), depth + 1);
+                                        child.put("children", grandChildren);
+                                        children.add(child);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            return children;
+        } finally {
+            lock.readLock().unlock();
         }
-        node.put("children", children);
-        return node;
     }
 }

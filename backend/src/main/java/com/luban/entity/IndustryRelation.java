@@ -26,6 +26,21 @@ public class IndustryRelation {
     @Column(length = 256)
     private String description;
 
+    @Column(length = 32)
+    private String label;
+
+    @Column(length = 16)
+    private String color;
+
+    @Column(name = "source_role", length = 32)
+    private String sourceRole;
+
+    @Column(name = "target_role", length = 32)
+    private String targetRole;
+
+    @Column(name = "source_to_target", nullable = false)
+    private Boolean sourceToTarget = false;
+
     @Column(name = "is_transitive", nullable = false)
     private Boolean isTransitive = false;
 

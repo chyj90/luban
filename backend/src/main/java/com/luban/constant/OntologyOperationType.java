@@ -1,8 +1,12 @@
 package com.luban.constant;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.Arrays;
 
 /**
  * 本体变更操作类型枚举，统一管理操作码、实体类型、LLM JSON 格式和内置关系类型。
@@ -19,7 +23,7 @@ public enum OntologyOperationType {
             "{\"conceptName\":\"概念名\",\"joinTable\":\"表B\",\"joinCondition\":\"表A.id = 表B.a_id\",\"relationType\":\"LEFT JOIN\",\"dataSourceId\":1,\"targetConcept\":\"表B对应的概念名\"}",
             "新增表连接映射"),
     ADD_RELATION(4, true, "RELATION", "relation",
-            "{\"sourceConceptName\":\"源概念\",\"targetConceptName\":\"目标概念\",\"relationType\":\"DRILLS_INTO\",\"description\":\"关系描述\"}",
+            "{\"sourceConceptName\":\"源概念\",\"targetConceptName\":\"目标概念\",\"relationType\":\"DRILLS_INTO\",\"description\":\"关系描述\",\"expression\":\"可选的计算公式，仅COMPUTED_FROM/DERIVED_FROM需要\"}",
             "新增概念关系"),
 
     UPDATE_CONCEPT(5, true, "CONCEPT", "concept",
@@ -32,7 +36,7 @@ public enum OntologyOperationType {
             "{\"joinMappingId\":1,\"joinTable\":\"表名\",\"joinCondition\":\"连接条件\",\"relationType\":\"LEFT JOIN\"}",
             "更新表连接映射"),
     UPDATE_RELATION(8, true, "RELATION", "relation",
-            "{\"id\":1,\"sourceConceptName\":\"源概念\",\"targetConceptName\":\"目标概念\",\"relationType\":\"DRILLS_INTO\",\"description\":\"关系描述\"}",
+            "{\"id\":1,\"sourceConceptName\":\"源概念\",\"targetConceptName\":\"目标概念\",\"relationType\":\"DRILLS_INTO\",\"description\":\"关系描述\",\"expression\":\"可选的计算公式，仅COMPUTED_FROM/DERIVED_FROM需要\"}",
             "更新概念关系"),
 
     DELETE_RELATION(9, false, "RELATION", null,
@@ -139,27 +143,81 @@ public enum OntologyOperationType {
      * 内置关系类型（行业创建时自动注册）。
      */
     public enum BuiltinRelation {
-        DRILLS_INTO("可下钻到子维度，纯分析导航"),
-        DRILLED_FROM("上卷维度，DRILLS_INTO 的逆，自动推导"),
-        CORRELATED("关联维度，交叉分析提示");
+        DRILLS_INTO("可下钻到子维度，纯分析导航", "可下钻", "#1677ff", "子维度", "父维度", false, true, false, 0),
+        DRILLED_FROM("上卷维度，DRILLS_INTO 的逆，自动推导", "上卷", "#8c8c8c", "父维度", "子维度", false, true, false, 1),
+        CORRELATED("关联维度，交叉分析提示，双向对称", "关联", "#faad14", "维度A", "维度B", false, false, true, 2),
+        INVOKES("概念调用算法，概念→算法", "调用算法", "#f5222d", "概念", "算法", true, false, false, 3),
+        INPUT_OF("算法输入参数绑定概念，算法→概念", "算法输入", "#2f54eb", "算法", "概念", true, false, false, 4),
+        OUTPUT_OF("算法输出参数绑定概念，概念←算法", "算法输出", "#389e0d", "概念", "算法", true, false, false, 5),
+        COMPUTED_FROM("概念由其他概念计算而来，概念→计算源", "计算得出", "#722ed1", "计算结果", "计算因子", true, true, false, 6),
+        DERIVED_FROM("概念派生自其他概念，概念→派生源", "条件触发", "#eb2f96", "派生结果", "派生条件", true, true, false, 7),
+        EQUIVALENT_TO("等价概念，双向对称", "等同于", "#52c41a", "概念A", "概念B", false, true, true, 8);
 
         private final String description;
+        private final String label;
+        private final String color;
+        private final String sourceRole;
+        private final String targetRole;
+        private final boolean sourceToTarget;
+        private final boolean isTransitive;
+        private final boolean isSymmetric;
+        private final int sortOrder;
 
-        BuiltinRelation(String description) {
+        BuiltinRelation(String description, String label, String color, String sourceRole, String targetRole,
+                boolean sourceToTarget, boolean isTransitive, boolean isSymmetric, int sortOrder) {
             this.description = description;
+            this.label = label;
+            this.color = color;
+            this.sourceRole = sourceRole;
+            this.targetRole = targetRole;
+            this.sourceToTarget = sourceToTarget;
+            this.isTransitive = isTransitive;
+            this.isSymmetric = isSymmetric;
+            this.sortOrder = sortOrder;
         }
 
-        public String description() {
-            return description;
-        }
+        public String description() { return description; }
+        public String label() { return label; }
+        public String color() { return color; }
+        public String sourceRole() { return sourceRole; }
+        public String targetRole() { return targetRole; }
+        public boolean sourceToTarget() { return sourceToTarget; }
+        public boolean isTransitive() { return isTransitive; }
+        public boolean isSymmetric() { return isSymmetric; }
+        public int sortOrder() { return sortOrder; }
 
         public static String toPromptList() {
             StringBuilder sb = new StringBuilder();
             for (BuiltinRelation r : values()) {
                 sb.append("  - ").append(r.name())
                         .append(": ").append(r.description).append("\n");
+                sb.append("    sourceConceptName=").append(r.sourceRole)
+                        .append(", targetConceptName=").append(r.targetRole);
+                if (r == COMPUTED_FROM || r == DERIVED_FROM) {
+                    sb.append("\n    **必须提供 expression 字段**，如 expression=\"OEE = 可用率 × 性能率 × 质量率\"");
+                }
+                sb.append("\n");
             }
             return sb.toString();
+        }
+
+        public static List<Map<String, Object>> toApiList() {
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (BuiltinRelation r : values()) {
+                Map<String, Object> map = new LinkedHashMap<>();
+                map.put("name", r.name());
+                map.put("description", r.description());
+                map.put("label", r.label());
+                map.put("color", r.color());
+                map.put("sourceRole", r.sourceRole());
+                map.put("targetRole", r.targetRole());
+                map.put("sourceToTarget", r.sourceToTarget());
+                map.put("transitive", r.isTransitive());
+                map.put("symmetric", r.isSymmetric());
+                map.put("sortOrder", r.sortOrder());
+                list.add(map);
+            }
+            return list;
         }
     }
 }
