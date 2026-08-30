@@ -1,7 +1,6 @@
 export interface Concept {
   id: number;
   name: string;
-  parentId: number | null;
   groupId: number | null;
   description: string;
   anomalyThresholdExpr: string | null;
@@ -14,7 +13,6 @@ export interface Concept {
 export interface ConceptDetailResponse {
   id: number;
   name: string;
-  parentId: number | null;
   groupId: number | null;
   description: string;
   createdAt: string;
@@ -44,7 +42,6 @@ export interface ToolBindingInfo {
 export interface ConceptTreeResponse {
   id: number;
   name: string;
-  parentId: number | null;
   groupId: number | null;
   description: string;
   relations: TreeRelationInfo[];
@@ -80,7 +77,6 @@ export interface ToolConcept {
 
 export interface CreateConceptRequest {
   name: string;
-  parentId?: number;
   groupId?: number;
   description?: string;
   anomalyThresholdExpr?: string;

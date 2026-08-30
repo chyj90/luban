@@ -1,19 +1,20 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes } from '@/api/tool';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import Select from '@/components/Select';
-import type { ToolDefinition, ToolSearchResult, SwaggerEndpoint, McpServer } from '@/types/tool';
+import type { ToolDefinition, ToolTypeInfo, ToolSearchResult, SwaggerEndpoint, McpServer } from '@/types/tool';
 import type { Datasource, DatasourceType, DatasourceStructure } from '@/types/datasource';
 import type { ToolConcept, Concept } from '@/types/concept';
 import './ToolListPage.css';
 
-const TOOL_TYPE_LABELS: Record<string, string> = {
-  HTTP: 'HTTP 接口',
-  MCP_PASSTHROUGH: 'MCP 透传',
+const TYPE_ICONS: Record<string, JSX.Element> = {
+  HTTP: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+  MCP_PASSTHROUGH: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+  default: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>,
 };
 
 export default function ToolListPage() {
@@ -22,12 +23,13 @@ export default function ToolListPage() {
   const groupId = searchParams.get('groupId') ? Number(searchParams.get('groupId')) : null;
   const [groupName, setGroupName] = useState('');
   const [tools, setTools] = useState<ToolDefinition[]>([]);
+  const [toolTypes, setToolTypes] = useState<ToolTypeInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<ToolSearchResult[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ToolDefinition | null>(null);
-  const [form, setForm] = useState<{ name: string; displayName: string; toolType: 'HTTP' | 'MCP_PASSTHROUGH'; description: string; inputSchema: string; config: string }>({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', config: '{}' });
+  const [form, setForm] = useState<{ name: string; displayName: string; toolType: string; description: string; inputSchema: string; config: string }>({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', config: '{}' });
   const [httpUrl, setHttpUrl] = useState('');
   const [httpMethod, setHttpMethod] = useState('GET');
   const [httpTimeout, setHttpTimeout] = useState(10);
@@ -65,6 +67,8 @@ export default function ToolListPage() {
   const headerParamMenuRef = useRef<HTMLDivElement | null>(null);
   const initialized = useRef(false);
   const prevActiveTab = useRef(activeTab);
+
+  const getTypeLabel = (value: string) => toolTypes.find(t => t.value === value)?.label || value;
 
   const toggleTableCollapse = (tableName: string) => {
     setCollapsedTables((prev) => {
@@ -292,6 +296,7 @@ export default function ToolListPage() {
     fetchGroupName();
     fetchTools();
     fetchMcpServers();
+    fetchToolTypes().then((res) => setToolTypes(res.data)).catch(() => {});
   }, [fetchGroupName, fetchTools, fetchMcpServers]);
 
   const fetchDatasources = useCallback(async () => {
@@ -420,7 +425,7 @@ export default function ToolListPage() {
     const config = buildConfig(form.toolType);
     const autoInputSchema = form.toolType === 'HTTP' ? buildInputSchema() : form.inputSchema;
     try {
-      const payload = { ...form, groupId, config, inputSchema: autoInputSchema, toolType: form.toolType as 'HTTP' | 'MCP_PASSTHROUGH' };
+      const payload = { ...form, groupId, config, inputSchema: autoInputSchema, toolType: form.toolType };
       if (editing) {
         await updateToolDefinition(editing.id, payload);
         toast('更新成功', 'success');
@@ -487,7 +492,7 @@ export default function ToolListPage() {
     setForm({
       name: tool.name,
       displayName: tool.displayName,
-      toolType: tool.toolType as 'HTTP' | 'MCP_PASSTHROUGH',
+      toolType: tool.toolType,
       description: tool.description || '',
       inputSchema: tool.inputSchema || '{}',
       config: tool.config || '{}',
@@ -675,7 +680,7 @@ export default function ToolListPage() {
           {searchResults.map((r) => (
             <div key={r.id} className="tool-list-search-item">
               <span className="tool-list-search-item-name">{r.displayName}</span>
-              <span className="tool-list-search-item-type">{TOOL_TYPE_LABELS[r.toolType] ?? r.toolType}</span>
+              <span className="tool-list-search-item-type">{getTypeLabel(r.toolType)}</span>
               <span className="tool-list-search-item-desc">{r.description}</span>
             </div>
           ))}
@@ -708,7 +713,7 @@ export default function ToolListPage() {
                       <div className="tool-list-tool-desc">{tool.description}</div>
                     </td>
                     <td>
-                      <span className="tool-list-type-badge">{TOOL_TYPE_LABELS[tool.toolType] ?? tool.toolType}</span>
+                      <span className="tool-list-type-badge">{getTypeLabel(tool.toolType)}</span>
                     </td>
                     <td>
                       <span className={`tool-list-status ${tool.status === 'ENABLED' ? 'enabled' : 'disabled'}`}>
@@ -768,15 +773,12 @@ export default function ToolListPage() {
             <div className="tool-form-field">
               <label className="tool-form-label">工具类型</label>
               <div className="tool-form-type-cards">
-                {([
-                  { value: 'HTTP', label: 'HTTP 接口', desc: '调用外部 REST API', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> },
-                  { value: 'MCP_PASSTHROUGH', label: 'MCP 透传', desc: '透传 MCP Server 工具', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
-                ] as const).map((t) => (
+                {toolTypes.map((t) => (
                   <button key={t.value} type="button" className={`tool-form-type-card ${form.toolType === t.value ? 'active' : ''}`} onClick={() => setForm({ ...form, toolType: t.value })}>
-                    <span className="tool-form-type-card-icon">{t.icon}</span>
+                    <span className="tool-form-type-card-icon">{TYPE_ICONS[t.value] || TYPE_ICONS.default}</span>
                     <span className="tool-form-type-card-info">
                       <span className="tool-form-type-card-label">{t.label}</span>
-                      <span className="tool-form-type-card-desc">{t.desc}</span>
+                      <span className="tool-form-type-card-desc">{t.description}</span>
                     </span>
                   </button>
                 ))}

@@ -15,13 +15,19 @@ export interface ToolDefinition {
   id: number;
   name: string;
   displayName: string;
-  toolType: 'HTTP' | 'SQL' | 'MCP_PASSTHROUGH';
+  toolType: string;
   description: string;
   inputSchema: string;
   outputSchema: string;
   config: string;
   groupId: number;
   status: string;
+}
+
+export interface ToolTypeInfo {
+  value: string;
+  label: string;
+  description: string;
 }
 
 export interface ToolSearchResult {

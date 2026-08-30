@@ -85,13 +85,6 @@ import './ConceptEditorPage.css';
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 64;
 
-const PARENT_OF_LABEL = '包含';
-const PARENT_OF_COLOR = '#8c8c8c';
-
-const RENDER_EDGE_TYPES = {
-  PARENT_OF: { label: PARENT_OF_LABEL, color: PARENT_OF_COLOR },
-};
-
 const DOMAIN_COLORS = [
   '#1677ff', '#52c41a', '#fa8c16', '#722ed1', '#eb2f96',
   '#13c2c2', '#f5222d', '#faad14', '#2f54eb', '#a0d911',
@@ -158,7 +151,6 @@ function getNodeType(
     if (r.targetConceptId === concept.id && targetRoles[r.relationType]?.includes('派生条件')) return 'condition';
   }
   if (concept.groupId != null) return 'system';
-  if (!concept.parentId && concepts.some((c) => c.parentId === concept.id)) return 'root';
   return 'default';
 }
 
@@ -280,21 +272,6 @@ function layoutNodes(
 
   const conceptIdSet = new Set(concepts.map((c) => c.id));
   const edges: Edge[] = [];
-  for (const c of concepts) {
-    if (c.parentId && conceptIdSet.has(c.parentId)) {
-      edges.push({
-        id: `parent-${c.parentId}-${c.id}`,
-        source: String(c.parentId),
-        target: String(c.id),
-        type: 'smoothstep',
-        style: { stroke: PARENT_OF_COLOR, strokeWidth: 2 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: PARENT_OF_COLOR },
-        label: PARENT_OF_LABEL,
-        labelStyle: { fontSize: 10, fill: PARENT_OF_COLOR },
-        labelBgStyle: { fill: '#fff', fillOpacity: 0.9 },
-      });
-    }
-  }
 
   for (const r of relations) {
     if (r.relationType === 'PARENT_OF') continue;
@@ -612,11 +589,6 @@ export default function ConceptEditorPage() {
             crossDomainIds.add(r.sourceConceptId);
           }
         }
-        for (const c of visibleConcepts) {
-          if (c.parentId && !domainConceptIds.has(c.parentId)) {
-            crossDomainIds.add(c.parentId);
-          }
-        }
         if (crossDomainIds.size > 0) {
           const crossRes = await batchGetConcepts([...crossDomainIds]);
           visibleConcepts = [...visibleConcepts, ...crossRes.data];
@@ -734,7 +706,6 @@ export default function ConceptEditorPage() {
     try {
       await updateConcept(conceptId, {
         name: inlineName.trim(),
-        parentId: existing?.parentId ?? undefined,
         groupId: existing?.groupId ?? undefined,
         description: existing?.description ?? undefined,
         anomalyThresholdExpr: existing?.anomalyThresholdExpr ?? undefined,
@@ -812,46 +783,6 @@ export default function ConceptEditorPage() {
     setRelationExpression('');
     setShowRelationDialog(true);
   }, [concepts, pushUndo, relationOptions]);
-
-  const onNodeDragStop = useCallback((_event: MouseEvent | TouchEvent, node: Node) => {
-    // Check if dropped on another node to create PARENT_OF
-    const allNodes = reactFlow.getNodes();
-    const draggingNode = allNodes.find((n) => n.id === node.id);
-    if (!draggingNode) return;
-    const rect = document.querySelector('.react-flow__pane')?.getBoundingClientRect();
-    if (!rect) return;
-    // Find nodes that overlap with the dragged node
-    const overlap = allNodes.find((n) => {
-      if (n.id === node.id) return false;
-      const dx = Math.abs(draggingNode.position.x - n.position.x);
-      const dy = Math.abs(draggingNode.position.y - n.position.y);
-      return dx < NODE_WIDTH && dy < NODE_HEIGHT * 0.8;
-    });
-    if (overlap) {
-      const target = concepts.find((c) => String(c.id) === overlap.id);
-      const source = concepts.find((c) => String(c.id) === node.id);
-      if (target && source && source.parentId !== target.id) {
-        confirm({
-          title: '建立包含关系',
-          message: `将「${source.name}」设为「${target.name}」的子概念？`,
-        }).then((ok: boolean) => {
-          if (ok) {
-            updateConcept(source.id, {
-              name: source.name,
-              parentId: target.id,
-              groupId: source.groupId ?? undefined,
-              description: source.description ?? undefined,
-              anomalyThresholdExpr: source.anomalyThresholdExpr ?? undefined,
-              anomalyThresholdDesc: source.anomalyThresholdDesc ?? undefined,
-            }).then(() => {
-              toast('包含关系已建立', 'success');
-              fetchData();
-            }).catch(() => toast('操作失败', 'error'));
-          }
-        });
-      }
-    }
-  }, [concepts, reactFlow, confirm, fetchData, toast]);
 
   const handleCreateRelation = async () => {
     if (!pendingConnection) return;
@@ -1138,31 +1069,6 @@ export default function ConceptEditorPage() {
         fetchData();
       } catch {
         toast('删除失败', 'error');
-      }
-    }
-    if (edgeId.startsWith('parent-')) {
-      const parts = edgeId.split('-');
-      const childId = Number(parts[2]);
-      const confirmed = await confirm({ title: '移除父子关系', message: '确定要移除父子关系吗？' });
-      if (!confirmed) return;
-      pushUndo();
-      try {
-        const child = concepts.find((c) => c.id === childId);
-        if (child) {
-          await updateConcept(childId, {
-            name: child.name,
-            parentId: undefined,
-            groupId: child.groupId ?? undefined,
-            description: child.description ?? undefined,
-            anomalyThresholdExpr: child.anomalyThresholdExpr ?? undefined,
-            anomalyThresholdDesc: child.anomalyThresholdDesc ?? undefined,
-          });
-          toast('父子关系已移除', 'success');
-          setSelectedEdge(null);
-          fetchData();
-        }
-      } catch {
-        toast('操作失败', 'error');
       }
     }
   };
@@ -1509,7 +1415,7 @@ export default function ConceptEditorPage() {
         title={
           <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <h2 className="page-topbar__title" style={{ margin: 0 }}>概念编辑器</h2>
-            <button className="titleIconBtn" onClick={fetchData} title="刷新">
+            <button className="titleIconBtn" onClick={() => fetchData()} title="刷新">
               <RefreshCw size={15} />
             </button>
             <button
@@ -1600,7 +1506,6 @@ export default function ConceptEditorPage() {
               onConnect={onConnect}
               onNodeClick={onNodeClick}
               onNodeDoubleClick={onNodeDoubleClick}
-              onNodeDragStop={onNodeDragStop}
               onPaneClick={onPaneClick}
               onDoubleClick={onPaneDoubleClickHandler}
               onPaneContextMenu={onPaneContextMenu}

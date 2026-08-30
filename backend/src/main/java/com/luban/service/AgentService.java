@@ -22,6 +22,7 @@ import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.constant.OntologyOperationType;
+import com.luban.constant.ToolType;
 import com.luban.entity.OntologyChangeLog;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.repository.ToolGroupRepository;
@@ -2630,15 +2631,11 @@ public class AgentService {
             return "{\"error\": \"Tool not found: " + toolName + "\"}";
         }
         try {
-            String toolType = tool.getToolType();
-            switch (toolType) {
-                case "HTTP":
-                    return httpExecutor.execute(tool, arguments, "agent");
-                case "MCP_PASSTHROUGH":
-                    return mcpExecutor.execute(tool, arguments);
-                default:
-                    return "{\"error\": \"Unsupported tool type: " + toolType + "\"}";
-            }
+            ToolType toolType = ToolType.fromValue(tool.getToolType());
+            return switch (toolType) {
+                case HTTP -> httpExecutor.execute(tool, arguments, "agent");
+                case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
+            };
         } catch (Exception e) {
             log.error("Tool execution failed: {}", toolName, e);
             return "{\"error\": \"" + e.getMessage() + "\"}";

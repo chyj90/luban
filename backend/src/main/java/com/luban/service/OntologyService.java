@@ -161,20 +161,35 @@ public class OntologyService {
             classMaps.get(industryId).put(c.getId(), cls);
         }
 
+        Map<String, Boolean> sourceToTargetMap = new HashMap<>();
+        for (IndustryRelation ir : allIndustryRelations) {
+            sourceToTargetMap.putIfAbsent(ir.getRelationType(), ir.getSourceToTarget());
+        }
+
+        Map<Long, Individual> conceptIndividuals = new HashMap<>();
+        List<ConceptRelation> relations = conceptRelationRepository.findAll();
+
+        Map<Long, Long> computedParentId = new HashMap<>();
+        for (ConceptRelation r : relations) {
+            Boolean sourceToTarget = sourceToTargetMap.get(r.getRelationType());
+            if (sourceToTarget != null && sourceToTarget) {
+                computedParentId.putIfAbsent(r.getTargetConceptId(), r.getSourceConceptId());
+            }
+        }
+
         for (Concept c : concepts) {
-            if (c.getParentId() != null) {
+            Long pid = computedParentId.get(c.getId());
+            if (pid != null) {
                 Long industryId = conceptIndustryMap.get(c.getId());
                 Map<Long, OntClass> cm = classMaps.get(industryId);
-                if (cm.containsKey(c.getParentId())) {
-                    OntClass parent = cm.get(c.getParentId());
+                if (cm.containsKey(pid)) {
+                    OntClass parent = cm.get(pid);
                     OntClass child = cm.get(c.getId());
                     parent.addSubClass(child);
                 }
             }
         }
 
-        Map<Long, Individual> conceptIndividuals = new HashMap<>();
-        List<ConceptRelation> relations = conceptRelationRepository.findAll();
         for (ConceptRelation r : relations) {
             Long industryId = conceptIndustryMap.get(r.getSourceConceptId());
             Map<Long, OntClass> cm = classMaps.get(industryId);

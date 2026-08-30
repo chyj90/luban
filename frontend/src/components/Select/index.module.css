@@ -22,9 +22,20 @@
   border-color: #1677ff;
 }
 
+.triggerDisabled:hover {
+  border-color: #e8edf3;
+}
+
 .triggerOpen {
   border-color: #1677ff;
   box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.triggerDisabled {
+  background: #f4f6f9;
+  color: #8c9cab;
+  cursor: not-allowed;
+  border-color: #e8edf3;
 }
 
 .triggerText {

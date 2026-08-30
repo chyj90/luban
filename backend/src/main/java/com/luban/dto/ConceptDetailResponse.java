@@ -12,7 +12,6 @@ import java.util.List;
 public class ConceptDetailResponse {
     private Long id;
     private String name;
-    private Long parentId;
     private Long groupId;
     private String description;
     private String createdAt;
@@ -48,7 +47,6 @@ public class ConceptDetailResponse {
         ConceptDetailResponse resp = new ConceptDetailResponse();
         resp.setId(concept.getId());
         resp.setName(concept.getName());
-        resp.setParentId(concept.getParentId());
         resp.setGroupId(concept.getGroupId());
         resp.setDescription(concept.getDescription());
         resp.setCreatedAt(concept.getCreatedAt() != null ? concept.getCreatedAt().toString() : null);

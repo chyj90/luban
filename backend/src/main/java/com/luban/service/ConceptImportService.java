@@ -629,16 +629,6 @@ public class ConceptImportService {
                 concept.setDescription(description);
                 concept.setGroupId(conceptGroupId);
 
-                if (parentName != null && createdConcepts.values().stream()
-                        .anyMatch(c -> c.getName().equals(parentName))) {
-                    Concept parent = createdConcepts.values().stream()
-                            .filter(c -> c.getName().equals(parentName))
-                            .findFirst().orElse(null);
-                    if (parent != null) {
-                        concept.setParentId(parent.getId());
-                    }
-                }
-
                 concept = conceptRepository.save(concept);
                 createdConcepts.put(concept.getId(), concept);
                 created++;

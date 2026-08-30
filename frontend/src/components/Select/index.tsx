@@ -16,6 +16,7 @@ interface SelectProps {
   placeholder?: string;
   onOpen?: () => void;
   className?: string;
+  disabled?: boolean;
   multiple?: false;
   multiValue?: never;
   onMultiChange?: never;
@@ -28,6 +29,7 @@ interface MultiSelectProps {
   placeholder?: string;
   onOpen?: () => void;
   className?: string;
+  disabled?: boolean;
   multiple: true;
   multiValue: string[];
   onMultiChange: (value: string[]) => void;
@@ -49,7 +51,7 @@ const MAX_DROPDOWN = 300;
 const GAP = 4;
 
 export default function Select(props: Props) {
-  const { value, options, onChange, placeholder, onOpen, className } = props;
+  const { value, options, onChange, placeholder, onOpen, className, disabled } = props;
   const multiple = props.multiple === true;
   const multiValue: string[] = multiple ? props.multiValue : [];
   const onMultiChange: ((v: string[]) => void) | undefined = multiple ? props.onMultiChange : undefined;
@@ -102,6 +104,7 @@ export default function Select(props: Props) {
   }, [open, measure]);
 
   const toggleOpen = () => {
+    if (disabled) return;
     if (!open) {
       if (onOpen) onOpen();
       setOpen(true);
@@ -193,7 +196,7 @@ export default function Select(props: Props) {
   return (
     <div className={`${styles.select} ${className || ''}`} ref={containerRef}>
       <div
-        className={`${styles.trigger} ${open ? styles.triggerOpen : ''}`}
+        className={`${styles.trigger} ${open ? styles.triggerOpen : ''} ${disabled ? styles.triggerDisabled : ''}`}
         onClick={toggleOpen}
       >
         {multiple ? (

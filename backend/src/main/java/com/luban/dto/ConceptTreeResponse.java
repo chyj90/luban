@@ -9,7 +9,6 @@ import java.util.List;
 public class ConceptTreeResponse {
     private Long id;
     private String name;
-    private Long parentId;
     private Long groupId;
     private String description;
     private List<RelationInfo> relations = new ArrayList<>();

@@ -105,7 +105,6 @@ public class ConceptService {
     public Concept create(CreateConceptRequest request) {
         Concept concept = new Concept();
         concept.setName(request.getName());
-        concept.setParentId(request.getParentId());
         concept.setGroupId(request.getGroupId());
         concept.setDescription(request.getDescription());
         concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
@@ -120,7 +119,6 @@ public class ConceptService {
         Concept concept = conceptRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Concept not found: " + id));
         concept.setName(request.getName());
-        concept.setParentId(request.getParentId());
         concept.setGroupId(request.getGroupId());
         concept.setDescription(request.getDescription());
         concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
@@ -172,28 +170,57 @@ public class ConceptService {
             concepts = conceptRepository.findAll();
         }
 
+        Map<Long, Concept> conceptMap = concepts.stream()
+                .collect(Collectors.toMap(Concept::getId, c -> c));
+
         List<ConceptRelation> allRelations = conceptRelationRepository.findAll();
         Map<Long, List<ConceptRelation>> relationMap = new HashMap<>();
         for (ConceptRelation r : allRelations) {
             relationMap.computeIfAbsent(r.getSourceConceptId(), k -> new ArrayList<>()).add(r);
         }
 
-        Map<Long, Concept> conceptMap = concepts.stream()
-                .collect(Collectors.toMap(Concept::getId, c -> c));
+        Map<String, Boolean> sourceToTargetMap = loadSourceToTargetMap();
+
+        Map<Long, Long> computedParentId = computeParentId(allRelations, sourceToTargetMap);
 
         Map<Long, List<Concept>> childrenMap = new HashMap<>();
         List<Concept> roots = new ArrayList<>();
         for (Concept c : concepts) {
-            if (c.getParentId() == null || !conceptMap.containsKey(c.getParentId())) {
+            Long pid = computedParentId.get(c.getId());
+            if (pid == null || !conceptMap.containsKey(pid)) {
                 roots.add(c);
             } else {
-                childrenMap.computeIfAbsent(c.getParentId(), k -> new ArrayList<>()).add(c);
+                childrenMap.computeIfAbsent(pid, k -> new ArrayList<>()).add(c);
             }
         }
 
         return roots.stream()
                 .map(root -> buildTree(root, childrenMap, relationMap, conceptMap))
                 .collect(Collectors.toList());
+    }
+
+    private Map<String, Boolean> loadSourceToTargetMap() {
+        Map<String, Boolean> map = new HashMap<>();
+        try {
+            List<com.luban.entity.IndustryRelation> industryRelations = industryRelationRepository.findAll();
+            for (com.luban.entity.IndustryRelation ir : industryRelations) {
+                map.putIfAbsent(ir.getRelationType(), ir.getSourceToTarget());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load IndustryRelation for parentId computation, using defaults", e);
+        }
+        return map;
+    }
+
+    private Map<Long, Long> computeParentId(List<ConceptRelation> allRelations, Map<String, Boolean> sourceToTargetMap) {
+        Map<Long, Long> parentId = new HashMap<>();
+        for (ConceptRelation r : allRelations) {
+            Boolean sourceToTarget = sourceToTargetMap.get(r.getRelationType());
+            if (sourceToTarget != null && sourceToTarget) {
+                parentId.putIfAbsent(r.getTargetConceptId(), r.getSourceConceptId());
+            }
+        }
+        return parentId;
     }
 
     private ConceptTreeResponse buildTree(Concept concept,
@@ -203,7 +230,6 @@ public class ConceptService {
         ConceptTreeResponse node = new ConceptTreeResponse();
         node.setId(concept.getId());
         node.setName(concept.getName());
-        node.setParentId(concept.getParentId());
         node.setGroupId(concept.getGroupId());
         node.setDescription(concept.getDescription());
 

@@ -1,31 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Camera, GitCompare, RotateCcw, Plus, ChevronRight, Loader2, Check, AlertTriangle, Clock, Hash, User, FileText, ArrowRight, X } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import Select from '@/components/Select';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { listSnapshots, createSnapshot, diffSnapshots, getSnapshot, rollbackSnapshot } from '@/api/snapshot';
-import { listOntologyGroups } from '@/api/concept';
+import { listOntologyGroups, listIndustries } from '@/api/concept';
 import type { ConceptSnapshot, DiffResult } from '@/api/snapshot';
+import type { OntologyGroup, Industry } from '@/types/concept';
 import './ConceptSnapshotPage.css';
-
-interface OntologyGroup {
-  id: number;
-  name: string;
-  code: string;
-}
 
 type ViewMode = 'list' | 'diff' | 'detail';
 
 export default function ConceptSnapshotPage() {
   const [snapshots, setSnapshots] = useState<ConceptSnapshot[]>([]);
   const [groups, setGroups] = useState<OntologyGroup[]>([]);
+  const [industries, setIndustries] = useState<Industry[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedIndustryId, setSelectedIndustryId] = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
-  const [version, setVersion] = useState('');
   const [comment, setComment] = useState('');
+  const [createError, setCreateError] = useState('');
   const [diffFromId, setDiffFromId] = useState<number | null>(null);
   const [diffToId, setDiffToId] = useState<number | null>(null);
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
@@ -55,16 +52,57 @@ export default function ConceptSnapshotPage() {
     listOntologyGroups()
       .then((d) => setGroups(d.data || []))
       .catch(() => {});
+    listIndustries()
+      .then((d) => {
+        setIndustries(d.data || []);
+        if (d.data && d.data.length > 0) setSelectedIndustryId(d.data[0].id);
+      })
+      .catch(() => {});
   }, [fetchSnapshots]);
 
+  const filteredGroups = useMemo(() => {
+    if (!selectedIndustryId) return [];
+    return groups.filter((g) => g.industryId === selectedIndustryId);
+  }, [groups, selectedIndustryId]);
+
+  const selectedGroup = useMemo(() => {
+    return groups.find((g) => g.id === selectedGroupId) || null;
+  }, [groups, selectedGroupId]);
+
+  const selectedIndustry = useMemo(() => {
+    return industries.find((i) => i.id === selectedIndustryId) || null;
+  }, [industries, selectedIndustryId]);
+
+  const autoVersion = useMemo(() => {
+    if (!selectedIndustry || !selectedGroup) return '';
+    const now = new Date();
+    const ts = now.getFullYear().toString() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0') +
+      String(now.getSeconds()).padStart(2, '0');
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `v${selectedIndustry.id}-${selectedGroup.id}-${ts}-${random}`;
+  }, [selectedIndustry, selectedGroup]);
+
   const handleCreate = async () => {
-    if (!selectedGroupId || !version.trim()) return;
+    setCreateError('');
+    if (!selectedIndustryId) {
+      setCreateError('请选择行业');
+      return;
+    }
+    if (!selectedGroupId) {
+      setCreateError('请选择概念域');
+      return;
+    }
     try {
-      await createSnapshot({ groupId: selectedGroupId, version, comment, createdBy: user?.account || 'admin' });
+      await createSnapshot({ groupId: selectedGroupId, version: autoVersion, comment, createdBy: user?.account || 'admin' });
       toast('快照创建成功', 'success');
       setShowCreate(false);
-      setVersion('');
       setComment('');
+      setSelectedGroupId(null);
+      setCreateError('');
       fetchSnapshots();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '创建失败';
@@ -124,7 +162,18 @@ export default function ConceptSnapshotPage() {
   const formatSnapshotData = (snapshot: string) => {
     try {
       const data = JSON.parse(snapshot);
-      if (Array.isArray(data)) return `${data.length} 个概念`;
+      if (Array.isArray(data)) {
+        return `${data.length} 个概念`;
+      }
+      if (data && typeof data === 'object' && 'concepts' in data) {
+        const concepts = data.concepts as Array<unknown>;
+        const parts = [`${concepts.length} 个概念`];
+        if (data.relations?.length > 0) parts.push(`${data.relations.length} 个关系`);
+        if (data.mappings?.length > 0) parts.push(`${data.mappings.length} 个映射`);
+        if (data.joinMappings?.length > 0) parts.push(`${data.joinMappings.length} 个关联`);
+        if (data.toolBindings?.length > 0) parts.push(`${data.toolBindings.length} 个工具绑定`);
+        return parts.join('，');
+      }
       return String(data).slice(0, 80);
     } catch {
       return snapshot.slice(0, 80);
@@ -158,27 +207,67 @@ export default function ConceptSnapshotPage() {
 
       {showCreate && (
         <div className="snapshot-modal-container">
-          <div className="snapshot-modal-overlay" onClick={() => setShowCreate(false)} />
+          <div className="snapshot-modal-overlay" onClick={() => { setShowCreate(false); setCreateError(''); }} />
           <div className="snapshot-modal-dialog">
             <div className="snapshot-modal-title">创建版本快照</div>
             <div className="snapshot-form-group">
-              <label>概念域</label>
-              <select value={selectedGroupId || ''} onChange={(e) => setSelectedGroupId(Number(e.target.value) || null)}>
-                <option value="">选择概念域</option>
-                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              <label>行业 <span className="snapshot-required">*</span></label>
+              <Select
+                value={selectedIndustryId != null ? String(selectedIndustryId) : ''}
+                options={industries.map((ind) => ({
+                  value: String(ind.id),
+                  label: ind.displayName,
+                }))}
+                onChange={(v) => {
+                  setSelectedIndustryId(v ? Number(v) : null);
+                  setSelectedGroupId(null);
+                  setCreateError('');
+                }}
+                placeholder="选择行业"
+              />
+            </div>
+            <div className="snapshot-form-group">
+              <label>概念域 <span className="snapshot-required">*</span></label>
+              <Select
+                value={selectedGroupId != null ? String(selectedGroupId) : ''}
+                options={filteredGroups.map((g) => ({
+                  value: String(g.id),
+                  label: g.displayName || g.name,
+                }))}
+                onChange={(v) => {
+                  setSelectedGroupId(v ? Number(v) : null);
+                  setCreateError('');
+                }}
+                placeholder={selectedIndustryId ? '选择概念域' : '请先选择行业'}
+                disabled={!selectedIndustryId}
+              />
+              {selectedIndustryId && filteredGroups.length === 0 && (
+                <span className="snapshot-form-hint">该行业下暂无概念域</span>
+              )}
             </div>
             <div className="snapshot-form-group">
               <label>版本号</label>
-              <input value={version} onChange={(e) => setVersion(e.target.value)} placeholder="如 v1.0.0" />
+              <div className="snapshot-version-display">
+                {autoVersion || (
+                  <span className="snapshot-version-placeholder">
+                    {selectedIndustryId && selectedGroupId ? '生成中...' : '选择行业和概念域后自动生成'}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="snapshot-form-group">
               <label>变更说明</label>
               <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="描述本次变更" rows={3} />
             </div>
+            {createError && (
+              <div className="snapshot-form-error">
+                <AlertTriangle size={14} />
+                <span>{createError}</span>
+              </div>
+            )}
             <div className="snapshot-modal-actions">
-              <button className="snapshot-btn-cancel" onClick={() => setShowCreate(false)}>取消</button>
-              <button className="snapshot-btn-primary" onClick={handleCreate}>创建</button>
+              <button className="snapshot-btn-cancel" onClick={() => { setShowCreate(false); setCreateError(''); }}>取消</button>
+              <button className="snapshot-btn-primary" onClick={handleCreate} disabled={!selectedIndustryId || !selectedGroupId}>创建</button>
             </div>
           </div>
         </div>
@@ -365,6 +454,38 @@ export default function ConceptSnapshotPage() {
                         <span className="snapshot-diff-summary-num">{diffResult.summary.modifiedCount}</span>
                         <span>修改概念</span>
                       </div>
+                      {(diffResult.summary.relationsAdded ?? 0) > 0 || (diffResult.summary.relationsRemoved ?? 0) > 0 ? (
+                        <div className="snapshot-diff-summary-card snapshot-diff-summary-card--relation">
+                          <span className="snapshot-diff-summary-num">
+                            +{diffResult.summary.relationsAdded ?? 0} / -{diffResult.summary.relationsRemoved ?? 0}
+                          </span>
+                          <span>关系变更</span>
+                        </div>
+                      ) : null}
+                      {(diffResult.summary.mappingsAdded ?? 0) > 0 || (diffResult.summary.mappingsRemoved ?? 0) > 0 ? (
+                        <div className="snapshot-diff-summary-card snapshot-diff-summary-card--mapping">
+                          <span className="snapshot-diff-summary-num">
+                            +{diffResult.summary.mappingsAdded ?? 0} / -{diffResult.summary.mappingsRemoved ?? 0}
+                          </span>
+                          <span>映射变更</span>
+                        </div>
+                      ) : null}
+                      {(diffResult.summary.joinMappingsAdded ?? 0) > 0 || (diffResult.summary.joinMappingsRemoved ?? 0) > 0 ? (
+                        <div className="snapshot-diff-summary-card snapshot-diff-summary-card--join">
+                          <span className="snapshot-diff-summary-num">
+                            +{diffResult.summary.joinMappingsAdded ?? 0} / -{diffResult.summary.joinMappingsRemoved ?? 0}
+                          </span>
+                          <span>关联变更</span>
+                        </div>
+                      ) : null}
+                      {(diffResult.summary.toolBindingsAdded ?? 0) > 0 || (diffResult.summary.toolBindingsRemoved ?? 0) > 0 ? (
+                        <div className="snapshot-diff-summary-card snapshot-diff-summary-card--binding">
+                          <span className="snapshot-diff-summary-num">
+                            +{diffResult.summary.toolBindingsAdded ?? 0} / -{diffResult.summary.toolBindingsRemoved ?? 0}
+                          </span>
+                          <span>工具绑定变更</span>
+                        </div>
+                      ) : null}
                     </div>
 
                     {diffResult.added.length > 0 && (

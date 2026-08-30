@@ -20,9 +20,6 @@ public class Concept {
     @Column(nullable = false, length = 255)
     private String name;
 
-    @Column(name = "parent_id")
-    private Long parentId;
-
     @Column(name = "group_id")
     private Long groupId;
 

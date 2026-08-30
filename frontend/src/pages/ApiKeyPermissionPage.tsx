@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, Search, ChevronLeft, ChevronRight } from 'lucide-react';
-import { listToolGroups, listToolDefinitions, listKeyTools, requestToolPermissions, listKeyDatasources, listAvailableDatasources, requestDatasourcePermission } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, listKeyTools, requestToolPermissions, listKeyDatasources, listAvailableDatasources, requestDatasourcePermission, fetchToolTypes } from '@/api/tool';
 import { listApiKeys } from '@/api/tool';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
-import type { ToolGroup, ToolDefinition } from '@/types/tool';
+import type { ToolGroup, ToolDefinition, ToolTypeInfo } from '@/types/tool';
 import './ApiKeyPermissionPage.css';
 
 interface ApiKeyItem {
@@ -36,11 +36,6 @@ const STATUS_LABEL: Record<string, string> = {
   REJECTED: '已驳回',
 };
 
-const TYPE_LABEL: Record<string, string> = {
-  HTTP: 'HTTP',
-  MCP_PASSTHROUGH: 'MCP',
-};
-
 export default function ApiKeyPermissionPage() {
   const { keyId } = useParams<{ keyId: string }>();
   const navigate = useNavigate();
@@ -48,6 +43,7 @@ export default function ApiKeyPermissionPage() {
   const confirm = useConfirmStore((s) => s.confirm);
 
   const [keyInfo, setKeyInfo] = useState<ApiKeyItem | null>(null);
+  const [toolTypes, setToolTypes] = useState<ToolTypeInfo[]>([]);
   const [groups, setGroups] = useState<ToolGroup[]>([]);
   const [tools, setTools] = useState<ToolWithStatus[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -78,6 +74,8 @@ export default function ApiKeyPermissionPage() {
         listToolGroups(),
         listKeyTools(Number(keyId)),
       ]);
+
+      fetchToolTypes().then((res) => setToolTypes(res.data)).catch(() => {});
 
       const keys = (keysRes.data as ApiKeyItem[]) || [];
       const currentKey = keys.find((k) => k.id === Number(keyId));
@@ -454,7 +452,7 @@ export default function ApiKeyPermissionPage() {
                         <div className="perm-tool-name-row">
                           <span className="perm-tool-name">{tool.displayName || tool.name}</span>
                           <span className={`perm-tool-type type-${tool.toolType}`}>
-                            {TYPE_LABEL[tool.toolType] || tool.toolType}
+                            {toolTypes.find(t => t.value === tool.toolType)?.label || tool.toolType}
                           </span>
                           <span className={`perm-tool-status status-${tool.permissionStatus.toLowerCase()}`}>
                             {STATUS_LABEL[tool.permissionStatus]}

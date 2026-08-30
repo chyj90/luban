@@ -2,6 +2,7 @@ import { get, post, put, del } from './client';
 import type {
   ToolGroup,
   ToolDefinition,
+  ToolTypeInfo,
   ToolSearchResult,
   ToolTestResult,
   McpServer,
@@ -15,6 +16,10 @@ import type {
 
 export function listToolGroups() {
   return get<ToolGroup[]>('/tool-groups');
+}
+
+export function fetchToolTypes() {
+  return get<ToolTypeInfo[]>('/tools/types');
 }
 
 export function createToolGroup(data: Partial<ToolGroup>) {

@@ -1,6 +1,7 @@
 package com.luban.controller;
 
 import com.luban.annotation.RequirePermission;
+import com.luban.constant.ToolType;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.executor.HttpExecutor;
@@ -28,6 +29,11 @@ public class ToolDefinitionController {
     private final McpExecutor mcpExecutor;
     private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
+
+    @GetMapping("/types")
+    public ResponseEntity<List<Map<String, String>>> listToolTypes() {
+        return ResponseEntity.ok(ToolType.toList());
+    }
 
     @GetMapping("/systems")
     public ResponseEntity<List<Map<String, Object>>> listSystems() {
@@ -113,14 +119,11 @@ public class ToolDefinitionController {
     }
 
     private String executeTool(ToolDefinition tool, Map<String, Object> arguments) {
-        switch (tool.getToolType()) {
-            case "HTTP":
-                return httpExecutor.execute(tool, arguments, "test");
-            case "MCP_PASSTHROUGH":
-                return mcpExecutor.execute(tool, arguments);
-            default:
-                return "{\"error\": \"Unsupported tool type: " + tool.getToolType() + "\"}";
-        }
+        ToolType toolType = ToolType.fromValue(tool.getToolType());
+        return switch (toolType) {
+            case HTTP -> httpExecutor.execute(tool, arguments, "test");
+            case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
+        };
     }
 
     private Map<String, Object> toToolSummary(ToolDefinition tool) {

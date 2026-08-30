@@ -379,15 +379,6 @@ public class OntologyChangeService {
             }
         }
 
-        // 如果有 parentConceptName，查找父概念
-        Object parentName = conceptData.get("parentConceptName");
-        if (parentName instanceof String && !((String) parentName).isEmpty()) {
-            List<Concept> parents = conceptRepository.findByName((String) parentName);
-            if (!parents.isEmpty()) {
-                concept.setParentId(parents.get(0).getId());
-            }
-        }
-
         Concept saved = conceptRepository.save(concept);
         log.info("ADD_CONCEPT executed: id={}, name={}, groupId={}", saved.getId(), saved.getName(), saved.getGroupId());
     }

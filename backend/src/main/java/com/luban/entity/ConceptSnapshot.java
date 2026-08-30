@@ -22,13 +22,13 @@ public class ConceptSnapshot {
     @Column(name = "group_id", nullable = false)
     private Long groupId;
 
-    @Column(nullable = false, length = 32)
+    @Column(nullable = false, length = 128)
     private String version;
 
     @Column(name = "snapshot", nullable = false, columnDefinition = "JSON")
     private String snapshot;
 
-    @Column(name = "change_log", columnDefinition = "JSON")
+    @Column(name = "change_log", columnDefinition = "TEXT")
     private String changeLog;
 
     @Column(name = "created_by", length = 64)

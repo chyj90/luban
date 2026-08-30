@@ -18,7 +18,19 @@ export interface DiffResult {
   added: Array<Record<string, unknown>>;
   removed: Array<Record<string, unknown>>;
   modified: Array<{ id: number; name: string; changes: Array<{ field: string; from: string; to: string }> }>;
-  summary: { addedCount: number; removedCount: number; modifiedCount: number };
+  summary: {
+    addedCount: number;
+    removedCount: number;
+    modifiedCount: number;
+    relationsAdded?: number;
+    relationsRemoved?: number;
+    mappingsAdded?: number;
+    mappingsRemoved?: number;
+    joinMappingsAdded?: number;
+    joinMappingsRemoved?: number;
+    toolBindingsAdded?: number;
+    toolBindingsRemoved?: number;
+  };
   error?: string;
 }
 
