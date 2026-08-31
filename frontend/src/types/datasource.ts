@@ -1,6 +1,42 @@
-export type DatasourceType = 'MySQL' | 'PostgreSQL';
+export type DatasourceType = string;
 
 export type DatasourceSlug = 'APPLICATION' | 'PLATFORM' | 'REF';
+
+export interface DriverInfo {
+  id: number;
+  name: string;
+  displayName: string;
+  description: string;
+  category: string;
+  driverClass: string;
+  jdbcUrlTemplate: string;
+  defaultPort: number;
+  groupId: string;
+  artifactId: string;
+  version: string;
+  classifier: string | null;
+  installed: boolean;
+  builtin: boolean;
+  enabled: boolean;
+  extraFields: ExtraField[] | null;
+  hideStandardFields: boolean;
+}
+
+export interface ExtraField {
+  name: string;
+  label: string;
+  placeholder: string;
+  type: 'text' | 'password' | 'select';
+  required: boolean;
+}
+
+export interface InstallProgress {
+  phase: 'DOWNLOADING' | 'REGISTERING' | 'COMPLETE' | 'ERROR';
+  fileName: string;
+  current: number;
+  total: number;
+  percent: number;
+}
 
 export interface DatasourceConfig {
   host?: string;

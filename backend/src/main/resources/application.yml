@@ -34,3 +34,14 @@ luban:
     rate-limit:
       max-requests: 30
       window-minutes: 1
+  drivers:
+    storage-path: drivers
+    auto-load-on-startup: true
+    maven:
+      repo-url: https://maven.aliyun.com/repository/central
+      fallback-url: https://repo.huaweicloud.com/repository/maven/
+      connect-timeout: 10000
+      read-timeout: 30000
+      max-retries: 3
+  datasource:
+    secret: ${LUBAN_DATASOURCE_SECRET:s5NHFCgkA7ju+WVrOFtZzG/0SQZRnaMggynl9q9fze4=}

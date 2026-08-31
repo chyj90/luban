@@ -279,10 +279,11 @@ public class SqlExecutionService {
         }
         Map<String, Object> config = datasourceService.fromJsonMap(ds.getConfig());
         String url = datasourceService.buildJdbcUrl(ds.getType(), config);
+        String password = datasourceService.decryptPassword(config);
         log.info("getConnection: datasourceId={}, type={}, url={}", datasourceId, ds.getType(), url);
         return DriverManager.getConnection(url,
                 String.valueOf(config.get("username")),
-                String.valueOf(config.get("password")));
+                password);
     }
 
     public Set<String> extractTableNames(String sql) {

@@ -439,3 +439,169 @@ textarea.ds-input {
   background: #e6f4ff;
   color: #1677ff;
 }
+
+/* Install Banner */
+.ds-form-field {
+  margin-bottom: 8px;
+}
+
+.ds-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #5a6a7e;
+  margin-bottom: 4px;
+}
+
+.ds-install-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #ad6800;
+}
+
+.ds-install-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ds-install-banner .ds-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Install Progress */
+.ds-install-progress {
+  padding: 10px 12px;
+  background: #f0f5ff;
+  border: 1px solid #d6e4ff;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.ds-install-title {
+  font-weight: 600;
+  color: #1f1f1f;
+  margin-bottom: 6px;
+}
+
+.ds-install-log {
+  max-height: 160px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #5a6a7e;
+}
+
+.ds-install-line {
+  padding: 1px 0;
+  word-break: break-all;
+}
+
+.ds-install-error {
+  color: #ff4d4f;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+/* Progress Bar */
+.ds-install-progress-bar {
+  height: 4px;
+  background: #e8edf3;
+  border-radius: 2px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.ds-install-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1677ff, #52c41a);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+/* Install Confirm Dialog */
+.ds-install-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.ds-install-dialog {
+  background: #fff;
+  border-radius: 10px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+}
+
+.ds-install-dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e8edf3;
+  color: #1f1f1f;
+}
+
+.ds-install-dialog-body {
+  padding: 16px 20px;
+}
+
+.ds-install-dialog-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  color: #1f1f1f;
+}
+
+.ds-install-dialog-label {
+  color: #8c9cab;
+  flex-shrink: 0;
+  margin-right: 12px;
+}
+
+.ds-install-dialog-mono {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: #5a6a7e;
+  word-break: break-all;
+  text-align: right;
+  max-width: 280px;
+}
+
+.ds-install-dialog-note {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: #f0f5ff;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #5a6a7e;
+}
+
+.ds-install-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #e8edf3;
+}

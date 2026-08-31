@@ -44,9 +44,9 @@ public interface AgentQueryLogRepository extends JpaRepository<AgentQueryLog, Lo
 
     long countByFeedbackGivenTrueAndCreatedAtAfter(LocalDateTime since);
 
-    @Query(value = "SELECT COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY llm_latency_ms), 0) FROM agent_query_log WHERE created_at >= :since AND llm_latency_ms IS NOT NULL", nativeQuery = true)
+    @Query(value = "SELECT COALESCE(MAX(llm_latency_ms), 0) FROM (SELECT llm_latency_ms, ROW_NUMBER() OVER (ORDER BY llm_latency_ms) AS rn, COUNT(*) OVER () AS cnt FROM agent_query_log WHERE created_at >= :since AND llm_latency_ms IS NOT NULL) t WHERE rn = CEIL(cnt * 0.95)", nativeQuery = true)
     Double p95LlmLatencySince(@Param("since") LocalDateTime since);
 
-    @Query(value = "SELECT COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY execution_latency_ms), 0) FROM agent_query_log WHERE created_at >= :since AND execution_latency_ms IS NOT NULL", nativeQuery = true)
+    @Query(value = "SELECT COALESCE(MAX(execution_latency_ms), 0) FROM (SELECT execution_latency_ms, ROW_NUMBER() OVER (ORDER BY execution_latency_ms) AS rn, COUNT(*) OVER () AS cnt FROM agent_query_log WHERE created_at >= :since AND execution_latency_ms IS NOT NULL) t WHERE rn = CEIL(cnt * 0.95)", nativeQuery = true)
     Double p95ExecutionLatencySince(@Param("since") LocalDateTime since);
 }

@@ -9,10 +9,11 @@ import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import com.luban.util.CryptoUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -26,8 +27,6 @@ import java.sql.Statement;
 import java.time.Duration;
 import java.util.*;
 
-import org.springframework.transaction.annotation.Transactional;
-
 @Slf4j
 @Service
 @Transactional
@@ -36,13 +35,19 @@ public class DatasourceService {
     private final DatasourceRepository datasourceRepository;
     private final ApplicationRepository applicationRepository;
     private final ObjectMapper objectMapper;
+    private final JdbcDriverService jdbcDriverService;
+    private final CryptoUtil cryptoUtil;
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              ApplicationRepository applicationRepository,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             JdbcDriverService jdbcDriverService,
+                             CryptoUtil cryptoUtil) {
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
         this.objectMapper = objectMapper;
+        this.jdbcDriverService = jdbcDriverService;
+        this.cryptoUtil = cryptoUtil;
     }
 
     private void verifyApplicationOwnership(Long applicationId) {
@@ -79,12 +84,15 @@ public class DatasourceService {
         if ("APPLICATION".equals(request.getSlug()) && request.getOwnerId() != null) {
             verifyApplicationOwnership(request.getOwnerId());
         }
+        Map<String, Object> config = new HashMap<>(request.getConfig() != null ? request.getConfig() : Map.of());
+        encryptPasswordInConfig(config);
+
         Datasource ds = new Datasource();
         ds.setOwnerId(request.getOwnerId());
         ds.setSlug(request.getSlug());
         ds.setName(request.getName());
         ds.setType(request.getType());
-        ds.setConfig(toJson(request.getConfig()));
+        ds.setConfig(toJson(config));
         ds.setStatus("pending");
         ds = datasourceRepository.save(ds);
         return buildDatasourceMap(ds);
@@ -95,11 +103,12 @@ public class DatasourceService {
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
         try {
             Map<String, Object> config = fromJsonMap(ds.getConfig());
-            boolean ok = switch (ds.getType().toLowerCase()) {
-                case "mysql", "postgresql" -> testJdbc(ds.getType(), config);
-                case "rest_api" -> testApi(config);
-                default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
-            };
+            String type = ds.getType().toLowerCase();
+            if ("rest_api".equals(type)) {
+                boolean ok = testApi(config);
+                return ok ? new TestDatasourceResponse(true, "连接成功") : new TestDatasourceResponse(false, "连接失败");
+            }
+            boolean ok = testJdbc(type, config);
             if (ok) {
                 ds.setStatus("connected");
                 datasourceRepository.save(ds);
@@ -117,10 +126,10 @@ public class DatasourceService {
     }
 
     private boolean testJdbc(String type, Map<String, Object> config) {
-        String url = buildJdbcUrl(type, config);
-        try (Connection conn = DriverManager.getConnection(url,
-                String.valueOf(config.get("username")),
-                String.valueOf(config.get("password")))) {
+        String url = jdbcDriverService.buildJdbcUrl(type, config);
+        String username = String.valueOf(config.get("username"));
+        String password = decryptPassword(config);
+        try (Connection conn = DriverManager.getConnection(url, username, password)) {
             return conn.isValid(5);
         } catch (Exception e) {
             throw new RuntimeException(e.getMessage());
@@ -152,22 +161,21 @@ public class DatasourceService {
         Datasource ds = datasourceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
         Map<String, Object> config = fromJsonMap(ds.getConfig());
+        String type = ds.getType().toLowerCase();
 
-        return switch (ds.getType().toLowerCase()) {
-            case "mysql", "postgresql" -> getJdbcStructure(ds.getType(), config);
-            case "rest_api" -> getApiStructure(config);
-            default -> throw new IllegalArgumentException("不支持的数据源类型: " + ds.getType());
-        };
+        if ("rest_api".equals(type)) {
+            return getApiStructure(config);
+        }
+        return getJdbcStructure(type, config);
     }
 
     private Map<String, Object> getJdbcStructure(String type, Map<String, Object> config) {
         List<Map<String, Object>> tables = new ArrayList<>();
-
         try {
-            String url = buildJdbcUrl(type, config);
-            try (Connection conn = DriverManager.getConnection(url,
-                    String.valueOf(config.get("username")),
-                    String.valueOf(config.get("password")))) {
+            String url = jdbcDriverService.buildJdbcUrl(type, config);
+            String username = String.valueOf(config.get("username"));
+            String password = decryptPassword(config);
+            try (Connection conn = DriverManager.getConnection(url, username, password)) {
                 DatabaseMetaData meta = conn.getMetaData();
                 String catalog = conn.getCatalog();
                 try (ResultSet rs = meta.getTables(catalog, null, "%", new String[]{"TABLE"})) {
@@ -196,7 +204,6 @@ public class DatasourceService {
         } catch (Exception e) {
             throw new RuntimeException("获取数据库结构失败: " + e.getMessage());
         }
-
         return Map.of("tables", tables);
     }
 
@@ -221,16 +228,16 @@ public class DatasourceService {
         Map<String, Object> config = fromJsonMap(ds.getConfig());
         String type = ds.getType().toLowerCase();
 
-        if (!"mysql".equals(type) && !"postgresql".equals(type)) {
+        if ("rest_api".equals(type)) {
             return Set.of();
         }
 
-        String url = buildJdbcUrl(type, config);
+        String url = jdbcDriverService.buildJdbcUrl(type, config);
         String sql = "SELECT DISTINCT " + columnName + " FROM " + tableName + " LIMIT 1000";
         Set<String> values = new HashSet<>();
         try (Connection conn = DriverManager.getConnection(url,
                 String.valueOf(config.get("username")),
-                String.valueOf(config.get("password")));
+                decryptPassword(config));
              Statement stmt = conn.createStatement()) {
             stmt.setQueryTimeout(10);
             try (ResultSet rs = stmt.executeQuery(sql)) {
@@ -263,7 +270,17 @@ public class DatasourceService {
         ds.setName(request.getName());
         ds.setType(request.getType());
         if (request.getConfig() != null) {
-            ds.setConfig(toJson(request.getConfig()));
+            Map<String, Object> newConfig = new HashMap<>(request.getConfig());
+            String newPassword = String.valueOf(newConfig.getOrDefault("password", ""));
+            if (newPassword.isBlank() || "••••••••".equals(newPassword)) {
+                Map<String, Object> oldConfig = fromJsonMap(ds.getConfig());
+                if (oldConfig.containsKey("password")) {
+                    newConfig.put("password", oldConfig.get("password"));
+                }
+            } else {
+                encryptPasswordInConfig(newConfig);
+            }
+            ds.setConfig(toJson(newConfig));
         }
         ds.setStatus("pending");
         ds = datasourceRepository.save(ds);
@@ -304,18 +321,30 @@ public class DatasourceService {
     }
 
     public String buildJdbcUrl(String type, Map<String, Object> config) {
-        if (config.containsKey("jdbcUrl") && config.get("jdbcUrl") != null) {
-            return String.valueOf(config.get("jdbcUrl"));
+        return jdbcDriverService.buildJdbcUrl(type, config);
+    }
+
+    private void encryptPasswordInConfig(Map<String, Object> config) {
+        if (config.containsKey("password") && config.get("password") != null) {
+            String pwd = String.valueOf(config.get("password"));
+            if (!pwd.isBlank() && !cryptoUtil.isEncrypted(pwd)) {
+                config.put("password", cryptoUtil.encrypt(pwd));
+            }
         }
-        String host = String.valueOf(config.get("host"));
-        Object portObj = config.get("port");
-        String port = portObj != null ? String.valueOf(portObj) : "3306";
-        String database = String.valueOf(config.get("database"));
-        return switch (type.toLowerCase()) {
-            case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
-            case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
-            default -> throw new IllegalArgumentException("不支持的数据源类型: " + type);
-        };
+    }
+
+    public String decryptPassword(Map<String, Object> config) {
+        if (!config.containsKey("password") || config.get("password") == null) {
+            return "";
+        }
+        String pwd = String.valueOf(config.get("password"));
+        if (pwd.isBlank()) {
+            return "";
+        }
+        if (cryptoUtil.isEncrypted(pwd)) {
+            return cryptoUtil.decrypt(pwd);
+        }
+        return pwd;
     }
 
     public List<Map<String, Object>> getAvailableDatasources() {
@@ -353,10 +382,12 @@ public class DatasourceService {
                         simplified.add(t);
                     }
                     info.put("tables", simplified);
+                } else {
+                    info.put("tables", List.of());
                 }
             } catch (Exception e) {
-                log.warn("获取数据源 {} 结构失败: {}", ds.getName(), e.getMessage());
                 info.put("tables", List.of());
+                info.put("error", e.getMessage());
             }
             result.add(info);
         }

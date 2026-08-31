@@ -41,6 +41,7 @@ import ognl.MemberAccess;
 
 import java.lang.reflect.Member;
 
+import com.luban.util.CryptoUtil;
 import com.luban.util.AgentLogger;
 
 @Service
@@ -63,19 +64,22 @@ public class QueryService {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyDatasourceRepository apiKeyDatasourceRepository;
     private final ObjectMapper objectMapper;
+    private final DatasourceService datasourceService;
 
     public QueryService(QueryRepository queryRepository,
                         DatasourceRepository datasourceRepository,
                         ApplicationRepository applicationRepository,
                         ApiKeyRepository apiKeyRepository,
                         ApiKeyDatasourceRepository apiKeyDatasourceRepository,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        DatasourceService datasourceService) {
         this.queryRepository = queryRepository;
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyDatasourceRepository = apiKeyDatasourceRepository;
         this.objectMapper = objectMapper;
+        this.datasourceService = datasourceService;
     }
 
     public List<Map<String, Object>> listByApplication(Long applicationId) {
@@ -123,12 +127,12 @@ public class QueryService {
                 || upperSql.startsWith("RENAME");
         if (isDdl) return;
 
-        Map<String, Object> config = fromJsonMap(ds.getConfig());
-        String url = buildJdbcUrl(ds.getType(), config);
+        Map<String, Object> config = datasourceService.fromJsonMap(ds.getConfig());
+        String url = datasourceService.buildJdbcUrl(ds.getType(), config);
 
         try (Connection conn = DriverManager.getConnection(url,
                 String.valueOf(config.get("username")),
-                String.valueOf(config.get("password")));
+                datasourceService.decryptPassword(config));
              Statement stmt = conn.createStatement()) {
             stmt.execute("EXPLAIN " + resolved);
             try (ResultSet rs = stmt.getResultSet()) {
@@ -260,7 +264,7 @@ public class QueryService {
     }
 
     private RunQueryResponse runJdbcQuery(String type, Map<String, Object> config, String sql) {
-        String url = buildJdbcUrl(type, config);
+        String url = datasourceService.buildJdbcUrl(type, config);
         long startTime = System.currentTimeMillis();
 
         String trimmedSql = sql.trim();
@@ -275,7 +279,7 @@ public class QueryService {
 
         try (Connection conn = DriverManager.getConnection(url,
                 String.valueOf(config.get("username")),
-                String.valueOf(config.get("password")));
+                datasourceService.decryptPassword(config));
              Statement stmt = conn.createStatement()) {
 
             if (isQuery) {
@@ -647,20 +651,6 @@ public class QueryService {
         if (value instanceof Number) return value.toString();
         if (value instanceof Boolean) return ((Boolean) value) ? "1" : "0";
         return value.toString().replace("'", "''");
-    }
-
-    private String buildJdbcUrl(String type, Map<String, Object> config) {
-        if (config.containsKey("jdbcUrl") && config.get("jdbcUrl") != null) {
-            return String.valueOf(config.get("jdbcUrl"));
-        }
-        String host = String.valueOf(config.get("host"));
-        String port = String.valueOf(config.getOrDefault("port", "3306"));
-        String database = String.valueOf(config.get("database"));
-        return switch (type.toLowerCase()) {
-            case "mysql" -> "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
-            case "postgresql" -> "jdbc:postgresql://" + host + ":" + port + "/" + database;
-            default -> throw new IllegalArgumentException("不支持的数据源类型: " + type);
-        };
     }
 
     private Map<String, Object> buildQueryMap(Query q) {

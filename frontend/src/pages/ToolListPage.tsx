@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes } from '@/api/tool';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
+import { listDrivers, installDriver } from '@/api/driver';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import Select from '@/components/Select';
 import type { ToolDefinition, ToolTypeInfo, ToolSearchResult, SwaggerEndpoint, McpServer } from '@/types/tool';
-import type { Datasource, DatasourceType, DatasourceStructure } from '@/types/datasource';
+import type { Datasource, DatasourceType, DatasourceStructure, DriverInfo, InstallProgress, ExtraField } from '@/types/datasource';
 import type { ToolConcept, Concept } from '@/types/concept';
 import './ToolListPage.css';
 
@@ -61,6 +62,9 @@ export default function ToolListPage() {
   const [dsStructure, setDsStructure] = useState<DatasourceStructure | null>(null);
   const [collapsedTables, setCollapsedTables] = useState<Set<string>>(new Set());
   const [dsTesting, setDsTesting] = useState<number | null>(null);
+  const [dsActiveCat, setDsActiveCat] = useState('RELATIONAL');
+  const [drivers, setDrivers] = useState<DriverInfo[]>([]);
+  const [installing, setInstalling] = useState<{ name: string; displayName: string; progress: InstallProgress[] } | null>(null);
   const toast = useToastStore((s) => s.show);
   const activeInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
   const [headerParamMenuIndex, setHeaderParamMenuIndex] = useState<number | null>(null);
@@ -69,6 +73,28 @@ export default function ToolListPage() {
   const prevActiveTab = useRef(activeTab);
 
   const getTypeLabel = (value: string) => toolTypes.find(t => t.value === value)?.label || value;
+
+  const getDriverInfo = (type: string) => drivers.find((d) => d.name.toLowerCase() === type.toLowerCase());
+  const isJdbcType = (type: string) => type && type !== 'rest_api' && type !== 'REST_API';
+
+  const handleInstallDriver = (name: string) => {
+    const driver = getDriverInfo(name);
+    if (!driver) return;
+    setInstalling({ name: driver.name, displayName: driver.displayName, progress: [] });
+    installDriver(
+      driver.name,
+      (p) => setInstalling((prev) => prev ? { ...prev, progress: [...prev.progress, p] } : null),
+      () => {
+        setInstalling(null);
+        listDrivers().then((res) => setDrivers(res.data)).catch(() => {});
+        toast('驱动安装成功', 'success');
+      },
+      (err) => {
+        setInstalling(null);
+        toast(err, 'error');
+      },
+    );
+  };
 
   const toggleTableCollapse = (tableName: string) => {
     setCollapsedTables((prev) => {
@@ -310,12 +336,27 @@ export default function ToolListPage() {
   }, [groupId]);
 
   const buildDsConfig = () => {
-    return { host: dsForm.host, port: Number(dsForm.port) || 3306, database: dsForm.database, username: dsForm.username, password: dsForm.password };
+    const config: Record<string, unknown> = { host: dsForm.host, port: Number(dsForm.port) || 3306, database: dsForm.database, username: dsForm.username, password: dsForm.password };
+    const driver = getDriverInfo(dsForm.type);
+    if (driver?.extraFields) {
+      const fieldValues = dsForm as Record<string, unknown>;
+      for (const ef of driver.extraFields) {
+        const val = fieldValues[ef.name];
+        if (val !== undefined && val !== '') {
+          config[ef.name] = val;
+        }
+      }
+    }
+    return config;
   };
 
   const handleDsSubmit = async () => {
-    if (!dsForm.name || !groupId) {
-      toast('名称和所属系统为必填项', 'error');
+    if (!dsForm.name) {
+      toast('请输入名称', 'error');
+      return;
+    }
+    if (!groupId) {
+      toast('缺少所属系统，请从系统管理页面进入', 'error');
       return;
     }
     try {
@@ -376,21 +417,33 @@ export default function ToolListPage() {
 
   const openDsCreate = () => {
     setDsEditingId(null);
-    setDsForm({ name: '', type: 'MySQL', host: '', port: '3306', database: '', username: '', password: '', baseUrl: '' });
+    const empty: Record<string, unknown> = { name: '', type: 'MySQL', host: '', port: '3306', database: '', username: '', password: '', baseUrl: '' };
+    setDsForm(empty as typeof dsForm);
     setDsShowForm(true);
   };
 
   const openDsEdit = (ds: Datasource) => {
     setDsEditingId(ds.id);
     const cfg = ds.config as Record<string, unknown>;
-    const normalizedType = (ds.type?.toLowerCase() === 'mysql' ? 'MySQL' : ds.type?.toLowerCase() === 'postgresql' ? 'PostgreSQL' : 'MySQL') as DatasourceType;
-    setDsForm({ name: ds.name, type: normalizedType, host: String(cfg.host || ''), port: String(cfg.port || '3306'), database: String(cfg.database || ''), username: String(cfg.username || ''), password: '', baseUrl: '' });
+    const driver = getDriverInfo(ds.type);
+    const base: Record<string, unknown> = {
+      name: ds.name, type: ds.type,
+      host: String(cfg.host || ''), port: String(cfg.port || (driver?.defaultPort || '3306')),
+      database: String(cfg.database || ''), username: String(cfg.username || ''), password: '', baseUrl: '',
+    };
+    if (driver?.extraFields) {
+      for (const ef of driver.extraFields) {
+        base[ef.name] = String(cfg[ef.name] || '');
+      }
+    }
+    setDsForm(base as typeof dsForm);
     setDsShowForm(true);
   };
 
   useEffect(() => {
     if (activeTab === 'datasources' && prevActiveTab.current !== 'datasources') {
       fetchDatasources();
+      listDrivers().then((res) => setDrivers(res.data)).catch(() => {});
     }
     prevActiveTab.current = activeTab;
   }, [activeTab, fetchDatasources]);
@@ -418,8 +471,12 @@ export default function ToolListPage() {
   };
 
   const handleSubmit = async () => {
-    if (!form.name || !groupId) {
-      toast('名称和所属系统为必填项', 'error');
+    if (!form.name) {
+      toast('请输入工具名称', 'error');
+      return;
+    }
+    if (!groupId) {
+      toast('缺少所属系统，请从系统管理页面进入', 'error');
       return;
     }
     const config = buildConfig(form.toolType);
@@ -1248,55 +1305,228 @@ export default function ToolListPage() {
             </table>
           </div>
 
-          {dsShowForm && (
-            <div className="tool-form-overlay" onClick={() => { setDsShowForm(false); setDsEditingId(null); }}>
-              <div className="tool-form" onClick={(e) => e.stopPropagation()}>
-                <h3 className="tool-form-title">{dsEditingId ? '编辑数据源' : '新建数据源'}</h3>
-                <div className="tool-form-field">
-                  <label className="tool-form-label">名称</label>
-                  <input className="tool-form-input" value={dsForm.name} onChange={(e) => setDsForm({ ...dsForm, name: e.target.value })} placeholder="如：生产数据库" />
-                </div>
-                <div className="tool-form-field">
-                  <label className="tool-form-label">类型</label>
-                  <Select value={dsForm.type} options={[{ value: 'MySQL', label: 'MySQL' }, { value: 'PostgreSQL', label: 'PostgreSQL' }]} onChange={(v) => setDsForm({ ...dsForm, type: v as DatasourceType })} />
-                </div>
-                {(dsForm.type === 'MySQL' || dsForm.type === 'PostgreSQL') && (
-                  <div className="tool-form-config-section">
-                    <h4 className="tool-form-config-title">连接信息</h4>
-                    <div className="tool-form-row">
-                      <div className="tool-form-field" style={{ flex: 2 }}>
-                        <label className="tool-form-label">主机</label>
-                        <input className="tool-form-input" value={dsForm.host} onChange={(e) => setDsForm({ ...dsForm, host: e.target.value })} placeholder="localhost" />
-                      </div>
-                      <div className="tool-form-field" style={{ flex: 1 }}>
-                        <label className="tool-form-label">端口</label>
-                        <input className="tool-form-input" value={dsForm.port} onChange={(e) => setDsForm({ ...dsForm, port: e.target.value })} placeholder="3306" />
-                      </div>
+          {dsShowForm && (() => {
+              const selectedDriver = getDriverInfo(dsForm.type);
+              const needsInstall = selectedDriver && !selectedDriver.installed && isJdbcType(dsForm.type);
+
+              const updateField = (key: string, value: string) => {
+                setDsForm({ ...dsForm, [key]: value } as typeof dsForm);
+              };
+
+              const handleDsTypeChange = (v: string) => {
+                const driver = drivers.find((d) => d.name.toLowerCase() === v.toLowerCase());
+                const port = driver ? String(driver.defaultPort) : (v === 'MySQL' ? '3306' : v === 'PostgreSQL' ? '5432' : '');
+                const updates: Record<string, unknown> = { type: v, port };
+                setDsForm({ ...dsForm, ...updates } as typeof dsForm);
+              };
+
+              const catColors: Record<string, { icon: string; badge: string; short: string }> = {
+                RELATIONAL: { icon: 'ds-icon-relational', badge: 'ds-badge-relational', short: 'RDB' },
+                OLAP: { icon: 'ds-icon-olap', badge: 'ds-badge-olap', short: 'OLAP' },
+                QUERY_ENGINE: { icon: 'ds-icon-query', badge: 'ds-badge-query', short: 'QE' },
+                DATALAKE: { icon: 'ds-icon-datalake', badge: 'ds-badge-datalake', short: 'DL' },
+                CLOUD: { icon: 'ds-icon-cloud', badge: 'ds-badge-cloud', short: 'CLOUD' },
+                API: { icon: 'ds-icon-api', badge: 'ds-badge-api', short: 'API' },
+              };
+
+              const builtinTypes = [
+                { name: 'MySQL', cat: 'RELATIONAL', label: 'MySQL', installed: true },
+                { name: 'PostgreSQL', cat: 'RELATIONAL', label: 'PostgreSQL', installed: true },
+              ];
+              const allTypes = [
+                ...builtinTypes,
+                ...drivers.filter(d => d.enabled).map(d => ({
+                  name: d.name, cat: d.category, label: d.displayName, installed: d.installed,
+                })),
+              ];
+              const categories = [...new Set(allTypes.map(t => t.cat))];
+
+              return (
+            <div className="tool-form-overlay" onClick={() => { setDsShowForm(false); setDsEditingId(null); setInstalling(null); }}>
+              <div className="tool-form ds-dialog" onClick={(e) => e.stopPropagation()}>
+                <div className="ds-dialog-header">
+                  <div className="ds-dialog-header-left">
+                    <div className="ds-dialog-header-icon">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                      </svg>
                     </div>
-                    <div className="tool-form-field">
-                      <label className="tool-form-label">数据库名</label>
-                      <input className="tool-form-input" value={dsForm.database} onChange={(e) => setDsForm({ ...dsForm, database: e.target.value })} placeholder="mydb" />
-                    </div>
-                    <div className="tool-form-row">
-                      <div className="tool-form-field" style={{ flex: 1 }}>
-                        <label className="tool-form-label">用户名</label>
-                        <input className="tool-form-input" value={dsForm.username} onChange={(e) => setDsForm({ ...dsForm, username: e.target.value })} placeholder="root" />
-                      </div>
-                      <div className="tool-form-field" style={{ flex: 1 }}>
-                        <label className="tool-form-label">密码</label>
-                        <input className="tool-form-input" type="password" value={dsForm.password} onChange={(e) => setDsForm({ ...dsForm, password: e.target.value })} placeholder="输入密码" />
-                      </div>
+                    <div>
+                      <h3 className="ds-dialog-title">{dsEditingId ? '编辑数据源' : '新建数据源'}</h3>
+                      <p className="ds-dialog-subtitle">配置数据库连接信息</p>
                     </div>
                   </div>
-                )}
-                <div className="tool-form-divider" />
-                <div className="tool-form-actions">
-                  <button className="tool-form-cancel" onClick={() => { setDsShowForm(false); setDsEditingId(null); }}>取消</button>
-                  <button className="tool-form-submit" onClick={handleDsSubmit}>{dsEditingId ? '保存' : '创建'}</button>
+                  <button className="ds-dialog-close" onClick={() => { setDsShowForm(false); setDsEditingId(null); setInstalling(null); }}>✕</button>
+                </div>
+
+                <div className="ds-dialog-body">
+                  <div className="ds-field">
+                    <label className="ds-field-label">名称</label>
+                    <input className="ds-field-input" value={dsForm.name} onChange={(e) => updateField('name', e.target.value)} placeholder="输入一个易于识别的名称，如：生产数据库" />
+                  </div>
+
+                  <div className="ds-field">
+                    <label className="ds-field-label">数据库类型</label>
+                    <div className="ds-type-tabs">
+                      {categories.map(cat => {
+                        const catNames: Record<string, string> = {
+                          RELATIONAL: '关系型', OLAP: 'OLAP', QUERY_ENGINE: '查询引擎',
+                          DATALAKE: '数据湖', CLOUD: '云数仓', API: '接口',
+                        };
+                        return (
+                          <button
+                            key={cat}
+                            className={`ds-type-tab ${dsActiveCat === cat ? 'active' : ''}`}
+                            onClick={() => setDsActiveCat(cat)}
+                          >
+                            {catNames[cat] || cat}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(() => {
+                      const cat = dsActiveCat;
+                      const cc = catColors[cat] || { icon: 'ds-icon-relational', badge: 'ds-badge-relational', short: cat };
+                      const types = allTypes.filter(t => t.cat === cat);
+                      return (
+                        <div className="ds-type-grid">
+                          {types.map(t => (
+                            <div
+                              key={t.name}
+                              className={`ds-type-card ${dsForm.type === t.name ? 'selected' : ''}`}
+                              onClick={() => handleDsTypeChange(t.name)}
+                            >
+                              <div className="ds-type-card-label">
+                                {t.label}
+                                {!t.installed && (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 4, color: '#f59e0b', verticalAlign: 'middle' }}>
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="7 10 12 15 17 10"/>
+                                    <line x1="12" y1="15" x2="12" y2="3"/>
+                                  </svg>
+                                )}
+                              </div>
+                              <span className={`ds-type-card-badge ${cc.badge}`}>{cc.short}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {needsInstall && (
+                    <div className="ds-install-banner">
+                      <span className="ds-install-banner-icon">📦</span>
+                      <span>{selectedDriver?.displayName} 驱动尚未安装，需要先下载驱动才能使用</span>
+                      <button className="ds-install-banner-btn" onClick={() => handleInstallDriver(selectedDriver!.name)} disabled={installing?.name === selectedDriver!.name}>
+                        {installing?.name === selectedDriver!.name ? '安装中...' : '安装驱动'}
+                      </button>
+                    </div>
+                  )}
+
+                  {installing && (
+                    <div className="ds-install-progress">
+                      <div className="ds-install-progress-title">正在安装 {installing.displayName} 驱动...</div>
+                      {installing.progress.length > 0 && (
+                        <div className="ds-install-progress-bar">
+                          <div className="ds-install-progress-fill" style={{ width: `${installing.progress[installing.progress.length - 1]?.percent || 0}%` }} />
+                        </div>
+                      )}
+                      <div className="ds-install-progress-log">
+                        {installing.progress.map((p, i) => (
+                          <div key={i} className="ds-install-progress-log-item">{p.fileName} ({p.percent}%)</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {isJdbcType(dsForm.type) && (
+                    <div className="ds-connection-section">
+                      <div className="ds-connection-header">
+                        <div className="ds-connection-header-icon">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                          </svg>
+                        </div>
+                        <span className="ds-connection-header-title">连接信息</span>
+                        <span className="ds-connection-header-hint">{selectedDriver?.displayName || dsForm.type}</span>
+                      </div>
+
+                      {!(selectedDriver?.hideStandardFields) && (
+                        <>
+                          <div className="ds-field-row">
+                            <div className="ds-field">
+                              <label className="ds-field-label">主机地址</label>
+                              <input className="ds-field-input" value={dsForm.host} onChange={(e) => updateField('host', e.target.value)} placeholder="localhost 或 IP 地址" />
+                            </div>
+                            <div className="ds-field" style={{ maxWidth: 140 }}>
+                              <label className="ds-field-label">端口</label>
+                              <input className="ds-field-input" value={dsForm.port} onChange={(e) => updateField('port', e.target.value)} placeholder={String(selectedDriver?.defaultPort || '3306')} />
+                            </div>
+                          </div>
+                          <div className="ds-field">
+                            <label className="ds-field-label">数据库名</label>
+                            <input className="ds-field-input" value={dsForm.database} onChange={(e) => updateField('database', e.target.value)} placeholder="输入数据库名称" />
+                          </div>
+                        </>
+                      )}
+
+                      {selectedDriver?.hideStandardFields && (
+                        <div className="ds-field">
+                          <label className="ds-field-label">主机地址</label>
+                          <input className="ds-field-input" value={dsForm.host} onChange={(e) => updateField('host', e.target.value)} placeholder="localhost 或 IP 地址" />
+                        </div>
+                      )}
+
+                      {selectedDriver?.extraFields?.map((ef: ExtraField) => {
+                        const val = (dsForm as Record<string, unknown>)[ef.name] as string || '';
+                        if (ef.type === 'select') {
+                          return (
+                            <div className="ds-field" key={ef.name}>
+                              <label className="ds-field-label">{ef.label}</label>
+                              <Select value={val} options={[{ value: '', label: ef.placeholder || '请选择' }, { value: 'http', label: 'HTTP' }, { value: 'binary', label: 'Binary' }]} onChange={(v: string) => updateField(ef.name, v)} />
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="ds-field" key={ef.name}>
+                            <label className="ds-field-label">{ef.label}{ef.required ? <span style={{ color: '#ef4444', marginLeft: 2 }}>*</span> : ''}</label>
+                            <input
+                              className="ds-field-input"
+                              placeholder={ef.placeholder}
+                              type={ef.type === 'password' ? 'password' : 'text'}
+                              value={val}
+                              onChange={(e) => updateField(ef.name, e.target.value)}
+                            />
+                          </div>
+                        );
+                      })}
+
+                      <div className="ds-field-row">
+                        <div className="ds-field">
+                          <label className="ds-field-label">用户名</label>
+                          <input className="ds-field-input" value={dsForm.username} onChange={(e) => updateField('username', e.target.value)} placeholder="数据库用户名" />
+                        </div>
+                        <div className="ds-field">
+                          <label className="ds-field-label">密码</label>
+                          <input className="ds-field-input" type="password" value={dsForm.password} onChange={(e) => updateField('password', e.target.value)} placeholder={dsEditingId ? '不修改请留空' : '输入密码'} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="ds-dialog-footer">
+                  <button className="ds-btn-cancel" onClick={() => { setDsShowForm(false); setDsEditingId(null); setInstalling(null); }}>取消</button>
+                  <button className="ds-btn-primary" onClick={handleDsSubmit}>{dsEditingId ? '保存修改' : '创建数据源'}</button>
                 </div>
               </div>
             </div>
-          )}
+              );
+            })()}
         </div>
       )}
 

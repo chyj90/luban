@@ -30,6 +30,20 @@ public class SqlSecurityValidator {
             "GET_LOCK", "RELEASE_LOCK", "xp_cmdshell", "EXEC"
     );
 
+    private static final Set<String> PRESTO_FORBIDDEN_OPS = Set.of(
+            "DROP", "ALTER", "CREATE", "INSERT", "UPDATE", "DELETE",
+            "GRANT", "REVOKE", "EXEC", "EXECUTE", "MERGE", "REPLACE", "TRUNCATE"
+    );
+
+    private static final Set<String> CLICKHOUSE_FORBIDDEN_OPS = Set.of(
+            "DROP", "TRUNCATE", "CREATE", "INSERT", "GRANT", "REVOKE", "EXEC", "EXECUTE", "MERGE", "REPLACE"
+    );
+
+    private static final Set<String> HIVE_FORBIDDEN_OPS = Set.of(
+            "DROP", "ALTER", "TRUNCATE", "CREATE", "INSERT", "UPDATE", "DELETE",
+            "GRANT", "REVOKE", "MERGE", "REPLACE"
+    );
+
     private static final Pattern COMMENT_PATTERN = Pattern.compile(
             "/\\*.*?\\*/|--[^\\n]*", Pattern.DOTALL);
 
@@ -56,7 +70,9 @@ public class SqlSecurityValidator {
 
         String upperSql = sql.toUpperCase();
 
-        for (String op : FORBIDDEN_OPERATIONS) {
+        Set<String> forbiddenOps = getForbiddenOps(datasourceId);
+
+        for (String op : forbiddenOps) {
             if (upperSql.contains(op)) {
                 errors.add("禁止的操作: " + op);
                 return new ValidationResult(false, errors, warnings);
@@ -95,6 +111,19 @@ public class SqlSecurityValidator {
         }
 
         return new ValidationResult(errors.isEmpty(), errors, warnings);
+    }
+
+    private Set<String> getForbiddenOps(Long datasourceId) {
+        if (datasourceId == null) return FORBIDDEN_OPERATIONS;
+        return datasourceRepository.findById(datasourceId)
+                .map(ds -> {
+                    String type = ds.getType() != null ? ds.getType().toLowerCase() : "";
+                    if (type.contains("presto") || type.contains("trino")) return PRESTO_FORBIDDEN_OPS;
+                    if (type.contains("clickhouse")) return CLICKHOUSE_FORBIDDEN_OPS;
+                    if (type.contains("hive") || type.contains("spark")) return HIVE_FORBIDDEN_OPS;
+                    return FORBIDDEN_OPERATIONS;
+                })
+                .orElse(FORBIDDEN_OPERATIONS);
     }
 
     private void validateDatasourceAccess(Long datasourceId, List<String> errors) {

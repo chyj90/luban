@@ -27,12 +27,15 @@ public class Nl2sqlConnectionPool {
 
     private final Map<Long, HikariDataSource> pools = new ConcurrentHashMap<>();
 
-    public Connection getConnection(Long datasourceId, String jdbcUrl, String username, String password) {
+    public Connection getConnection(Long datasourceId, String jdbcUrl, String username, String password, String driverClassName) {
         HikariDataSource ds = pools.computeIfAbsent(datasourceId, id -> {
             HikariConfig config = new HikariConfig();
             config.setJdbcUrl(jdbcUrl);
             config.setUsername(username);
             config.setPassword(password);
+            if (driverClassName != null && !driverClassName.isEmpty()) {
+                config.setDriverClassName(driverClassName);
+            }
             config.setMaximumPoolSize(Math.max(1, MAX_TOTAL_CONNECTIONS / Math.max(1, pools.size() + 1)));
             config.setMinimumIdle(0);
             config.setIdleTimeout(IDLE_TIMEOUT_MS);

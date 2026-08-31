@@ -46,6 +46,12 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/auth/**", "/error").permitAll()
                 .anyRequest().authenticated()
             )
+            .headers(headers -> headers
+                .cacheControl(cache -> cache.disable())
+                .contentTypeOptions(contentType -> contentType.disable())
+                .frameOptions(frame -> frame.disable())
+                .xssProtection(xss -> xss.disable())
+            )
             .addFilterBefore(apiKeyAuthFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
