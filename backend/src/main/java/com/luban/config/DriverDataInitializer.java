@@ -41,7 +41,7 @@ public class DriverDataInitializer implements CommandLineRunner {
                 createDriver("clickhouse", "ClickHouse", "列式 OLAP 数据库", "OLAP",
                         "com.clickhouse.jdbc.ClickHouseDriver",
                         "jdbc:clickhouse://{host}:{port}/{database}",
-                        8123, "com.clickhouse", "clickhouse-jdbc", "0.6.5", null, false,
+                        8123, "com.clickhouse", "clickhouse-jdbc", "0.7.0", null, false,
                         null, false),
                 createDriver("starrocks", "StarRocks", "实时分析 MPP 数据库", "OLAP",
                         "com.mysql.cj.jdbc.Driver",
@@ -117,9 +117,19 @@ public class DriverDataInitializer implements CommandLineRunner {
         );
 
         for (JdbcDriver preset : presets) {
-            if (!driverRepository.existsByName(preset.getName())) {
+            var existing = driverRepository.findByName(preset.getName());
+            if (existing.isEmpty()) {
                 driverRepository.save(preset);
                 log.info("预置驱动: {} ({})", preset.getDisplayName(), preset.getName());
+            } else if (!preset.getVersion().equals(existing.get().getVersion())) {
+                JdbcDriver db = existing.get();
+                db.setVersion(preset.getVersion());
+                db.setGroupId(preset.getGroupId());
+                db.setArtifactId(preset.getArtifactId());
+                db.setClassifier(preset.getClassifier());
+                db.setInstalled(false);
+                driverRepository.save(db);
+                log.info("驱动版本更新: {} {} -> {}", preset.getName(), existing.get().getVersion(), preset.getVersion());
             }
         }
     }

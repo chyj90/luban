@@ -18,20 +18,23 @@
 }
 
 .ds-add-btn {
-  padding: 4px 10px;
-  border: 1px solid #e8edf3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 12px;
+  border: none;
   border-radius: 6px;
-  background: #fff;
-  color: #1f1f1f;
+  background: #1677ff;
+  color: #fff;
   font-size: 12px;
+  line-height: 1;
   cursor: pointer;
   transition: all 0.15s;
 }
 
 .ds-add-btn:hover {
-  background: transparent;
-  border-color: #1677ff;
-  color: #1677ff;
+  background: #4096ff;
 }
 
 /* Form */
@@ -289,6 +292,18 @@ textarea.ds-input {
 .ds-card-type {
   font-size: 11px;
   color: #8c9cab;
+}
+
+.ds-card-type.ds-badge-relational,
+.ds-card-type.ds-badge-olap,
+.ds-card-type.ds-badge-query,
+.ds-card-type.ds-badge-datalake,
+.ds-card-type.ds-badge-cloud,
+.ds-card-type.ds-badge-api {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .ds-card-status {

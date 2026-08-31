@@ -238,14 +238,29 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
 
   const getDsDisplay = (type: string) => {
     const driver = getDriverInfo(type);
-    if (driver) return { label: driver.displayName, color: driverColors[driver.category] || '#8c9cab' };
-    if (type.toLowerCase() === 'rest_api') return { label: 'REST API', color: '#fa8c16' };
-    return { label: type, color: '#8c9cab' };
+    if (driver) return {
+      label: driver.displayName,
+      color: driverColors[driver.category] || '#8c9cab',
+      badgeClass: badgeClassMap[driver.category] || '',
+    };
+    if (type.toLowerCase() === 'rest_api') return {
+      label: 'REST API', color: '#fa8c16', badgeClass: 'ds-badge-api',
+    };
+    return { label: type, color: '#8c9cab', badgeClass: '' };
   };
 
   const driverColors: Record<string, string> = {
     OLAP: '#1677ff', DATALAKE: '#52c41a', QUERY_ENGINE: '#722ed1',
     RELATIONAL: '#00758f', CLOUD: '#13c2c2', OTHER: '#8c9cab',
+  };
+
+  const badgeClassMap: Record<string, string> = {
+    RELATIONAL: 'ds-badge-relational',
+    OLAP: 'ds-badge-olap',
+    QUERY_ENGINE: 'ds-badge-query',
+    DATALAKE: 'ds-badge-datalake',
+    CLOUD: 'ds-badge-cloud',
+    API: 'ds-badge-api',
   };
 
   const selectedDriver = getDriverInfo(form.type);
@@ -256,7 +271,11 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       <div className="ds-panel-header">
         <span className="ds-panel-title">数据源</span>
         <button className="ds-add-btn" onClick={() => { setShowForm(!showForm); setEditingId(null); setForm(EMPTY_FORM); }}>
-          + 新建
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          新建
         </button>
       </div>
 
@@ -527,7 +546,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                     </div>
                     <div className="ds-card-info">
                       <span className="ds-card-name">{kd.name}</span>
-                      <span className="ds-card-type">{info.label} · 来自 KEY</span>
+                      <span className={`ds-card-type ${info.badgeClass || ''}`}>{info.label} · 来自 KEY</span>
                     </div>
                     <span className="ds-card-badge ds-badge-key">KEY</span>
                   </div>
@@ -538,7 +557,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
         )}
 
         {datasources.length === 0 && keyDatasources.length === 0 && !showForm && (
-          <div className="ds-empty">暂无数据源，点击"+ 新建"添加</div>
+          <div className="ds-empty">暂无数据源，点击"新建"添加</div>
         )}
         {datasources.map((ds) => {
           const info = getDsDisplay(ds.type);
@@ -551,7 +570,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 </div>
                 <div className="ds-card-info">
                   <span className="ds-card-name">{ds.name}</span>
-                  <span className="ds-card-type">{info.label}</span>
+                  <span className={`ds-card-type ${info.badgeClass || ''}`}>{info.label}</span>
                 </div>
                 <span className={`ds-card-status ${isConnected ? 'connected' : ''}`}>
                   {isConnected ? '●' : '○'}

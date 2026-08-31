@@ -77,6 +77,21 @@ export default function ToolListPage() {
   const getDriverInfo = (type: string) => drivers.find((d) => d.name.toLowerCase() === type.toLowerCase());
   const isJdbcType = (type: string) => type && type !== 'rest_api' && type !== 'REST_API';
 
+  const CATEGORY_BADGE_MAP: Record<string, string> = {
+    RELATIONAL: 'ds-badge-relational', OLAP: 'ds-badge-olap',
+    QUERY_ENGINE: 'ds-badge-query', DATALAKE: 'ds-badge-datalake',
+    CLOUD: 'ds-badge-cloud', API: 'ds-badge-api',
+  };
+
+  const getDsTypeLabel = (type: string) => {
+    const driver = getDriverInfo(type);
+    if (driver) return { label: driver.displayName, badgeClass: CATEGORY_BADGE_MAP[driver.category] || '' };
+    if (type.toLowerCase() === 'rest_api') return { label: 'REST API', badgeClass: 'ds-badge-api' };
+    if (type.toLowerCase() === 'mysql') return { label: 'MySQL', badgeClass: 'ds-badge-relational' };
+    if (type.toLowerCase() === 'postgresql') return { label: 'PostgreSQL', badgeClass: 'ds-badge-relational' };
+    return { label: type, badgeClass: '' };
+  };
+
   const handleInstallDriver = (name: string) => {
     const driver = getDriverInfo(name);
     if (!driver) return;
@@ -1280,7 +1295,10 @@ export default function ToolListPage() {
                     <tr key={ds.id}>
                       <td className="tool-list-name-cell">{ds.name}</td>
                       <td>
-                        <span className={`tool-list-ds-type-badge ds-type-${ds.type.toLowerCase()}`}>{(ds.type as string).toLowerCase() === 'mysql' ? 'MySQL' : (ds.type as string).toLowerCase() === 'postgresql' ? 'PostgreSQL' : ds.type}</span>
+                        {(() => {
+                          const b = getDsTypeLabel(ds.type);
+                          return <span className={`tool-list-ds-type-badge ${b.badgeClass}`}>{b.label}</span>;
+                        })()}
                       </td>
                       <td>
                         <span className={`tool-list-ds-status ${ds.status === 'connected' ? 'connected' : ds.status === 'error' ? 'error' : ''}`}>

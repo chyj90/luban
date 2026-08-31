@@ -17,6 +17,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -61,7 +62,7 @@ public class JdbcDriverService {
                     classLoaderManager.registerDriver(driver.getName(), driver.getDriverClass(), jars);
                     log.info("启动时加载驱动: {}", driver.getDisplayName());
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 log.warn("启动时加载驱动失败: {} - {}", driver.getDisplayName(), e.getMessage());
             }
         }
@@ -103,6 +104,13 @@ public class JdbcDriverService {
         CompletableFuture.runAsync(() -> {
             try {
                 Path driverDir = getDriverDir(driver.getName());
+                // 清理旧版本驱动文件
+                if (Files.exists(driverDir)) {
+                    try (var files = Files.walk(driverDir)) {
+                        files.sorted(Comparator.reverseOrder())
+                                .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+                    }
+                }
                 Files.createDirectories(driverDir);
 
                 sendProgress(emitter, DownloadProgress.info("开始下载: " + driver.getDisplayName()));

@@ -28,8 +28,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -82,6 +85,22 @@ public class MavenDependencyResolver {
         );
 
         try {
+            // 无指定 classifier 时，优先尝试 all-in-one 胖包
+            if (classifier == null || classifier.isEmpty()) {
+                try {
+                    List<Path> allJars = new ArrayList<>();
+                    Artifact allArtifact = new DefaultArtifact(groupId, artifactId, "all", "jar", version);
+                    downloadAndCopy(allArtifact, targetDir, session, repos, allJars, progressCallback);
+                    if (!allJars.isEmpty()) {
+                        progressCallback.accept(DownloadProgress.info("使用 all-in-one JAR，跳过依赖解析"));
+                        return allJars;
+                    }
+                } catch (Exception e) {
+                    log.info("all classifier JAR 不存在，回退到常规依赖解析: {}", e.getMessage());
+                }
+            }
+
+            // 常规路径：下载 JAR + 递归解析 POM 依赖
             Set<String> resolved = new HashSet<>();
             List<Path> jars = new ArrayList<>();
 
@@ -143,32 +162,41 @@ public class MavenDependencyResolver {
             return;
         }
 
-        if (model.getDependencyManagement() != null) {
-            log.info("TODO: dependencyManagement 暂未处理");
+        Map<String, String> depVersionMap = new HashMap<>();
+        if (model.getDependencyManagement() != null && model.getDependencyManagement().getDependencies() != null) {
+            for (org.apache.maven.model.Dependency dm : model.getDependencyManagement().getDependencies()) {
+                String dmKey = dm.getGroupId() + ":" + dm.getArtifactId();
+                depVersionMap.put(dmKey, dm.getVersion());
+            }
+            log.debug("dependencyManagement 解析到 {} 个版本定义", depVersionMap.size());
         }
 
         if (model.getDependencies() == null) {
             return;
         }
 
+        log.info("POM {} 解析到 {} 个直接依赖", coord, model.getDependencies().size());
         for (org.apache.maven.model.Dependency dep : model.getDependencies()) {
-            if (dep.isOptional() || "true".equals(dep.getOptional())) {
-                continue;
-            }
-
             String scope = dep.getScope() != null ? dep.getScope() : "compile";
 
             String effectiveScope = mediateScope(parentScope, scope);
             if (effectiveScope == null) {
+                log.debug("  跳过 {}:{} (scope={})", dep.getGroupId(), dep.getArtifactId(), scope);
                 continue;
             }
 
-            String depVersion = dep.getVersion();
+            String depVersion = resolveProperties(dep.getVersion(), model.getProperties());
             if (depVersion == null) {
-                log.warn("依赖 {}:{} 缺少版本号，跳过", dep.getGroupId(), dep.getArtifactId());
-                continue;
+                String dmKey = dep.getGroupId() + ":" + dep.getArtifactId();
+                depVersion = depVersionMap.get(dmKey);
+                if (depVersion == null) {
+                    log.warn("依赖 {}:{} 缺少版本号（dependencyManagement 中也未找到），跳过", dep.getGroupId(), dep.getArtifactId());
+                    continue;
+                }
+                log.debug("依赖 {}:{} 从 dependencyManagement 获取版本: {}", dep.getGroupId(), dep.getArtifactId(), depVersion);
             }
 
+            log.info("  -> {}:{}:{} (scope={}, optional={})", dep.getGroupId(), dep.getArtifactId(), depVersion, scope, dep.isOptional());
             resolveRecursive(dep.getGroupId(), dep.getArtifactId(), depVersion,
                     null, effectiveScope,
                     targetDir, localRepoPath, session, repos, resolved, jars, progressCallback);
@@ -192,6 +220,32 @@ public class MavenDependencyResolver {
             return parentScope;
         }
         return null;
+    }
+
+    private String resolveProperties(String value, java.util.Properties props) {
+        if (value == null || !value.contains("${")) {
+            return value;
+        }
+        if (props == null || props.isEmpty()) {
+            log.warn("无法解析属性引用 '{}'：POM 中无 properties 定义", value);
+            return value;
+        }
+        StringBuilder result = new StringBuilder(value);
+        int start = result.indexOf("${");
+        while (start >= 0) {
+            int end = result.indexOf("}", start);
+            if (end < 0) break;
+            String key = result.substring(start + 2, end);
+            String propValue = props.getProperty(key);
+            if (propValue != null) {
+                result.replace(start, end + 1, propValue);
+                start = result.indexOf("${", start);
+            } else {
+                log.warn("无法解析属性 '{}'，POM 中未定义: {}", key, value);
+                start = result.indexOf("${", end);
+            }
+        }
+        return result.toString();
     }
 
     private void downloadAndCopy(Artifact artifact, Path targetDir,
