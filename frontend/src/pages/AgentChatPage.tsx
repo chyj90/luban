@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, Fragment } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Database, Search, Sparkles } from 'lucide-react';
 import { fetchAgentChatStream, getSessionMessages, clearChatSession } from '@/api/agent';
 import { quickConceptFeedback, listConcepts, listConceptFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
@@ -817,24 +818,37 @@ export default function AgentChatPage() {
         <div className="agent-chat-messages">
           {messages.length === 0 ? (
               <div className="agent-chat-welcome">
+                <div className="agent-chat-welcome-illustration">
+                  <Sparkles size={36} color="#1677ff" />
+                </div>
                 <h1 className="agent-chat-welcome-title">AI 数据洞察助手</h1>
                 <p className="agent-chat-welcome-subtitle">自动分析数据，定位指标异常根因</p>
                 <div className="agent-chat-templates">
                   {user?.superAdmin && (
                     <div
                       className="agent-chat-template-card"
-                      onClick={() => handleSend('帮我配置库存积压分析本体，数据源"零售电商库"。根概念"库存周转天数"，异常阈值 > 60 天，下钻维度：物料 → 供应商 → 采购订单，关联维度：生产计划。需要用到 materials、inventory、suppliers、purchase_orders、production_plans 表')}
+                      onClick={() => setInput('帮我配置库存积压分析本体，数据源"零售电商库"。根概念"库存周转天数"，异常阈值 > 60 天，下钻维度：物料 → 供应商 → 采购订单，关联维度：生产计划。需要用到 materials、inventory、suppliers、purchase_orders、production_plans 表')}
                     >
-                      <span className="agent-chat-template-label">建本体</span>
-                      <span className="agent-chat-template-desc">配置库存积压分析本体</span>
+                      <div className="agent-chat-template-card-icon" style={{ background: 'linear-gradient(135deg, #eef2ff, #dbe4ff)' }}>
+                      <Database size={20} color="#4f6ef6" />
+                    </div>
+                      <div className="agent-chat-template-card-text">
+                        <span className="agent-chat-template-label">建本体</span>
+                        <span className="agent-chat-template-desc">配置库存积压分析本体</span>
+                      </div>
                     </div>
                   )}
                   <div
                     className="agent-chat-template-card"
-                    onClick={() => handleSend('最近客诉率为什么超 3%？')}
+                    onClick={() => setInput('最近客诉率为什么超 3%？')}
                   >
-                    <span className="agent-chat-template-label">问数据</span>
-                    <span className="agent-chat-template-desc">客诉率异常根因分析</span>
+                    <div className="agent-chat-template-card-icon" style={{ background: 'linear-gradient(135deg, #eef2ff, #dbe4ff)' }}>
+                      <Search size={20} color="#4f6ef6" />
+                    </div>
+                    <div className="agent-chat-template-card-text">
+                      <span className="agent-chat-template-label">问数据</span>
+                      <span className="agent-chat-template-desc">客诉率异常根因分析</span>
+                    </div>
                   </div>
                 </div>
                 <p className="agent-chat-welcome-hint">选择一个模版开始，或直接输入问题</p>

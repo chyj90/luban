@@ -192,13 +192,25 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  gap: 12px;
+  gap: 8px;
   color: #999;
   padding: 40px 0;
 }
 
+.agent-chat-welcome-illustration {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #e6f0ff, #d6e4ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  color: #1677ff;
+}
+
 .agent-chat-welcome-title {
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   color: #1a1a2e;
   margin: 0;
@@ -206,15 +218,15 @@
 }
 
 .agent-chat-welcome-subtitle {
-  font-size: 15px;
-  color: #888;
-  margin: 0 0 16px 0;
+  font-size: 14px;
+  color: #8c8c8c;
+  margin: 0 0 24px 0;
 }
 
 .agent-chat-welcome-hint {
   font-size: 13px;
-  color: #aaa;
-  margin: 16px 0 0 0;
+  color: #bfbfbf;
+  margin: 28px 0 0 0;
 }
 
 .agent-chat-templates {
@@ -226,29 +238,42 @@
 
 .agent-chat-template-card {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 20px 32px;
-  border: 1px solid #e8e8e8;
+  gap: 12px;
+  padding: 14px 22px;
+  border: 1px solid #e8ecf1;
   border-radius: 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  background: #fff;
-  min-width: 160px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.25s ease;
+  background: transparent;
+  min-width: 200px;
 }
 
 .agent-chat-template-card:hover {
-  border-color: #4f6ef6;
-  box-shadow: 0 4px 16px rgba(79, 110, 246, 0.12);
-  transform: translateY(-1px);
+  border-color: #bdd0f0;
+  background: #f8faff;
+}
+
+.agent-chat-template-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.agent-chat-template-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .agent-chat-template-label {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: #1a1a2e;
 }
 
 .agent-chat-template-desc {
