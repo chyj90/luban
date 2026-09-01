@@ -170,7 +170,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
           ? {
               ...p,
               steps: p.steps.map((s) =>
-                s.id === stepId ? { ...s, ...updates } : s,
+                String(s.id) === String(stepId) ? { ...s, ...updates } : s,
               ),
             }
           : p,

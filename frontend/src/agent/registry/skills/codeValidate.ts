@@ -1,5 +1,6 @@
 import { parse as acornParse } from 'acorn';
 import { listQueries } from '@/api/query';
+import { LIBRARY_RULES } from './libraryRules';
 
 interface QueryInfo {
   id: number;
@@ -232,6 +233,29 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
         `可用方法：${validList}。请使用 navigateToPageByName 按名称跳转，或 getAllPages 获取页面列表。`
       );
     }
+  }
+
+  // 检查第三方库使用规范
+  if (/new\s+Chart\s*\(/.test(code)) {
+    const hasDestroy = /\.destroy\s*\(\s*\)/.test(code);
+    const destroyIdx = code.search(/\.destroy\s*\(\s*\)/);
+    const hasNullifyAfterDestroy = destroyIdx >= 0 && /=\s*null\s*;/.test(code.substring(destroyIdx));
+    if (!hasDestroy || !hasNullifyAfterDestroy) {
+      const lineNum = code.substring(0, code.search(/new\s+Chart\s*\(/)).split('\n').length;
+      errors.push(
+        `[JS] 第 ${lineNum} 行：${LIBRARY_RULES['chart.js']}`
+      );
+    }
+  }
+
+  // 检查 addEventListener 缺少 { once: true }，SPA 中会导致多次初始化
+  const loadListenerMatch = /addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/g;
+  if (loadListenerMatch.test(code) && !/\{\s*once\s*:\s*true\s*\}/.test(code)) {
+    const lineNum = code.substring(0, code.search(/addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/)).split('\n').length;
+    warnings.push(
+      `[JS] 第 ${lineNum} 行：addEventListener 在 SPA 中可能多次触发，` +
+      `请使用 addEventListener('load', fn, { once: true }) 确保只执行一次。`
+    );
   }
 }
 

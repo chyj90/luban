@@ -18,6 +18,7 @@ export function getCodePageSkillSummary(): string {
 - HTML/CSS/JS 使用纯原生技术，不依赖任何框架
 - 使用 CSS Grid/Flexbox 布局，响应式设计，支持手机/平板/桌面
 - 外部库通过 CDN 引入，在创建页面时指定 libraries 参数
+- 使用第三方库（Chart.js、Three.js 等）时，代码校验会自动检查库的使用规范，无需在 Prompt 中记忆
 - 页面中使用 {{ QueryName.data }} 绑定查询结果
 - 调用查询使用 QueryName.run({ 参数 }) 返回 Promise，结果结构 { columns, rows, totalCount }，其中 rows 是对象数组，每个对象以字段名（如 order_no）为 key 访问
 - **JS 代码中访问字段名必须与查询 columns 完全一致，一个字母都不能差**，禁止编造字段名（如查询返回 name 就写 row.name，不要写成 row.customer_name）

@@ -323,13 +323,17 @@ export const codeSkills: Record<string, SkillFactory> = {
           console.warn('[code:update]', validation.warnings.join('\n'));
         }
 
-        const res = await updateCodePage(pageId, {
-          html,
-          css,
-          js,
-          libraries: (args.libraries as string[]) || [],
-          queryIds: (args.queryIds as number[]) || [],
-        });
+        const updateData: Record<string, unknown> = {};
+        if (html !== undefined) updateData.html = html;
+        if (css !== undefined) updateData.css = css;
+        if (js !== undefined) updateData.js = js;
+        if (args.libraries !== undefined) {
+          updateData.libraries = args.libraries;
+        }
+        if (args.queryIds !== undefined) {
+          updateData.queryIds = args.queryIds;
+        }
+        const res = await updateCodePage(pageId, updateData);
         ctx.onPageChange?.(pageId);
         return { success: true, message: '页面代码更新成功', data: res.data };
       } catch (e: any) {

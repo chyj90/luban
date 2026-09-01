@@ -193,8 +193,10 @@ export const planSkills: Record<string, SkillFactory> = {
       const store = useAgentStore.getState();
       const plan = store.plans.find((p: unknown) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
+      const step = plan.steps.find((s: unknown) => String(s.id) === String(item_id));
+      if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s: unknown) => s.id).join(', ')}` };
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
-      store.updateStep(plan_id, item_id, { status: statusMap[status] as unknown, result: result || undefined });
+      store.updateStep(plan_id, String(item_id), { status: statusMap[status] as unknown, result: result || undefined });
       upsertPlanMessage(plan_id);
       return { success: true, message: `步骤 ${item_id} 状态已更新为 ${status}` };
     },

@@ -1,5 +1,6 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { listPages } from '@/api';
+import { listQueries as listAllQueries } from '@/api/query';
 
 export const observationSkills: Record<string, SkillFactory> = {
   'observation:list_pages': (ctx) => ({
@@ -18,6 +19,26 @@ export const observationSkills: Record<string, SkillFactory> = {
         };
       } catch {
         return { success: false, message: `获取页面列表失败: ${(e as Error).message}` };
+      }
+    },
+  }),
+
+  'observation:list_queries': (ctx) => ({
+    id: 'observation:list_queries',
+    category: SkillCategory.OBSERVATION,
+    name: 'list_queries',
+    description: '列出当前应用中所有查询，返回查询名称和ID列表。',
+    parameters: { type: 'object', properties: {} },
+    async execute() {
+      try {
+        const res = await listAllQueries(ctx.applicationId);
+        return {
+          success: true,
+          message: `共 ${res.data.length} 个查询`,
+          data: { queries: (res.data as Array<{ id: number; name: string }>).map((q) => ({ id: q.id, name: q.name })) },
+        };
+      } catch {
+        return { success: false, message: '获取查询列表失败' };
       }
     },
   }),
