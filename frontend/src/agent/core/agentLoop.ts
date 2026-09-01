@@ -1,9 +1,12 @@
 import type { Message, Plan, ToolDefinition } from '@/types/agent';
 import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage } from './llmClient';
 
+export interface ShouldCompleteResult {
+  shouldContinue: boolean;
+  message?: string;
+}
+
 export interface AgentLoopOptions {
-  baseUrl: string;
-  apiKey: string;
   model: string;
   systemPrompt: string;
   tools: ToolDefinition[];
@@ -24,6 +27,7 @@ export interface AgentLoopOptions {
   onError: (error: string) => void;
   onTokenUsage: (input: number, output: number) => void;
   onApiMessages?: (messages: LLMMessage[]) => void;
+  onShouldComplete?: () => ShouldCompleteResult;
 }
 
 export interface AgentLoopResult {
@@ -33,12 +37,13 @@ export interface AgentLoopResult {
 
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const {
-    baseUrl, apiKey, model, systemPrompt: _systemPrompt, tools, maxIterations,
+    model, systemPrompt: _systemPrompt, tools, maxIterations,
     temperature, timeout, signal,
     conversationMessages: initialMessages,
     onStatusChange, onStreamingContent, onClearStreaming,
     onAddMessage, onPlanCreate: _onPlanCreate, onPlanConfirm: _onPlanConfirm, onStepUpdate: _onStepUpdate,
     onToolCall, onToolResult, onError, onTokenUsage: _onTokenUsage, onApiMessages,
+    onShouldComplete,
   } = options;
 
   const conversationMessages = [...initialMessages];
@@ -52,6 +57,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
 
   const toolRetryCounts = new Map<string, number>();
   const MAX_RETRIES = 3;
+  let loopExtensions = 0;
+  const MAX_LOOP_EXTENSIONS = 5;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) throw new Error('Cancelled');
@@ -64,14 +71,16 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
 
     try {
-      let content = '';
       const toolCallsAccumulated: Array<{
         id: string;
         function: { name: string; arguments: string };
       }> = [];
 
+      let content = '';
+      let reasoningContent = '';
+
       const streamGen = callLLMAPIStream({
-        baseUrl, apiKey, model,
+        model,
         messages: apiMessages,
         tools: toolDefs,
         temperature,
@@ -82,7 +91,11 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
       for await (const chunk of streamGen) {
         if (chunk.type === 'content' && chunk.content) {
           onStreamingContent(chunk.content, chunk.reasoning);
-          content += chunk.content;
+          if (chunk.reasoning) {
+            reasoningContent += chunk.content;
+          } else {
+            content += chunk.content;
+          }
         } else if (chunk.type === 'tool_call' && chunk.toolCall) {
           toolCallsAccumulated.push(chunk.toolCall);
         }
@@ -99,6 +112,7 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           id: crypto.randomUUID(),
           role: 'assistant',
           content: content?.trim() || '',
+          reasoningContent: reasoningContent || undefined,
           timestamp: Date.now(),
           toolCalls: toolCalls.map((tc) => ({
             id: tc.id,
@@ -213,11 +227,31 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
         const assistantMsg: Message = {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: content || '执行完毕。',
+          content: content?.trim() || '执行完毕。',
+          reasoningContent: reasoningContent || undefined,
           timestamp: Date.now(),
         };
         conversationMessages.push(assistantMsg);
         onAddMessage(assistantMsg);
+
+        if (onShouldComplete && loopExtensions < MAX_LOOP_EXTENSIONS) {
+          const check = onShouldComplete();
+          if (check.shouldContinue && check.message) {
+            console.log(`[AgentLoop] 计划未完成，注入强制继续指令（第 ${loopExtensions + 1}/${MAX_LOOP_EXTENSIONS} 次）`);
+            loopExtensions++;
+            conversationMessages.push({
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: check.message,
+              timestamp: Date.now(),
+            });
+            continue;
+          }
+          if (check.shouldContinue) {
+            console.log(`[AgentLoop] 计划未完成，但已达最大扩展次数 ${MAX_LOOP_EXTENSIONS}，强制结束`);
+          }
+        }
+
         onStatusChange('completed');
         return { response: content || '执行完毕。', conversationMessages };
       }

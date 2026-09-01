@@ -1,3 +1,5 @@
+import { useAuthStore } from '@/stores/authStore';
+
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
@@ -37,8 +39,6 @@ export interface LLMStreamChunk {
 }
 
 export interface LLMCallOptions {
-  baseUrl: string;
-  apiKey: string;
   model: string;
   messages: LLMMessage[];
   tools: ToolDef[];
@@ -48,80 +48,60 @@ export interface LLMCallOptions {
 }
 
 export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> {
-  const { baseUrl, apiKey, model, messages, tools, temperature, timeout, signal } = options;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  if (signal) {
-    signal.addEventListener('abort', () => controller.abort());
-  }
+  const { model, messages, tools, temperature, timeout, signal } = options;
 
   const startTime = Date.now();
-  const msgSummary = messages.map((m) => `${m.role}${m.tool_calls ? `(${m.tool_calls.length} tool_calls)` : ''}${m.tool_call_id ? `(tool_call_id)` : ''}`).join(' → ');
   const toolNames = tools.map((t) => t.function.name).join(', ');
-  console.log(`[LLM] 调用 ${model} | 消息: ${msgSummary} | 工具: [${toolNames}] | temperature: ${temperature}`);
+  console.log(`[LLM] 调用 ${model} | 工具: [${toolNames}] | temperature: ${temperature}`);
 
-  try {
-    const apiUrl = `${baseUrl}/chat/completions`;
-    const requestBody = JSON.stringify({
-      model,
-      messages,
-      tools,
-      tool_choice: 'auto',
-      temperature,
-      stream: false,
-    });
+  let contentText = '';
+  let resolved = false;
+  let streamError: Error | null = null;
 
-    const res = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: requestBody,
-      signal: controller.signal,
-    });
+  const streamGen = callLLMAPIStream(options);
 
-    clearTimeout(timeoutId);
-
-    if (!res.ok) {
-      const errorBody = await res.text();
-      const err: unknown = new Error(`LLM API 调用失败 (${res.status}): ${errorBody}`);
-      err.status = res.status;
-      console.error(`[LLM] API 失败 (${res.status}): ${errorBody.slice(0, 500)}`);
-      throw err;
-    }
-
-    const data = await res.json();
-    const choice = data.choices?.[0];
-    const message = choice?.message;
-
-    const content = message?.content || '';
-    const toolCalls = message?.tool_calls || [];
-    const elapsed = Date.now() - startTime;
-    const usage = data.usage;
-
-    if (toolCalls.length > 0) {
-      console.log(`[LLM] ${elapsed}ms | ${toolCalls.length} tool_calls: [${toolCalls.map((tc: unknown) => tc.function.name).join(', ')}] | content: "${content.slice(0, 100)}"${usage ? ` | tokens: ${usage.prompt_tokens}→${usage.completion_tokens}` : ''}`);
-      console.log(`[LLM] ${elapsed}ms | 纯文本回复 | content: "${content.slice(0, 200)}${content.length > 200 ? '...' : ''}"${usage ? ` | tokens: ${usage.prompt_tokens}→${usage.completion_tokens}` : ''}`);
-    }
-
-    return { content, toolCalls };
-  } catch (e: unknown) {
-    clearTimeout(timeoutId);
-    const elapsed = Date.now() - startTime;
-    if (e.name === 'AbortError') {
-      if (signal?.aborted) {
-        console.log(`[LLM] ${elapsed}ms | 用户手动取消`);
-        throw new Error('Cancelled', { cause: e });
+  const collect = async () => {
+    try {
+      for await (const chunk of streamGen) {
+        if (chunk.type === 'content') {
+          contentText += chunk.content;
+        }
       }
-      console.error(`[LLM] ${elapsed}ms | 超时（${timeout / 1000}秒）`);
-      throw new Error(`LLM 调用超时（${timeout / 1000}秒）`, { cause: e });
+    } catch (e) {
+      streamError = e instanceof Error ? e : new Error(String(e));
     }
-    console.error(`[LLM] ${elapsed}ms | 异常: ${e.message}`);
-    throw e;
+    resolved = true;
+  };
+
+  const timeoutId = setTimeout(() => {
+    if (!resolved) {
+      streamError = new Error(`LLM 调用超时（${timeout / 1000}秒）`);
+      resolved = true;
+    }
+  }, timeout);
+
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      if (!resolved) {
+        streamError = new Error('Cancelled');
+        resolved = true;
+      }
+    });
   }
+
+  await collect();
+  clearTimeout(timeoutId);
+
+  if (streamError) {
+    if (streamError.message.includes('Cancelled')) {
+      throw new Error('Cancelled', { cause: streamError });
+    }
+    throw streamError;
+  }
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[LLM] ${elapsed}ms | content: "${contentText.slice(0, 200)}${contentText.length > 200 ? '...' : ''}"`);
+  return { content: contentText, toolCalls: [] };
 }
 
 export function buildToolDefinitions(tools: Array<{
@@ -249,24 +229,22 @@ export function parseToolArguments(rawArgs: string): Record<string, unknown> {
         // ignore
       }
     }
+    console.warn('[parseToolArguments] JSON 解析失败，返回空对象。原始参数:', rawArgs.slice(0, 300));
     return {};
   }
 }
 
 export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator<LLMStreamChunk> {
-  const { baseUrl, apiKey, model, messages, tools, temperature, timeout, signal } = options;
+  const { model, messages, tools, temperature, timeout, signal } = options;
 
   const startTime = Date.now();
-  const msgSummary = messages.map((m) => `${m.role}${m.tool_calls ? `(${m.tool_calls.length} tool_calls)` : ''}${m.tool_call_id ? `(tool_call_id)` : ''}`).join(' → ');
   const toolNames = tools.map((t) => t.function.name).join(', ');
-  console.log(`[LLM] 流式调用 ${model} | 消息: ${msgSummary} | 工具: [${toolNames}] | temperature: ${temperature}`);
+  console.log(`[LLM] 流式调用 ${model} | 工具: [${toolNames}] | temperature: ${temperature}`);
 
-  const apiUrl = `${baseUrl}/chat/completions`;
+  const proxyUrl = '/api/v1/agent/dev/chat/stream';
   const requestBody = JSON.stringify({
-    model,
     messages,
     tools,
-    tool_choice: 'auto',
     temperature,
     stream: true,
   });
@@ -289,11 +267,36 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
     }
   };
 
-  const processSSELine = (line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith('data: ')) return;
-    const data = trimmed.slice(6);
-    if (data === '[DONE]') {
+  const processSSELine = (event: string, data: string) => {
+    if (event === 'delta') {
+      try {
+        const delta = JSON.parse(data);
+        let content = delta.content || '';
+        if (content) {
+          content = content.replace(/<\/think_never_used_[a-f0-9]+>/gi, '');
+          if (content) {
+            contentText += content;
+            pending.push({
+              type: 'content',
+              content,
+              ...(delta.reasoning ? { reasoning: true } : {}),
+            });
+          }
+        }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            const existing = toolCallsMap.get(idx) || { id: '', name: '', arguments: '' };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+            toolCallsMap.set(idx, existing);
+          }
+        }
+      } catch {
+        // 忽略解析失败的行
+      }
+    } else if (event === 'done') {
       for (const tc of toolCallsMap.values()) {
         pending.push({
           type: 'tool_call',
@@ -302,57 +305,34 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
       }
       pending.push({ type: 'done' });
       finished = true;
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(data);
-      const delta = parsed.choices?.[0]?.delta;
-      if (!delta) return;
-
-      if (delta.content) {
-        contentText += delta.content;
-        pending.push({ type: 'content', content: delta.content });
-      }
-
-      if (delta.reasoning_content) {
-        contentText += delta.reasoning_content;
-        pending.push({ type: 'content', content: delta.reasoning_content, reasoning: true });
-      }
-
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          const idx = tc.index ?? toolCallsMap.size;
-          if (!toolCallsMap.has(idx)) {
-            toolCallsMap.set(idx, {
-              id: tc.id || '',
-              name: tc.function?.name || '',
-              arguments: tc.function?.arguments || '',
-            });
-          } else {
-            const existing = toolCallsMap.get(idx)!;
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name = tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-          }
-        }
-      }
-    } catch {
-      // 忽略无法解析的行
+    } else if (event === 'error') {
+      streamError = new Error(data);
+      finished = true;
     }
   };
 
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', apiUrl, true);
+  xhr.open('POST', proxyUrl, true);
   xhr.setRequestHeader('Content-Type', 'application/json');
-  xhr.setRequestHeader('Authorization', `Bearer ${apiKey}`);
+
+  const token = useAuthStore.getState().token;
+  if (token) {
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+  }
+
   xhr.timeout = timeout;
 
   if (signal) {
     signal.addEventListener('abort', () => {
+      streamError = new Error('Cancelled');
+      finished = true;
       xhr.abort();
+      wake();
     });
   }
+
+  let currentEvent = '';
+  let currentData = '';
 
   xhr.onprogress = () => {
     const fullText = xhr.responseText;
@@ -364,15 +344,31 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
     lineBuffer = lines.pop() || '';
 
     for (const line of lines) {
-      processSSELine(line);
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith('data: ')) {
+        currentData = line.slice(6);
+      } else if (line.trim() === '') {
+        if (currentEvent) {
+          processSSELine(currentEvent, currentData);
+        }
+        currentEvent = '';
+        currentData = '';
+      }
     }
     wake();
   };
 
   xhr.onloadend = () => {
     if (lineBuffer.trim()) {
-      processSSELine(lineBuffer);
-      lineBuffer = '';
+      if (lineBuffer.startsWith('event: ')) {
+        currentEvent = lineBuffer.slice(7).trim();
+      } else if (lineBuffer.startsWith('data: ')) {
+        currentData = lineBuffer.slice(6);
+        if (currentEvent) {
+          processSSELine(currentEvent, currentData);
+        }
+      }
     }
 
     if (!finished) {
@@ -387,8 +383,8 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
     }
 
     if (xhr.status !== 0 && xhr.status >= 400) {
-      streamError = new Error(`LLM API 流式调用失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500) || ''}`);
-      console.error(`[LLM] 流式API 失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500)}`);
+      streamError = new Error(`LLM 代理调用失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500) || ''}`);
+      console.error(`[LLM] 代理失败 (${xhr.status}): ${xhr.responseText?.slice(0, 500)}`);
     }
 
     const elapsed = Date.now() - startTime;

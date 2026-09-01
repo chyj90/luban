@@ -85,33 +85,40 @@ public class MavenDependencyResolver {
         );
 
         try {
+            // 指定了 classifier（如 standalone），直接下载该 JAR，跳过依赖解析
+            if (classifier != null && !classifier.isEmpty()) {
+                List<Path> jars = new ArrayList<>();
+                Artifact jarArtifact = new DefaultArtifact(groupId, artifactId, classifier, "jar", version);
+                downloadAndCopy(jarArtifact, targetDir, session, repos, jars, progressCallback);
+                progressCallback.accept(DownloadProgress.info("使用 " + classifier + " JAR，跳过依赖解析"));
+                return jars;
+            }
+
             // 无指定 classifier 时，优先尝试 all-in-one 胖包
-            if (classifier == null || classifier.isEmpty()) {
-                try {
-                    List<Path> allJars = new ArrayList<>();
-                    Artifact allArtifact = new DefaultArtifact(groupId, artifactId, "all", "jar", version);
-                    downloadAndCopy(allArtifact, targetDir, session, repos, allJars, progressCallback);
-                    if (!allJars.isEmpty()) {
-                        progressCallback.accept(DownloadProgress.info("使用 all-in-one JAR，跳过依赖解析"));
-                        return allJars;
-                    }
-                } catch (Exception e) {
-                    log.info("all classifier JAR 不存在，回退到常规依赖解析: {}", e.getMessage());
+            try {
+                List<Path> allJars = new ArrayList<>();
+                Artifact allArtifact = new DefaultArtifact(groupId, artifactId, "all", "jar", version);
+                downloadAndCopy(allArtifact, targetDir, session, repos, allJars, progressCallback);
+                if (!allJars.isEmpty()) {
+                    progressCallback.accept(DownloadProgress.info("使用 all-in-one JAR，跳过依赖解析"));
+                    return allJars;
                 }
+            } catch (Exception e) {
+                log.info("all classifier JAR 不存在，回退到常规依赖解析: {}", e.getMessage());
             }
 
             // 常规路径：下载 JAR + 递归解析 POM 依赖
             Set<String> resolved = new HashSet<>();
             List<Path> jars = new ArrayList<>();
 
-            resolveRecursive(groupId, artifactId, version, classifier, "compile",
+            resolveRecursive(groupId, artifactId, version, null, "compile",
                     targetDir, localRepoPath, session, repos, resolved, jars, progressCallback);
 
             progressCallback.accept(DownloadProgress.info(
                     "依赖解析完成，共 " + jars.size() + " 个 JAR"));
             return jars;
 
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("Maven 依赖解析失败: {}:{}:{}", groupId, artifactId, version, e);
             throw new RuntimeException("依赖解析失败: " + e.getMessage(), e);
         }
@@ -135,14 +142,14 @@ public class MavenDependencyResolver {
 
         try {
             downloadAndCopy(jarArtifact, targetDir, session, repos, jars, progressCallback);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.warn("JAR 下载失败: {}, 继续尝试解析 POM 依赖", coord);
         }
 
         Artifact pomArtifact = new DefaultArtifact(groupId, artifactId, "pom", version);
         try {
             downloadAndCopy(pomArtifact, localRepoPath, session, repos, new ArrayList<>(), progressCallback);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.warn("POM 下载失败: {}, 跳过依赖解析", coord);
             return;
         }
@@ -279,7 +286,7 @@ public class MavenDependencyResolver {
                 jars.add(target);
                 progressCallback.accept(DownloadProgress.done(fileName));
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             throw new RuntimeException("下载失败: " + fileName + " - " + e.getMessage(), e);
         }
     }

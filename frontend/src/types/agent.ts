@@ -58,6 +58,7 @@ export interface ToolContext {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onDatasourceChange?: () => void;
   onWorkflowNavigate?: (view: WorkflowNavigateView) => void;
 }
 

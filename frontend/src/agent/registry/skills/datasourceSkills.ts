@@ -3,19 +3,19 @@ import { createDatasource, testDatasource, getDatasourceStructure } from '@/api'
 import { listDatasources } from '@/api/datasource';
 
 export const datasourceSkills: Record<string, SkillFactory> = {
-  'datasource:list': (_ctx) => ({
+  'datasource:list': (ctx) => ({
     id: 'datasource:list',
     category: SkillCategory.DATASOURCE,
     name: 'list_datasources',
     description: '列出当前工作区中所有数据源，包含每个数据源的连接状态（connected/error/pending）。',
     parameters: { type: 'object', properties: {} },
     async execute() {
-      const res = await listDatasources(ctx.applicationId);
+      const res = await listDatasources('APPLICATION', ctx.applicationId);
       return { success: true, message: `共 ${res.data.length} 个数据源`, data: res.data };
     },
   }),
 
-  'datasource:test': (_ctx) => ({
+  'datasource:test': (ctx) => ({
     id: 'datasource:test',
     category: SkillCategory.DATASOURCE,
     name: 'test_datasource',
@@ -35,7 +35,7 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'datasource:structure': (_ctx) => ({
+  'datasource:structure': (ctx) => ({
     id: 'datasource:structure',
     category: SkillCategory.DATASOURCE,
     name: 'fetch_datasource_structure',
@@ -51,7 +51,7 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'datasource:connect': (_ctx) => ({
+  'datasource:connect': (ctx) => ({
     id: 'datasource:connect',
     category: SkillCategory.DATASOURCE,
     name: 'connect_datasource',
@@ -74,14 +74,16 @@ config 字段：baseUrl（必填）、method（可选，默认 GET）、headers�
     async execute(args) {
       try {
         const res = await createDatasource({
-          applicationId: ctx.applicationId,
+          ownerId: ctx.applicationId,
+          slug: 'APPLICATION' as const,
           name: args.name as string,
           type: args.type as string,
           config: args.config as Record<string, unknown>,
-        } as Parameters<typeof createDatasource>[0]);
+        });
         await testDatasource(res.data.id);
+        ctx.onDatasourceChange?.();
         return { success: true, message: `数据源 "${args.name}" 连接成功`, data: res.data };
-      } catch {
+      } catch (e: unknown) {
         return { success: false, message: `连接数据源失败: ${(e as Error).message}` };
       }
     },

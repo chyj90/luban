@@ -4,7 +4,7 @@ import { listDatasources } from '@/api/datasource';
 import { listQueries } from '@/api';
 
 export const querySkills: Record<string, SkillFactory> = {
-  'query:list': (_ctx) => ({
+  'query:list': (ctx) => ({
     id: 'query:list',
     category: SkillCategory.QUERY,
     name: 'list_queries',
@@ -16,7 +16,7 @@ export const querySkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'query:create': (_ctx) => {
+  'query:create': (ctx) => {
     const testedDatasources = new Set<number>();
 
     async function ensureConnected(datasourceId: number): Promise<string | null> {
@@ -75,6 +75,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
             description: (args.description as string) || '',
           });
           ctx.onQueriesChange?.();
+          ctx.onQuerySelect?.({ id: res.data.id, name: res.data.name });
           return { success: true, message: `查询 "${args.name}" 创建成功`, data: res.data };
         } catch {
           return { success: false, message: `创建查询失败: ${(e as Error).message}` };
@@ -83,7 +84,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
     };
   },
 
-  'query:update': (_ctx) => ({
+  'query:update': (ctx) => ({
     id: 'query:update',
     category: SkillCategory.QUERY,
     name: 'update_query',
@@ -112,6 +113,8 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
             params,
             description: (args.description as string) || '',
           });
+        ctx.onQueriesChange?.();
+        ctx.onQuerySelect?.({ id: args.queryId as number, name: (args.name as string) || '' });
         return { success: true, message: '查询更新成功', data: res.data };
       } catch {
         return { success: false, message: `更新查询失败: ${(e as Error).message}` };
@@ -119,7 +122,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
     },
   }),
 
-  'query:delete': (_ctx) => ({
+  'query:delete': (ctx) => ({
     id: 'query:delete',
     category: SkillCategory.QUERY,
     name: 'delete_query',
@@ -142,7 +145,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
     },
   }),
 
-  'query:run': (_ctx) => ({
+  'query:run': (ctx) => ({
     id: 'query:run',
     category: SkillCategory.QUERY,
     name: 'run_query',
@@ -158,14 +161,18 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
     async execute(args) {
       try {
         const res = await runQuery(args.queryId as number, { params: (args.params as Record<string, unknown>) || {} });
-        return { success: true, message: `查询执行成功，返回 ${res.data?.totalCount ?? 0} 条数据`, data: res.data };
+        ctx.onQuerySelect?.({ id: args.queryId as number, name: '' });
+        const columns = (res.data?.columns as string[]) || [];
+        const totalCount = res.data?.totalCount ?? 0;
+        const colInfo = columns.length > 0 ? `，列名：${columns.join('、')}` : '';
+        return { success: true, message: `查询执行成功，返回 ${totalCount} 条数据${colInfo}`, data: res.data };
       } catch {
         return { success: false, message: `执行查询失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'query:get': (_ctx) => ({
+  'query:get': (ctx) => ({
     id: 'query:get',
     category: SkillCategory.QUERY,
     name: 'get_query',
@@ -180,6 +187,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
         const res = await listQueries(ctx.applicationId);
         const query = res.data.find((q: unknown) => q.id === args.queryId);
         if (!query) return { success: false, message: `未找到查询 ${args.queryId}` };
+        ctx.onQuerySelect?.({ id: query.id as number, name: query.name as string });
         return { success: true, message: '获取查询成功', data: query };
       } catch {
         return { success: false, message: `获取查询失败: ${(e as Error).message}` };
@@ -187,7 +195,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
     },
   }),
 
-  'query:execute': (_ctx) => ({
+  'query:execute': (ctx) => ({
     id: 'query:execute',
     category: SkillCategory.QUERY,
     name: 'execute_sql',

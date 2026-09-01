@@ -231,8 +231,8 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 确认 `https://jsonplaceholder.typicode.com` 可访问 | 浏览器访问返回 JSON 数据 |
-| 2 | 确认 `https://api.github.com` 可访问（无需认证的公开接口） | 浏览器访问返回 JSON 数据 |
+| 1 | 确认 `https://jsonplaceholder.typicode.com/posts` 可访问 | 浏览器访问返回 JSON 数据 |
+| 2 | 确认 `https://v1.hitokoto.cn/` 可访问（无需认证的公开接口） | 浏览器访问返回 JSON 数据，包含 `hitokoto`、`from` 等字段 |
 
 ---
 
@@ -405,14 +405,14 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 |:--:|------|------|
 | 1 | 发送：`帮我连接一个 REST API 数据源，名字叫 JSONPlaceholder，baseUrl 是 https://jsonplaceholder.typicode.com` | 请求发出 |
 | 2 | 等待执行 | 连接成功 |
-| 3 | 发送：`帮我连接一个 REST API 数据源，名字叫 GitHub Public，baseUrl 是 https://api.github.com` | 请求发出 |
+| 3 | 发送：`帮我连接一个 REST API 数据源，名字叫 DummyJSON，baseUrl 是 https://dummyjson.com` | 请求发出 |
 | 4 | 等待执行 | 连接成功 |
 
 #### TC-API-02：创建 REST API 查询并验证返回
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 发送：`帮我创建以下查询：1. GetPosts 使用 JSONPlaceholder，接口 /posts，返回所有文章；2. GetPostComments 使用 JSONPlaceholder，接口 /posts/{{ this.params.postId }}/comments，根据文章ID获取评论；3. GetUserInfo 使用 JSONPlaceholder，接口 /users/{{ this.params.userId }}，获取用户信息；4. GetGitHubRepos 使用 GitHub Public，接口 /users/{{ this.params.username }}/repos，获取用户仓库列表` | 请求发出 |
+| 1 | 发送：`帮我创建以下查询：1. GetPosts 使用 JSONPlaceholder，接口 /posts，返回所有文章；2. GetPostComments 使用 JSONPlaceholder，接口 /posts/{{ this.params.postId }}/comments，根据文章ID获取评论；3. GetUserInfo 使用 JSONPlaceholder，接口 /users/{{ this.params.userId }}，获取用户信息；4. GetProducts 使用 DummyJSON，接口 /products，获取所有商品列表` | 请求发出 |
 | 2 | 等待执行 | 4 个查询创建成功 |
 | 3 | 发送：`帮我执行 GetPosts，获取前 10 条` | 请求发出 |
 | 4 | 验证返回数据 | 返回 JSONPlaceholder 的 posts 数据，共 100 条（或按参数返回） |
@@ -423,11 +423,11 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 发送：`帮我创建一个综合数据页面，名字叫数据中心，要求：1. 左侧展示 ERP 系统的销售概览（使用 GetProductSales 和 GetCustomerRanking）；2. 右侧展示外部 API 数据（使用 GetPosts 展示最新文章列表）；3. 底部展示 GitHub 仓库列表（使用 GetGitHubRepos，username 为 facebook）；4. 整体使用 Tab 切换布局` | 请求发出 |
+| 1 | 发送：`帮我创建一个综合数据页面，名字叫数据中心，要求：1. 左侧展示 ERP 系统的销售概览（使用 GetProductSales 和 GetCustomerRanking）；2. 右侧展示外部 API 数据（使用 GetPosts 展示最新文章列表）；3. 底部展示 DummyJSON 商品列表（使用 GetProducts）；4. 整体使用 Tab 切换布局` | 请求发出 |
 | 2 | 切换到数据中心页面 | 页面渲染正常 |
 | 3 | 检查 ERP 数据 Tab | 商品销量和客户排行数据正确 |
 | 4 | 检查外部 API Tab | JSONPlaceholder 文章列表正常展示 |
-| 5 | 检查 GitHub Tab | Facebook 公开仓库列表正常展示 |
+| 5 | 检查 DummyJSON Tab | 商品列表正常展示，包含 title、price 等字段 |
 | 6 | 验证 Tab 切换 | 3 个 Tab 独立工作，切换流畅，数据不串 |
 
 ---

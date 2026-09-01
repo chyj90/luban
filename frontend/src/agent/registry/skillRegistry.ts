@@ -78,7 +78,7 @@ export function getSkillIdsByCategory(category: SkillCategory): string[] {
  */
 export function resolveSkills(
   skillIds: string[],
-  _ctx: ToolContext,
+  ctx: ToolContext,
   chatRouter?: ChatRouter,
 ): ToolDefinition[] {
   return skillIds

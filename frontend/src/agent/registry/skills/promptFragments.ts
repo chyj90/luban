@@ -7,8 +7,9 @@
 
 export function getPageSkillSummary(): string {
   return `## 页面管理
-- 创建/删除/重命名页面
+- 删除/重命名页面
 - 通过 list_pages 查看所有页面
+- 创建页面使用 create_code_page（一步到位创建页面并写入代码）
 - 不确定目标页面时主动向用户确认`;
 }
 
@@ -18,7 +19,10 @@ export function getCodePageSkillSummary(): string {
 - 使用 CSS Grid/Flexbox 布局，响应式设计，支持手机/平板/桌面
 - 外部库通过 CDN 引入，在创建页面时指定 libraries 参数
 - 页面中使用 {{ QueryName.data }} 绑定查询结果
-- 调用查询使用 QueryName.run({ 参数 }) 返回 Promise，结果结构 { columns, rows, totalCount }
+- 调用查询使用 QueryName.run({ 参数 }) 返回 Promise，结果结构 { columns, rows, totalCount }，其中 rows 是对象数组，每个对象以字段名（如 order_no）为 key 访问
+- **JS 代码中访问字段名必须与查询 columns 完全一致，一个字母都不能差**，禁止编造字段名（如查询返回 name 就写 row.name，不要写成 row.customer_name）
+- **queryIds 必须填写实际查询 ID，不能留空数组**，否则页面无法加载数据
+- **筛选/搜索/排序优先使用客户端 JS 完成**：页面初始化时调用 QueryName.run() 获取全量数据存入数组，后续筛选、搜索、排序全部用 JS 对数组操作。仅当 DBA 智能体明确告知查询支持哪些参数时，才传参给 run()
 - 按钮点击事件必须使用 onclick="函数名()" 属性，并在 JS 中定义对应函数
 - 修改页面前先调用 get_code_page 获取完整代码，增量修改
 - 平台注入 window.__LUBAN_USER__ = { id, name, email } 获取当前登录用户
@@ -53,7 +57,7 @@ export function getFindAnalysisSkillSummary(): string {
 - 收到用户需求后，**必须先调用 analyze_requirement**，将需求委派给需求分析助手
 - 分析助手会从业务视角完成：话题拆解、UI布局、数据字段、Query设计、流程分析、冲突合并
 - 分析助手会同步创建执行计划（create_plan），你不需要再创建计划
-- 分析助手返回报告和计划后，展示给用户确认，确认后调用 confirm_plan 开始执行
+- 分析助手返回报告和计划后，**不要在回复中重复报告内容**（分析助手已经直接输出给用户），只需简短说明「分析完成，请确认以上计划」并等待用户确认，**禁止自行调用 confirm_plan**，用户明确回复后（如"确认"、"开始"）才调用 confirm_plan 开始执行
 - 不要在分析阶段调用其他工具（数据操作、创建页面等）
 - 分析助手不知道数据库结构，所以分析结果中的字段都是业务语言描述的`;
 }
@@ -77,8 +81,8 @@ export function getPlanPromptFragment(): string {
 1. **需求澄清** → 需求不明确时直接提问，不创建计划
 2. **创建计划** → 调用 create_plan，覆盖用户所有需求点
 3. **用户确认** → 计划展示给用户，等待确认
-4. **执行步骤** → 按顺序调用工具，每步用 update_plan_item 标记状态
-5. **完成验证** → 调用 validate_plan 检查是否全部完成
+4. **执行步骤** → 按顺序调用工具，每步用 update_plan_item 标记状态。**禁止跳过任何步骤**，一个代码更新可能覆盖多个步骤，但每个步骤都必须单独标记为 completed
+5. **完成验证** → 所有步骤标记完成后，调用 validate_plan 检查。如果 validate_plan 返回未完成的步骤，必须立即标记完成
 
 ### 计划灵活性
 - 执行中用户补充需求 → 调用 adjust_plan 追加步骤
@@ -171,5 +175,15 @@ export function getAnalysisPromptFragment(): string {
 - description: 描述需要设计的表单和流程（如"设计请假表单和审批流程：表单包含请假类型/起止日期/原因，流程为发起人→直属上级审批"）
 - 不要为审批流程话题创建 page/datasource/query 类别的步骤，这些由流程设计助手自动处理
 
-**非审批流程话题的计划步骤**：使用对应的 toolName（create_page/update_page/delegate_query 等）`;
+**非审批流程话题的计划步骤**：只能使用以下 toolName，禁止编造不存在的工具名：
+- create_code_page：创建页面并写入代码（一步到位，不需要先 create_page）
+- update_code_page：更新已有页面的代码
+- delegate_query：委派给数据辅助智能体创建/修改查询
+- delegate_workflow：委派给流程设计助手
+- 没有单独的"添加筛选"、"配置表格列"、"设置颜色"、"开启排序"、"设置按钮"等工具，这些功能全部在 create_code_page 或 update_code_page 中通过 HTML/CSS/JS 代码一次性完成
+
+### ⚠️ 步骤顺序强制规则
+- **当页面需要使用查询时，delegate_query 步骤必须排在 create_code_page 之前**，确保创建页面时能拿到 queryId
+- 查询步骤完成后，创建页面步骤的 queryIds 参数必须填写实际查询 ID，不能留空
+- 违反此规则会导致页面创建后无法加载数据（查询未绑定到页面）`;
 }

@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentEventHandler } from '@dudko.dev/agent-web';
 import type { AgentEvent as AppAgentEvent, Message, Plan, Step } from '@/types/agent';
+import { useAgentStore } from '@/stores/agentStore';
 
 interface EventAdapterDeps {
   addMessage: (msg: Message) => void;
@@ -221,7 +222,29 @@ export function createEventAdapter(deps: EventAdapterDeps): AgentEventHandler {
           });
         }
         if (planId) {
-          updatePlan(planId, { status: 'completed' });
+          const store = useAgentStore.getState();
+          const plan = store.plans.find((p) => p.id === planId);
+          if (plan && (plan.status === 'confirmed' || plan.status === 'executing')) {
+            const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
+            const runningSteps = plan.steps.filter((s) => s.status === 'running');
+            if (pendingSteps.length > 0 || runningSteps.length > 0) {
+              console.warn(`${prefix} 计划未完成但收到 final 事件！pending: ${pendingSteps.length}, running: ${runningSteps.length}`);
+              updatePlan(planId, { status: 'stopped' });
+              addMessage({
+                id: crypto.randomUUID(),
+                role: 'system',
+                content: `⚠️ 任务异常结束：计划仍有 ${pendingSteps.length + runningSteps.length} 个步骤未完成。`,
+                timestamp: Date.now(),
+                agentId,
+                agentName,
+                agentIcon,
+              });
+            } else {
+              updatePlan(planId, { status: 'completed' });
+            }
+          } else {
+            updatePlan(planId, { status: 'completed' });
+          }
         }
         setStatus('completed');
         break;

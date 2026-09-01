@@ -6,12 +6,13 @@ import type { AgentDefinition } from '../registry/agentRegistry';
 
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
-  'providerType' | 'model' | 'baseUrl' | 'currentPageId' | 'currentPageName' | 'allPages' | 'applicationId'
+  'model' | 'currentPageId' | 'currentPageName' | 'allPages' | 'applicationId'
 > & {
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onDatasourceChange?: () => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
@@ -30,6 +31,7 @@ export type RouterCallbacks = {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onDatasourceChange?: () => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
@@ -185,6 +187,7 @@ export class ChatRouter {
       onPageChange: this.callbacks.onPageChange || this.sessionOptions.onPageChange,
       onQuerySelect: this.callbacks.onQuerySelect || this.sessionOptions.onQuerySelect,
       onQueriesChange: this.callbacks.onQueriesChange || this.sessionOptions.onQueriesChange,
+      onDatasourceChange: this.callbacks.onDatasourceChange || this.sessionOptions.onDatasourceChange,
       onWorkflowNavigate: this.callbacks.onWorkflowNavigate || this.sessionOptions.onWorkflowNavigate,
     };
 

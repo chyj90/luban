@@ -37,7 +37,7 @@ export interface AgentDefinition {
  */
 export function resolveAgentTools(
   agentDef: AgentDefinition,
-  _ctx: ToolContext,
+  ctx: ToolContext,
   chatRouter?: ChatRouter,
 ): ToolDefinition[] {
   // 优先使用 allowedSkills（新方式）
@@ -58,10 +58,10 @@ export const AGENTS: AgentDefinition[] = [
     icon: '',
     description: '主智能体，负责设计页面、选择查询和API、生成代码',
     isDefault: true,
-    buildSystemPrompt: (_ctx) =>
+    buildSystemPrompt: (ctx) =>
       buildInteliSystemPrompt(ctx.applicationId, ctx.pageId, ctx.pageName, ctx.allPages),
     allowedSkills: [
-      'page:create', 'page:delete', 'page:rename',
+      'page:delete', 'page:rename',
       'code:create', 'code:get', 'code:update',
       'observation:list_pages', 'observation:record',
       'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
@@ -75,7 +75,7 @@ export const AGENTS: AgentDefinition[] = [
     icon: '',
     description: '数据辅助智能体，负责连接数据源、创建查询、执行调试',
     isDefault: false,
-    buildSystemPrompt: (_ctx) =>
+    buildSystemPrompt: (ctx) =>
       buildDataAssistantPrompt({
         applicationId: ctx.applicationId,
         taskType: ctx.taskType || 'B单页面',

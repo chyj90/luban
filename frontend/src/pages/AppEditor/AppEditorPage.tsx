@@ -105,6 +105,17 @@ export function AppEditorPage() {
     listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
   }, [appId]);
 
+  const handleQueriesChange = useCallback(() => {
+    setSidebarTab('queries');
+    listQueries(Number(appId)).then((res) => {
+      setQueries(res.data);
+    }).catch(() => setQueries([]));
+  }, [appId]);
+
+  const handleDatasourceChange = useCallback(() => {
+    setSidebarTab('datasources');
+  }, []);
+
   const handlePageChange = (pageId: number) => {
     setEditingFile(null);
     setSelectedQuery(null);
@@ -351,10 +362,10 @@ export function AppEditorPage() {
         </svg>
       </button>
 
-      {agentOpen && currentPage && (
+      {currentPage && (
         <>
-          <div className="app-editor-agent-backdrop" onClick={() => setAgentOpen(false)} />
-          <div className="app-editor-agent-overlay">
+          <div className={`app-editor-agent-backdrop ${agentOpen ? '' : 'app-editor-hidden'}`} onClick={() => setAgentOpen(false)} />
+          <div className={`app-editor-agent-overlay ${agentOpen ? '' : 'app-editor-hidden'}`}>
             <AgentPanel
               appId={appId || ''}
               currentPageId={currentPage.id}
@@ -362,7 +373,8 @@ export function AppEditorPage() {
               onPagesChange={loadPages}
               onPageChange={handlePageChange}
               onQuerySelect={handleQuerySelect}
-              onQueriesChange={refreshQueries}
+              onQueriesChange={handleQueriesChange}
+              onDatasourceChange={handleDatasourceChange}
               onWorkflowNavigate={handleWorkflowNavigate}
             />
           </div>

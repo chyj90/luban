@@ -1,16 +1,14 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import type { Message } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
-import { useLLMStore } from '@/stores/llmStore';
 import { toast } from '@/stores/toastStore';
-import { vaultManager } from '@/agent/core/vaultManager';
 import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { getSubPlans } from '@/agent/core/planContext';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
 import { listPages } from '@/api';
-import type { ProviderType, Plan } from '@/types/agent';
+import type { Plan } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
 import './AgentPanel.css';
 
@@ -71,10 +69,11 @@ interface AgentPanelProps {
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
+  onDatasourceChange?: () => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 }
 
-type TabView = 'chat' | 'plan' | 'settings';
+type TabView = 'chat' | 'plan';
 
 const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
   const isPlanMsg = msg.role === 'plan';
@@ -172,12 +171,6 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
     && JSON.stringify(prev.msg.toolCalls) === JSON.stringify(next.msg.toolCalls);
 });
 
-const PROVIDERS: { key: ProviderType; label: string }[] = [
-  { key: 'openai', label: 'OpenAI' },
-  { key: 'anthropic', label: 'Anthropic' },
-  { key: 'deepseek', label: 'DeepSeek' },
-];
-
 function formatExport(messages: import('@/types/agent').Message[]): string {
   const lines: string[] = [];
   lines.push(`# AI Agent 会话记录`);
@@ -237,14 +230,10 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   return lines.join('\n');
 }
 
-export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onWorkflowNavigate }: AgentPanelProps) {
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onWorkflowNavigate }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<TabView>('chat');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [savedProvider, setSavedProvider] = useState<ProviderType | null>(null);
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -291,11 +280,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     stopPlan,
     reset,
   } = useAgentStore();
-
-  const activeConfig = useLLMStore((s) => s.getActiveConfig());
-  const configs = useLLMStore((s) => s.configs);
-  const setActiveConfig = useLLMStore((s) => s.setActiveConfig);
-  const llmActiveId = useLLMStore((s) => s.activeConfigId);
 
   useEffect(() => {
     listPages(Number(appId)).then((res) => {
@@ -452,28 +436,13 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onPageChange,
     onQuerySelect,
     onQueriesChange,
+    onDatasourceChange,
     onWorkflowNavigate,
-  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onWorkflowNavigate]);
+  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onWorkflowNavigate]);
 
   const runAgent = async (userMessage: string) => {
-    const config = activeConfig || configs[0];
-    if (!config || !config.model) {
-      setError('请先在设置中配置 API Key 并选择模型');
-      setActiveTab('settings');
-      return;
-    }
-
-    const hasKey = await useLLMStore.getState().hasApiKey(config.provider);
-    if (!hasKey) {
-      setError('请先在设置中配置 API Key');
-      setActiveTab('settings');
-      return;
-    }
-
     const sessionOptions: RouterSessionOptions = {
-      providerType: config.provider,
-      model: config.model,
-      baseUrl: config.baseUrl,
+      model: 'default',
       currentPageId,
       currentPageName,
       allPages,
@@ -482,6 +451,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       onPageChange,
       onQuerySelect,
       onQueriesChange,
+      onDatasourceChange,
       onWorkflowNavigate,
     };
 
@@ -500,7 +470,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         sessionId,
       });
       await result.executor.run(result.processedInput);
-    } catch {
+    } catch (e) {
       setError((e as Error).message);
     }
   };
@@ -626,81 +596,12 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     await runAgent(continueMsg);
   };
 
-  const handleTest = async (provider: ProviderType, baseUrl: string, apiKey: string) => {
-    setTesting(true);
-    setTestResult(null);
-    setAvailableModels([]);
-    try {
-      const url = baseUrl.replace(/\/+$/, '') + '/models';
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const models: string[] = (data.data || [])
-        .map((m: unknown) => m.id)
-        .filter(Boolean)
-        .sort();
-      setAvailableModels(models);
-      setTestResult('success');
-      await useLLMStore.getState().setApiKey(provider, apiKey);
-      useLLMStore.setState((s) => ({
-        configs: s.configs.map((c) =>
-          c.provider === provider ? { ...c, model: models[0] || '' } : c,
-        ),
-      }));
-    } catch {
-      setTestResult('fail');
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  useEffect(() => {
-    (async () => {
-      const store = useLLMStore.getState();
-      for (const cfg of store.configs) {
-        const key = await store.getApiKey(cfg.provider);
-        if (key) {
-          useLLMStore.setState((s) => ({
-            configs: s.configs.map((c) =>
-              c.provider === cfg.provider ? { ...c, apiKey: key } : c,
-            ),
-          }));
-          if (!store.activeConfigId || store.activeConfigId === cfg.provider) {
-            setSavedProvider(cfg.provider);
-          }
-        }
-      }
-    })();
-  }, []);
-
   useEffect(() => {
     if (!showDebugMenu) return;
     const handler = () => setShowDebugMenu(false);
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [showDebugMenu]);
-
-  const handleSaveConfig = async (provider: ProviderType, baseUrl: string, model: string, apiKey: string) => {
-    const store = useLLMStore.getState();
-    await store.setApiKey(provider, apiKey);
-    await vaultManager.setConfig(provider, { model, baseUrl });
-    setSavedProvider(provider);
-  };
-
-  const handleClearConfig = async (provider: ProviderType) => {
-    await vaultManager.deleteApiKey(provider);
-    await vaultManager.deleteConfig(provider);
-    useLLMStore.setState((s) => ({
-      configs: s.configs.map((c) =>
-        c.provider === provider ? { ...c, apiKey: '', model: '', baseUrl: c.baseUrl } : c,
-      ),
-    }));
-    setTestResult(null);
-    setAvailableModels([]);
-    setSavedProvider(null);
-  };
 
   const isRunning = status === 'streaming' || status === 'executing' || status === 'planning';
 
@@ -915,147 +816,11 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
             >
               计划
             </button>
-            <button
-              className={`ap-tab ${activeTab === 'settings' ? 'active' : ''}`}
-              onClick={() => setActiveTab('settings')}
-            >
-              设置
-            </button>
           </div>
         </div>
       </div>
 
       <div className="ap-body">
-        {activeTab === 'settings' && (
-          <div className="ap-settings">
-            <div className="ap-settings-title">大模型配置</div>
-            <p className="ap-settings-desc">选择一个模型并填写 API Key 以启用 AI 助手</p>
-
-            <div className="ap-settings-providers">
-              {PROVIDERS.map((p) => (
-                <label
-                  key={p.key}
-                  className={`ap-provider-card ${(llmActiveId || configs[0]?.provider) === p.key ? 'active' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="provider"
-                    checked={(llmActiveId || configs[0]?.provider) === p.key}
-                    onChange={async () => {
-                      setActiveConfig(p.key);
-                      setTestResult(null);
-                      setAvailableModels([]);
-                      const hasKey = await useLLMStore.getState().hasApiKey(p.key);
-                      setSavedProvider(hasKey ? p.key : null);
-                    }}
-                  />
-                  <span>{p.label}</span>
-                </label>
-              ))}
-            </div>
-
-            {configs.map((cfg) => {
-              const isActive = (llmActiveId || configs[0]?.provider) === cfg.provider;
-              if (!isActive) return null;
-              return (
-                <div key={cfg.provider} className="ap-config-form">
-                  <div className="ap-field">
-                    <label>Base URL</label>
-                    <input
-                      type="text"
-                      value={cfg.baseUrl}
-                      onChange={(e) => {
-                        useLLMStore.setState((s) => ({
-                          configs: s.configs.map((c) =>
-                            c.provider === cfg.provider ? { ...c, baseUrl: e.target.value } : c
-                          ),
-                        }));
-                      }}
-                    />
-                  </div>
-                  <div className="ap-field">
-                    <label>API Key</label>
-                    <div className="ap-field-row">
-                      <input
-                        type="password"
-                        value={cfg.apiKey}
-                        placeholder="sk-..."
-                        onChange={(e) => {
-                          setTestResult(null);
-                          setAvailableModels([]);
-                          setSavedProvider(null);
-                          useLLMStore.setState((s) => ({
-                            configs: s.configs.map((c) =>
-                              c.provider === cfg.provider ? { ...c, apiKey: e.target.value } : c
-                            ),
-                          }));
-                        }}
-                      />
-                      <button
-                        className="ap-test-btn"
-                        onClick={() => handleTest(cfg.provider, cfg.baseUrl, cfg.apiKey)}
-                        disabled={testing || !cfg.apiKey.trim()}
-                      >
-                        {testing ? '测试中...' : '测试'}
-                      </button>
-                    </div>
-                    {testResult === 'success' && (
-                      <span className="ap-test-ok">连接成功</span>
-                    )}
-                    {testResult === 'fail' && (
-                      <span className="ap-test-fail">连接失败，请检查 API Key 和 Base URL</span>
-                    )}
-                  </div>
-                  <div className="ap-field">
-                    <label>Model</label>
-                    {testResult === 'success' && availableModels.length > 0 ? (
-                      <select
-                        value={cfg.model}
-                        onChange={(e) => {
-                          useLLMStore.setState((s) => ({
-                            configs: s.configs.map((c) =>
-                              c.provider === cfg.provider ? { ...c, model: e.target.value } : c
-                            ),
-                          }));
-                        }}
-                      >
-                        {availableModels.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        value={cfg.model}
-                        disabled
-                        placeholder={testResult === 'fail' ? '测试失败，请检查配置' : '请先点击测试按钮'}
-                      />
-                    )}
-                  </div>
-                  <div className="ap-config-actions">
-                    {savedProvider === cfg.provider ? (
-                      <button
-                        className="ap-btn-clear"
-                        onClick={() => handleClearConfig(cfg.provider)}
-                      >
-                        清除配置
-                      </button>
-                    ) : (
-                      <button
-                        className="ap-btn-save-config"
-                        disabled={!cfg.apiKey || !cfg.model}
-                        onClick={() => handleSaveConfig(cfg.provider, cfg.baseUrl, cfg.model, cfg.apiKey)}
-                      >
-                        保存配置
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
         {activeTab === 'plan' && (
           <div className="ap-plan">
             {plans.length === 0 ? (

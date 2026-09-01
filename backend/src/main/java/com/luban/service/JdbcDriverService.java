@@ -133,8 +133,8 @@ public class JdbcDriverService {
                 sendProgress(emitter, DownloadProgress.info("安装完成"));
                 emitter.send(SseEmitter.event().name("complete").data("安装完成"));
                 emitter.complete();
-            } catch (Exception e) {
-                log.error("驱动安装失败: {} ({})", driver.getName(), e.getMessage());
+            } catch (Throwable e) {
+                log.error("驱动安装失败: {} ({})", driver.getName(), e.getMessage(), e);
                 try {
                     emitter.send(SseEmitter.event().name("error").data("安装失败: " + e.getMessage()));
                 } catch (IOException ignored) {

@@ -1,41 +1,22 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createCodePage, getCodePage, updateCodePage } from '@/api';
-
-const CODE_PAGE_DESCRIPTION = `创建一个新的代码页面，包含 HTML/CSS/JS 代码。支持引入外部 CDN 库。
-
-## CDN 库
-通过 libraries 参数传入 CDN URL 数组，脚本会自动注入到页面 <head> 中，在用户 JS 之前加载：
-  libraries: ["https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"]
-
-## 查询绑定
-页面中通过 {{ QueryName.data }} 在 HTML 中展示查询结果，通过 QueryName.run({ param }) 在 JS 中调用查询：
-  <!-- HTML: 直接绑定查询结果 -->
-  <div id="list">{{ GetUsers.data }}</div>
-
-  // JS: 调用查询并处理结果
-  GetUsers.run({ name: '张三' }).then(function(res) {
-    // res = { columns: ['id','name'], rows: [['1','张三']], totalCount: 1 }
-    document.getElementById('list').textContent = JSON.stringify(res.rows);
-  });
-
-## 事件处理（必须）
-按钮必须使用 onclick 属性绑定 JS 函数，并在 JS 中定义对应的函数。
-
-## 平台内置能力
-- 当前登录用户信息：window.__LUBAN_USER__ = { id, name, email }
-- 页面跳转：window.__LUBAN__.navigateToPage(pageId)
-- 页面跳转：window.__LUBAN__.navigateToPageByName('页面名称')`;
+import { validateCode } from './codeValidate';
 
 export const codeSkills: Record<string, SkillFactory> = {
-  'code:create': (_ctx) => ({
+  'code:create': (ctx) => ({
     id: 'code:create',
     category: SkillCategory.CODE,
     name: 'create_code_page',
-    description: CODE_PAGE_DESCRIPTION,
+    description: `创建新的代码页面（同时创建页面记录并写入 HTML/CSS/JS 代码），支持引入外部 CDN 库。
+
+## 参数必须使用纯 JSON 格式，禁止使用 XML 标签（如 <parameter>）
+## name 为必填参数，不传会导致 400 错误
+## queryIds 必须填写实际查询 ID，不能留空数组，否则页面无法加载数据
+## 页面已存在时用 update_code_page，新建用 create_code_page`,
     parameters: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '页面名称' },
+        name: { type: 'string', description: '【必填】页面名称，如"订单管理"。不填会导致 HTTP 400 错误' },
         html: { type: 'string', description: 'HTML 代码' },
         css: { type: 'string', description: 'CSS 样式代码' },
         js: { type: 'string', description: 'JavaScript 代码' },
@@ -46,25 +27,55 @@ export const codeSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try {
+        const name = (args.name as string)?.trim();
+        if (!name) {
+          if (Object.keys(args).length === 0) {
+            return { success: false, message: '参数解析失败，请使用纯 JSON 格式，禁止 XML 标签' };
+          }
+          return { success: false, message: 'name 参数不能为空，请填写页面名称（如"订单管理"）后重试' };
+        }
+
+        const html = (args.html as string)?.trim() || '';
+        const css = (args.css as string)?.trim() || '';
+        const js = (args.js as string)?.trim() || '';
+
+        if (!html && !css && !js) {
+          if (Object.keys(args).length <= 1) {
+            return { success: false, message: '参数解析失败，请使用纯 JSON 格式，禁止 XML 标签' };
+          }
+          return { success: false, message: '页面代码不能全为空，请提供 HTML/CSS/JS 代码后再调用 create_code_page' };
+        }
+
+        const validation = await validateCode(html, css, js, {
+          queryIds: (args.queryIds as number[]) || [],
+          applicationId: ctx.applicationId,
+        });
+        if (!validation.valid) {
+          return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };
+        }
+        if (validation.warnings.length > 0) {
+          console.warn('[code:create]', validation.warnings.join('\n'));
+        }
+
         const res = await createCodePage({
           applicationId: ctx.applicationId,
-          name: args.name as string,
-          html: args.html as string | undefined,
-          css: args.css as string | undefined,
-          js: args.js as string | undefined,
+          name,
+          html,
+          css,
+          js,
           libraries: (args.libraries as string[]) || [],
           queryIds: (args.queryIds as number[]) || [],
         });
         ctx.onPagesChange?.();
         ctx.onPageChange?.(res.data.id);
-        return { success: true, message: `代码页面 "${args.name}" 创建成功`, data: res.data };
-      } catch {
+        return { success: true, message: `代码页面 "${name}" 创建成功`, data: res.data };
+      } catch (e: any) {
         return { success: false, message: `创建代码页面失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'code:get': (_ctx) => ({
+  'code:get': (ctx) => ({
     id: 'code:get',
     category: SkillCategory.CODE,
     name: 'get_code_page',
@@ -79,18 +90,20 @@ export const codeSkills: Record<string, SkillFactory> = {
         const pageId = (args.pageId as number) || ctx.pageId;
         const res = await getCodePage(pageId);
         return { success: true, message: '获取页面代码成功', data: res.data };
-      } catch {
+      } catch (e: any) {
         return { success: false, message: `获取页面代码失败: ${(e as Error).message}` };
       }
     },
   }),
 
-  'code:update': (_ctx) => ({
+  'code:update': (ctx) => ({
     id: 'code:update',
     category: SkillCategory.CODE,
     name: 'update_code_page',
     description: `更新代码页面的代码。支持增量修改（传入 changes）或全量替换（传入 html/css/js）。
-增量修改时，每项变更包含 action（replace/insert_before/insert_after/delete）和对应参数。`,
+
+## 参数必须使用纯 JSON 格式，禁止 XML 标签
+## pageId 为必填参数`,
     parameters: {
       type: 'object',
       properties: {
@@ -119,6 +132,13 @@ export const codeSkills: Record<string, SkillFactory> = {
     async execute(args) {
       try {
         const pageId = args.pageId as number;
+        if (!pageId || pageId <= 0) {
+          if (Object.keys(args).length === 0) {
+            return { success: false, message: '参数解析失败，请使用纯 JSON 格式，禁止 XML 标签' };
+          }
+          return { success: false, message: 'pageId 参数不能为空，请提供要更新的页面 ID' };
+        }
+
         const changes = args.changes as Array<{ action: string; target: string; newContent?: string; section: string }> | undefined;
         let html = args.html as string | undefined;
         let css = args.css as string | undefined;
@@ -187,6 +207,17 @@ export const codeSkills: Record<string, SkillFactory> = {
           js = sections.js;
         }
 
+        const validation = await validateCode(html, css, js, {
+          queryIds: (args.queryIds as number[]) || [],
+          applicationId: ctx.applicationId,
+        });
+        if (!validation.valid) {
+          return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };
+        }
+        if (validation.warnings.length > 0) {
+          console.warn('[code:update]', validation.warnings.join('\n'));
+        }
+
         const res = await updateCodePage(pageId, {
           html,
           css,
@@ -196,7 +227,7 @@ export const codeSkills: Record<string, SkillFactory> = {
         });
         ctx.onPageChange?.(pageId);
         return { success: true, message: '页面代码更新成功', data: res.data };
-      } catch {
+      } catch (e: any) {
         return { success: false, message: `更新代码失败: ${(e as Error).message}` };
       }
     },

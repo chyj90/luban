@@ -212,7 +212,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const handleTest = async (id: number) => {
     setTesting(id);
     const res = await testDatasource(id);
-    toast.show(res.data.message, res.data.success ? 'success' : 'error');
+    toast(res.data.message, res.data.success ? 'success' : 'error');
     setTesting(null);
   };
 

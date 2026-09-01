@@ -97,6 +97,9 @@ export const planSkills: Record<string, SkillFactory> = {
     },
     async execute(args): Promise<ToolExecuteResult> {
       const { title, summary, items } = args as unknown;
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return { success: false, message: '计划步骤列表 items 为空，请提供至少一个步骤' };
+      }
       const store = useAgentStore.getState();
       const planId = generatePlanId();
       const plan = {
@@ -105,11 +108,11 @@ export const planSkills: Record<string, SkillFactory> = {
         agentName: '主智能体',
         agentIcon: '',
         steps: items.map((item: unknown, index: number) => ({
-          id: item.id || generateItemId(),
-          description: item.description,
+          id: item?.id || generateItemId(),
+          description: item?.description || '',
           status: 'pending' as const,
           order: index,
-          toolName: item.toolName,
+          toolName: item?.toolName,
         })),
         createdAt: Date.now(),
         status: 'draft' as const,
@@ -201,7 +204,7 @@ export const planSkills: Record<string, SkillFactory> = {
     id: 'plan:confirm',
     category: SkillCategory.PLAN,
     name: 'confirm_plan',
-    description: '确认或放弃计划。用户确认后调用此工具标记计划状态。',
+    description: '确认或放弃计划。⚠️ 只有用户明确回复确认（如"确认"、"开始"、"没问题"）后才能调用此工具。禁止在分析完成时自行调用。',
     parameters: {
       type: 'object',
       properties: {

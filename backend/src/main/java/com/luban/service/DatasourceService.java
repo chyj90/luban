@@ -118,7 +118,7 @@ public class DatasourceService {
                 datasourceRepository.save(ds);
                 return new TestDatasourceResponse(false, "连接失败");
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             ds.setStatus("error");
             datasourceRepository.save(ds);
             return new TestDatasourceResponse(false, "连接失败: " + e.getMessage());
@@ -131,7 +131,7 @@ public class DatasourceService {
         String password = decryptPassword(config);
         try (Connection conn = DriverManager.getConnection(url, username, password)) {
             return conn.isValid(5);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             throw new RuntimeException(e.getMessage());
         }
     }

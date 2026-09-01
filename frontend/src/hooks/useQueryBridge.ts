@@ -16,7 +16,7 @@ interface BridgeResponse {
   type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT';
   id: string;
   queryName?: string;
-  result?: { columns: string[]; rows: unknown[][]; totalCount: number };
+  result?: { columns: string[]; rows: Record<string, unknown>[]; totalCount: number };
   error?: string;
   success?: boolean;
   apiName?: string;
@@ -85,11 +85,17 @@ export function useQueryBridge(
 
       try {
         const res = await runQuery(query.id, { params: msg.params });
+        const { columns, rows, totalCount, executionTime } = res.data;
+        const objectRows: Record<string, unknown>[] = rows.map((row: unknown[]) => {
+          const obj: Record<string, unknown> = {};
+          columns.forEach((col, i) => { obj[col] = row[i]; });
+          return obj;
+        });
         respond({
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
-          result: res.data,
+          result: { columns, rows: objectRows, totalCount },
         });
       } catch {
         respond({
@@ -205,6 +211,23 @@ export function useQueryBridge(
     if (!d) return;
 
     if (d.type === 'QUERY_RESULT') {
+      if (d.result && d.result.rows && d.result.columns) {
+        var cols = d.result.columns;
+        var warned = {};
+        d.result.rows = d.result.rows.map(function(row) {
+          return new Proxy(row, {
+            get: function(target, prop) {
+              if (typeof prop === 'string' && prop !== 'then' && !(prop in target)) {
+                if (!warned[prop]) {
+                  warned[prop] = true;
+                  console.error('[鲁班] 字段名错误：row.' + prop + ' 不存在，可用字段：' + cols.join(', '));
+                }
+              }
+              return target[prop];
+            }
+          });
+        });
+      }
       if (d.result) _results[d.queryName] = d.result;
       var cb = _pending[d.id];
       if (cb) {
@@ -253,6 +276,7 @@ export function useQueryBridge(
           document.body.appendChild(script);
           if (document.readyState === 'complete' || document.readyState === 'interactive') {
             document.dispatchEvent(new Event('DOMContentLoaded'));
+            window.dispatchEvent(new Event('load'));
           }
         }
       }

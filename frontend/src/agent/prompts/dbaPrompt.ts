@@ -8,7 +8,7 @@ export interface DBAContext {
   modifyInstructions?: string[];
 }
 
-export function buildDataAssistantPrompt(_ctx: DBAContext): string {
+export function buildDataAssistantPrompt(ctx: DBAContext): string {
   const existingQueriesText = ctx.existingQueries?.length
     ? ctx.existingQueries.map((q) => `  - ${q.name} (ID:${q.id})：${q.description}`).join('\n')
     : '（无已有查询）';
@@ -17,7 +17,7 @@ export function buildDataAssistantPrompt(_ctx: DBAContext): string {
     ? ctx.modifyInstructions.map((m, i) => `  ${i + 1}. ${m}`).join('\n')
     : '';
 
-  const retryRule = `\n## 重试规则\n- 如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向主智能体说明遇到的问题和已尝试的方案，等待用户指导\n- 回答使用中文，思考过程也必须使用中文，禁止英文思考\n- 禁止过度思考：同一问题推敲不超过 2 次，禁止反复权衡。禁止出现"Actually, let me reconsider..."、"Let me think about this again..."等英文循环推理`;
+  const retryRule = `\n## 重试规则\n- 如果在同一个问题上尝试了 3 次仍无进展，停止尝试，向主智能体说明遇到的问题和已尝试的方案，等待用户指导\n- 回答使用中文，思考过程也必须使用中文，禁止英文思考\n- 禁止过度思考：同一问题推敲不超过 2 次，禁止反复权衡。禁止出现"Actually, let me reconsider..."、"Let me think about this again..."等英文循环推理\n- 工具调用参数必须使用纯 JSON 格式，禁止 XML 标签`;
 
   if (ctx.taskType === 'DELETE') {
     return `你是数据辅助智能体（DBA），负责管理数据源和查询。
@@ -83,6 +83,13 @@ ${existingQueriesText}
 - 直接执行 SQL（建表、插入数据等）
 
 ## 工作流程（只创建这一个查询）
+
+### ⚠️ 快速路径（优先尝试）
+1. **先调用 list_queries**，检查是否存在同名查询（${ctx.queryName}）
+2. **如果查询已存在** → 直接调用 run_query 测试，测试通过立即汇报结果，**跳过所有后续步骤**
+3. **如果查询不存在** → 继续下面的完整流程
+
+### 完整流程（查询不存在时）
 1. 检查对话历史，如果已有数据源信息、表结构、查询列表，直接跳到步骤 4
 2. 首次或无历史时：list_datasources → test_datasource → fetch_datasource_structure → list_queries
 3. 如需建表/插入数据，使用 execute_sql 直接执行 DDL/DML，不要用 create_query 创建 DDL 查询
@@ -103,10 +110,12 @@ ${existingQueriesText}
 - 字符串参数需要在 SQL 外加引号，如 WHERE name = '{{ this.params.name }}'
 - 你只管理数据源和查询，不操作页面
 - 所有 Query 属于当前应用，不绑定到特定页面
+- CREATE 时必须先调用 list_queries 检查是否存在同名查询，若存在则复用已有查询，不要重复创建
 
 ### 字段归属（重要）
 - **字段需求由主智能体定义**：主智能体知道页面需要展示什么字段，你负责在数据库中找对应的列
 - **你负责映射，不是决策**：找到每列对应的数据库字段，如果某字段在任何表中都不存在，必须明确汇报该字段不可用
+- **汇报结果必须使用 run_query 返回的真实列名**：run_query 执行后消息中会包含「列名：xxx、xxx」，制作字段映射表时必须原样使用这些列名。即使你认为某列应该叫 customer_name，如果实际列名是 name，就必须写 name。禁止根据用户需求自行编造字段名
 - **如果没有任何表包含所需字段**：说明需要创建新表，向主智能体确认表结构后创建
 
 ### 数据完整性原则（最高优先级）

@@ -167,6 +167,10 @@
   z-index: 98;
 }
 
+.app-editor-hidden {
+  display: none !important;
+}
+
 .app-editor-agent-overlay {
   position: fixed;
   bottom: 84px;

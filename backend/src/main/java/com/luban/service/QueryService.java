@@ -522,10 +522,11 @@ public class QueryService {
 
     private boolean evaluateCondition(String condition, Map<String, Object> params) {
         try {
+            Map<String, Object> wrapper = new HashMap<>();
+            wrapper.put("params", params);
             OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
-            ctx.setRoot(params);
-            ctx.setValues(params);
-            Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, params);
+            ctx.setRoot(wrapper);
+            Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, wrapper);
             boolean boolResult = result instanceof Boolean ? (Boolean) result : false;
             AgentLogger.bug("bug-if-tag.log",
                 String.format("OGNL条件求值: [%s] → %s | params=%s",

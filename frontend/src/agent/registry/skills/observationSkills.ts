@@ -2,7 +2,7 @@ import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { listPages } from '@/api';
 
 export const observationSkills: Record<string, SkillFactory> = {
-  'observation:list_pages': (_ctx) => ({
+  'observation:list_pages': (ctx) => ({
     id: 'observation:list_pages',
     category: SkillCategory.OBSERVATION,
     name: 'list_pages',
@@ -22,7 +22,7 @@ export const observationSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'observation:record': (_ctx) => ({
+  'observation:record': (ctx) => ({
     id: 'observation:record',
     category: SkillCategory.OBSERVATION,
     name: 'record_observation',

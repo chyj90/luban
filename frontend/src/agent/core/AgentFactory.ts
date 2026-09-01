@@ -8,9 +8,7 @@ import { getPlanPromptFragment } from '../registry/skills/promptFragments';
 import type { ChatRouter } from './chatRouter';
 
 export interface AgentFactoryOptions {
-  providerType: string;
   model: string;
-  baseUrl: string;
   currentPageId: number;
   currentPageName: string;
   allPages: Array<{ id: number; name: string }>;
@@ -45,7 +43,7 @@ export type AgentExecutor = {
 
 export async function createAgent(options: AgentFactoryOptions): Promise<AgentExecutor> {
   const {
-    providerType, model, baseUrl,
+    model,
     currentPageId, currentPageName, allPages,
     sessionId: _sessionId, dispatch,
     applicationId,
@@ -74,15 +72,6 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   const name = agentName || '主智能体';
   const icon = agentIcon || '';
-
-  async function resolveApiKey(providerType: string): Promise<string> {
-    const { vaultManager } = await import('./vaultManager');
-    const apiKey = await vaultManager.getApiKey(providerType as unknown);
-    if (!apiKey) {
-      throw new Error(`未配置 ${providerType} 的 API Key，请在设置中配置`);
-    }
-    return apiKey;
-  }
 
   return {
     async run(userMessage: string): Promise<void> {
@@ -125,11 +114,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       const STREAMING_THROTTLE_MS = 50;
 
       try {
-        const apiKey = await resolveApiKey(providerType);
-
         const result = await runAgentLoop({
-          baseUrl,
-          apiKey,
           model,
           systemPrompt: finalSystemPrompt,
           tools,
@@ -245,6 +230,30 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               payload: messages,
             });
           },
+          onShouldComplete: () => {
+            if (!isMainAgent) {
+              return { shouldContinue: false };
+            }
+            const store = useAgentStore.getState();
+            const activePlans = store.plans.filter(
+              (p) => p.status === 'confirmed' || p.status === 'executing',
+            );
+            for (const plan of activePlans) {
+              const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
+              const runningSteps = plan.steps.filter((s) => s.status === 'running');
+              if (pendingSteps.length > 0 || runningSteps.length > 0) {
+                const pendingList = pendingSteps.map((s) => `  - [待完成] ${s.description}`).join('\n');
+                const runningList = runningSteps.map((s) => `  - [执行中] ${s.description}`).join('\n');
+                const allIncomplete = [pendingList, runningList].filter(Boolean).join('\n');
+                console.log(`[AgentFactory:${name}] 拦截退出：计划 "${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成步骤、${runningSteps.length} 个执行中步骤`);
+                return {
+                  shouldContinue: true,
+                  message: `[系统强制指令] 你的任务尚未完成！以下计划步骤还未执行完毕：\n\n${allIncomplete}\n\n请立即继续执行这些未完成的步骤。每完成一个步骤，必须调用 update_plan_item 标记状态。所有步骤完成后，调用 validate_plan 验证。禁止在任务未完成时结束对话。`,
+                };
+              }
+            }
+            return { shouldContinue: false };
+          },
         });
 
         setStatus('completed');
@@ -252,6 +261,33 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
         conversationMessages.length = 0;
         conversationMessages.push(...result.conversationMessages);
+
+        if (isMainAgent) {
+          const store = useAgentStore.getState();
+          const activePlans = store.plans.filter(
+            (p) => p.status === 'confirmed' || p.status === 'executing',
+          );
+          for (const plan of activePlans) {
+            const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
+            const runningSteps = plan.steps.filter((s) => s.status === 'running');
+            if (pendingSteps.length > 0 || runningSteps.length > 0) {
+              console.warn(`[AgentFactory:${name}] 循环结束但计划未完成："${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成、${runningSteps.length} 个执行中，标记为 stopped`);
+              store.updatePlan(plan.id, { status: 'stopped' });
+              addMessage({
+                id: crypto.randomUUID(),
+                role: 'system',
+                content: `⚠️ 任务异常结束：计划 "${plan.agentName}" 仍有 ${pendingSteps.length + runningSteps.length} 个步骤未完成。`,
+                timestamp: Date.now(),
+                agentId: agentId || 'main-agent',
+                agentName: name,
+                agentIcon: icon,
+              });
+            } else {
+              store.updatePlan(plan.id, { status: 'completed' });
+            }
+          }
+        }
+
         console.log(`[AgentFactory:${name}] run() 完成 | ${Date.now() - runStart}ms`);
       } catch (err: unknown) {
         if (err.message === 'Cancelled' || err.name === 'AbortError') {

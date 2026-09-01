@@ -1,31 +1,8 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { createCodePage, deletePage, renamePage } from '@/api';
+import { deletePage, renamePage } from '@/api';
 
 export const pageSkills: Record<string, SkillFactory> = {
-  'page:create': (_ctx) => ({
-    id: 'page:create',
-    category: SkillCategory.PAGE,
-    name: 'create_page',
-    description: '创建一个新的代码页面。需要提供页面名称。',
-    parameters: {
-      type: 'object',
-      properties: { name: { type: 'string', description: '页面名称' } },
-      required: ['name'],
-    },
-    requiresConfirmation: true,
-    async execute(args) {
-      try {
-        const res = await createCodePage({ applicationId: ctx.applicationId, name: args.name as string });
-        ctx.onPagesChange?.();
-        ctx.onPageChange?.(res.data.id);
-        return { success: true, message: `页面 "${args.name}" 创建成功 (id: ${res.data.id})`, data: res.data };
-      } catch {
-        return { success: false, message: `创建页面失败: ${(e as Error).message}` };
-      }
-    },
-  }),
-
-  'page:delete': (_ctx) => ({
+  'page:delete': (ctx) => ({
     id: 'page:delete',
     category: SkillCategory.PAGE,
     name: 'delete_page',
@@ -48,7 +25,7 @@ export const pageSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'page:rename': (_ctx) => ({
+  'page:rename': (ctx) => ({
     id: 'page:rename',
     category: SkillCategory.PAGE,
     name: 'rename_page',

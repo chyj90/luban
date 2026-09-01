@@ -2,7 +2,7 @@ import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { formApi, workflowApi, instanceApi, taskApi, orgApi, bindingApi, lintApi } from '@/api/workflow';
 
 export const workflowSkills: Record<string, SkillFactory> = {
-  'workflow:design_form': (_ctx) => ({
+  'workflow:design_form': (ctx) => ({
     id: 'workflow:design_form',
     category: SkillCategory.WORKFLOW,
     name: 'design_form',
@@ -31,7 +31,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:design': (_ctx) => ({
+  'workflow:design': (ctx) => ({
     id: 'workflow:design',
     category: SkillCategory.WORKFLOW,
     name: 'design_workflow',
@@ -75,7 +75,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:bind': (_ctx) => ({
+  'workflow:bind': (ctx) => ({
     id: 'workflow:bind',
     category: SkillCategory.WORKFLOW,
     name: 'bind_workflow',
@@ -95,7 +95,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:search_members': (_ctx) => ({
+  'workflow:search_members': (ctx) => ({
     id: 'workflow:search_members',
     category: SkillCategory.WORKFLOW,
     name: 'search_members',
@@ -115,7 +115,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:search_roles': (_ctx) => ({
+  'workflow:search_roles': (ctx) => ({
     id: 'workflow:search_roles',
     category: SkillCategory.WORKFLOW,
     name: 'search_roles',
@@ -135,7 +135,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:search_departments': (_ctx) => ({
+  'workflow:search_departments': (ctx) => ({
     id: 'workflow:search_departments',
     category: SkillCategory.WORKFLOW,
     name: 'search_departments',
@@ -155,7 +155,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:list_instances': (_ctx) => ({
+  'workflow:list_instances': (ctx) => ({
     id: 'workflow:list_instances',
     category: SkillCategory.WORKFLOW,
     name: 'list_workflow_instances',
@@ -174,7 +174,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:approve': (_ctx) => ({
+  'workflow:approve': (ctx) => ({
     id: 'workflow:approve',
     category: SkillCategory.WORKFLOW,
     name: 'approve_workflow',
@@ -190,7 +190,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:reject': (_ctx) => ({
+  'workflow:reject': (ctx) => ({
     id: 'workflow:reject',
     category: SkillCategory.WORKFLOW,
     name: 'reject_workflow',
@@ -206,7 +206,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:freeze': (_ctx) => ({
+  'workflow:freeze': (ctx) => ({
     id: 'workflow:freeze',
     category: SkillCategory.WORKFLOW,
     name: 'freeze_workflow',
@@ -222,7 +222,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:unfreeze': (_ctx) => ({
+  'workflow:unfreeze': (ctx) => ({
     id: 'workflow:unfreeze',
     category: SkillCategory.WORKFLOW,
     name: 'unfreeze_workflow',
@@ -238,7 +238,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:cancel': (_ctx) => ({
+  'workflow:cancel': (ctx) => ({
     id: 'workflow:cancel',
     category: SkillCategory.WORKFLOW,
     name: 'cancel_workflow',
@@ -254,7 +254,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:lint': (_ctx) => ({
+  'workflow:lint': (ctx) => ({
     id: 'workflow:lint',
     category: SkillCategory.WORKFLOW,
     name: 'lint_workflow',
@@ -288,7 +288,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:copy': (_ctx) => ({
+  'workflow:copy': (ctx) => ({
     id: 'workflow:copy',
     category: SkillCategory.WORKFLOW,
     name: 'copy_workflow',
@@ -306,7 +306,7 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
     },
   }),
 
-  'workflow:preview': (_ctx) => ({
+  'workflow:preview': (ctx) => ({
     id: 'workflow:preview',
     category: SkillCategory.WORKFLOW,
     name: 'preview_workflow',
