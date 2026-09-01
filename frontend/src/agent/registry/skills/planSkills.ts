@@ -226,7 +226,7 @@ export const planSkills: Record<string, SkillFactory> = {
     id: 'plan:validate',
     category: SkillCategory.PLAN,
     name: 'validate_plan',
-    description: '验证计划是否完整，检查是否有遗漏的需求点。',
+    description: '验证计划是否完整，检查是否有遗漏的需求点。验证完成后，必须向用户汇报最终执行结果。',
     parameters: {
       type: 'object',
       properties: { plan_id: { type: 'string', description: '计划 ID' } },
@@ -239,7 +239,23 @@ export const planSkills: Record<string, SkillFactory> = {
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
       const pendingSteps = plan.steps.filter((s: unknown) => s.status === 'pending');
       const doneSteps = plan.steps.filter((s: unknown) => s.status === 'done');
-      return { success: true, message: `计划验证：共 ${plan.steps.length} 步骤，已完成 ${doneSteps.length}，待完成 ${pendingSteps.length}`, data: { pendingSteps, doneSteps } };
+      const runningSteps = plan.steps.filter((s: unknown) => s.status === 'running');
+
+      if (pendingSteps.length === 0 && runningSteps.length === 0) {
+        store.updatePlan(plan_id, { status: 'completed' });
+        upsertPlanMessage(plan_id);
+        return {
+          success: true,
+          message: `计划验证通过！共 ${plan.steps.length} 个步骤，全部已完成。\n\n请立即向用户汇报最终执行结果，列出每个步骤的完成情况，并告知用户任务已全部完成。禁止在此消息后直接结束对话，必须先生成汇报文本。`,
+          data: { totalSteps: plan.steps.length, doneSteps: doneSteps.length, pendingSteps: 0 },
+        };
+      }
+
+      return {
+        success: true,
+        message: `计划验证：共 ${plan.steps.length} 步骤，已完成 ${doneSteps.length}，待完成 ${pendingSteps.length}，执行中 ${runningSteps.length}。请继续执行未完成的步骤。`,
+        data: { pendingSteps, doneSteps, runningSteps },
+      };
     },
   }),
 
@@ -278,19 +294,83 @@ export const planSkills: Record<string, SkillFactory> = {
     id: 'plan:adjust',
     category: SkillCategory.PLAN,
     name: 'adjust_plan',
-    description: '根据执行结果调整计划。',
+    description: `根据执行结果调整计划。支持追加、删除或替换步骤。
+
+调整后会自动重新汇报完整计划到聊天面板。
+
+注意：调用此工具后，计划变更已生效，无需再调用 update_plan。`,
     parameters: {
       type: 'object',
       properties: {
         plan_id: { type: 'string', description: '计划 ID' },
         reason: { type: 'string', description: '调整原因' },
         changes: { type: 'string', description: '调整内容描述' },
+        action: { type: 'string', enum: ['append', 'remove', 'replace'], description: '操作类型：append=追加步骤，remove=删除步骤，replace=替换步骤' },
+        step_index: { type: 'number', description: '步骤索引（从0开始，remove/replace 时必填）' },
+        new_description: { type: 'string', description: '新步骤描述（append/replace 时必填）' },
+        new_tool_name: { type: 'string', description: '新步骤工具名称（append/replace 时可选）' },
+        new_id: { type: 'string', description: '新步骤 ID（append 时可选，不提供则自动生成）。⚠️ 重要：后续 update_plan_item 需要用此 ID 来更新步骤状态，请务必记录此 ID。' },
       },
       required: ['plan_id', 'reason'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, reason, changes } = args as unknown;
-      return { success: true, message: `计划 ${plan_id} 调整：${reason}${changes ? `，调整内容：${changes}` : ''}` };
+      const typedArgs = args as unknown;
+      const store = useAgentStore.getState();
+      const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
+      if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
+
+      let actionMessage = '';
+      let newItemId = '';
+
+      switch (typedArgs.action) {
+        case 'append': {
+          if (!typedArgs.new_description) return { success: false, message: 'append 操作需要 new_description' };
+          newItemId = typedArgs.new_id || generateItemId();
+          const newStep = {
+            id: newItemId,
+            description: typedArgs.new_description,
+            status: 'pending' as const,
+            order: plan.steps.length,
+            toolName: typedArgs.new_tool_name,
+          };
+          store.updatePlan(typedArgs.plan_id, { steps: [...plan.steps, newStep] });
+          actionMessage = `已追加步骤 ${plan.steps.length + 1}：${typedArgs.new_description}（步骤 ID: ${newItemId}）`;
+          break;
+        }
+        case 'remove': {
+          if (typedArgs.step_index === undefined) return { success: false, message: 'remove 操作需要 step_index' };
+          const removed = plan.steps[typedArgs.step_index];
+          if (!removed) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
+          const filtered = plan.steps.filter((_: unknown, i: number) => i !== typedArgs.step_index).map((s: unknown, i: number) => ({ ...s, order: i }));
+          store.updatePlan(typedArgs.plan_id, { steps: filtered });
+          actionMessage = `已删除步骤 ${typedArgs.step_index + 1}：${removed.description}`;
+          break;
+        }
+        case 'replace': {
+          if (typedArgs.step_index === undefined || !typedArgs.new_description) return { success: false, message: 'replace 操作需要 step_index 和 new_description' };
+          if (!plan.steps[typedArgs.step_index]) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
+          const updated = plan.steps.map((s: unknown, i: number) =>
+            i === typedArgs.step_index
+              ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name || s.toolName }
+              : s,
+          );
+          store.updatePlan(typedArgs.plan_id, { steps: updated });
+          actionMessage = `已替换步骤 ${typedArgs.step_index + 1} 为：${typedArgs.new_description}`;
+          break;
+        }
+        default: {
+          actionMessage = `已记录调整原因：${typedArgs.reason}`;
+        }
+      }
+
+      upsertPlanMessage(typedArgs.plan_id);
+
+      const summary = buildPlanSummary(store.plans.find((p: unknown) => p.id === typedArgs.plan_id)!);
+      return {
+        success: true,
+        message: `计划 ${typedArgs.plan_id} 调整完成。${actionMessage}${typedArgs.changes ? `\n调整内容：${typedArgs.changes}` : ''}\n\n当前完整计划：\n${summary}`,
+        data: { planId: typedArgs.plan_id, newItemId: newItemId || undefined },
+      };
     },
   }),
 };

@@ -1,6 +1,91 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { createCodePage, getCodePage, updateCodePage } from '@/api';
-import { validateCode } from './codeValidate';
+import { createCodePage, getCodePage, updateCodePage, runQuery, listAppTools, runAppTool } from '@/api';
+import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
+
+function extractQueryNamesFromJS(js: string): string[] {
+  const names = new Set<string>();
+  const runPattern = /(\w+)\.run\s*\(/g;
+  let match: RegExpExecArray | null;
+  while ((match = runPattern.exec(js)) !== null) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+function extractApiNamesFromJS(js: string): string[] {
+  const names = new Set<string>();
+  const callPattern = /(\w+)\.call\s*\(/g;
+  let match: RegExpExecArray | null;
+  while ((match = callPattern.exec(js)) !== null) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+async function runPageQueries(
+  queryNames: string[],
+  applicationId: number,
+): Promise<QueryRunResult[]> {
+  const results: QueryRunResult[] = [];
+  for (const name of queryNames) {
+    try {
+      const { listQueries } = await import('@/api/query');
+      const allRes = await listQueries(applicationId);
+      const allQueries = allRes.data || [];
+      const query = allQueries.find((q: { name: string }) => q.name === name);
+      if (!query) continue;
+
+      const res = await runQuery(query.id, { params: {} });
+      const { columns, rows, totalCount } = res.data;
+      const sampleRow = rows.length > 0
+        ? columns.reduce((obj: Record<string, unknown>, col: string, i: number) => {
+            obj[col] = rows[0][i];
+            return obj;
+          }, {})
+        : undefined;
+
+      results.push({
+        queryName: name,
+        columns,
+        sampleRow,
+        totalCount,
+      });
+    } catch {
+      // 查询执行失败，跳过（可能参数必填或数据源不可用）
+    }
+  }
+  return results;
+}
+
+async function runPageApis(
+  apiNames: string[],
+  applicationId: number,
+): Promise<ApiRunResult[]> {
+  const results: ApiRunResult[] = [];
+  try {
+    const appToolsRes = await listAppTools(applicationId);
+    const appTools = (appToolsRes.data || []) as Array<{ id: number; name: string }>;
+
+    for (const name of apiNames) {
+      const tool = appTools.find((t) => t.name === name);
+      if (!tool) continue;
+
+      try {
+        const res = await runAppTool(applicationId, tool.id, {});
+        results.push({
+          apiName: name,
+          status: res.data.status,
+          body: res.data.body,
+        });
+      } catch {
+        // API 执行失败，跳过
+      }
+    }
+  } catch {
+    // 获取 App Tools 列表失败
+  }
+  return results;
+}
 
 export const codeSkills: Record<string, SkillFactory> = {
   'code:create': (ctx) => ({
@@ -46,9 +131,19 @@ export const codeSkills: Record<string, SkillFactory> = {
           return { success: false, message: '页面代码不能全为空，请提供 HTML/CSS/JS 代码后再调用 create_code_page' };
         }
 
+        const queryNames = extractQueryNamesFromJS(js);
+        const apiNames = extractApiNamesFromJS(js);
+
+        const [queryResults, apiResults] = await Promise.all([
+          queryNames.length > 0 ? runPageQueries(queryNames, ctx.applicationId) : Promise.resolve([]),
+          apiNames.length > 0 ? runPageApis(apiNames, ctx.applicationId) : Promise.resolve([]),
+        ]);
+
         const validation = await validateCode(html, css, js, {
           queryIds: (args.queryIds as number[]) || [],
           applicationId: ctx.applicationId,
+          queryResults,
+          apiResults,
         });
         if (!validation.valid) {
           return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };
@@ -207,9 +302,19 @@ export const codeSkills: Record<string, SkillFactory> = {
           js = sections.js;
         }
 
+        const queryNames = extractQueryNamesFromJS(js);
+        const apiNames = extractApiNamesFromJS(js);
+
+        const [queryResults, apiResults] = await Promise.all([
+          queryNames.length > 0 ? runPageQueries(queryNames, ctx.applicationId) : Promise.resolve([]),
+          apiNames.length > 0 ? runPageApis(apiNames, ctx.applicationId) : Promise.resolve([]),
+        ]);
+
         const validation = await validateCode(html, css, js, {
           queryIds: (args.queryIds as number[]) || [],
           applicationId: ctx.applicationId,
+          queryResults,
+          apiResults,
         });
         if (!validation.valid) {
           return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };

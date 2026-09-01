@@ -4,14 +4,14 @@ import type { Plan, Step } from '@/types/agent';
 export function getUnfinishedPlans(): Plan[] {
   const state = useAgentStore.getState();
   return state.plans.filter(
-    (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing',
+    (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
   );
 }
 
 export function formatUnfinishedPlansForPrompt(): string {
   const state = useAgentStore.getState();
   const unfinished = state.plans.filter(
-    (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing',
+    (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
   );
   if (unfinished.length === 0) return '';
 
@@ -24,7 +24,7 @@ export function formatUnfinishedPlansForPrompt(): string {
 
   unfinished.forEach((plan) => {
     const isFocused = plan.id === state.focusPlanId;
-    const statusLabel = plan.status === 'draft' ? '[待确认]' : plan.status === 'confirmed' ? '[已确认]' : '[执行中]';
+    const statusLabel = plan.status === 'draft' ? '[待确认]' : plan.status === 'confirmed' ? '[已确认]' : plan.status === 'executing' ? '[执行中]' : '[异常中断]';
     lines.push(
       `### ${isFocused ? '【当前焦点】' : ''}${plan.agentName} [${statusLabel}]: ${plan.steps.map((s) => s.description).join(' → ')}`,
     );

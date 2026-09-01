@@ -174,7 +174,10 @@ export function useQueryBridge(
   window.__LUBAN_USER__ = ${userJson};
 
   window.__LUBAN__ = {
-    navigateToPage: function(pageId) {
+    navigateToPage: function(pageId, params) {
+      if (params) {
+        try { sessionStorage.setItem('__luban_params__', JSON.stringify(params)); } catch(e) {}
+      }
       return new Promise(function(resolve, reject) {
         var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
         _pending[id] = { resolve: resolve, reject: reject };
@@ -183,7 +186,10 @@ export function useQueryBridge(
         }, '*');
       });
     },
-    navigateToPageByName: function(pageName) {
+    navigateToPageByName: function(pageName, params) {
+      if (params) {
+        try { sessionStorage.setItem('__luban_params__', JSON.stringify(params)); } catch(e) {}
+      }
       return new Promise(function(resolve, reject) {
         var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
         _pending[id] = { resolve: resolve, reject: reject };
@@ -191,6 +197,13 @@ export function useQueryBridge(
           type: 'NAVIGATE_TO_PAGE_BY_NAME', id: id, pageName: pageName
         }, '*');
       });
+    },
+    getPageParams: function() {
+      try {
+        var stored = sessionStorage.getItem('__luban_params__');
+        sessionStorage.removeItem('__luban_params__');
+        return stored ? JSON.parse(stored) : null;
+      } catch(e) { return null; }
     },
     getAllPages: function() {
       return ${allPagesJson};
@@ -215,12 +228,21 @@ export function useQueryBridge(
         var cols = d.result.columns;
         var warned = {};
         d.result.rows = d.result.rows.map(function(row) {
-          return new Proxy(row, {
+          var obj;
+          if (Array.isArray(row)) {
+            obj = {};
+            cols.forEach(function(col, i) {
+              obj[col] = row[i];
+            });
+          } else {
+            obj = row;
+          }
+          return new Proxy(obj, {
             get: function(target, prop) {
               if (typeof prop === 'string' && prop !== 'then' && !(prop in target)) {
                 if (!warned[prop]) {
                   warned[prop] = true;
-                  console.error('[鲁班] 字段名错误：row.' + prop + ' 不存在，可用字段：' + cols.join(', '));
+                  console.error('[鲁班] 字段名错误：' + prop + ' 不存在，可用字段：' + cols.join(', '));
                 }
               }
               return target[prop];
@@ -346,7 +368,10 @@ export function useQueryBridge(
 
     return `window.__LUBAN_USER__ = ${userJson};
 window.__LUBAN__ = {
-  navigateToPage: function(pageId) {
+  navigateToPage: function(pageId, params) {
+    if (params) {
+      try { sessionStorage.setItem('__luban_params__', JSON.stringify(params)); } catch(e) {}
+    }
     return new Promise(function(resolve, reject) {
       var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
       var pending = window.__bridge_pending || {};
@@ -356,7 +381,10 @@ window.__LUBAN__ = {
       }, '*');
     });
   },
-  navigateToPageByName: function(pageName) {
+  navigateToPageByName: function(pageName, params) {
+    if (params) {
+      try { sessionStorage.setItem('__luban_params__', JSON.stringify(params)); } catch(e) {}
+    }
     return new Promise(function(resolve, reject) {
       var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
       var pending = window.__bridge_pending || {};
@@ -365,6 +393,13 @@ window.__LUBAN__ = {
         type: 'NAVIGATE_TO_PAGE_BY_NAME', id: id, pageName: pageName
       }, '*');
     });
+  },
+  getPageParams: function() {
+    try {
+      var stored = sessionStorage.getItem('__luban_params__');
+      sessionStorage.removeItem('__luban_params__');
+      return stored ? JSON.parse(stored) : null;
+    } catch(e) { return null; }
   },
   getAllPages: function() {
     return ${allPagesJson};

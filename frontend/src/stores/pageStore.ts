@@ -19,7 +19,7 @@ export const usePageStore = create<PageState>((set) => ({
     try {
       const res = await getCodePage(pageId);
       set({ currentPage: res.data });
-    } catch {
+    } catch (e) {
       set({ error: (e as Error).message });
     } finally {
       set({ loading: false });

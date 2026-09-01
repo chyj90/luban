@@ -236,7 +236,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             }
             const store = useAgentStore.getState();
             const activePlans = store.plans.filter(
-              (p) => p.status === 'confirmed' || p.status === 'executing',
+              (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
             );
             for (const plan of activePlans) {
               const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
@@ -265,7 +265,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         if (isMainAgent) {
           const store = useAgentStore.getState();
           const activePlans = store.plans.filter(
-            (p) => p.status === 'confirmed' || p.status === 'executing',
+            (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
           );
           for (const plan of activePlans) {
             const pendingSteps = plan.steps.filter((s) => s.status === 'pending');

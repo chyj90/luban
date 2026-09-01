@@ -112,6 +112,7 @@ export const AGENTS: AgentDefinition[] = [
     isDefault: false,
     buildSystemPrompt: () => ANALYSIS_AGENT_PROMPT,
     allowedSkills: [
+      'observation:list_pages',
       'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
     ],

@@ -522,6 +522,7 @@ public class QueryService {
 
     private boolean evaluateCondition(String condition, Map<String, Object> params) {
         try {
+            condition = condition.replaceAll("\\bthis\\.", "");
             Map<String, Object> wrapper = new HashMap<>();
             wrapper.put("params", params);
             OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
@@ -632,6 +633,7 @@ public class QueryService {
 
     private String evaluateOgnlExpression(String expr, Map<String, Object> params) {
         try {
+            expr = expr.replaceAll("\\bthis\\.", "");
             Map<String, Object> wrapper = new HashMap<>();
             wrapper.put("params", params);
             OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
@@ -651,7 +653,7 @@ public class QueryService {
     private String formatSqlValue(Object value) {
         if (value instanceof Number) return value.toString();
         if (value instanceof Boolean) return ((Boolean) value) ? "1" : "0";
-        return value.toString().replace("'", "''");
+        return "'" + value.toString().replace("'", "''") + "'";
     }
 
     private Map<String, Object> buildQueryMap(Query q) {

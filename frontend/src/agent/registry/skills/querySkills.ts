@@ -25,7 +25,7 @@ export const querySkills: Record<string, SkillFactory> = {
         await testDatasource(datasourceId);
         testedDatasources.add(datasourceId);
         return null;
-      } catch {
+      } catch (e) {
         const datasources = await listDatasources(ctx.applicationId).then(r => r.data).catch(() => []);
         const ds = datasources.find((d: unknown) => d.id === datasourceId);
         const dsName = ds ? `「${ds.name}」` : `ID:${datasourceId}`;
@@ -43,7 +43,9 @@ export const querySkills: Record<string, SkillFactory> = {
 body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
   SELECT * FROM users WHERE name = {{ this.params.userName }}
 
-支持动态 SQL 标签（<if>、<where>、<set>、<foreach>），OGNL 表达式支持 and/or/! 等运算符。`,
+支持动态 SQL 标签（<if>、<where>、<set>、<foreach>），统一使用 this.params.X 访问参数：
+正确：<if test="this.params.status != null and this.params.status != ''">AND o.status = '{{ this.params.status }}'</if>
+OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，必须用 and、or）`,
       parameters: {
         type: 'object',
         properties: {
@@ -77,7 +79,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
           ctx.onQueriesChange?.();
           ctx.onQuerySelect?.({ id: res.data.id, name: res.data.name });
           return { success: true, message: `查询 "${args.name}" 创建成功`, data: res.data };
-        } catch {
+        } catch (e) {
           return { success: false, message: `创建查询失败: ${(e as Error).message}` };
         }
       },
@@ -116,7 +118,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
         ctx.onQueriesChange?.();
         ctx.onQuerySelect?.({ id: args.queryId as number, name: (args.name as string) || '' });
         return { success: true, message: '查询更新成功', data: res.data };
-      } catch {
+      } catch (e) {
         return { success: false, message: `更新查询失败: ${(e as Error).message}` };
       }
     },
@@ -139,7 +141,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
         await deleteQuery(args.queryId as number);
         ctx.onQueriesChange?.();
         return { success: true, message: '查询删除成功' };
-      } catch {
+      } catch (e) {
         return { success: false, message: `删除查询失败: ${(e as Error).message}` };
       }
     },
@@ -166,7 +168,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
         const totalCount = res.data?.totalCount ?? 0;
         const colInfo = columns.length > 0 ? `，列名：${columns.join('、')}` : '';
         return { success: true, message: `查询执行成功，返回 ${totalCount} 条数据${colInfo}`, data: res.data };
-      } catch {
+      } catch (e) {
         return { success: false, message: `执行查询失败: ${(e as Error).message}` };
       }
     },
@@ -189,7 +191,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
         if (!query) return { success: false, message: `未找到查询 ${args.queryId}` };
         ctx.onQuerySelect?.({ id: query.id as number, name: query.name as string });
         return { success: true, message: '获取查询成功', data: query };
-      } catch {
+      } catch (e) {
         return { success: false, message: `获取查询失败: ${(e as Error).message}` };
       }
     },
@@ -214,7 +216,7 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
       try {
         const res = await executeSql(args.datasourceId as number, args.sql as string);
         return { success: true, message: `SQL 执行成功，${res.data?.totalCount ?? 0} 条结果`, data: res.data };
-      } catch {
+      } catch (e) {
         return { success: false, message: `SQL 执行失败: ${(e as Error).message}` };
       }
     },

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
 import { listPages } from '@/api/page';
@@ -21,6 +21,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shellReadyRef = useRef(false);
   const codePageRef = useRef<CodePageData | null>(null);
+  const sendPageToIframeRef = useRef<((cp: CodePageData) => void) | null>(null);
 
   const [pages, setPages] = useState<Page[]>([]);
   const [totalPages, setTotalPages] = useState(0);
@@ -29,8 +30,10 @@ export function AppUserPage({ app }: AppUserPageProps) {
   const [loading, setLoading] = useState(true);
   const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
 
-  const userInfo = user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
-  const pageList = pages.map(p => ({ id: p.id, name: p.name }));
+  const userInfo = useMemo(() => {
+    return user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
+  }, [user?.id, user?.account, user?.email]);
+  const pageList = useMemo(() => pages.map(p => ({ id: p.id, name: p.name })), [pages]);
   const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate, app.id, appTools);
 
   function handlePageNavigate(pageId: number) {
@@ -45,7 +48,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
     setCurrentPageId(pageId);
   }
 
-  const queryNames = queries.map(q => q.name);
+  const queryNames = useMemo(() => queries.map(q => q.name), [queries]);
 
   useEffect(() => {
     if (!app.id) return;
@@ -97,6 +100,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
       bridgeScript: buildBridgeContent(queryNames),
     }, '*');
   }, [queryNames, buildBridgeContent]);
+  sendPageToIframeRef.current = sendPageToIframe;
 
   // Load code page content when currentPageId changes
   useEffect(() => {
@@ -167,13 +171,13 @@ export function AppUserPage({ app }: AppUserPageProps) {
       if (e.data.type === 'SHELL_READY') {
         shellReadyRef.current = true;
         if (codePageRef.current) {
-          sendPageToIframe(codePageRef.current);
+          sendPageToIframeRef.current?.(codePageRef.current);
         }
       }
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
-  }, [queryNames, buildShellScript, sendPageToIframe]);
+  }, [queryNames, buildShellScript]);
 
   useEffect(() => {
     setGlobalLoading(loading);

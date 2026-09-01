@@ -5,6 +5,20 @@ interface QueryInfo {
   id: number;
   name: string;
   body: string;
+  params: Record<string, unknown>;
+}
+
+export interface QueryRunResult {
+  queryName: string;
+  columns: string[];
+  sampleRow?: Record<string, unknown>;
+  totalCount?: number;
+}
+
+export interface ApiRunResult {
+  apiName: string;
+  status: number;
+  body: unknown;
 }
 
 export interface ValidateResult {
@@ -17,6 +31,8 @@ export interface ValidateFieldNamesOptions {
   js?: string;
   queryIds?: number[];
   applicationId: number;
+  queryResults?: QueryRunResult[];
+  apiResults?: ApiRunResult[];
 }
 
 export async function validateCode(
@@ -31,6 +47,7 @@ export async function validateCode(
   try { if (html) validateHtml(html, errors, warnings); } catch (e: any) { errors.push(`[HTML] 校验器异常: ${e?.message || e}`); }
   try { if (css) validateCss(css, errors, warnings); } catch (e: any) { errors.push(`[CSS] 校验器异常: ${e?.message || e}`); }
   try { if (js) validateJs(js, errors, warnings); } catch (e: any) { errors.push(`[JS] 校验器异常: ${e?.message || e}`); }
+  try { if (js) validateCrossPageParams(js, errors, warnings); } catch (e: any) { errors.push(`[跨页面参数校验] 异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -148,6 +165,46 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
     }
   }
 
+  // 检查查询结果访问模式：查询返回 {columns, rows, totalCount}，数据在 rows 数组中
+  // 错误：c[0].field、c[i].field、c.length
+  // 正确：c.rows[0].field、c.rows[i].field、c.rows.length
+  const thenVars = new Set<string>();
+  const thenFnPattern = /\.then\s*\(\s*function\s*\(\s*(\w+)\s*\)/g;
+  const thenArrowPattern = /\.then\s*\(\s*\(?\s*(\w+)\s*\)?\s*=>/g;
+  let m: RegExpExecArray | null;
+  while ((m = thenFnPattern.exec(code)) !== null) { thenVars.add(m[1]); }
+  while ((m = thenArrowPattern.exec(code)) !== null) { thenVars.add(m[1]); }
+
+  for (const varName of thenVars) {
+    const correctAccess = new RegExp('\\b' + varName + '\\.rows\\[');
+    if (correctAccess.test(code)) continue; // 正确用法，跳过
+
+    const directAccess = new RegExp('\\b' + varName + '\\[\\d+\\]');
+    const varAccess = new RegExp('\\b' + varName + '\\[[a-zA-Z_\\$]\\w*\\]');
+    const lenAccess = new RegExp('\\b' + varName + '\\.length\\b');
+
+    const hasDirectAccess = directAccess.test(code);
+    const hasVarAccess = varAccess.test(code);
+    const hasLenAccess = lenAccess.test(code);
+
+    if (hasDirectAccess || hasVarAccess || hasLenAccess) {
+      const searchPatterns = [directAccess, varAccess, lenAccess];
+      let firstIdx = Infinity;
+      for (const p of searchPatterns) {
+        p.lastIndex = 0;
+        const r = p.exec(code);
+        if (r && r.index < firstIdx) firstIdx = r.index;
+      }
+      const lineNum = code.substring(0, firstIdx).split('\n').length;
+      errors.push(
+        `[JS] 第 ${lineNum} 行：查询结果 \`${varName}\` 是对象 {columns, rows, totalCount}，` +
+        `数据在 \`${varName}.rows\` 数组里。` +
+        `请将 \`${varName}[0]\` 改为 \`${varName}.rows[0]\`，` +
+        `\`${varName}.length\` 改为 \`${varName}.rows.length\`。`
+      );
+    }
+  }
+
   // 检查常见问题：使用数组索引访问查询结果
   const rowIndexMatch = /row\[\d+\]/g;
   let idxMatch: RegExpExecArray | null;
@@ -158,6 +215,24 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
       '查询返回的 rows 是对象数组，请使用字段名访问（如 row.order_no），不要用索引。'
     );
   }
+
+  // 检查 __LUBAN__ API 调用：只允许文档中列出的方法
+  const VALID_LUBAN_METHODS = new Set([
+    'navigateToPage', 'navigateToPageByName', 'getPageParams', 'getAllPages', 'callApi',
+  ]);
+  const lubanApiPattern = /window\.__LUBAN__\.(\w+)\s*\(/g;
+  let lubanMatch: RegExpExecArray | null;
+  while ((lubanMatch = lubanApiPattern.exec(code)) !== null) {
+    const methodName = lubanMatch[1];
+    if (!VALID_LUBAN_METHODS.has(methodName)) {
+      const lineNum = code.substring(0, lubanMatch.index).split('\n').length;
+      const validList = [...VALID_LUBAN_METHODS].join('、');
+      errors.push(
+        `[JS] 第 ${lineNum} 行：\`window.__LUBAN__.${methodName}()\` 不存在。` +
+        `可用方法：${validList}。请使用 navigateToPageByName 按名称跳转，或 getAllPages 获取页面列表。`
+      );
+    }
+  }
 }
 
 async function validateFieldNames(
@@ -166,7 +241,7 @@ async function validateFieldNames(
   errors: string[],
   warnings: string[],
 ) {
-  const { queryIds, applicationId } = options;
+  const { queryIds, applicationId, queryResults } = options;
   if (!js) return;
 
   let queries: QueryInfo[] = [];
@@ -182,42 +257,100 @@ async function validateFieldNames(
     }
   }
 
-  if (queries.length === 0) return;
+  if (queries.length === 0 && (!queryResults || queryResults.length === 0)) return;
 
   const allFieldNames = new Set<string>();
-  for (const q of queries) {
-    const fields = extractFieldNamesFromSQL(q.body);
-    fields.forEach((f) => allFieldNames.add(f));
+  const queryFieldMap = new Map<string, Set<string>>();
+
+  if (queryResults && queryResults.length > 0) {
+    for (const qr of queryResults) {
+      const fields = new Set(qr.columns);
+      queryFieldMap.set(qr.queryName, fields);
+      qr.columns.forEach((f) => allFieldNames.add(f));
+    }
+  } else {
+    for (const q of queries) {
+      const fields = extractFieldNamesFromSQL(q.body);
+      const fieldSet = new Set(fields);
+      queryFieldMap.set(q.name, fieldSet);
+      fields.forEach((f) => allFieldNames.add(f));
+    }
   }
 
-  if (allFieldNames.size === 0) return;
+  if (allFieldNames.size > 0) {
+    const mismatches = findFieldNameMismatches(js, allFieldNames);
+    if (mismatches.length > 0) {
+      const details = mismatches.slice(0, 5).map((m) =>
+        `第 ${m.line} 行：使用了 \`${m.used}\`，应改为 \`${m.expected}\``
+      ).join('；');
 
-  const mismatches = findFieldNameMismatches(js, allFieldNames);
-  if (mismatches.length > 0) {
-    const details = mismatches.slice(0, 5).map((m) =>
-      `第 ${m.line} 行：使用了 \`${m.used}\`，应改为 \`${m.expected}\``
-    ).join('；');
+      const structInfo = buildStructureInfo(queryResults, queryFieldMap);
+      errors.push(
+        `[JS 字段名] 代码中使用了驼峰命名的字段名，但查询返回的是下划线命名。` +
+        `请将以下字段名改为下划线格式：${details}` +
+        (mismatches.length > 5 ? `（共 ${mismatches.length} 处，仅展示前 5 处）` : '') +
+        structInfo
+      );
+    }
 
-    errors.push(
-      `[JS 字段名] 代码中使用了驼峰命名的字段名，但查询返回的是下划线命名。` +
-      `请将以下字段名改为下划线格式：${details}` +
-      (mismatches.length > 5 ? `（共 ${mismatches.length} 处，仅展示前 5 处）` : '')
-    );
+    const unknownFields = findUnknownFieldNames(js, allFieldNames);
+    if (unknownFields.length > 0) {
+      const fieldList = [...allFieldNames].join('、');
+
+      const chineseFields = unknownFields.filter((f) => /[\u4e00-\u9fff]/.test(f.used));
+      const nonChineseFields = unknownFields.filter((f) => !/[\u4e00-\u9fff]/.test(f.used));
+
+      if (chineseFields.length > 0) {
+        const details = chineseFields.slice(0, 5).map((f) =>
+          `第 ${f.line} 行：\`${f.used}\``
+        ).join('、');
+        const structInfo = buildStructureInfo(queryResults, queryFieldMap);
+        errors.push(
+          `[JS 字段名] 代码中使用了中文字段名，但查询返回的是英文字段名。` +
+          `可用字段：${fieldList}。` +
+          `错误字段：${details}。` +
+          `请使用英文字段名（如 row.order_no 而非 row.订单号）` +
+          (chineseFields.length > 5 ? `（共 ${chineseFields.length} 处，仅展示前 5 处）` : '') +
+          structInfo
+        );
+      }
+
+      if (nonChineseFields.length > 0) {
+        const details = nonChineseFields.slice(0, 5).map((f) =>
+          `第 ${f.line} 行：\`${f.used}\`${f.suggestion ? `（是否指 \`${f.suggestion}\`？）` : ''}`
+        ).join('；');
+        const structInfo = buildStructureInfo(queryResults, queryFieldMap);
+        errors.push(
+          `[JS 字段名] 代码中使用了查询不存在的字段。可用字段：${fieldList}。` +
+          `错误字段：${details}` +
+          (nonChineseFields.length > 5 ? `（共 ${nonChineseFields.length} 处，仅展示前 5 处）` : '') +
+          structInfo
+        );
+      }
+    }
   }
 
-  const unknownFields = findUnknownFieldNames(js, allFieldNames);
-  if (unknownFields.length > 0) {
-    const fieldList = [...allFieldNames].join('、');
-    const details = unknownFields.slice(0, 5).map((f) =>
-      `第 ${f.line} 行：\`${f.used}\`${f.suggestion ? `（是否指 \`${f.suggestion}\`？）` : ''}`
-    ).join('；');
+  validateQueryParameterNames(js, queries, errors);
+}
 
-    errors.push(
-      `[JS 字段名] 代码中使用了查询不存在的字段。可用字段：${fieldList}。` +
-      `错误字段：${details}` +
-      (unknownFields.length > 5 ? `（共 ${unknownFields.length} 处，仅展示前 5 处）` : '')
-    );
+function buildStructureInfo(
+  queryResults: QueryRunResult[] | undefined,
+  queryFieldMap: Map<string, Set<string>>,
+): string {
+  if (!queryResults || queryResults.length === 0) return '';
+
+  const parts: string[] = [];
+  for (const qr of queryResults) {
+    const fields = queryFieldMap.get(qr.queryName);
+    const fieldList = fields ? [...fields].join(', ') : qr.columns.join(', ');
+    let part = `\n  ${qr.queryName}.run() 返回 {columns, rows, totalCount}，数据在 rows 数组中`;
+    part += `\n  ${qr.queryName} 可用字段：${fieldList}`;
+    if (qr.totalCount !== undefined) {
+      part += `\n  ${qr.queryName} 总行数：${qr.totalCount}`;
+    }
+    parts.push(part);
   }
+  return '\n查询返回结构：' + parts.join('');
 }
 
 function extractQueryNamesFromJS(js: string): string[] {
@@ -251,6 +384,63 @@ function fetchAllQueries(applicationId: number): Promise<QueryInfo[]> {
     });
 }
 
+function validateQueryParameterNames(
+  js: string,
+  queries: QueryInfo[],
+  errors: string[],
+) {
+  const queryMap = new Map<string, QueryInfo>();
+  for (const q of queries) {
+    queryMap.set(q.name, q);
+  }
+
+  const callPattern = /(\w+)\.run\s*\(\s*\{([^}]*)\}\s*\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = callPattern.exec(js)) !== null) {
+    const queryName = match[1];
+    const paramsStr = match[2] || '';
+    const query = queryMap.get(queryName);
+    if (!query) continue;
+
+    const jsParamNames = extractJSObjectKeys(paramsStr);
+
+    const sqlParamNames = extractSQLParamNames(query.body);
+
+    const unknownParams = jsParamNames.filter((p) => !sqlParamNames.has(p));
+    if (unknownParams.length > 0) {
+      const lineNum = js.substring(0, match.index).split('\n').length;
+      const sqlParamList = sqlParamNames.size > 0
+        ? [...sqlParamNames].join('、')
+        : '无（查询不接受参数）';
+      errors.push(
+        `[JS 查询参数] 第 ${lineNum} 行：\`${queryName}.run()\` 传入了参数 \`${unknownParams.join('、')}\`，` +
+        `但查询 SQL 中未定义该参数。SQL 中定义的参数：${sqlParamList}。` +
+        `请检查 SQL 的 WHERE 条件是否使用了 \`{{ this.params.${unknownParams[0]} }}\` 格式的参数绑定`
+      );
+    }
+  }
+}
+
+function extractJSObjectKeys(paramsStr: string): string[] {
+  const keys: string[] = [];
+  const keyPattern = /(\w+)\s*:/g;
+  let match: RegExpExecArray | null;
+  while ((match = keyPattern.exec(paramsStr)) !== null) {
+    keys.push(match[1]);
+  }
+  return keys;
+}
+
+function extractSQLParamNames(sql: string): Set<string> {
+  const names = new Set<string>();
+  const paramPattern = /\{\{\s*this\.params\.(\w+)\s*\}\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = paramPattern.exec(sql)) !== null) {
+    names.add(match[1]);
+  }
+  return names;
+}
+
 function extractFieldNamesFromSQL(sql: string): string[] {
   const fields: string[] = [];
 
@@ -265,18 +455,26 @@ function extractFieldNamesFromSQL(sql: string): string[] {
     const trimmed = part.trim();
     if (!trimmed || trimmed === '*') continue;
 
-    const asMatch = trimmed.match(/^(.*?)\s+AS\s+(\w+)\s*$/i);
+    const asMatch = trimmed.match(/^(.*?)\s+AS\s+(.+?)\s*$/i);
     if (asMatch) {
       const beforeAs = asMatch[1].trim();
-      const alias = asMatch[2];
-      const colMatch = beforeAs.match(/^(?:\w+\.)?(\w+)$/);
-      if (colMatch) {
-        fields.push(colMatch[1]);
+      const alias = asMatch[2].trim();
+      const isAliasChinese = /[\u4e00-\u9fff]/.test(alias);
+      if (isAliasChinese) {
+        const colMatch = beforeAs.match(/(\w+)$/);
+        if (colMatch) {
+          fields.push(colMatch[1]);
+        }
       } else {
-        fields.push(alias);
+        const colMatch = beforeAs.match(/^(?:\w+\.)?(\w+)$/);
+        if (colMatch && /^[a-zA-Z_]/.test(colMatch[1])) {
+          fields.push(colMatch[1]);
+        } else {
+          fields.push(alias);
+        }
       }
     } else {
-      const colMatch = trimmed.match(/(?:\w+\.)?(\w+)$/);
+      const colMatch = trimmed.match(/(\w+)$/);
       if (colMatch) {
         const name = colMatch[1];
         if (/^(COUNT|SUM|AVG|MAX|MIN|GROUP_CONCAT)\s*\(/i.test(trimmed)) continue;
@@ -333,35 +531,164 @@ function findFieldNameMismatches(
   return mismatches;
 }
 
+const DOM_SKIP_NAMES = [
+  'innerHTML', 'outerHTML', 'textContent', 'innerText', 'outerText',
+  'parentNode', 'parentElement', 'childNodes', 'children',
+  'firstChild', 'lastChild', 'firstElementChild', 'lastElementChild',
+  'nextSibling', 'previousSibling', 'nextElementSibling', 'previousElementSibling',
+  'classList', 'dataset', 'style',
+  'offsetWidth', 'offsetHeight', 'offsetTop', 'offsetLeft', 'offsetParent',
+  'clientWidth', 'clientHeight', 'clientTop', 'clientLeft',
+  'scrollWidth', 'scrollHeight', 'scrollTop', 'scrollLeft',
+  'tagName', 'nodeName', 'nodeType', 'nodeValue',
+  'appendChild', 'removeChild', 'replaceChild', 'insertBefore',
+  'append', 'prepend', 'remove', 'replaceWith', 'before', 'after',
+  'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByClassName', 'getElementsByTagName',
+  'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute', 'toggleAttribute',
+  'addEventListener', 'removeEventListener', 'dispatchEvent',
+  'focus', 'blur', 'click', 'scrollIntoView', 'scrollBy', 'scrollTo',
+  'cloneNode', 'contains', 'matches', 'closest',
+  'animate', 'getAnimations', 'getBoundingClientRect',
+  'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText',
+];
+
+let _builtins: Set<string> | null = null;
+
+function validateCrossPageParams(js: string, errors: string[], warnings: string[]) {
+  const navigateParams = new Set<string>();
+  const getPageParamsAccess = new Set<string>();
+
+  const navPattern = /navigateToPage(?:ByName)?\s*\(\s*(?:'[^']*'|"[^"]*"|\d+)\s*,\s*\{([^}]*)\}\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = navPattern.exec(js)) !== null) {
+    const paramsStr = m[1];
+    const keys = extractObjectKeys(paramsStr);
+    keys.forEach((k) => navigateParams.add(k));
+  }
+
+  const getParamsVarPattern = /(?:const|let|var)\s+(\w+)\s*=\s*window\.__LUBAN__\.getPageParams\s*\(\s*\)/g;
+  let gpm: RegExpExecArray | null;
+  while ((gpm = getParamsVarPattern.exec(js)) !== null) {
+    const varName = gpm[1];
+    const accessPattern = new RegExp('\\b' + varName + '\\.(\\w+)', 'g');
+    let am: RegExpExecArray | null;
+    while ((am = accessPattern.exec(js)) !== null) {
+      getPageParamsAccess.add(am[1]);
+    }
+  }
+
+  const directAccessPattern = /window\.__LUBAN__\.getPageParams\s*\(\s*\)\.(\w+)/g;
+  let dam: RegExpExecArray | null;
+  while ((dam = directAccessPattern.exec(js)) !== null) {
+    getPageParamsAccess.add(dam[1]);
+  }
+
+  if (getPageParamsAccess.size === 0 && navigateParams.size === 0) return;
+
+  if (navigateParams.size > 0 && getPageParamsAccess.size > 0) {
+    const missing = [...navigateParams].filter((p) => !getPageParamsAccess.has(p));
+    const extra = [...getPageParamsAccess].filter((p) => !navigateParams.has(p));
+    if (missing.length > 0 || extra.length > 0) {
+      const msgs: string[] = [];
+      if (missing.length > 0) {
+        msgs.push(`navigateToPage 传了 ${missing.join('、')}，但 getPageParams 未使用`);
+      }
+      if (extra.length > 0) {
+        msgs.push(`getPageParams 使用了 ${extra.join('、')}，但 navigateToPage 未传入`);
+      }
+      errors.push(`[跨页面参数] ${msgs.join('；')}。请确保参数名完全一致`);
+    }
+    return;
+  }
+
+  if (getPageParamsAccess.size > 0 && navigateParams.size === 0) {
+    warnings.push(
+      `[跨页面参数] 页面使用了 getPageParams() 获取参数 ${[...getPageParamsAccess].join('、')}，` +
+      '请用 get_code_page 读取源页面代码，确认其 navigateToPage 传入了完全相同的 key'
+    );
+  }
+
+  if (navigateParams.size > 0 && getPageParamsAccess.size === 0) {
+    warnings.push(
+      `[跨页面参数] 页面调用了 navigateToPage 传入参数 ${[...navigateParams].join('、')}，` +
+      '请用 get_code_page 读取目标页面代码，确认其 getPageParams() 以相同 key 接收'
+    );
+  }
+}
+
+function extractObjectKeys(objStr: string): string[] {
+  const keys: string[] = [];
+  const keyPattern = /(\w+)\s*:/g;
+  let km: RegExpExecArray | null;
+  while ((km = keyPattern.exec(objStr)) !== null) {
+    keys.push(km[1]);
+  }
+  return keys;
+}
+
+function getBuiltins(): Set<string> {
+  if (_builtins) return _builtins;
+
+  _builtins = new Set(Object.getOwnPropertyNames(Object.prototype));
+  for (const name of DOM_SKIP_NAMES) {
+    _builtins.add(name);
+  }
+  for (const name of Object.getOwnPropertyNames(Array.prototype)) {
+    _builtins.add(name);
+  }
+  for (const name of QUERY_RESULT_STRUCTURE) {
+    _builtins.add(name);
+  }
+  return _builtins;
+}
+
+const QUERY_RESULT_STRUCTURE = ['rows', 'columns', 'totalCount'];
+
+const DATA_VAR_PATTERNS = [
+  'row', 'rows', 'item', 'orderData', 'order', 'result',
+  'info', 'record', 'detail', 'entry', 'obj', 'r', 'd', 'o', 'it',
+  'product', 'customer', 'user', 'orderItem', 'line',
+];
+
 function findUnknownFieldNames(
   js: string,
   actualFieldNames: Set<string>,
 ): { line: number; used: string; suggestion?: string }[] {
   const unknownFields: { line: number; used: string; suggestion?: string }[] = [];
 
-  const fieldPattern = /\brow\.(\w+)\b/g;
+  const varNames = DATA_VAR_PATTERNS.join('|');
+  const fieldPattern = new RegExp(
+    `\\b(?:${varNames})\\.([\\u4e00-\\u9fff\\w]+)\\b`,
+    'g',
+  );
   let match: RegExpExecArray | null;
   while ((match = fieldPattern.exec(js)) !== null) {
     const fieldName = match[1];
 
     if (actualFieldNames.has(fieldName)) continue;
-    if (!fieldName.includes('_')) continue;
+    if (getBuiltins().has(fieldName)) continue;
 
     const exists = unknownFields.some((f) => f.used === fieldName);
     if (exists) continue;
 
-    let suggestion: string | undefined;
-    for (const actual of actualFieldNames) {
-      if (actual.toLowerCase() === fieldName.toLowerCase()) {
-        suggestion = actual;
-        break;
-      }
+    const isChinese = /[\u4e00-\u9fff]/.test(fieldName);
 
-      const normalizedUsed = fieldName.replace(/[_\s]/g, '').toLowerCase();
-      const normalizedActual = actual.replace(/[_\s]/g, '').toLowerCase();
-      if (normalizedUsed === normalizedActual) {
-        suggestion = actual;
-        break;
+    let suggestion: string | undefined;
+    if (isChinese) {
+      suggestion = undefined;
+    } else {
+      for (const actual of actualFieldNames) {
+        if (actual.toLowerCase() === fieldName.toLowerCase()) {
+          suggestion = actual;
+          break;
+        }
+
+        const normalizedUsed = fieldName.replace(/[_\s]/g, '').toLowerCase();
+        const normalizedActual = actual.replace(/[_\s]/g, '').toLowerCase();
+        if (normalizedUsed === normalizedActual) {
+          suggestion = actual;
+          break;
+        }
       }
     }
 

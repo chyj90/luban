@@ -1,7 +1,7 @@
 import type { ProviderType } from '@/types/agent';
 
 export const AGENT_CONFIG = {
-  maxIterations: 15,
+  maxIterations: 100,
   maxStepsPerTask: 6,
   maxRevisions: 3,
   compressAfterChars: 12000,

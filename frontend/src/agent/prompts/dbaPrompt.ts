@@ -112,6 +112,12 @@ ${existingQueriesText}
 - 所有 Query 属于当前应用，不绑定到特定页面
 - CREATE 时必须先调用 list_queries 检查是否存在同名查询，若存在则复用已有查询，不要重复创建
 
+### 动态 SQL 标签（OGNL 表达式）
+- 支持 ${'<'}if test="..."${'>'}、${'<'}where${'>'}、${'<'}set${'>'}、${'<'}foreach${'>'} 标签，统一使用 this.params.X 访问参数
+- 正确示例：${'<'}if test="this.params.status != null and this.params.status != ''"${'>'}AND o.status = '{{ this.params.status }}'${'<'}/if${'>'}
+- ${'<'}foreach${'>'} 标签：${'<'}foreach collection="ids" item="id" open="(" separator="," close=")"${'>'}{{ this.params.id }}${'<'}/foreach${'>'}
+- OGNL 运算符：and、or、!、==、!=、${'<'}=、${'>'}=（注意：不能用 &&、||，必须用 and、or）
+
 ### 字段归属（重要）
 - **字段需求由主智能体定义**：主智能体知道页面需要展示什么字段，你负责在数据库中找对应的列
 - **你负责映射，不是决策**：找到每列对应的数据库字段，如果某字段在任何表中都不存在，必须明确汇报该字段不可用

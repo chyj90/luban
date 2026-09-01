@@ -277,11 +277,30 @@ ${context ? `上下文信息：${context}` : ''}
 当前应用 ID: ${ctx.applicationId}
 ${context ? `上下文信息：${context}` : ''}`;
 
-          const executor = await chatRouter!.routeTo('analysis-assistant', `请分析需求：${requirement}`, `analysis-${Date.now()}`, {
-            systemPrompt,
-            isDelegated: true,
-            agentContext: { requirement, context },
-          });
+          const executor = await chatRouter!.routeTo(
+            'analysis-assistant',
+            `请分析以下需求，先调用 list_pages 了解项目现状。完成后只回复"已了解"，不要继续分析。\n\n需求：${requirement}`,
+            `analysis-${Date.now()}`,
+            {
+              systemPrompt,
+              isDelegated: true,
+              agentContext: { requirement, context },
+            },
+          );
+
+          console.log(`[delegate_analysis] 第1步完成：了解项目现状`);
+
+          await executor.run('根据页面列表，将需求拆解为独立话题，输出话题列表（每个话题标注类型）。完成后不要再继续。');
+
+          console.log(`[delegate_analysis] 第2步完成：话题拆解`);
+
+          await executor.run('对每个话题按规范进行完整分析，输出需求分析报告（7个章节：需求概述、功能模块、页面规划、UI分析、用户操作流程、数据字段、待确认问题）。待确认问题中，已知的事情不要提问，不确定的事情才问。');
+
+          console.log(`[delegate_analysis] 第3步完成：逐话题分析`);
+
+          await executor.run('根据分析报告，调用 create_plan 创建执行计划。');
+
+          console.log(`[delegate_analysis] 第4步完成：创建计划`);
 
           const messages = executor.getMessages();
           const response = messages
@@ -290,11 +309,19 @@ ${context ? `上下文信息：${context}` : ''}`;
             .join('\n\n')
             .trim();
 
-          // 从分析助手的回复中提取 plan_id
-          const planIdMatch = response.match(/plan[_-]?id[：:]\s*(\d+)/i)
-            || response.match(/计划[_-]?id[：:]\s*(\d+)/i)
-            || response.match(/planId[：:]\s*(\d+)/i);
-          const planId = planIdMatch ? parseInt(planIdMatch[1], 10) : null;
+          // 从分析助手的消息中提取 plan_id（create_plan 工具返回的 planId）
+          let planId: string | null = null;
+          for (const m of messages) {
+            if (m.role === 'tool' && m.content) {
+              try {
+                const parsed = JSON.parse(m.content);
+                if (parsed?.data?.planId) {
+                  planId = parsed.data.planId;
+                  break;
+                }
+              } catch { /* 非 JSON 内容，跳过 */ }
+            }
+          }
 
           console.log(`[delegate_analysis] 完成 | 总耗时: ${Date.now() - execStart}ms | planId: ${planId}`);
 
