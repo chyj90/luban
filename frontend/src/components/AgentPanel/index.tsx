@@ -876,12 +876,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
                   if (!el) return;
                   const threshold = 50;
                   isUserAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-                  (window as unknown).bug_trace_log('scroll-user', {
-                    scrollTop: el.scrollTop,
-                    scrollHeight: el.scrollHeight,
-                    clientHeight: el.clientHeight,
-                    isAtBottom: isUserAtBottomRef.current,
-                  });
                 }}>
               {messages.map((msg) => (
                 <MessageItem key={msg.id} msg={msg} />

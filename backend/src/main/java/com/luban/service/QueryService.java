@@ -289,7 +289,7 @@ public class QueryService {
 
                     List<String> columns = new ArrayList<>();
                     for (int i = 1; i <= colCount; i++) {
-                        columns.add(meta.getColumnName(i));
+                        columns.add(meta.getColumnLabel(i));
                     }
 
                     List<List<Object>> rows = new ArrayList<>();
