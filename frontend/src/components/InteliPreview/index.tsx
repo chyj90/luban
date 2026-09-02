@@ -41,7 +41,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   const sendUpdatePageRef = useRef(sendUpdatePage);
   sendUpdatePageRef.current = sendUpdatePage;
 
-  // Build shell — rebuild when queryNames changes (e.g., queries loaded after backend restart)
+  // Build shell — rebuild when queryNames changes
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
@@ -78,8 +78,7 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
         const wasNotReady = !shellReadyRef.current;
         shellReadyRef.current = true;
         if (wasNotReady) {
-          const cp = codePageRef.current;
-          sendUpdatePageRef.current(cp);
+          sendUpdatePageRef.current(codePageRef.current);
         }
       }
     };

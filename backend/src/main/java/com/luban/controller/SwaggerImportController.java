@@ -124,7 +124,6 @@ public class SwaggerImportController {
                 tool.setConfig(config != null ? config : "{}");
                 tool.setGroupId(groupId);
                 tool.setScope("PLATFORM");
-                tool.setStatus("ENABLED");
                 toolDefinitionRepository.save(tool);
 
                 Map<String, Object> imported_ep = new LinkedHashMap<>();

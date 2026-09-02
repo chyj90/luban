@@ -59,6 +59,24 @@ export function upsertPlanMessage(planId: string) {
   }
 }
 
+const VALID_PLAN_TOOL_NAMES = new Set([
+  'create_code_page',
+  'update_code_page',
+  'delegate_query',
+  'delegate_workflow',
+]);
+
+function validatePlanItems(items: unknown[]): string | null {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] as Record<string, unknown>;
+    const toolName = item?.toolName as string | undefined;
+    if (toolName && !VALID_PLAN_TOOL_NAMES.has(toolName)) {
+      return `步骤 ${i + 1} 的 toolName "${toolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}`;
+    }
+  }
+  return null;
+}
+
 export const planSkills: Record<string, SkillFactory> = {
   'plan:create': () => ({
     id: 'plan:create',
@@ -99,6 +117,10 @@ export const planSkills: Record<string, SkillFactory> = {
       const { title, summary, items } = args as unknown;
       if (!items || !Array.isArray(items) || items.length === 0) {
         return { success: false, message: '计划步骤列表 items 为空，请提供至少一个步骤' };
+      }
+      const invalidMsg = validatePlanItems(items);
+      if (invalidMsg) {
+        return { success: false, message: invalidMsg };
       }
       const store = useAgentStore.getState();
       const planId = generatePlanId();
@@ -145,6 +167,11 @@ export const planSkills: Record<string, SkillFactory> = {
       const store = useAgentStore.getState();
       const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
+
+      const newToolName = typedArgs.new_tool_name as string | undefined;
+      if (newToolName && !VALID_PLAN_TOOL_NAMES.has(newToolName)) {
+        return { success: false, message: `toolName "${newToolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}` };
+      }
 
       switch (typedArgs.action) {
         case 'append': {
@@ -320,6 +347,11 @@ export const planSkills: Record<string, SkillFactory> = {
       const store = useAgentStore.getState();
       const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
+
+      const newToolName = typedArgs.new_tool_name as string | undefined;
+      if (newToolName && !VALID_PLAN_TOOL_NAMES.has(newToolName)) {
+        return { success: false, message: `toolName "${newToolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}` };
+      }
 
       let actionMessage = '';
       let newItemId = '';

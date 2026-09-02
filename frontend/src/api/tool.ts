@@ -225,10 +225,6 @@ export function listApplicationDatasources(applicationId: number) {
 }
 
 // Application tool CRUD
-export function listAppTools(applicationId: number) {
-  return get<unknown[]>(`/application-tools/${applicationId}`);
-}
-
 export function createAppTool(applicationId: number, data: Record<string, unknown>) {
   return post<unknown>(`/application-tools/${applicationId}`, data);
 }
@@ -248,4 +244,13 @@ export function runAppTool(applicationId: number, id: number, params: Record<str
     elapsed: number;
     body: unknown;
   }>(`/application-tools/${applicationId}/${id}/run`, { params });
+}
+
+export function runRuntimeTool(pageId: number, toolId: number, params: Record<string, unknown>) {
+  return post<{
+    status: number;
+    headers: Record<string, string[]>;
+    elapsed: number;
+    body: unknown;
+  }>(`/runtime/${pageId}/tool/${toolId}/run`, { params });
 }

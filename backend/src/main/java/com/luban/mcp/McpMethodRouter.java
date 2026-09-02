@@ -54,7 +54,7 @@ public class McpMethodRouter {
     }
 
     private JsonRpcResponse handleToolsList(JsonRpcRequest request) {
-        List<ToolDefinition> tools = toolDefinitionRepository.findByStatusAndScope("ENABLED", "PLATFORM");
+        List<ToolDefinition> tools = toolDefinitionRepository.findByScope("PLATFORM");
         List<Map<String, Object>> toolList = new ArrayList<>();
 
         for (ToolDefinition tool : tools) {

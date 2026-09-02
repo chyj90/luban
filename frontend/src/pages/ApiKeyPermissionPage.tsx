@@ -82,7 +82,7 @@ export default function ApiKeyPermissionPage() {
       setKeyInfo(currentKey || null);
 
       const allGroups = (groupsRes.data as ToolGroup[]) || [];
-      setGroups(allGroups.filter((g) => g.status === 'ENABLED'));
+      setGroups(allGroups);
 
       const kt = (keyToolsRes.data as { toolId: number; status: string }[]) || [];
       const sm = new Map<number, string>();
@@ -102,7 +102,6 @@ export default function ApiKeyPermissionPage() {
       const res = await listToolDefinitions({ groupId: String(groupId) });
       const raw = (res.data as ToolDefinition[]) || [];
       const withStatus: ToolWithStatus[] = raw
-        .filter((t) => t.status === 'ENABLED')
         .map((t) => ({
           ...t,
           permissionStatus: (sm.get(t.id) || 'NONE') as ToolWithStatus['permissionStatus'],

@@ -70,6 +70,7 @@ interface AgentPanelProps {
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
+  onToolsChange?: (apiId?: number) => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 }
 
@@ -230,7 +231,7 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   return lines.join('\n');
 }
 
-export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onWorkflowNavigate }: AgentPanelProps) {
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<TabView>('chat');
@@ -437,8 +438,9 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onQuerySelect,
     onQueriesChange,
     onDatasourceChange,
+    onToolsChange,
     onWorkflowNavigate,
-  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onWorkflowNavigate]);
+  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
 
   const runAgent = async (userMessage: string) => {
     const sessionOptions: RouterSessionOptions = {
@@ -452,6 +454,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       onQuerySelect,
       onQueriesChange,
       onDatasourceChange,
+      onToolsChange,
       onWorkflowNavigate,
     };
 

@@ -55,7 +55,7 @@ public class SystemPermissionController {
 
     @GetMapping("/systems")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listSystems(@AuthenticationPrincipal User user) {
-        List<ToolGroup> groups = toolGroupRepository.findByStatusOrderBySortOrderAsc("ENABLED");
+        List<ToolGroup> groups = toolGroupRepository.findAllByOrderBySortOrderAsc();
         List<SystemPermission> userPerms = systemPermissionRepository.findByUserId(user.getId());
         Map<Long, SystemPermission> permMap = userPerms.stream()
                 .collect(Collectors.toMap(SystemPermission::getGroupId, p -> p, (a, b) -> a));

@@ -768,7 +768,6 @@ export default function ToolListPage() {
               <tr>
                 <th>工具名称</th>
                 <th>类型</th>
-                <th>状态</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -786,11 +785,6 @@ export default function ToolListPage() {
                     </td>
                     <td>
                       <span className="tool-list-type-badge">{getTypeLabel(tool.toolType)}</span>
-                    </td>
-                    <td>
-                      <span className={`tool-list-status ${tool.status === 'ENABLED' ? 'enabled' : 'disabled'}`}>
-                        {tool.status === 'ENABLED' ? '启用' : '禁用'}
-                      </span>
                     </td>
                     <td>
                       <div className="tool-list-row-actions">

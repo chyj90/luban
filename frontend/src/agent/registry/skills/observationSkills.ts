@@ -1,6 +1,7 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { listPages } from '@/api';
 import { listQueries as listAllQueries } from '@/api/query';
+import { listApplicationTools } from '@/api/tool';
 
 export const observationSkills: Record<string, SkillFactory> = {
   'observation:list_pages': (ctx) => ({
@@ -39,6 +40,23 @@ export const observationSkills: Record<string, SkillFactory> = {
         };
       } catch {
         return { success: false, message: '获取查询列表失败' };
+      }
+    },
+  }),
+
+  'observation:list_apis': (ctx) => ({
+    id: 'observation:list_apis',
+    category: SkillCategory.OBSERVATION,
+    name: 'list_apis',
+    description: '列出当前应用中所有已连接的 API 工具，返回 API 名称和ID列表。',
+    parameters: { type: 'object', properties: {} },
+    async execute() {
+      try {
+        const res = await listApplicationTools(ctx.applicationId);
+        const tools = (res.data as Array<{ id: number; displayName: string; name: string }>) || [];
+        return { success: true, message: `共 ${tools.length} 个 API`, data: { apis: tools.map((t) => ({ id: t.id, name: t.displayName || t.name })) } };
+      } catch {
+        return { success: false, message: '获取 API 列表失败' };
       }
     },
   }),

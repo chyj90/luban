@@ -1,5 +1,5 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { createCodePage, getCodePage, updateCodePage, runQuery, listAppTools, runAppTool } from '@/api';
+import { createCodePage, getCodePage, updateCodePage, runQuery, listApplicationTools, runAppTool } from '@/api';
 import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
 
 function extractQueryNamesFromJS(js: string): string[] {
@@ -14,7 +14,7 @@ function extractQueryNamesFromJS(js: string): string[] {
 
 function extractApiNamesFromJS(js: string): string[] {
   const names = new Set<string>();
-  const callPattern = /(\w+)\.call\s*\(/g;
+  const callPattern = /window\.__LUBAN__\.callApi\s*\(\s*['"]([^'"]+)['"]/g;
   let match: RegExpExecArray | null;
   while ((match = callPattern.exec(js)) !== null) {
     names.add(match[1]);
@@ -63,11 +63,11 @@ async function runPageApis(
 ): Promise<ApiRunResult[]> {
   const results: ApiRunResult[] = [];
   try {
-    const appToolsRes = await listAppTools(applicationId);
-    const appTools = (appToolsRes.data || []) as Array<{ id: number; name: string }>;
+    const appToolsRes = await listApplicationTools(applicationId);
+    const appTools = (appToolsRes.data || []) as Array<{ id: number; displayName: string }>;
 
     for (const name of apiNames) {
-      const tool = appTools.find((t) => t.name === name);
+      const tool = appTools.find((t) => t.displayName === name);
       if (!tool) continue;
 
       try {
@@ -97,6 +97,7 @@ export const codeSkills: Record<string, SkillFactory> = {
 ## 参数必须使用纯 JSON 格式，禁止使用 XML 标签（如 <parameter>）
 ## name 为必填参数，不传会导致 400 错误
 ## queryIds 必须填写实际查询 ID，不能留空数组，否则页面无法加载数据
+## toolIds 必须填写实际 API 工具 ID，不能留空数组，否则页面无法调用 API
 ## 页面已存在时用 update_code_page，新建用 create_code_page`,
     parameters: {
       type: 'object',
@@ -107,6 +108,7 @@ export const codeSkills: Record<string, SkillFactory> = {
         js: { type: 'string', description: 'JavaScript 代码' },
         libraries: { type: 'array', items: { type: 'string' }, description: 'CDN 库 URL 列表' },
         queryIds: { type: 'array', items: { type: 'number' }, description: '关联的查询 ID 列表' },
+        toolIds: { type: 'array', items: { type: 'number' }, description: '关联的 API 工具 ID 列表' },
       },
       required: ['name'],
     },
@@ -141,6 +143,7 @@ export const codeSkills: Record<string, SkillFactory> = {
 
         const validation = await validateCode(html, css, js, {
           queryIds: (args.queryIds as number[]) || [],
+          toolIds: (args.toolIds as number[]) || [],
           applicationId: ctx.applicationId,
           queryResults,
           apiResults,
@@ -160,6 +163,7 @@ export const codeSkills: Record<string, SkillFactory> = {
           js,
           libraries: (args.libraries as string[]) || [],
           queryIds: (args.queryIds as number[]) || [],
+          toolIds: (args.toolIds as number[]) || [],
         });
         ctx.onPagesChange?.();
         ctx.onPageChange?.(res.data.id);
@@ -221,6 +225,7 @@ export const codeSkills: Record<string, SkillFactory> = {
         },
         libraries: { type: 'array', items: { type: 'string' } },
         queryIds: { type: 'array', items: { type: 'number' } },
+        toolIds: { type: 'array', items: { type: 'number' } },
       },
       required: ['pageId'],
     },
@@ -312,6 +317,7 @@ export const codeSkills: Record<string, SkillFactory> = {
 
         const validation = await validateCode(html, css, js, {
           queryIds: (args.queryIds as number[]) || [],
+          toolIds: (args.toolIds as number[]) || [],
           applicationId: ctx.applicationId,
           queryResults,
           apiResults,
@@ -332,6 +338,9 @@ export const codeSkills: Record<string, SkillFactory> = {
         }
         if (args.queryIds !== undefined) {
           updateData.queryIds = args.queryIds;
+        }
+        if (args.toolIds !== undefined) {
+          updateData.toolIds = args.toolIds;
         }
         const res = await updateCodePage(pageId, updateData);
         ctx.onPageChange?.(pageId);

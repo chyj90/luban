@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { runQuery, runAppTool } from '@/api';
+import { runQuery, runAppTool, runRuntimeQuery, runRuntimeTool } from '@/api';
 import type { Query } from '@/types/query';
 
 interface BridgeRequest {
@@ -46,6 +46,7 @@ export function useQueryBridge(
   onNavigate?: (pageId: number) => void,
   applicationId?: number,
   appTools?: AppToolInfo[],
+  currentPageId?: number,
 ) {
   const queriesRef = useRef<Query[]>(queries);
   queriesRef.current = queries;
@@ -61,6 +62,9 @@ export function useQueryBridge(
 
   const appIdRef = useRef<number | undefined>(applicationId);
   appIdRef.current = applicationId;
+
+  const pageIdRef = useRef<number | undefined>(currentPageId);
+  pageIdRef.current = currentPageId;
 
   const handleMessage = useCallback(async (event: MessageEvent) => {
     const msg = event.data as BridgeRequest;
@@ -84,7 +88,10 @@ export function useQueryBridge(
       }
 
       try {
-        const res = await runQuery(query.id, { params: msg.params });
+        const pageId = pageIdRef.current;
+        const res = pageId
+          ? await runRuntimeQuery(pageId, query.id, { params: msg.params })
+          : await runQuery(query.id, { params: msg.params });
         const { columns, rows, totalCount, executionTime } = res.data;
         const objectRows: Record<string, unknown>[] = rows.map((row: unknown[]) => {
           const obj: Record<string, unknown> = {};
@@ -123,8 +130,9 @@ export function useQueryBridge(
     } else if (msg.type === 'CALL_API') {
       const appId = appIdRef.current;
       const tool = appToolsRef.current.find((t) => t.name === msg.apiName);
+      const pageId = pageIdRef.current;
 
-      if (!appId) {
+      if (!appId && !pageId) {
         respond({ type: 'API_RESULT', id: msg.id, apiName: msg.apiName, error: '应用 ID 未配置' });
         return;
       }
@@ -135,7 +143,9 @@ export function useQueryBridge(
       }
 
       try {
-        const res = await runAppTool(appId, tool.id, msg.params || {});
+        const res = pageId
+          ? await runRuntimeTool(pageId, tool.id, msg.params || {})
+          : await runAppTool(appId!, tool.id, msg.params || {});
         respond({
           type: 'API_RESULT',
           id: msg.id,

@@ -74,7 +74,7 @@ public class ApiKeyService {
     }
 
     public List<ToolDefinition> listAvailableTools() {
-        return toolDefinitionRepository.findByStatusAndScope("ENABLED", "PLATFORM");
+        return toolDefinitionRepository.findByScope("PLATFORM");
     }
 
     @Transactional

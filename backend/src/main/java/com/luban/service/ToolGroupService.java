@@ -2,6 +2,9 @@ package com.luban.service;
 
 import com.luban.dto.CreateToolGroupRequest;
 import com.luban.entity.ToolGroup;
+import com.luban.repository.DatasourceRepository;
+import com.luban.repository.SystemPermissionRepository;
+import com.luban.repository.ToolDefinitionRepository;
 import com.luban.repository.ToolGroupRepository;
 import com.luban.util.AesEncryptUtil;
 import com.luban.util.Ed25519Util;
@@ -16,13 +19,22 @@ import java.util.List;
 public class ToolGroupService {
 
     private final ToolGroupRepository toolGroupRepository;
+    private final ToolDefinitionRepository toolDefinitionRepository;
+    private final SystemPermissionRepository systemPermissionRepository;
+    private final DatasourceRepository datasourceRepository;
 
-    public ToolGroupService(ToolGroupRepository toolGroupRepository) {
+    public ToolGroupService(ToolGroupRepository toolGroupRepository,
+                            ToolDefinitionRepository toolDefinitionRepository,
+                            SystemPermissionRepository systemPermissionRepository,
+                            DatasourceRepository datasourceRepository) {
         this.toolGroupRepository = toolGroupRepository;
+        this.toolDefinitionRepository = toolDefinitionRepository;
+        this.systemPermissionRepository = systemPermissionRepository;
+        this.datasourceRepository = datasourceRepository;
     }
 
     public List<ToolGroup> listAll() {
-        return toolGroupRepository.findByStatusOrderBySortOrderAsc("ENABLED");
+        return toolGroupRepository.findAllByOrderBySortOrderAsc();
     }
 
     public ToolGroup getById(Long id) {
@@ -49,7 +61,6 @@ public class ToolGroupService {
         group.setIcon(request.getIcon());
         group.setDefaultConfig(request.getDefaultConfig());
         group.setSortOrder(request.getSortOrder() != null ? request.getSortOrder() : 0);
-        group.setStatus("ENABLED");
 
         generateKeyPair(group);
 
@@ -73,8 +84,10 @@ public class ToolGroupService {
     @Transactional
     public void delete(Long id) {
         ToolGroup group = getById(id);
-        group.setStatus("DISABLED");
-        toolGroupRepository.save(group);
+        toolDefinitionRepository.deleteByGroupIdAndScope(id, "PLATFORM");
+        systemPermissionRepository.deleteByGroupId(id);
+        datasourceRepository.deleteBySlugAndOwnerId("PLATFORM", id);
+        toolGroupRepository.delete(group);
     }
 
     private void generateKeyPair(ToolGroup group) {

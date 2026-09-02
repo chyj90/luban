@@ -33,6 +33,9 @@ public class CodePage {
     @Column(columnDefinition = "text")
     private String queryIds;
 
+    @Column(columnDefinition = "text")
+    private String toolIds;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

@@ -232,7 +232,6 @@ public class ApiKeyController {
         List<ToolDefinition> appTools = toolDefinitionRepository
                 .findByGroupIdAndScope(applicationId, "APPLICATION");
         List<Map<String, Object>> appToolItems = appTools.stream()
-                .filter(t -> !"DISABLED".equals(t.getStatus()))
                 .map(t -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("id", t.getId());
@@ -244,7 +243,6 @@ public class ApiKeyController {
                     item.put("inputSchema", t.getInputSchema());
                     item.put("outputSchema", t.getOutputSchema());
                     item.put("config", t.getConfig());
-                    item.put("status", t.getStatus());
                     return item;
                 }).collect(Collectors.toList());
 

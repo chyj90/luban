@@ -86,7 +86,8 @@ export const AGENTS: AgentDefinition[] = [
       }),
     allowedSkills: [
       'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
-      'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get',
+      'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:references',
+      'api:list', 'api:connect', 'api:test', 'api:delete',
     ],
   },
   {
@@ -114,6 +115,7 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'observation:list_pages',
       'observation:list_queries',
+      'observation:list_apis',
       'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
     ],

@@ -24,6 +24,7 @@ export enum SkillCategory {
   PLAN = 'plan',
   DATASOURCE = 'datasource',
   QUERY = 'query',
+  API = 'api',
   WORKFLOW = 'workflow',
   DELEGATE = 'delegate',
 }

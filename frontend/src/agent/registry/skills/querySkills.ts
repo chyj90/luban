@@ -1,7 +1,7 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createQuery, updateQuery, deleteQuery, runQuery, executeSql, testDatasource } from '@/api';
 import { listDatasources } from '@/api/datasource';
-import { listQueries } from '@/api';
+import { listQueries, listPages, getCodePage } from '@/api';
 
 export const querySkills: Record<string, SkillFactory> = {
   'query:list': (ctx) => ({
@@ -51,8 +51,8 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         properties: {
           name: { type: 'string', description: '查询名称，英文驼峰命名' },
           datasourceId: { type: 'number', description: '数据源 ID' },
-          body: { type: 'string', description: 'SQL 语句或 REST API 端点路径' },
-          type: { type: 'string', enum: ['SQL', 'REST_API'], description: '查询类型' },
+          body: { type: 'string', description: 'SQL 语句' },
+          type: { type: 'string', enum: ['SQL'], description: '查询类型' },
           params: { type: 'array', items: { type: 'object' }, description: '参数定义列表' },
           description: { type: 'string', description: '查询描述' },
         },
@@ -218,6 +218,62 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         return { success: true, message: `SQL 执行成功，${res.data?.totalCount ?? 0} 条结果`, data: res.data };
       } catch (e) {
         return { success: false, message: `SQL 执行失败: ${(e as Error).message}` };
+      }
+    },
+  }),
+
+  'query:references': (ctx) => ({
+    id: 'query:references',
+    category: SkillCategory.QUERY,
+    name: 'list_query_references',
+    description: `查询指定查询被哪些页面引用。修改查询前必须调用此工具评估影响范围。
+返回引用该查询的所有页面列表，DBA 据此判断修改查询是否会影响其他页面。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        queryId: { type: 'number', description: '查询 ID' },
+        queryName: { type: 'string', description: '查询名称（与 queryId 二选一）' },
+      },
+      required: [],
+    },
+    async execute(args) {
+      try {
+        const pagesRes = await listPages(ctx.applicationId);
+        const pages = pagesRes.data;
+        const references: Array<{ pageId: number; pageName: string }> = [];
+        const targetId = args.queryId as number | undefined;
+        const targetName = args.queryName as string | undefined;
+
+        for (const page of pages) {
+          try {
+            const codeRes = await getCodePage(page.id);
+            const queryIds: number[] = codeRes.data.codePage?.queryIds || [];
+            if (targetId !== undefined) {
+              if (queryIds.includes(targetId)) {
+                references.push({ pageId: page.id, pageName: page.name });
+              }
+            } else if (targetName) {
+              const allQueries = await listQueries(ctx.applicationId);
+              const matched = allQueries.data.find((q: { name: string }) => q.name === targetName);
+              if (matched && queryIds.includes(matched.id)) {
+                references.push({ pageId: page.id, pageName: page.name });
+              }
+            }
+          } catch {
+            // 页面可能没有代码页，跳过
+          }
+        }
+
+        if (references.length === 0) {
+          return { success: true, message: '该查询未被任何页面引用，可安全修改', data: { references: [] } };
+        }
+        return {
+          success: true,
+          message: `查询被 ${references.length} 个页面引用：${references.map((r) => r.pageName).join('、')}`,
+          data: { references },
+        };
+      } catch (e) {
+        return { success: false, message: `查询引用分析失败: ${(e as Error).message}` };
       }
     },
   }),

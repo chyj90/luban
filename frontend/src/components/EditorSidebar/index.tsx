@@ -29,9 +29,12 @@ interface EditorSidebarProps {
   selectedApi?: SelectedApi | null;
   onApiSelect?: (api: SelectedApi | null) => void;
   onToolsChange?: (tools: Array<{ id: number; name: string }>) => void;
+  toolsVersion?: number;
+  pendingApiId?: number | null;
+  onPendingApiHandled?: () => void;
 }
 
-export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, selectedApi, onApiSelect, onToolsChange }: EditorSidebarProps) {
+export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, selectedApi, onApiSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: EditorSidebarProps) {
   const _navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');
@@ -322,6 +325,9 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
             selectedApi={selectedApi ?? null}
             onSelect={onApiSelect ?? (() => {})}
             onToolsChange={onToolsChange}
+            toolsVersion={toolsVersion}
+            pendingApiId={pendingApiId}
+            onPendingApiHandled={onPendingApiHandled}
           />
         )}
       </div>

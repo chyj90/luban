@@ -7,6 +7,8 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.transaction.Transactional;
+
 @Repository
 public interface SystemPermissionRepository extends JpaRepository<SystemPermission, Long> {
 
@@ -19,4 +21,7 @@ public interface SystemPermissionRepository extends JpaRepository<SystemPermissi
     Optional<SystemPermission> findByWorkflowInstanceId(Long workflowInstanceId);
 
     List<SystemPermission> findByStatus(String status);
+
+    @Transactional
+    void deleteByGroupId(Long groupId);
 }

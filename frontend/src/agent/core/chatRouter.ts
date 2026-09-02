@@ -13,6 +13,7 @@ export type RouterSessionOptions = Pick<
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
+  onToolsChange?: (apiId?: number) => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
@@ -32,6 +33,7 @@ export type RouterCallbacks = {
   onQuerySelect?: (query: { id: number; name: string }) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
+  onToolsChange?: (apiId?: number) => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 };
 
@@ -188,6 +190,7 @@ export class ChatRouter {
       onQuerySelect: this.callbacks.onQuerySelect || this.sessionOptions.onQuerySelect,
       onQueriesChange: this.callbacks.onQueriesChange || this.sessionOptions.onQueriesChange,
       onDatasourceChange: this.callbacks.onDatasourceChange || this.sessionOptions.onDatasourceChange,
+      onToolsChange: this.callbacks.onToolsChange || this.sessionOptions.onToolsChange,
       onWorkflowNavigate: this.callbacks.onWorkflowNavigate || this.sessionOptions.onWorkflowNavigate,
     };
 

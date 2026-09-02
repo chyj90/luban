@@ -123,11 +123,6 @@ export default function SystemListPage() {
               <h3 className="system-card-name">{group.name}</h3>
               <span className="system-card-code">{group.code}</span>
               <p className="system-card-desc">{group.description || '暂无描述'}</p>
-              <div className="system-card-meta">
-                <span className={`system-card-status ${group.status === 'ENABLED' ? 'enabled' : 'disabled'}`}>
-                  {group.status === 'ENABLED' ? '启用' : '禁用'}
-                </span>
-              </div>
             </div>
             <div className="system-card-actions">
               <button

@@ -24,3 +24,7 @@ export async function deletePage(id: number) {
 export async function renamePage(id: number, name: string) {
   return put<Page>(`/pages/${id}`, { name });
 }
+
+export async function getRuntimePageCode(pageId: number) {
+  return get<CodePage>(`/runtime/${pageId}/code`);
+}

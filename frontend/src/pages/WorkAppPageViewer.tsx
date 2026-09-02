@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
 import { getCodePage } from '@/api/page';
 import { listQueries } from '@/api/query';
-import { listAppTools, listApplicationTools } from '@/api/tool';
+import { listApplicationTools } from '@/api/tool';
 import { getApplication } from '@/api/application';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
@@ -28,7 +28,7 @@ export function WorkAppPageViewer() {
   const pid = pageId ? Number(pageId) : null;
   const aid = appId ? Number(appId) : null;
   const { buildShellScript, buildBridgeContent } = useQueryBridge(
-    queries, userInfo, [{ id: pid || 0, name: appName }], () => {}, aid, appTools,
+    queries, userInfo, [{ id: pid || 0, name: appName }], () => {}, aid, appTools, pid || undefined,
   );
 
   const queryNames = queries.map(q => q.name);
@@ -43,25 +43,19 @@ export function WorkAppPageViewer() {
     Promise.allSettled([
       getApplication(aid),
       listQueries(aid),
-      listAppTools(aid),
       listApplicationTools(aid),
     ]).then((results) => {
-      const [appResult, queriesResult, toolsResult, keyToolsResult] = results;
+      const [appResult, queriesResult, toolsResult] = results;
       if (appResult.status === 'fulfilled') {
         setAppName(appResult.value.data.name);
       }
       if (queriesResult.status === 'fulfilled') {
         setQueries(queriesResult.value.data);
       }
-      if (toolsResult.status === 'fulfilled' || keyToolsResult.status === 'fulfilled') {
-        const selfTools = toolsResult.status === 'fulfilled'
-          ? ((toolsResult.value.data as Record<string, unknown>[]) || []).map((t) => ({ id: t.id as number, name: (t.displayName || t.name || '') as string }))
-          : [];
-        const keyTools = keyToolsResult.status === 'fulfilled'
-          ? ((keyToolsResult.value.data as Record<string, unknown>[]) || []).map((t) => ({ id: t.id as number, name: (t.displayName || t.name || '') as string }))
-          : [];
-        const merged = [...selfTools, ...keyTools.filter(kt => !selfTools.some(st => st.id === kt.id))];
-        setAppTools(merged);
+      if (toolsResult.status === 'fulfilled') {
+        const tools = ((toolsResult.value.data as Record<string, unknown>[]) || [])
+          .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
+        setAppTools(tools);
       }
       setLoading(false);
     });

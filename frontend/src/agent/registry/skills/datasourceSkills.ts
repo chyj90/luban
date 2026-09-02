@@ -55,18 +55,17 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     id: 'datasource:connect',
     category: SkillCategory.DATASOURCE,
     name: 'connect_datasource',
-    description: `连接一个新的数据源。支持 MySQL、PostgreSQL、REST API。
+    description: `连接一个新的数据源。支持 MySQL、PostgreSQL 及通过驱动扩展的数据源类型。
 
 ## SQL 数据源（MySQL/PostgreSQL）
 config 字段：host（必填）、port（默认 3306/5432）、database（必填）、username（必填）、password（必填）
 
-## REST API 数据源
-config 字段：baseUrl（必填）、method（可选，默认 GET）、headers（可选）`,
+注意：REST API 类型已从数据源中独立，请使用 API 页签管理外部 API 连接。`,
     parameters: {
       type: 'object',
       properties: {
         name: { type: 'string', description: '数据源名称' },
-        type: { type: 'string', enum: ['MySQL', 'PostgreSQL', 'REST_API'], description: '数据源类型' },
+        type: { type: 'string', enum: ['MySQL', 'PostgreSQL'], description: '数据源类型' },
         config: { type: 'object', description: '连接配置' },
       },
       required: ['name', 'type', 'config'],

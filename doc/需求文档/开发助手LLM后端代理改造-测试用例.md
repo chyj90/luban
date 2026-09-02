@@ -231,8 +231,10 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 确认 `https://jsonplaceholder.typicode.com/posts` 可访问 | 浏览器访问返回 JSON 数据 |
-| 2 | 确认 `https://v1.hitokoto.cn/` 可访问（无需认证的公开接口） | 浏览器访问返回 JSON 数据，包含 `hitokoto`、`from` 等字段 |
+| 1 | 确认 `https://jsonplaceholder.typicode.com/posts` 可访问 | 浏览器访问返回 JSON 数组（100 条文章） |
+| 2 | 确认 `https://jsonplaceholder.typicode.com/users` 可访问 | 浏览器访问返回 JSON 数组（10 个用户） |
+| 3 | 确认 `https://dummyjson.com/products` 可访问 | 浏览器访问返回 JSON 对象，包含 `products` 数组 |
+| 4 | 确认 `https://v1.hitokoto.cn/` 可访问（无需认证的公开接口） | 浏览器访问返回 JSON 数据，包含 `hitokoto`、`from` 等字段 |
 
 ---
 
@@ -403,31 +405,37 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 发送：`帮我连接一个 REST API 数据源，名字叫 JSONPlaceholder，baseUrl 是 https://jsonplaceholder.typicode.com` | 请求发出 |
-| 2 | 等待执行 | 连接成功 |
-| 3 | 发送：`帮我连接一个 REST API 数据源，名字叫 DummyJSON，baseUrl 是 https://dummyjson.com` | 请求发出 |
-| 4 | 等待执行 | 连接成功 |
+| 1 | 发送：`帮我连接一个外部 API，名称叫 GetPosts，GET 方法，URL 是 https://jsonplaceholder.typicode.com/posts，描述是获取所有文章列表` | 请求发出 |
+| 2 | 等待执行 | AI 调用 `connect_api`，API 连接成功，提示「API 连接成功」 |
+| 3 | 打开 API 页签 | 列表中显示 `GetPosts`，方法为 GET，URL 为 `https://jsonplaceholder.typicode.com/posts` |
+| 4 | 发送：`帮我连接一个外部 API，名称叫 GetUsers，GET 方法，URL 是 https://jsonplaceholder.typicode.com/users` | 请求发出 |
+| 5 | 等待执行 | 连接成功 |
+| 6 | 发送：`帮我连接一个外部 API，名称叫 GetProducts，GET 方法，URL 是 https://dummyjson.com/products` | 请求发出 |
+| 7 | 等待执行 | 连接成功 |
+| 8 | 打开 API 页签 | 3 个 API 全部存在，信息正确 |
 
-#### TC-API-02：创建 REST API 查询并验证返回
+#### TC-API-02：测试 API 与连接更多端点
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 发送：`帮我创建以下查询：1. GetPosts 使用 JSONPlaceholder，接口 /posts，返回所有文章；2. GetPostComments 使用 JSONPlaceholder，接口 /posts/{{ this.params.postId }}/comments，根据文章ID获取评论；3. GetUserInfo 使用 JSONPlaceholder，接口 /users/{{ this.params.userId }}，获取用户信息；4. GetProducts 使用 DummyJSON，接口 /products，获取所有商品列表` | 请求发出 |
-| 2 | 等待执行 | 4 个查询创建成功 |
-| 3 | 发送：`帮我执行 GetPosts，获取前 10 条` | 请求发出 |
-| 4 | 验证返回数据 | 返回 JSONPlaceholder 的 posts 数据，共 100 条（或按参数返回） |
-| 5 | 发送：`帮我执行 GetPostComments，postId 填 1` | 请求发出 |
+| 1 | 发送：`帮我测试一下 GetPosts 这个 API` | 请求发出 |
+| 2 | 等待执行 | AI 调用 `test_api`，返回 HTTP 200 状态码，body 展示 JSON 数组（100 条文章） |
+| 3 | 发送：`帮我连接一个外部 API，名称叫 GetPostComments，GET 方法，URL 是 https://jsonplaceholder.typicode.com/posts/1/comments` | 请求发出 |
+| 4 | 等待执行 | 连接成功 |
+| 5 | 发送：`测试一下 GetPostComments` | 请求发出 |
 | 6 | 验证返回数据 | 返回 postId=1 的评论列表，共 5 条 |
+| 7 | 发送：`帮我连接一个外部 API，名称叫 GetUserInfo，GET 方法，URL 是 https://jsonplaceholder.typicode.com/users/1` | 请求发出 |
+| 8 | 等待执行 | 连接成功，测试返回用户 1 的详细信息 |
 
 #### TC-API-03：API 数据与数据库数据混合展示
 
 | 步骤 | 操作 | 预期结果 |
 |:--:|------|------|
-| 1 | 发送：`帮我创建一个综合数据页面，名字叫数据中心，要求：1. 左侧展示 ERP 系统的销售概览（使用 GetProductSales 和 GetCustomerRanking）；2. 右侧展示外部 API 数据（使用 GetPosts 展示最新文章列表）；3. 底部展示 DummyJSON 商品列表（使用 GetProducts）；4. 整体使用 Tab 切换布局` | 请求发出 |
+| 1 | 发送：`帮我创建一个综合数据页面，名字叫数据中心，要求：1. 左侧展示 ERP 系统的销售概览（使用 SQL 查询 GetProductSales 和 GetCustomerRanking）；2. 右侧展示外部 API 数据（调用 GetPosts API 展示最新文章列表）；3. 底部展示 DummyJSON 商品列表（调用 GetProducts API）；4. 整体使用 Tab 切换布局` | 请求发出 |
 | 2 | 切换到数据中心页面 | 页面渲染正常 |
-| 3 | 检查 ERP 数据 Tab | 商品销量和客户排行数据正确 |
-| 4 | 检查外部 API Tab | JSONPlaceholder 文章列表正常展示 |
-| 5 | 检查 DummyJSON Tab | 商品列表正常展示，包含 title、price 等字段 |
+| 3 | 检查 ERP 数据 Tab | 商品销量和客户排行数据正确（来自 SQL 查询） |
+| 4 | 检查外部 API Tab | 调用 GetPosts API，文章列表正常展示，包含 title、body 字段 |
+| 5 | 检查 DummyJSON Tab | 调用 GetProducts API，商品列表正常展示，包含 title、price 等字段 |
 | 6 | 验证 Tab 切换 | 3 个 Tab 独立工作，切换流畅，数据不串 |
 
 ---
@@ -694,7 +702,7 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 - [ ] 能成功创建多表关联的详情页面
 - [ ] 能成功创建带 Chart.js 图表的统计看板
 - [ ] 能成功创建含条件分支的多级审批流程
-- [ ] 能成功集成外部 REST API 数据
+- [ ] 能成功连接外部 API 并调用获取数据
 - [ ] 能成功实现跨页面导航和数据传递
 - [ ] 能成功设计含动态表格的复杂表单
 
@@ -718,7 +726,7 @@ INSERT INTO inventory_logs (product_id, change_type, quantity, before_stock, aft
 | TC-E2E-07 | 销售统计看板（图表+多查询绑定） | ⬜ | | |
 | TC-E2E-08 | 库存管理页面（表单+日志） | ⬜ | | |
 | TC-API-01 | 连接多个外部 API | ⬜ | | |
-| TC-API-02 | 创建 REST API 查询并验证返回 | ⬜ | | |
+| TC-API-02 | 测试 API 与连接更多端点 | ⬜ | | |
 | TC-API-03 | API 数据与数据库数据混合展示 | ⬜ | | |
 | TC-WF-01 | 设计复杂表单 | ⬜ | | |
 | TC-WF-02 | 设计多级审批流程 | ⬜ | | |

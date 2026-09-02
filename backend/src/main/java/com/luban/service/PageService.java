@@ -61,6 +61,7 @@ public class PageService {
         codePage.setJs(request.getJs());
         codePage.setLibraries(toJson(request.getLibraries()));
         codePage.setQueryIds(toJson(request.getQueryIds()));
+        codePage.setToolIds(toJson(request.getToolIds()));
         codePageRepository.save(codePage);
 
         return buildPageResponse(page, codePage);
@@ -86,6 +87,7 @@ public class PageService {
         if (request.getJs() != null) codePage.setJs(request.getJs());
         if (request.getLibraries() != null) codePage.setLibraries(toJson(request.getLibraries()));
         if (request.getQueryIds() != null) codePage.setQueryIds(toJson(request.getQueryIds()));
+        if (request.getToolIds() != null) codePage.setToolIds(toJson(request.getToolIds()));
         codePageRepository.save(codePage);
 
         return buildPageResponse(page, codePage);
@@ -134,6 +136,7 @@ public class PageService {
         codePageData.put("js", codePage.getJs());
         codePageData.put("libraries", fromJsonList(codePage.getLibraries()));
         codePageData.put("queryIds", fromJsonLongList(codePage.getQueryIds()));
+        codePageData.put("toolIds", fromJsonLongList(codePage.getToolIds()));
         result.put("codePage", codePageData);
 
         return result;

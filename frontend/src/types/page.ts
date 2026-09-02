@@ -15,6 +15,7 @@ export interface CodePageData {
   js: string;
   libraries: string[];
   queryIds: number[];
+  toolIds: number[];
 }
 
 export interface CodePage extends Page {
@@ -29,6 +30,7 @@ export interface CreateCodePageRequest {
   js?: string;
   libraries?: string[];
   queryIds?: number[];
+  toolIds?: number[];
 }
 
 export interface UpdateCodePageRequest {
@@ -37,4 +39,5 @@ export interface UpdateCodePageRequest {
   js?: string;
   libraries?: string[];
   queryIds?: number[];
+  toolIds?: number[];
 }

@@ -31,6 +31,7 @@ export interface ValidateResult {
 export interface ValidateFieldNamesOptions {
   js?: string;
   queryIds?: number[];
+  toolIds?: number[];
   applicationId: number;
   queryResults?: QueryRunResult[];
   apiResults?: ApiRunResult[];
@@ -317,7 +318,10 @@ async function validateFieldNames(
       );
     }
 
-    const unknownFields = findUnknownFieldNames(js, allFieldNames);
+    const knownQueryNames = queryResults
+      ? queryResults.map((qr) => qr.queryName)
+      : queries.map((q) => q.name);
+    const unknownFields = findUnknownFieldNames(js, allFieldNames, knownQueryNames);
     if (unknownFields.length > 0) {
       const fieldList = [...allFieldNames].join('、');
 
@@ -355,6 +359,8 @@ async function validateFieldNames(
   }
 
   validateQueryParameterNames(js, queries, errors);
+
+  validateApiCalls(js, options.apiResults, errors);
 }
 
 function buildStructureInfo(
@@ -555,27 +561,6 @@ function findFieldNameMismatches(
   return mismatches;
 }
 
-const DOM_SKIP_NAMES = [
-  'innerHTML', 'outerHTML', 'textContent', 'innerText', 'outerText',
-  'parentNode', 'parentElement', 'childNodes', 'children',
-  'firstChild', 'lastChild', 'firstElementChild', 'lastElementChild',
-  'nextSibling', 'previousSibling', 'nextElementSibling', 'previousElementSibling',
-  'classList', 'dataset', 'style',
-  'offsetWidth', 'offsetHeight', 'offsetTop', 'offsetLeft', 'offsetParent',
-  'clientWidth', 'clientHeight', 'clientTop', 'clientLeft',
-  'scrollWidth', 'scrollHeight', 'scrollTop', 'scrollLeft',
-  'tagName', 'nodeName', 'nodeType', 'nodeValue',
-  'appendChild', 'removeChild', 'replaceChild', 'insertBefore',
-  'append', 'prepend', 'remove', 'replaceWith', 'before', 'after',
-  'querySelector', 'querySelectorAll', 'getElementById', 'getElementsByClassName', 'getElementsByTagName',
-  'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute', 'toggleAttribute',
-  'addEventListener', 'removeEventListener', 'dispatchEvent',
-  'focus', 'blur', 'click', 'scrollIntoView', 'scrollBy', 'scrollTo',
-  'cloneNode', 'contains', 'matches', 'closest',
-  'animate', 'getAnimations', 'getBoundingClientRect',
-  'insertAdjacentHTML', 'insertAdjacentElement', 'insertAdjacentText',
-];
-
 let _builtins: Set<string> | null = null;
 
 function validateCrossPageParams(js: string, errors: string[], warnings: string[]) {
@@ -654,40 +639,30 @@ function getBuiltins(): Set<string> {
   if (_builtins) return _builtins;
 
   _builtins = new Set(Object.getOwnPropertyNames(Object.prototype));
-  for (const name of DOM_SKIP_NAMES) {
-    _builtins.add(name);
-  }
   for (const name of Object.getOwnPropertyNames(Array.prototype)) {
-    _builtins.add(name);
-  }
-  for (const name of QUERY_RESULT_STRUCTURE) {
     _builtins.add(name);
   }
   return _builtins;
 }
 
-const QUERY_RESULT_STRUCTURE = ['rows', 'columns', 'totalCount'];
-
-const DATA_VAR_PATTERNS = [
-  'row', 'rows', 'item', 'orderData', 'order', 'result',
-  'info', 'record', 'detail', 'entry', 'obj', 'r', 'd', 'o', 'it',
-  'product', 'customer', 'user', 'orderItem', 'line',
-];
-
 function findUnknownFieldNames(
   js: string,
   actualFieldNames: Set<string>,
+  queryNames: string[] = [],
 ): { line: number; used: string; suggestion?: string }[] {
   const unknownFields: { line: number; used: string; suggestion?: string }[] = [];
 
-  const varNames = DATA_VAR_PATTERNS.join('|');
+  const rowVars = collectQueryRowVars(js, queryNames);
+  if (rowVars.size === 0) return unknownFields;
+
+  const varPattern = [...rowVars].join('|');
   const fieldPattern = new RegExp(
-    `\\b(?:${varNames})\\.([\\u4e00-\\u9fff\\w]+)\\b`,
+    `\\b(${varPattern})\\.([\\u4e00-\\u9fff\\w]+)\\b`,
     'g',
   );
   let match: RegExpExecArray | null;
   while ((match = fieldPattern.exec(js)) !== null) {
-    const fieldName = match[1];
+    const fieldName = match[2];
 
     if (actualFieldNames.has(fieldName)) continue;
     if (getBuiltins().has(fieldName)) continue;
@@ -721,4 +696,172 @@ function findUnknownFieldNames(
   }
 
   return unknownFields;
+}
+
+function collectQueryRowVars(js: string, queryNames: string[]): Set<string> {
+  const rowVars = new Set<string>();
+  if (queryNames.length === 0) return rowVars;
+
+  let ast: acorn.Node;
+  try {
+    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as acorn.Node;
+  } catch {
+    return rowVars;
+  }
+
+  const querySet = new Set(queryNames);
+
+  function walk(node: any): void {
+    if (!node || typeof node !== 'object') return;
+
+    if (node.type === 'CallExpression') {
+      const callee = node.callee;
+      if (callee?.type === 'MemberExpression' && callee.property?.name === 'then') {
+        const runCall = callee.object;
+        if (
+          runCall?.type === 'CallExpression' &&
+          runCall.callee?.type === 'MemberExpression' &&
+          runCall.callee.property?.name === 'run' &&
+          runCall.callee.object?.type === 'Identifier' &&
+          querySet.has(runCall.callee.object.name)
+        ) {
+          const thenCallback = node.arguments[0];
+          if (thenCallback) {
+            const thenParam = getFirstParamName(thenCallback);
+            if (thenParam) {
+              collectRowVarsFromBody(thenCallback, thenParam, rowVars);
+            }
+          }
+        }
+      }
+    }
+
+    for (const key of Object.keys(node)) {
+      const child = (node as any)[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (item && typeof item === 'object') walk(item);
+        }
+      } else if (child && typeof child === 'object' && child.type) {
+        walk(child);
+      }
+    }
+  }
+
+  walk(ast);
+  return rowVars;
+}
+
+function getFirstParamName(node: any): string | null {
+  if (
+    (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration') &&
+    node.params?.length > 0 &&
+    node.params[0].type === 'Identifier'
+  ) {
+    return node.params[0].name;
+  }
+  if (
+    node.type === 'ArrowFunctionExpression' &&
+    node.params?.length > 0 &&
+    node.params[0].type === 'Identifier'
+  ) {
+    return node.params[0].name;
+  }
+  return null;
+}
+
+function collectRowVarsFromBody(node: any, thenParam: string, rowVars: Set<string>): void {
+  if (!node || typeof node !== 'object') return;
+
+  if (node.type === 'CallExpression') {
+    const callee = node.callee;
+    if (
+      callee?.type === 'MemberExpression' &&
+      (callee.property?.name === 'forEach' ||
+        callee.property?.name === 'map' ||
+        callee.property?.name === 'filter') &&
+      callee.object?.type === 'MemberExpression' &&
+      callee.object.object?.type === 'Identifier' &&
+      callee.object.object.name === thenParam &&
+      callee.object.property?.name === 'rows'
+    ) {
+      const iterCallback = node.arguments[0];
+      if (iterCallback) {
+        const iterParam = getFirstParamName(iterCallback);
+        if (iterParam) {
+          rowVars.add(iterParam);
+        }
+      }
+    }
+  }
+
+  for (const key of Object.keys(node)) {
+    const child = (node as any)[key];
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        if (item && typeof item === 'object') collectRowVarsFromBody(item, thenParam, rowVars);
+      }
+    } else if (child && typeof child === 'object' && child.type) {
+      collectRowVarsFromBody(child, thenParam, rowVars);
+    }
+  }
+}
+
+function validateApiCalls(
+  js: string,
+  apiResults: ApiRunResult[] | undefined,
+  errors: string[],
+) {
+  if (!apiResults || apiResults.length === 0) return;
+
+  const apiNames = new Set(apiResults.map((r) => r.apiName));
+
+  const callPattern = /window\.__LUBAN__\.callApi\s*\(\s*['"]([^'"]+)['"]/g;
+  let match: RegExpExecArray | null;
+  while ((match = callPattern.exec(js)) !== null) {
+    const apiName = match[1];
+    if (!apiNames.has(apiName)) {
+      const lineNum = js.substring(0, match.index).split('\n').length;
+      const available = [...apiNames].join('、');
+      errors.push(
+        `[JS API] 第 ${lineNum} 行：调用不存在的 API「${apiName}」。` +
+        `可用 API：${available}。请检查 API 名称是否拼写正确`
+      );
+    }
+  }
+
+  const runPattern = /(\w+)\.run\s*\(/g;
+  while ((match = runPattern.exec(js)) !== null) {
+    const name = match[1];
+    if (apiNames.has(name)) {
+      const lineNum = js.substring(0, match.index).split('\n').length;
+      errors.push(
+        `[JS API] 第 ${lineNum} 行：\`${name}.run()\` 调用方式错误。` +
+        `「${name}」是外部 API 工具，不是 SQL 查询，应改用 \`window.__LUBAN__.callApi('${name}')\` 调用`
+      );
+    }
+  }
+
+  for (const result of apiResults) {
+    if (result.status >= 400) {
+      const refs = findApiRefLines(js, result.apiName);
+      if (refs.length > 0) {
+        const lineInfo = refs.slice(0, 3).map((l) => `第 ${l} 行`).join('、');
+        errors.push(
+          `[JS API] ${lineInfo}：API「${result.apiName}」测试返回 HTTP ${result.status}，` +
+          `请检查 API 配置是否正确或使用其他 API 替代`
+        );
+      }
+    }
+  }
+}
+
+function findApiRefLines(js: string, apiName: string): number[] {
+  const lines: number[] = [];
+  const pattern = new RegExp(`callApi\\s*\\(\\s*['"]${apiName}['"]`, 'g');
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(js)) !== null) {
+    lines.push(js.substring(0, match.index).split('\n').length);
+  }
+  return lines;
 }

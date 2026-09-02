@@ -47,9 +47,6 @@ public class ToolGroup {
     @Column(name = "sort_order")
     private Integer sortOrder;
 
-    @Column(nullable = false, length = 20)
-    private String status;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -60,7 +57,6 @@ public class ToolGroup {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
-        if (status == null) status = "ENABLED";
         if (sortOrder == null) sortOrder = 0;
     }
 

@@ -1,10 +1,12 @@
 package com.luban.controller;
 
 import com.luban.dto.ApiResponse;
+import com.luban.entity.Application;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.ApiKeyTool;
+import com.luban.repository.ApplicationRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.repository.ApplicationApiKeyRepository;
 import com.luban.repository.ApiKeyToolRepository;
@@ -21,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -51,6 +54,7 @@ public class ApplicationToolController {
     private final ApiKeyToolRepository apiKeyToolRepository;
     private final UserRepository userRepository;
     private final PageService pageService;
+    private final ApplicationRepository applicationRepository;
 
     public ApplicationToolController(ToolDefinitionRepository toolDefinitionRepository,
                                      RoleRepository roleRepository,
@@ -58,7 +62,8 @@ public class ApplicationToolController {
                                      ApplicationApiKeyRepository applicationApiKeyRepository,
                                      ApiKeyToolRepository apiKeyToolRepository,
                                      UserRepository userRepository,
-                                     PageService pageService) {
+                                     PageService pageService,
+                                     ApplicationRepository applicationRepository) {
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
@@ -66,15 +71,7 @@ public class ApplicationToolController {
         this.apiKeyToolRepository = apiKeyToolRepository;
         this.userRepository = userRepository;
         this.pageService = pageService;
-    }
-
-    @GetMapping("/{applicationId}")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> list(
-            @PathVariable Long applicationId) {
-        List<ToolDefinition> tools = toolDefinitionRepository
-                .findByGroupIdAndScope(applicationId, "APPLICATION");
-        List<Map<String, Object>> result = tools.stream().map(this::toToolMap).collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.ok(result));
+        this.applicationRepository = applicationRepository;
     }
 
     @PostMapping("/{applicationId}")
@@ -129,12 +126,21 @@ public class ApplicationToolController {
                 .body(ApiResponse.ok(toToolMap(tool)));
     }
 
+    private void checkAppOwnership(Long applicationId, User user) {
+        Application app = applicationRepository.findById(applicationId)
+                .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
+        if (!app.getCreatedBy().equals(user.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作此应用");
+        }
+    }
+
     @PutMapping("/{applicationId}/{id}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> update(
             @PathVariable Long applicationId,
             @PathVariable Long id,
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
+        checkAppOwnership(applicationId, user);
         ToolDefinition tool = toolDefinitionRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("API 不存在: " + id));
 
@@ -174,7 +180,9 @@ public class ApplicationToolController {
     @DeleteMapping("/{applicationId}/{id}")
     public ResponseEntity<ApiResponse<Void>> delete(
             @PathVariable Long applicationId,
-            @PathVariable Long id) {
+            @PathVariable Long id,
+            @AuthenticationPrincipal User user) {
+        checkAppOwnership(applicationId, user);
         ToolDefinition tool = toolDefinitionRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("API 不存在: " + id));
 
@@ -183,8 +191,7 @@ public class ApplicationToolController {
                     .body(ApiResponse.error("无权删除此 API"));
         }
 
-        tool.setStatus("DISABLED");
-        toolDefinitionRepository.save(tool);
+        toolDefinitionRepository.delete(tool);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
@@ -199,6 +206,7 @@ public class ApplicationToolController {
 
         String scope = tool.getScope();
         if ("APPLICATION".equals(scope)) {
+            checkAppOwnership(applicationId, user);
             if (!tool.getGroupId().equals(applicationId)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(ApiResponse.error("无权调用此 API"));
@@ -208,19 +216,18 @@ public class ApplicationToolController {
                     .body(ApiResponse.error("不支持的 API 类型"));
         }
 
-        // 白名单校验：用户在应用是否有角色
-        List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
-        List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
-        List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
-        boolean inWhitelist = userRoles.stream()
-                .anyMatch(ru -> appRoleIds.contains(ru.getRoleId()));
-        if (!inWhitelist) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("无权访问此应用，请联系管理员"));
-        }
-
-        // 授权 API（PLATFORM scope）额外校验 KEY 绑定和权限
+        // 授权 API（PLATFORM scope）额外校验：白名单 + KEY 绑定权限
         if ("PLATFORM".equals(scope)) {
+            List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
+            List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
+            List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
+            boolean inWhitelist = userRoles.stream()
+                    .anyMatch(ru -> appRoleIds.contains(ru.getRoleId()));
+            if (!inWhitelist) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error("无权访问此应用，请联系管理员"));
+            }
+
             List<ApplicationApiKey> bindings = applicationApiKeyRepository
                     .findByApplicationIdAndStatus(applicationId, "ACTIVE");
             if (bindings.isEmpty()) {
@@ -449,7 +456,6 @@ public class ApplicationToolController {
         map.put("displayName", tool.getDisplayName());
         map.put("description", tool.getDescription());
         map.put("toolType", tool.getToolType());
-        map.put("status", tool.getStatus());
         map.put("groupId", tool.getGroupId());
         map.put("scope", tool.getScope());
         map.put("config", tool.getConfig());

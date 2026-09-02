@@ -19,4 +19,5 @@ public class CreateCodePageRequest {
     private String js;
     private List<String> libraries;
     private List<Long> queryIds;
+    private List<Long> toolIds;
 }

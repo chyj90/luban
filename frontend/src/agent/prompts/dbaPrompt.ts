@@ -6,6 +6,7 @@ export interface DBAContext {
   requirement: string;
   existingQueries?: Array<{ id: number; name: string; description: string }>;
   modifyInstructions?: string[];
+  queryReferences?: Array<{ pageId: number; pageName: string }>;
 }
 
 export function buildDataAssistantPrompt(ctx: DBAContext): string {
@@ -37,6 +38,10 @@ export function buildDataAssistantPrompt(ctx: DBAContext): string {
   }
 
   if (ctx.taskType === 'MODIFY') {
+    const referencesText = ctx.queryReferences?.length
+      ? ctx.queryReferences.map((r) => `  - ${r.pageName} (ID:${r.pageId})`).join('\n')
+      : '';
+
     return `你是数据辅助智能体（DBA），负责管理数据源和查询。
 
 ## 当前上下文
@@ -51,13 +56,15 @@ ${modifyText ? `\n## 具体修改说明\n${modifyText}` : ''}
 
 ## 已有查询
 ${existingQueriesText}
+${referencesText ? `\n## ⚠️ 跨页面影响范围（重要）\n该查询被以下页面引用，修改返回字段会影响这些页面：\n${referencesText}\n\n修改时请注意：\n- 如果修改涉及返回字段的增删改，会影响所有引用该查询的页面\n- 如需新增字段，尽量以追加方式添加到现有 SQL 末尾，避免改变已有字段顺序和名称\n- 如需删除字段，必须在汇报结果中明确指出删除了哪些字段，以及哪些页面会受影响\n- 修改完成后，在汇报中单独列出「跨页面影响」部分，说明哪些页面可能受影响` : ''}
 
 ## 修改流程
 1. 先调用 list_queries 确认要修改的查询是否存在
 2. 调用 get_query 获取查询的完整 SQL 和配置
-3. 根据修改需求调整 SQL，然后调用 update_query 更新
-4. 调用 run_query 测试修改后的查询
-5. 测试通过后汇报结果${retryRule}`;
+3. 调用 list_query_references 确认查询的引用情况
+4. 根据修改需求调整 SQL，然后调用 update_query 更新
+5. 调用 run_query 测试修改后的查询
+6. 测试通过后汇报结果${retryRule}`;
   }
 
   return `你是数据辅助智能体（DBA），负责管理数据源和查询。
@@ -75,21 +82,36 @@ ${ctx.requirement}
 ${existingQueriesText}
 
 ## 你的能力
-- 连接数据源（MySQL/PostgreSQL/REST API）
+- 连接数据源（MySQL/PostgreSQL 及驱动扩展的数据源）
+- 连接外部 API（connect_api，支持 GET/POST/PUT/DELETE/PATCH）
+- 测试 API 连通性（test_api）
 - 查看数据源列表和数据库表结构
 - 测试数据源连通性
 - 创建/更新/删除查询
 - 执行查询并调试
 - 直接执行 SQL（建表、插入数据等）
 
-## 工作流程（只创建这一个查询）
+## ⚠️ 判断需求类型（首先执行）
+分析「需要创建的查询」内容，判断是 **API 连接** 还是 **SQL 查询**：
+- **包含 API/HTTP/接口/端点/REST/请求地址/baseUrl 等关键词** → 走 API 连接流程
+- **包含 表格/字段/数据/统计/报表/CRUD 等关键词** → 走 SQL 查询流程
 
-### ⚠️ 快速路径（优先尝试）
+### API 连接流程（需求为 API 连接时）
+1. 先调用 list_apis 检查是否存在同名 API
+2. 如果已存在 → 调用 test_api 测试连通性，成功则汇报结果，**跳过后续步骤**
+3. 如果不存在 → 调用 connect_api 创建 API 连接
+4. 调用 test_api 测试连通性，验证 API 可用
+5. 测试通过后，汇报结果（API 名称、方法、地址、响应状态）
+6. 不需要创建 SQL 查询
+
+### SQL 查询流程（需求为 SQL 查询时）
+
+#### ⚠️ 快速路径（优先尝试）
 1. **先调用 list_queries**，检查是否存在同名查询（${ctx.queryName}）
 2. **如果查询已存在** → 直接调用 run_query 测试，测试通过立即汇报结果，**跳过所有后续步骤**
 3. **如果查询不存在** → 继续下面的完整流程
 
-### 完整流程（查询不存在时）
+#### 完整流程（查询不存在时）
 1. 检查对话历史，如果已有数据源信息、表结构、查询列表，直接跳到步骤 4
 2. 首次或无历史时：list_datasources → test_datasource → fetch_datasource_structure → list_queries
 3. 如需建表/插入数据，使用 execute_sql 直接执行 DDL/DML，不要用 create_query 创建 DDL 查询

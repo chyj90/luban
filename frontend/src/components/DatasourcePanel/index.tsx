@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import Select from '@/components/Select';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { listDrivers, installDriver } from '@/api/driver';
 import { listApplicationDatasources } from '@/api/tool';
@@ -263,6 +264,22 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     API: 'ds-badge-api',
   };
 
+  const dataSourceTypeOptions = useMemo(() => {
+    const options: Array<{ value: string; label: string }> = [
+      { value: 'MySQL', label: 'MySQL' },
+      { value: 'PostgreSQL', label: 'PostgreSQL' },
+    ];
+    if (drivers.length > 0) {
+      for (const d of drivers.filter((d) => d.enabled)) {
+        options.push({
+          value: d.name,
+          label: `${d.displayName}${d.installed ? '' : ' (需安装)'}`,
+        });
+      }
+    }
+    return options;
+  }, [drivers]);
+
   const selectedDriver = getDriverInfo(form.type);
   const needsInstall = selectedDriver && !selectedDriver.installed && isJdbcType(form.type);
 
@@ -283,31 +300,12 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
         <div className="ds-form">
           <div className="ds-form-field">
             <label className="ds-label">数据源类型</label>
-            <select
-              className="ds-input"
+            <Select
               value={form.type}
-              onChange={(e) => handleTypeSelect(e.target.value)}
-            >
-              <option value="">请选择类型</option>
-              <optgroup label="关系型数据库">
-                <option value="MySQL">MySQL</option>
-                <option value="PostgreSQL">PostgreSQL</option>
-              </optgroup>
-              <optgroup label="API">
-                <option value="rest_api">REST API</option>
-              </optgroup>
-              {drivers.length > 0 && (
-                <optgroup label="数据仓库 / 大数据">
-                  {drivers
-                    .filter((d) => d.enabled)
-                    .map((d) => (
-                      <option key={d.name} value={d.name}>
-                        {d.displayName} {d.installed ? '' : '(需安装)'}
-                      </option>
-                    ))}
-                </optgroup>
-              )}
-            </select>
+              options={dataSourceTypeOptions}
+              onChange={handleTypeSelect}
+              placeholder="请选择类型"
+            />
           </div>
 
           {needsInstall && (
@@ -421,16 +419,16 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 const val = (form as Record<string, unknown>)[ef.name] as string || '';
                 if (ef.type === 'select') {
                   return (
-                    <select
+                    <Select
                       key={ef.name}
-                      className="ds-input"
                       value={val}
-                      onChange={(e) => setForm({ ...form, [ef.name]: e.target.value })}
-                    >
-                      <option value="">{ef.label}</option>
-                      <option value="http">HTTP</option>
-                      <option value="binary">Binary</option>
-                    </select>
+                      options={[
+                        { value: 'http', label: 'HTTP' },
+                        { value: 'binary', label: 'Binary' },
+                      ]}
+                      onChange={(value) => setForm({ ...form, [ef.name]: value })}
+                      placeholder={ef.label}
+                    />
                   );
                 }
                 return (
@@ -488,12 +486,17 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 <div className="ds-section-header">
                   <span>认证</span>
                 </div>
-                <select className="ds-input" value={form.authType} onChange={(e) => setForm({ ...form, authType: e.target.value })}>
-                  <option value="none">None</option>
-                  <option value="basic">Basic Auth</option>
-                  <option value="apiKey">API Key</option>
-                  <option value="bearer">Bearer Token</option>
-                </select>
+                <Select
+                  value={form.authType}
+                  options={[
+                    { value: 'none', label: 'None' },
+                    { value: 'basic', label: 'Basic Auth' },
+                    { value: 'apiKey', label: 'API Key' },
+                    { value: 'bearer', label: 'Bearer Token' },
+                  ]}
+                  onChange={(value) => setForm({ ...form, authType: value })}
+                  placeholder="选择认证方式"
+                />
 
                 {form.authType === 'basic' && (
                   <>
@@ -506,10 +509,15 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                   <>
                     <input className="ds-input" placeholder="Key 名称" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} />
                     <input className="ds-input" placeholder="Value" type="password" value={form.apiValue} onChange={(e) => setForm({ ...form, apiValue: e.target.value })} />
-                    <select className="ds-input" value={form.apiAddTo} onChange={(e) => setForm({ ...form, apiAddTo: e.target.value as 'header' | 'query' })}>
-                      <option value="header">添加到 Header</option>
-                      <option value="query">添加到 Query 参数</option>
-                    </select>
+                    <Select
+                      value={form.apiAddTo}
+                      options={[
+                        { value: 'header', label: '添加到 Header' },
+                        { value: 'query', label: '添加到 Query 参数' },
+                      ]}
+                      onChange={(value) => setForm({ ...form, apiAddTo: value as 'header' | 'query' })}
+                      placeholder="添加位置"
+                    />
                   </>
                 )}
 

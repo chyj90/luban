@@ -370,7 +370,7 @@ public class ApplicationService {
         queryRepository.deleteByApplicationId(id);
 
         // 3. 删除应用级数据源（owner_id = 应用ID）
-        datasourceRepository.deleteByOwnerId(id);
+        datasourceRepository.deleteBySlugAndOwnerId("APPLICATION", id);
 
         // 4. 删除应用级 API（scope=APPLICATION, groupId=appId）
         toolDefinitionRepository.deleteByGroupIdAndScope(id, "APPLICATION");

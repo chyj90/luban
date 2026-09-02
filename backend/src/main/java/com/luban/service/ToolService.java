@@ -77,8 +77,7 @@ public class ToolService {
     @Transactional
     public void delete(Long id) {
         ToolDefinition tool = getById(id);
-        tool.setStatus("DISABLED");
-        toolDefinitionRepository.save(tool);
+        toolDefinitionRepository.delete(tool);
     }
 
     private void validateJson(String json, String fieldName) {

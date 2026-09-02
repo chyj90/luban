@@ -3,6 +3,7 @@ import { listQueries, createQuery, deleteQuery } from '@/api';
 import { listDatasources } from '@/api/datasource';
 import { toast } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
+import Select from '@/components/Select';
 import type { Query } from '@/types/query';
 import type { Datasource } from '@/types/datasource';
 import './QueryPanel.css';
@@ -33,9 +34,15 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect, querie
 
   useEffect(() => {
     if (applicationId) {
-      listDatasources(applicationId).then((res) => setDatasources(res.data));
+      listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
     }
   }, [applicationId]);
+
+  const datasourceOptions = useMemo(() => {
+    return datasources
+      .filter((ds) => ds.type !== 'rest_api' && ds.type !== 'REST_API')
+      .map((ds) => ({ value: String(ds.id), label: `${ds.name} (${ds.type})` }));
+  }, [datasources]);
 
   const nextName = useMemo(() => {
     const max = queries.reduce((n, q) => {
@@ -96,17 +103,12 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect, querie
 
         {showForm && (
           <div className="qp-create-form">
-            <select
-              value={form.datasourceId}
-              onChange={(e) => setForm({ ...form, datasourceId: Number(e.target.value) })}
-            >
-              <option value={0} disabled>选择数据源</option>
-              {datasources.map((ds) => (
-                <option key={ds.id} value={ds.id}>
-                  {ds.name} ({ds.type})
-                </option>
-              ))}
-            </select>
+            <Select
+              value={form.datasourceId ? String(form.datasourceId) : ''}
+              options={datasourceOptions}
+              onChange={(value) => setForm({ ...form, datasourceId: Number(value) })}
+              placeholder="选择数据源"
+            />
             <div className="editor-sidebar-new-form">
               <input
                 value={form.name}

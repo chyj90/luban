@@ -29,9 +29,6 @@ public class ToolDefinition {
     @Column(name = "tool_type", nullable = false, length = 20)
     private String toolType;
 
-    @Column(nullable = false, length = 20)
-    private String status;
-
     @Column(name = "input_schema", columnDefinition = "JSON")
     private String inputSchema;
 
@@ -63,7 +60,6 @@ public class ToolDefinition {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
-        if (status == null) status = "ENABLED";
         if (scope == null) scope = "PLATFORM";
     }
 

@@ -23,6 +23,7 @@ export function getCodePageSkillSummary(): string {
 - 调用查询使用 QueryName.run({ 参数 }) 返回 Promise，结果结构 { columns, rows, totalCount }，其中 rows 是对象数组，每个对象以字段名（如 order_no）为 key 访问
 - **JS 代码中访问字段名必须与查询 columns 完全一致，一个字母都不能差**，禁止编造字段名（如查询返回 name 就写 row.name，不要写成 row.customer_name）
 - **queryIds 必须填写实际查询 ID，不能留空数组**，否则页面无法加载数据
+- **toolIds 必须填写实际 API 工具 ID，不能留空数组**，否则页面无法调用 API
 - **筛选/搜索/排序优先使用客户端 JS 完成**：页面初始化时调用 QueryName.run() 获取全量数据存入数组，后续筛选、搜索、排序全部用 JS 对数组操作。仅当 DBA 智能体明确告知查询支持哪些参数时，才传参给 run()
 - **使用已有查询前必须先验证**：不要假设已有查询的 SQL 正确。创建/修改依赖某查询的页面前，先用 run_query 验证查询可正常执行，**确认参数名和字段名正确后再创建页面**。查询参数名必须与 run() 调用中传入的参数名一致
 - 按钮点击事件必须使用 onclick="函数名()" 属性，并在 JS 中定义对应函数
@@ -33,13 +34,14 @@ export function getCodePageSkillSummary(): string {
   - navigateToPageByName(pageName, params)：按页面名称跳转（推荐，无需查 ID），params 为可选参数对象
   - getPageParams()：获取跳转时传入的参数对象
   - getAllPages()：获取所有页面列表数组 [{ id, name, ... }]
+  - callApi(apiName, params)：调用已连接的外部 API 工具，返回 Promise<{ status, headers, body }>。⚠️ 外部 API 必须用 callApi 调用，不能用 QueryName.run() 调用（QueryName.run() 仅用于 SQL 查询）
 - **跨页面参数名必须一致**：navigateToPage/navigateToPageByName 传入的 params 对象 key，必须与目标页面 getPageParams() 后访问的 key 完全一致。例如源页面写 navigateToPageByName('订单详情', { orderNo })，目标页面必须写 params.orderNo，不能写成 params.orderId`;
 }
 
 export function getDelegateQuerySkillSummary(): string {
   return `## 数据操作
-- 你**不知道**数据库结构，**不能**直接操作查询
-- 所有数据相关操作委派给数据辅助智能体（DBA）
+- 你**不知道**数据库结构，**不能**直接操作查询、数据源或 API
+- 所有数据相关操作委派给数据辅助智能体（DBA），包括：查询 CRUD、数据源连接、外部 API 连接
 - 仔细阅读 DBA 的回复：如果 DBA 请求确认，转达给用户；如果 DBA 汇报完成，继续下一步
 - DELETE 时：query_name 不填，只用 requirement 描述删除需求，如"删除所有查询"或"删除查询 xxx"`;
 }

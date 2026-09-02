@@ -8,7 +8,6 @@ import { EditorSidebar } from '@/components/EditorSidebar';
 import { InteliPreview } from '@/components/InteliPreview';
 import { InteliEditor } from '@/components/InteliEditor';
 import { QueryEditor } from '@/components/QueryEditor';
-import { ApiPanel } from '@/components/ApiPanel';
 import { ApiDetail } from '@/components/ApiDetail';
 import type { SelectedApi } from '@/components/ApiDetail';
 import { DatasourcePanel } from '@/components/DatasourcePanel';
@@ -19,7 +18,7 @@ import MyWorkflow from '@/pages/workflow/MyWorkflow';
 import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
-import { listPages, listQueries } from '@/api';
+import { listPages, listQueries, listApplicationTools } from '@/api';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
 import './AppEditorPage.css';
@@ -52,25 +51,38 @@ export function AppEditorPage() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
   const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
   const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
+  const [toolsVersion, setToolsVersion] = useState(0);
+  const [pendingApiId, setPendingApiId] = useState<number | null>(null);
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null);
   const [workflowView, setWorkflowView] = useState<WorkflowView>({ view: 'processes', appId: Number(appId) });
   const [editingFile, setEditingFile] = useState<EditingFile | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
 
   const loadPages = useCallback(() => {
     if (appId) {
+      setDataReady(false);
       listPages(Number(appId)).then((res) => {
         const pageList = res.data.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         setPages(pageList);
         if (pageList.length > 0) {
           const defaultPage = pageList.find((p) => p.isDefault) || pageList[0];
-          listQueries(Number(appId)).then((res) => {
-            setQueries(res.data);
+          Promise.all([
+            listQueries(Number(appId)),
+            listApplicationTools(Number(appId)),
+          ]).then(([queriesRes, toolsRes]) => {
+            const tools = ((toolsRes.data as Record<string, unknown>[]) || [])
+              .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
+            setQueries(queriesRes.data);
+            setAppTools(tools);
             fetchPage(defaultPage.id);
+            setDataReady(true);
           }).catch(() => {
             setQueries([]);
+            setAppTools([]);
             fetchPage(defaultPage.id);
+            setDataReady(true);
           });
         }
       });
@@ -114,6 +126,14 @@ export function AppEditorPage() {
 
   const handleDatasourceChange = useCallback(() => {
     setSidebarTab('datasources');
+  }, []);
+
+  const handleToolsChange = useCallback((apiId?: number) => {
+    setSidebarTab('apis');
+    setToolsVersion(v => v + 1);
+    if (apiId != null) {
+      setPendingApiId(apiId);
+    }
   }, []);
 
   const handlePageChange = (pageId: number) => {
@@ -173,7 +193,7 @@ export function AppEditorPage() {
     setGlobalLoading(loading);
   }, [loading, setGlobalLoading]);
 
-  if (loading || !appId) return null;
+  if (!dataReady || !appId) return null;
 
   if (!currentPage && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources') return null;
 
@@ -198,6 +218,9 @@ export function AppEditorPage() {
           selectedApi={selectedApi}
           onApiSelect={setSelectedApi}
           onToolsChange={setAppTools}
+          toolsVersion={toolsVersion}
+          pendingApiId={pendingApiId}
+          onPendingApiHandled={() => setPendingApiId(null)}
         />
 
         <div className="app-editor-main">
@@ -375,6 +398,7 @@ export function AppEditorPage() {
               onQuerySelect={handleQuerySelect}
               onQueriesChange={handleQueriesChange}
               onDatasourceChange={handleDatasourceChange}
+              onToolsChange={handleToolsChange}
               onWorkflowNavigate={handleWorkflowNavigate}
             />
           </div>

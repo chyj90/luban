@@ -48,6 +48,9 @@ interface ApiPanelProps {
   selectedApi: SelectedApi | null;
   onSelect: (api: SelectedApi | null) => void;
   onToolsChange?: (tools: Array<{ id: number; name: string }>) => void;
+  toolsVersion?: number;
+  pendingApiId?: number | null;
+  onPendingApiHandled?: () => void;
 }
 
 function emptyApiForm() {
@@ -89,7 +92,7 @@ function parseAppToolConfig(tool: AppToolItem) {
   }
 }
 
-export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange }: ApiPanelProps) {
+export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: ApiPanelProps) {
   const [keyTools, setKeyTools] = useState<KeyToolItem[]>([]);
   const [appTools, setAppTools] = useState<AppToolItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,7 +126,17 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange }
     }
   }, [applicationId]);
 
-  useEffect(() => { fetchTools(); }, [fetchTools]);
+  useEffect(() => { fetchTools(); }, [fetchTools, toolsVersion]);
+
+  useEffect(() => {
+    if (pendingApiId == null || loading) return;
+    const matched = appTools.find((t) => t.id === pendingApiId);
+    if (matched) {
+      const api = parseAppToolConfig(matched);
+      onSelect({ type: 'app', data: { ...api, id: matched.id } });
+      onPendingApiHandled?.();
+    }
+  }, [appTools, pendingApiId, loading, onSelect, onPendingApiHandled]);
 
   useEffect(() => {
     const selfTools = appTools.map((t) => ({ id: t.id, name: t.displayName || t.toolName || '' }));

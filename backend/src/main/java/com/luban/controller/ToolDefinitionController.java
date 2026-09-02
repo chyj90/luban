@@ -37,7 +37,7 @@ public class ToolDefinitionController {
 
     @GetMapping("/systems")
     public ResponseEntity<List<Map<String, Object>>> listSystems() {
-        List<ToolDefinition> tools = toolDefinitionRepository.findByStatusAndScope("ENABLED", "PLATFORM");
+        List<ToolDefinition> tools = toolDefinitionRepository.findByScope("PLATFORM");
         Map<Long, Map<String, Object>> systemMap = new LinkedHashMap<>();
         for (ToolDefinition tool : tools) {
             Long groupId = tool.getGroupId();

@@ -2,6 +2,7 @@ import { SkillCategory, type SkillFactory, resolveSkills } from '../skillRegistr
 import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { ANALYSIS_AGENT_PROMPT } from '../../prompts/analysisAgent';
 import { getAgentMemory, setAgentMemory } from '../agentMemory';
+import { listPages, getCodePage, listQueries } from '@/api';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
 
 export const delegateSkills: Record<string, SkillFactory> = {
@@ -21,15 +22,18 @@ export const delegateSkills: Record<string, SkillFactory> = {
       id: 'delegate:query',
       category: SkillCategory.DELEGATE,
       name: 'delegate_query',
-      description: `向数据辅助智能体委派单个查询的创建、修改或删除任务。
-每次调用只处理一个查询，不要批量传入。
+      description: `向数据辅助智能体委派数据相关任务，包括：
+- 创建/修改/删除查询
+- 连接/测试/删除数据源
+- 连接/测试/删除外部 API
+每次调用只处理一个任务，不要批量传入。
 数据辅助智能体会自行验证结果并汇报。`,
       parameters: {
         type: 'object',
         properties: {
           task_type: { type: 'string', enum: ['CREATE', 'MODIFY', 'DELETE'], description: '任务类型' },
           target_page: { type: 'string', description: '目标页面名称（DELETE 时可为空字符串）' },
-          query_name: { type: 'string', description: '查询名称，英文驼峰命名（DELETE 时不填）' },
+          query_name: { type: 'string', description: '查询/数据源/API 名称，英文驼峰命名（DELETE 时不填）' },
           requirement: { type: 'string', description: 'CREATE：需要的字段列表。MODIFY：修改说明。DELETE：删除需求描述' },
           existing_queries: { type: 'array', items: { type: 'object', properties: { id: { type: 'number' }, name: { type: 'string' }, description: { type: 'string' } } }, description: '当前应用已有的查询列表（MODIFY 时使用）' },
           modify_instructions: { type: 'array', items: { type: 'string' }, description: '修改查询的具体说明（MODIFY 时使用）' },
@@ -47,6 +51,37 @@ export const delegateSkills: Record<string, SkillFactory> = {
         } as unknown);
 
         try {
+          let queryReferences: Array<{ pageId: number; pageName: string }> = [];
+
+          if (typedArgs.task_type === 'MODIFY') {
+            try {
+              const pagesRes = await listPages(ctx.applicationId);
+              const pages = pagesRes.data;
+              const queriesRes = await listQueries(ctx.applicationId);
+              const allQueries = queriesRes.data;
+              const matchedQuery = allQueries.find((q: { name: string }) => q.name === typedArgs.query_name);
+
+              if (matchedQuery) {
+                for (const page of pages) {
+                  try {
+                    const codeRes = await getCodePage(page.id);
+                    const queryIds: number[] = codeRes.data.codePage?.queryIds || [];
+                    if (queryIds.includes(matchedQuery.id)) {
+                      queryReferences.push({ pageId: page.id, pageName: page.name });
+                    }
+                  } catch {
+                    // 页面可能没有代码页，跳过
+                  }
+                }
+              }
+              if (queryReferences.length > 0) {
+                console.log(`[delegate_query] 查询「${typedArgs.query_name}」被 ${queryReferences.length} 个页面引用: ${queryReferences.map((r) => r.pageName).join(', ')}`);
+              }
+            } catch (e) {
+              console.warn(`[delegate_query] 查询引用分析失败:`, e);
+            }
+          }
+
           const dbaPrompt = buildDataAssistantPrompt({
             applicationId: ctx.applicationId,
             taskType: typedArgs.task_type,
@@ -55,11 +90,13 @@ export const delegateSkills: Record<string, SkillFactory> = {
             requirement: typedArgs.requirement,
             existingQueries: typedArgs.existing_queries,
             modifyInstructions: typedArgs.modify_instructions,
+            queryReferences,
           });
 
           const dbaTools = resolveSkills([
             'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
-            'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute',
+            'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
+            'api:list', 'api:connect', 'api:test', 'api:delete',
           ], ctx, chatRouter);
 
           let userMessage: string;
@@ -108,7 +145,6 @@ export const delegateSkills: Record<string, SkillFactory> = {
             type: 'DELEGATE_QUERY_END',
             payload: { taskType: typedArgs.task_type, queryName: typedArgs.query_name, success: true, details: dbaResponse },
           } as unknown);
-          ctx.onQueriesChange?.();
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
           return { success: true, message: result.message, data: result };

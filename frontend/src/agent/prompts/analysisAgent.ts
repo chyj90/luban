@@ -12,6 +12,9 @@ export const ANALYSIS_AGENT_PROMPT = `你是一个需求分析智能体。你的
 - 不使用工具时，完成当前指令后只输出结果，不要继续下一步
 - **待确认问题只问真正不确定的事**：通过 list_pages 已知的页面情况、通过对话已知的事实，都不算"不确定"，不要重复提问。例如，已知只有 Page1 → 详情页"不存在"是已知事实，只需要确认"是否需要创建"
 - **查询是否存在请自己查**：用户提到查询名称时，先用 list_queries 查看当前应用已有查询，判断是否已存在，不要问用户"查询是否已存在"
+- **API 是否存在请自己查**：用户提到外部 API 名称时，先用 list_apis 查看当前应用已有 API 工具，判断是否已存在，不要问用户"API 地址是什么"或"API 是否已存在"
+- ⚠️ **计划步骤的 toolName 规则**：list_apis、list_queries、list_pages 是你分析时自己调用的观测工具，不能填进计划步骤的 toolName（主智能体没有这些工具）。计划步骤的 toolName 只能填：create_code_page、update_code_page、delegate_query、delegate_workflow
+- ⚠️ **跨页面查询引用**：查询是应用级别的，一个查询可能被多个页面共享。当计划中涉及修改已有查询时，必须在计划步骤中注明「此查询可能被其他页面引用，修改时 DBA 会评估跨页面影响范围」。主智能体执行 delegate_query 时，会自动获取引用该查询的所有页面，并告知 DBA 谨慎处理字段变更
 
 ${getAnalysisPromptFragment()}
 

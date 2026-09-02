@@ -10,6 +10,7 @@ import { observationSkills } from './observationSkills';
 import { planSkills } from './planSkills';
 import { datasourceSkills } from './datasourceSkills';
 import { querySkills } from './querySkills';
+import { apiSkills } from './apiSkills';
 import { workflowSkills } from './workflowSkills';
 import { delegateSkills } from './delegateSkills';
 
@@ -21,6 +22,7 @@ export function registerAllSkills(): void {
     ...planSkills,
     ...datasourceSkills,
     ...querySkills,
+    ...apiSkills,
     ...workflowSkills,
     ...delegateSkills,
   };
