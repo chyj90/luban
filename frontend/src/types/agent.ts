@@ -72,12 +72,9 @@ export interface ToolExecuteResult {
 }
 
 export interface DelegateQueryArgs {
-  task_type: string;
+  requirement: string;
   target_page: string;
   query_name: string;
-  requirement: string;
-  existing_queries?: Array<{ id: number; name: string; description: string }>;
-  modify_instructions?: string[];
 }
 
 export interface DelegateQueryResult {

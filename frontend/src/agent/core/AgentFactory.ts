@@ -6,6 +6,7 @@ import { formatUnfinishedPlansForPrompt } from './planContext';
 import { runAgentLoop } from './agentLoop';
 import { getPlanPromptFragment } from '../registry/skills/promptFragments';
 import type { ChatRouter } from './chatRouter';
+import { createAgentStateMachine, AgentState, isUserConfirming, type AgentStateMachine } from './agentStateMachine';
 
 export interface AgentFactoryOptions {
   model: string;
@@ -41,6 +42,37 @@ export type AgentExecutor = {
   getMessages: () => Message[];
 };
 
+function handleToolResultTransition(
+  toolName: string,
+  result: { success: boolean; data?: { planId?: string } },
+  stateMachine: AgentStateMachine,
+) {
+  if (toolName === 'delegate_analysis' && result.success) {
+    const store = useAgentStore.getState();
+    const draftPlan = store.plans.find((p) => p.status === 'draft');
+    if (draftPlan) {
+      stateMachine.transition(AgentState.AWAITING_CONFIRM, draftPlan.id);
+      console.log(`[AgentFactory] delegate_analysis 完成，发现 draft plan: ${draftPlan.id}，切换到 AWAITING_CONFIRM`);
+    }
+    return;
+  }
+
+  if (toolName === 'confirm_plan' && result.success) {
+    stateMachine.transition(AgentState.EXECUTING, stateMachine.planId);
+    return;
+  }
+
+  if (toolName === 'abandon_plan' && result.success) {
+    stateMachine.transition(AgentState.IDLE, null);
+    return;
+  }
+
+  if (toolName === 'validate_plan' && result.success) {
+    stateMachine.transition(AgentState.IDLE, null);
+    return;
+  }
+}
+
 export async function createAgent(options: AgentFactoryOptions): Promise<AgentExecutor> {
   const {
     model,
@@ -55,6 +87,8 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   let abortController: AbortController | null = null;
   const conversationMessages: Message[] = initialMessages ? [...initialMessages] : [];
+  const tempName = agentName || '主智能体';
+  console.log(`[AgentFactory:${tempName}] createAgent | initialMessages 参数: ${initialMessages?.length || 0} 条 | conversationMessages 初始化后: ${conversationMessages.length} 条 | roles: [${conversationMessages.map((m) => m.role).join(', ')}]`);
 
   const isMainAgent = options.agentType !== 'data-assistant';
   const systemPrompt = overrideSystemPrompt || buildInteliSystemPrompt(
@@ -72,6 +106,8 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   const name = agentName || '主智能体';
   const icon = agentIcon || '';
+
+  const stateMachine = isMainAgent ? createAgentStateMachine() : undefined;
 
   return {
     async run(userMessage: string): Promise<void> {
@@ -104,6 +140,27 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         });
       }
 
+      if (stateMachine && stateMachine.state === AgentState.AWAITING_CONFIRM) {
+        if (isUserConfirming(userMessage)) {
+          const store = useAgentStore.getState();
+          const planId = stateMachine.planId;
+          if (planId) {
+            store.confirmPlan(planId);
+            stateMachine.transition(AgentState.EXECUTING, planId);
+            conversationMessages.push({
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: '计划已确认。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
+              timestamp: Date.now(),
+            });
+            console.log(`[AgentFactory:${name}] 自动确认计划 ${planId}，切换到 EXECUTING`);
+          }
+        } else {
+          stateMachine.transition(AgentState.IDLE, null);
+          console.log(`[AgentFactory:${name}] 用户消息非确认，切换回 IDLE`);
+        }
+      }
+
       setStatus('planning');
       setStreaming(true);
 
@@ -123,6 +180,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           timeout: AGENT_CONFIG.timeout,
           signal: abortController.signal,
           conversationMessages,
+          stateMachine,
           onStatusChange: (status) => {
             setStatus(status);
           },
@@ -229,6 +287,9 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               type: 'DEBUG_CHAT_LOG',
               payload: messages,
             });
+          },
+          onAfterToolResult: (toolName, result, sm) => {
+            handleToolResultTransition(toolName, result, sm);
           },
           onShouldComplete: () => {
             if (!isMainAgent) {

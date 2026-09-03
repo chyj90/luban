@@ -3,6 +3,7 @@ import { createAgent } from './AgentFactory';
 import type { AgentExecutor, AgentFactoryOptions } from './AgentFactory';
 import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMentions, resolveAgentTools } from '../registry/agentRegistry';
 import type { AgentDefinition } from '../registry/agentRegistry';
+import { getAgentMemory } from '../registry/agentMemory';
 
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
@@ -112,7 +113,11 @@ export class ChatRouter {
       };
     }
 
-    const executor = await this.createExecutor(agentDef, sessionId);
+    const executor = await this.createExecutor(agentDef, sessionId, {
+        initialMessages: agentDef.id !== 'main-agent'
+          ? getAgentMemory(Number(this.sessionOptions.applicationId), agentDef.id)
+          : undefined,
+      });
     this.allExecutors.add(executor);
     this.activeAgentId = agentDef.id;
     this.activeExecutor = executor;

@@ -1,5 +1,217 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { formApi, workflowApi, instanceApi, taskApi, orgApi, bindingApi, lintApi } from '@/api/workflow';
+import { listRoles, listDepartments } from '@/api/user';
+
+const VALID_NODE_TYPES = ['start', 'approval', 'condition', 'parallel', 'sub_process', 'end', 'cc'];
+
+function validateWorkflowNodes(nodes: unknown[]): string | null {
+  if (!nodes || nodes.length === 0) {
+    return '节点列表不能为空';
+  }
+
+  const errors: string[] = [];
+
+  nodes.forEach((node: unknown, i: number) => {
+    const n = node as Record<string, unknown>;
+    const prefix = `节点[${i}]`;
+
+    if (!n.nodeType) {
+      errors.push(`${prefix}: 缺少 nodeType 字段（如 "start"、"approval"、"condition"、"end"）`);
+    } else if (!VALID_NODE_TYPES.includes(n.nodeType as string)) {
+      errors.push(`${prefix}: nodeType "${n.nodeType}" 无效，必须是 ${VALID_NODE_TYPES.join('/')} 之一`);
+    }
+
+    const expectedType = n.nodeType ? `${n.nodeType}Node` : '';
+    if (!n.type) {
+      errors.push(`${prefix}: 缺少 type 字段，应为 "${expectedType}"（nodeType + "Node" 后缀）`);
+    } else if (expectedType && n.type !== expectedType) {
+      errors.push(`${prefix}: type "${n.type}" 不正确，应为 "${expectedType}"`);
+    }
+
+    if (!n.position || typeof (n.position as Record<string, unknown>)?.x !== 'number' || typeof (n.position as Record<string, unknown>)?.y !== 'number') {
+      errors.push(`${prefix}: 缺少 position 字段，格式为 { x: number, y: number }`);
+    }
+
+    if (!n.id) {
+      errors.push(`${prefix}: 缺少 id 字段（如 "start"、"approval_1"、"end"），边将通过此 id 连接节点`);
+    }
+
+    const data = n.data as Record<string, unknown> | undefined;
+    if (!data) {
+      errors.push(`${prefix}: 缺少 data 字段`);
+    } else {
+      if (!data.label) {
+        errors.push(`${prefix}: data.label 不能为空，应为节点显示名称`);
+      }
+      if (!data.nodeType) {
+        errors.push(`${prefix}: data.nodeType 不能为空，应与 nodeType 字段一致`);
+      }
+      const config = data.config as Record<string, unknown> | undefined;
+      if (!config) {
+        errors.push(`${prefix}: data.config 不能为空`);
+      } else if (!config.nodeName) {
+        errors.push(`${prefix}: data.config.nodeName 不能为空，应为节点名称`);
+      }
+    }
+  });
+
+  if (errors.length > 0) {
+    return `节点格式校验失败，请修正后重试：\n${errors.map((e) => `  - ${e}`).join('\n')}\n\n` +
+      `正确格式示例（含所有节点类型）：\n` +
+      `"nodes": [\n` +
+      `  { "id": "start", "nodeType": "start", "type": "startNode", "position": { "x": 300, "y": 50 }, "data": { "label": "发起人", "nodeType": "start", "config": { "nodeName": "发起人" } } },\n` +
+      `  { "id": "approval_1", "nodeType": "approval", "type": "approvalNode", "position": { "x": 300, "y": 170 }, "data": { "label": "部门负责人审批", "nodeType": "approval", "config": { "nodeName": "部门负责人审批", "approverType": "department_head", "departmentSource": "initiator" } } },\n` +
+      `  { "id": "end", "nodeType": "end", "type": "endNode", "position": { "x": 300, "y": 290 }, "data": { "label": "结束", "nodeType": "end", "config": { "nodeName": "结束" } } }\n` +
+      `]\n` +
+      `edges 连线示例：\n` +
+      `"edges": [\n` +
+      `  { "id": "e1", "source": "start", "target": "approval_1", "type": "smoothstep", "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20 } },\n` +
+      `  { "id": "e2", "source": "approval_1", "target": "end", "type": "smoothstep", "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20 } }\n` +
+      `]\n` +
+      `注意：type = nodeType + "Node"（如 approval → approvalNode，不是 approverNode）`;
+  }
+  return null;
+}
+
+function validateWorkflowEdges(edges: unknown[], nodeIds: Set<string>): string | null {
+  if (!edges || edges.length === 0) {
+    return '连线列表不能为空';
+  }
+
+  const errors: string[] = [];
+
+  edges.forEach((edge: unknown, i: number) => {
+    const e = edge as Record<string, unknown>;
+    const prefix = `连线[${i}]`;
+
+    if (!e.id || typeof e.id !== 'string') {
+      errors.push(`${prefix}: 缺少 id 字段（如 "e1"、"e2"），必须为字符串`);
+    }
+    if (!e.source || typeof e.source !== 'string') {
+      errors.push(`${prefix}: 缺少 source 字段，必须为源节点的 id`);
+    } else if (!nodeIds.has(e.source as string)) {
+      errors.push(`${prefix}: source "${e.source}" 不存在于节点列表中，请检查节点 id 是否正确`);
+    }
+    if (!e.target || typeof e.target !== 'string') {
+      errors.push(`${prefix}: 缺少 target 字段，必须为目标节点的 id`);
+    } else if (!nodeIds.has(e.target as string)) {
+      errors.push(`${prefix}: target "${e.target}" 不存在于节点列表中，请检查节点 id 是否正确`);
+    }
+    if (!e.type || typeof e.type !== 'string') {
+      errors.push(`${prefix}: 缺少 type 字段，必须为 "smoothstep"`);
+    }
+    if (!e.markerEnd || typeof (e.markerEnd as Record<string, unknown>)?.type !== 'string') {
+      errors.push(`${prefix}: 缺少 markerEnd 字段，必须为 { "type": "arrowclosed", "width": 20, "height": 20 }`);
+    }
+  });
+
+  if (errors.length > 0) {
+    return `连线格式校验失败，请修正后重试：\n${errors.map((e) => `  - ${e}`).join('\n')}\n\n` +
+      `正确连线格式示例：\n` +
+      `"edges": [\n` +
+      `  { "id": "e1", "source": "start", "target": "approval_1", "type": "smoothstep", "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20 } },\n` +
+      `  { "id": "e2", "source": "approval_1", "target": "end", "type": "smoothstep", "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20 } }\n` +
+      `]\n` +
+      `注意：source 和 target 必须引用节点列表中的 id（如 "start"、"approval_1"、"end"），不能使用节点 label 名称`;
+  }
+  return null;
+}
+
+async function validateNodeConfigReferences(nodes: unknown[]): Promise<string | null> {
+  const roleIdSet = new Set<number>();
+  const memberIdSet = new Set<number>();
+  const departmentIdSet = new Set<number>();
+
+  const collectIds = (ids: unknown, target: Set<number>) => {
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === 'number') target.add(id);
+        else if (typeof id === 'string' && !isNaN(Number(id))) target.add(Number(id));
+      }
+    }
+  };
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i] as Record<string, unknown>;
+    if (n.nodeType !== 'approval') continue;
+    const config = (n.data as Record<string, unknown>)?.config as Record<string, unknown> | undefined;
+    if (!config) continue;
+    collectIds(config.roleIds, roleIdSet);
+    collectIds(config.memberIds, memberIdSet);
+    collectIds(config.departmentIds, departmentIdSet);
+  }
+
+  if (roleIdSet.size === 0 && memberIdSet.size === 0 && departmentIdSet.size === 0) {
+    return null;
+  }
+
+  let validRoles = new Set<number>();
+  let validMembers = new Set<number>();
+  let validDepartments = new Set<number>();
+
+  try {
+    const promises: Promise<void>[] = [];
+
+    if (roleIdSet.size > 0) {
+      promises.push(
+        listRoles().then((res) => {
+          validRoles = new Set((res.data || []).map((r: { id: number }) => r.id));
+        }),
+      );
+    }
+
+    if (memberIdSet.size > 0) {
+      promises.push(
+        orgApi.getMembers().then((members) => {
+          validMembers = new Set((members || []).map((m: { id: number }) => m.id));
+        }),
+      );
+    }
+
+    if (departmentIdSet.size > 0) {
+      promises.push(
+        listDepartments().then((res) => {
+          validDepartments = new Set((res.data || []).map((d: { id: number }) => d.id));
+        }),
+      );
+    }
+
+    await Promise.all(promises);
+  } catch (e) {
+    console.warn('[workflowSkills] 无法验证节点引用，跳过:', e);
+    return null;
+  }
+
+  const errors: string[] = [];
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i] as Record<string, unknown>;
+    if (n.nodeType !== 'approval') continue;
+    const config = (n.data as Record<string, unknown>)?.config as Record<string, unknown> | undefined;
+    if (!config) continue;
+    const prefix = `节点[${i}]（${config.nodeName || '审批节点'}）`;
+
+    const validateIds = (ids: unknown, validSet: Set<number>, label: string, searchTool: string) => {
+      if (Array.isArray(ids)) {
+        for (const id of ids) {
+          const numId = typeof id === 'number' ? id : Number(id);
+          if (!validSet.has(numId)) {
+            errors.push(`${prefix}: ${label} ${id} 不存在，请先使用 ${searchTool} 查询可用项后重新调用 design_workflow`);
+          }
+        }
+      }
+    };
+
+    validateIds(config.roleIds, validRoles, '角色 ID', 'search_roles');
+    validateIds(config.memberIds, validMembers, '人员 ID', 'search_members');
+    validateIds(config.departmentIds, validDepartments, '部门 ID', 'search_departments');
+  }
+
+  if (errors.length > 0) {
+    return `节点引用校验失败，请修正后重试：\n${errors.map((e) => `  - ${e}`).join('\n')}`;
+  }
+  return null;
+}
 
 export const workflowSkills: Record<string, SkillFactory> = {
   'workflow:design_form': (ctx) => ({
@@ -25,8 +237,11 @@ export const workflowSkills: Record<string, SkillFactory> = {
         });
         if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', formMode: true, formId: result.id });
         return { success: true, message: '表单创建成功', data: result };
-      } catch {
-        return { success: false, message: `表单创建失败: ${(e as Error).message}` };
+      } catch (e: unknown) {
+        const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          || (e as Error).message
+          || '未知错误';
+        return { success: false, message: `表单创建失败：${errMsg}。请检查 fields 格式是否正确（参考系统提示词中的字段类型和格式）。` };
       }
     },
   }),
@@ -35,43 +250,64 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:design',
     category: SkillCategory.WORKFLOW,
     name: 'design_workflow',
-    description: `设计一个业务流程。指定流程名称、节点配置和连线关系。
-
-## 每个节点（nodes[i]）必须包含的字段
-- nodeId: 节点唯一标识（如 start、approval_1、end）
-- id: 节点唯一标识（与 nodeId 相同，如 start、approval_1、end）
-- nodeType: 节点类型（start/approval/condition/parallel/sub_process/end，不加 "Node" 后缀，用于后端校验）
-- type: 节点类型（startNode/approvalNode/conditionNode/parallelNode/sub_processNode/endNode，加 "Node" 后缀，用于前端渲染）
-- position: { x: number, y: number } 节点在画布上的位置（必填）
-- data: { label: 显示名称, nodeType: 节点类型（同 nodeType 字段值）, config: 配置对象 }
-
-## 节点类型
-start（开始）、approval（审批）、condition（条件分支）、parallel（并行）、sub_process（子流程）、end（结束）
-
-## 审批人类型
-member（指定人员）、role（指定角色）、department_head（部门负责人）、leader（直属上级）
-
-## 审批模式
-all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequential（依次审批）`,
+    description: '创建审批流程。⚠️ 必须在函数调用参数中传入 name/applicationId/nodes/edges，不要只在思考中描述。',
     parameters: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '流程名称' },
-        description: { type: 'string', description: '流程描述' },
+        name: { type: 'string', description: '流程名称（如：采购审批流程）', minLength: 1 },
         applicationId: { type: 'number', description: '应用 ID' },
-        nodes: { type: 'array', description: '节点配置列表' },
-        edges: { type: 'array', description: '连线列表' },
+        nodes: { type: 'array', description: '节点列表。每个节点必须有 nodeType/type/position/data 字段', minItems: 1 },
+        edges: { type: 'array', description: '连线列表。每条连线必须有 id(字符串)/source/target/type("smoothstep")/markerEnd({"type":"arrowclosed","width":20,"height":20})', minItems: 1 },
       },
-      required: ['name', 'applicationId'],
+      required: ['name', 'applicationId', 'nodes', 'edges'],
     },
     async execute(args) {
-      const { name, description, applicationId, nodes, edges } = args as unknown;
-      const result = await workflowApi.createDefinition({
-        name, description, applicationId,
-        nodes: JSON.stringify(nodes || []), edges: JSON.stringify(edges || []),
-      });
-      if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', processId: result.id });
-      return { success: true, data: result, message: `流程「${name}」创建成功` };
+      const { name, applicationId, nodes, edges } = args as unknown;
+      const description = (args as Record<string, unknown>).description as string | undefined;
+
+      const missing: string[] = [];
+      if (!name) missing.push('name（流程名称，如 "采购审批流程"）');
+      if (!applicationId) missing.push(`applicationId（当前应用 ID: ${ctx.applicationId || '未知'}）`);
+      if (!nodes || !Array.isArray(nodes) || nodes.length === 0) missing.push('nodes（节点数组，至少包含 start 和 end 节点）');
+      if (!edges || !Array.isArray(edges) || edges.length === 0) missing.push('edges（连线数组）');
+
+      if (missing.length > 0) {
+        return {
+          success: false,
+          message: `design_workflow 调用失败：工具调用参数为空或缺少必填字段。\n` +
+            `缺少的参数：${missing.join('、')}\n` +
+            `请在函数调用中传入完整的 JSON 参数，不要只在思考文本中描述。示例：\n` +
+            `{ "name": "流程名称", "applicationId": ${ctx.applicationId || 1}, "nodes": [{ "id": "start", "nodeType": "start", "type": "startNode", "position": { "x": 300, "y": 50 }, "data": { "label": "发起人", "nodeType": "start", "config": { "nodeName": "发起人" } } }, { "id": "approval_1", "nodeType": "approval", "type": "approvalNode", "position": { "x": 300, "y": 170 }, "data": { "label": "审批人", "nodeType": "approval", "config": { "nodeName": "审批人", "approverType": "leader", "leaderOf": "initiator" } } }, { "id": "end", "nodeType": "end", "type": "endNode", "position": { "x": 300, "y": 290 }, "data": { "label": "结束", "nodeType": "end", "config": { "nodeName": "结束" } } }], "edges": [{ "id": "e1", "source": "start", "target": "approval_1", "type": "smoothstep", "markerEnd": { "type": "arrowclosed" } }, { "id": "e2", "source": "approval_1", "target": "end", "type": "smoothstep", "markerEnd": { "type": "arrowclosed" } }] }`,
+        };
+      }
+
+      const appId = (applicationId as number) || ctx.applicationId;
+      try {
+        const validationError = validateWorkflowNodes((nodes as unknown[]) || []);
+        if (validationError) {
+          return { success: false, message: validationError };
+        }
+        const nodeIds = new Set((nodes as unknown[]).map((n: unknown) => (n as Record<string, unknown>).id as string));
+        const edgeError = validateWorkflowEdges((edges as unknown[]) || [], nodeIds);
+        if (edgeError) {
+          return { success: false, message: edgeError };
+        }
+        const refError = await validateNodeConfigReferences((nodes as unknown[]) || []);
+        if (refError) {
+          return { success: false, message: refError };
+        }
+        const result = await workflowApi.createDefinition({
+          name, description, applicationId: appId,
+          nodes: JSON.stringify(nodes || []), edges: JSON.stringify(edges || []),
+        });
+        if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', processId: result.id });
+        return { success: true, data: result, message: `流程「${name}」创建成功` };
+      } catch (e: unknown) {
+        const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          || (e as Error).message
+          || '未知错误';
+        return { success: false, message: `创建流程「${name}」失败：${errMsg}。请检查 nodes 和 edges 格式是否正确（参考系统提示词中的节点和连线格式）。` };
+      }
     },
   }),
 
@@ -89,8 +325,11 @@ all_pass（会签）、any_pass（或签）、ratio_pass（按比例）、sequen
       try {
         await bindingApi.bind({ formId: args.formId as number, workflowId: args.processId as number });
         return { success: true, message: '流程绑定成功' };
-      } catch {
-        return { success: false, message: `流程绑定失败: ${(e as Error).message}` };
+      } catch (e: unknown) {
+        const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          || (e as Error).message
+          || '未知错误';
+        return { success: false, message: `流程绑定失败：${errMsg}。请确保 formId 和 processId 正确。` };
       }
     },
   }),

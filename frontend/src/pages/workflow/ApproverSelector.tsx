@@ -49,6 +49,9 @@ export default function ApproverSelector({ config, onChange, appId }: ApproverSe
       if ((config.approverIds as string[])?.length) {
         type = 'member';
         onChange('approverType', 'member');
+      } else if ((config.roleIds as string[])?.length) {
+        type = 'role';
+        onChange('approverType', 'role');
       } else {
         onChange('approverCount', 0);
         return;
@@ -60,7 +63,7 @@ export default function ApproverSelector({ config, onChange, appId }: ApproverSe
     } else {
       onChange('approverCount', 1);
     }
-  }, [config.approverType, config.approverIds, onChange]);
+  }, [config.approverType, config.approverIds, config.roleIds, onChange]);
 
   return (
     <div>

@@ -14,7 +14,6 @@ import { DatasourcePanel } from '@/components/DatasourcePanel';
 import { AgentPanel } from '@/components/AgentPanel';
 import ProcessList from '@/pages/workflow/ProcessList';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
-import MyWorkflow from '@/pages/workflow/MyWorkflow';
 import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
@@ -30,7 +29,6 @@ type SidebarTab = 'pages' | 'queries' | 'workflow' | 'datasources' | 'apis';
 export type WorkflowView =
   | { view: 'processes'; appId?: number }
   | { view: 'designer'; processId?: number; formMode?: boolean; formId?: number; appId?: number }
-  | { view: 'my-workflow'; appId?: number }
   | { view: 'forms'; appId?: number }
   | { view: 'form-preview'; formId: number; appId?: number }
   | { view: 'instance-detail'; instanceId: number; appId?: number };
@@ -243,12 +241,6 @@ export function AppEditorPage() {
                   onBack={() => setWorkflowView({ view: workflowView.formMode ? 'forms' : 'processes', appId: Number(appId) })}
                 />
               )}
-              {workflowView.view === 'my-workflow' && (
-                <MyWorkflow
-                  embedded
-                  onNavigate={handleWorkflowNavigate}
-                />
-              )}
               {workflowView.view === 'forms' && (
                 <FormList
                   embedded
@@ -267,7 +259,7 @@ export function AppEditorPage() {
                 <InstanceDetail
                   embedded
                   instanceId={workflowView.instanceId}
-                  onBack={() => setWorkflowView({ view: 'my-workflow', appId: Number(appId) })}
+                  onBack={() => setWorkflowView({ view: 'processes', appId: Number(appId) })}
                 />
               )}
             </div>

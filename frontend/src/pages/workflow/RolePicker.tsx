@@ -21,12 +21,12 @@ export default function RolePicker({
   const [open, setOpen] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [search, setSearch] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(value));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set((value || []).map(String)));
   const containerRef = useRef<HTMLDivElement>(null);
-  const valueKey = value.join(',');
+  const valueKey = (value || []).map(String).join(',');
 
   useEffect(() => {
-    setSelectedIds(new Set(value));
+    setSelectedIds(new Set((value || []).map(String)));
   }, [valueKey]);
 
   useEffect(() => {

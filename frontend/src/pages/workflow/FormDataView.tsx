@@ -17,7 +17,15 @@ function parseFieldsSchema(schemaStr: string): FieldSchema[] {
   if (!schemaStr) return [];
   try {
     const parsed = JSON.parse(schemaStr);
-    return Array.isArray(parsed) ? parsed : parsed.fields || [];
+    const raw = Array.isArray(parsed) ? parsed : parsed.fields || [];
+    return raw.map((field: Record<string, unknown>) => ({
+      ...field,
+      label: (field.label as string) || (field.name as string) || '',
+      options: (field.options as Array<Record<string, unknown>>)?.map((opt) => ({
+        ...opt,
+        label: (opt.label as string) || (opt.name as string) || '',
+      })),
+    })) as FieldSchema[];
   } catch {
     return [];
   }

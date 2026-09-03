@@ -293,8 +293,8 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
             toolCallsMap.set(idx, existing);
           }
         }
-      } catch {
-        // 忽略解析失败的行
+      } catch (e) {
+        console.warn('[llmClient] SSE delta 解析失败:', e, 'data:', data.substring(0, 200));
       }
     } else if (event === 'done') {
       for (const tc of toolCallsMap.values()) {
@@ -343,7 +343,8 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
     const lines = lineBuffer.split('\n');
     lineBuffer = lines.pop() || '';
 
-    for (const line of lines) {
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, '');
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7).trim();
       } else if (line.startsWith('data: ')) {
@@ -361,10 +362,11 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
 
   xhr.onloadend = () => {
     if (lineBuffer.trim()) {
-      if (lineBuffer.startsWith('event: ')) {
-        currentEvent = lineBuffer.slice(7).trim();
-      } else if (lineBuffer.startsWith('data: ')) {
-        currentData = lineBuffer.slice(6);
+      const trimmed = lineBuffer.replace(/\r$/, '');
+      if (trimmed.startsWith('event: ')) {
+        currentEvent = trimmed.slice(7).trim();
+      } else if (trimmed.startsWith('data: ')) {
+        currentData = trimmed.slice(6);
         if (currentEvent) {
           processSSELine(currentEvent, currentData);
         }

@@ -291,7 +291,8 @@
   border: 2px solid #e8edf3;
   border-radius: 8px;
   background: #fff;
-  min-width: 180px;
+  width: 200px;
+  box-sizing: border-box;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s;
 }
@@ -318,14 +319,21 @@
   font-size: 13px;
   font-weight: 500;
   color: #1f1f1f;
-  display: inline;
+  display: inline-block;
+  max-width: calc(100% - 32px);
   vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nodeSubLabel {
   font-size: 11px;
   color: #8c9cab;
   margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Handle */

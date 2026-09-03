@@ -1,5 +1,6 @@
 import type { Message, Plan, ToolDefinition } from '@/types/agent';
 import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage } from './llmClient';
+import type { AgentStateMachine } from './agentStateMachine';
 
 export interface ShouldCompleteResult {
   shouldContinue: boolean;
@@ -15,6 +16,7 @@ export interface AgentLoopOptions {
   timeout: number;
   signal?: AbortSignal;
   conversationMessages: Message[];
+  stateMachine?: AgentStateMachine;
   onStatusChange: (status: string) => void;
   onStreamingContent: (content: string, reasoning?: boolean) => void;
   onClearStreaming: () => void;
@@ -28,6 +30,7 @@ export interface AgentLoopOptions {
   onTokenUsage: (input: number, output: number) => void;
   onApiMessages?: (messages: LLMMessage[]) => void;
   onShouldComplete?: () => ShouldCompleteResult;
+  onAfterToolResult?: (toolName: string, result: ToolExecuteResult, stateMachine: AgentStateMachine) => void;
 }
 
 export interface AgentLoopResult {
@@ -35,25 +38,30 @@ export interface AgentLoopResult {
   conversationMessages: Message[];
 }
 
+function buildToolDefsForIteration(tools: ToolDefinition[], stateMachine?: AgentStateMachine) {
+  const filtered = stateMachine ? stateMachine.filterTools(tools) : tools;
+  return buildToolDefinitions(filtered.map((t) => ({
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+  })));
+}
+
 export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoopResult> {
   const {
     model, systemPrompt: _systemPrompt, tools, maxIterations,
     temperature, timeout, signal,
     conversationMessages: initialMessages,
+    stateMachine,
     onStatusChange, onStreamingContent, onClearStreaming,
     onAddMessage, onPlanCreate: _onPlanCreate, onPlanConfirm: _onPlanConfirm, onStepUpdate: _onStepUpdate,
     onToolCall, onToolResult, onError, onTokenUsage: _onTokenUsage, onApiMessages,
-    onShouldComplete,
+    onShouldComplete, onAfterToolResult,
   } = options;
 
   const conversationMessages = [...initialMessages];
-  const toolDefs = buildToolDefinitions(tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters,
-  })));
 
-  console.log(`[AgentLoop] 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 工具: [${tools.map((t) => t.name).join(', ')}]`);
+  console.log(`[AgentLoop] 开始 | 模型: ${model} | 最多 ${maxIterations} 轮 | 状态: ${stateMachine?.state || '无'} | 工具: [${tools.map((t) => t.name).join(', ')}] | 初始消息: ${conversationMessages.length} 条`);
 
   const toolRetryCounts = new Map<string, number>();
   const MAX_RETRIES = 3;
@@ -63,12 +71,14 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) throw new Error('Cancelled');
 
-    console.log(`[AgentLoop] 轮 第 ${iteration + 1}/${maxIterations} 轮`);
+    console.log(`[AgentLoop] 轮 第 ${iteration + 1}/${maxIterations} 轮 | 状态: ${stateMachine?.state || '无'}`);
 
     onStatusChange('executing');
     const apiMessages = buildAPIMessages(conversationMessages);
     onApiMessages?.(apiMessages);
     console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
+
+    const toolDefs = buildToolDefsForIteration(tools, stateMachine);
 
     try {
       const toolCallsAccumulated: Array<{
@@ -159,6 +169,10 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           }
 
           onToolResult(toolName, toolResult, assistantMsg.id, toolCall.id);
+
+          if (stateMachine) {
+            onAfterToolResult?.(toolName, toolResult, stateMachine);
+          }
 
           if (!toolResult.success) {
             const retries = (toolRetryCounts.get(toolName) || 0) + 1;

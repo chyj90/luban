@@ -5,11 +5,13 @@ const memoryCache = new Map<string, Map<string, Message[]>>();
 export function getAgentMemory(applicationId: number, agentId: string): Message[] {
   const appKey = String(applicationId);
   const appCache = memoryCache.get(appKey);
-  if (!appCache) return [];
-  return appCache.get(agentId) || [];
+  const result = appCache?.get(agentId) || [];
+  console.log(`[agentMemory] GET ${agentId} | appId=${applicationId} | 返回 ${result.length} 条消息`);
+  return result;
 }
 
 export function setAgentMemory(applicationId: number, agentId: string, messages: Message[]): void {
+  console.log(`[agentMemory] SET ${agentId} | appId=${applicationId} | 保存 ${messages.length} 条消息`);
   const appKey = String(applicationId);
   if (!memoryCache.has(appKey)) {
     memoryCache.set(appKey, new Map());

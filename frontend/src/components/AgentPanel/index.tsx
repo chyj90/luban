@@ -7,6 +7,7 @@ import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRou
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { getSubPlans } from '@/agent/core/planContext';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
+import { setAgentMemory } from '@/agent/registry/agentMemory';
 import { listPages } from '@/api';
 import type { Plan } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
@@ -473,6 +474,9 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         sessionId,
       });
       await result.executor.run(result.processedInput);
+      if (result.agentId !== 'main-agent') {
+        setAgentMemory(Number(appId), result.agentId, result.executor.getMessages());
+      }
     } catch (e) {
       setError((e as Error).message);
     }

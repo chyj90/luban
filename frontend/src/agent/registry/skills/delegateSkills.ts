@@ -2,8 +2,10 @@ import { SkillCategory, type SkillFactory, resolveSkills } from '../skillRegistr
 import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { ANALYSIS_AGENT_PROMPT } from '../../prompts/analysisAgent';
 import { getAgentMemory, setAgentMemory } from '../agentMemory';
-import { listPages, getCodePage, listQueries } from '@/api';
+import { formApi } from '@/api/workflow';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
+
+const activeDelegations = new Set<string>();
 
 export const delegateSkills: Record<string, SkillFactory> = {
   'delegate:query': (ctx, chatRouter) => {
@@ -23,74 +25,42 @@ export const delegateSkills: Record<string, SkillFactory> = {
       category: SkillCategory.DELEGATE,
       name: 'delegate_query',
       description: `向数据辅助智能体委派数据相关任务，包括：
+- 查询/列出数据源、查询、API、表结构
 - 创建/修改/删除查询
-- 连接/测试/删除数据源
-- 连接/测试/删除外部 API
-每次调用只处理一个任务，不要批量传入。
-数据辅助智能体会自行验证结果并汇报。`,
+- 连接/测试/删除数据源和外部 API
+只需用自然语言描述需求，DBA 会自行判断该做什么。`,
       parameters: {
         type: 'object',
         properties: {
-          task_type: { type: 'string', enum: ['CREATE', 'MODIFY', 'DELETE'], description: '任务类型' },
-          target_page: { type: 'string', description: '目标页面名称（DELETE 时可为空字符串）' },
-          query_name: { type: 'string', description: '查询/数据源/API 名称，英文驼峰命名（DELETE 时不填）' },
-          requirement: { type: 'string', description: 'CREATE：需要的字段列表。MODIFY：修改说明。DELETE：删除需求描述' },
-          existing_queries: { type: 'array', items: { type: 'object', properties: { id: { type: 'number' }, name: { type: 'string' }, description: { type: 'string' } } }, description: '当前应用已有的查询列表（MODIFY 时使用）' },
-          modify_instructions: { type: 'array', items: { type: 'string' }, description: '修改查询的具体说明（MODIFY 时使用）' },
+          requirement: { type: 'string', description: '自然语言描述的需求，如"列出所有数据源"、"为订单页创建查询，需要 id、订单号、金额、状态字段"、"删除查询 xxx"' },
+          target_page: { type: 'string', description: '目标页面名称（可选）' },
+          query_name: { type: 'string', description: '查询名称（可选，创建/修改时建议提供）' },
         },
-        required: ['task_type', 'requirement'],
+        required: ['requirement'],
       },
       async execute(args) {
         const typedArgs = args as unknown as DelegateQueryArgs;
         const execStart = Date.now();
-        console.log(`[delegate_query] 开始 | taskType=${typedArgs.task_type} | queryName=${typedArgs.query_name}`);
+        const guardKey = `query:${typedArgs.query_name || 'general'}`;
+        if (activeDelegations.has(guardKey)) {
+          console.warn(`[delegate_query] 相同任务正在执行中，拒绝重复调用 | key=${guardKey}`);
+          return { success: false, message: '相同的数据操作任务正在执行中，请等待其完成后再试', _noRetry: true };
+        }
+        activeDelegations.add(guardKey);
+
+        console.log(`[delegate_query] 开始 | requirement=${typedArgs.requirement?.slice(0, 60)}`);
 
         ctx.dispatch?.({
           type: 'DELEGATE_QUERY_START',
-          payload: { taskType: typedArgs.task_type, targetPage: typedArgs.target_page, queryName: typedArgs.query_name, requirement: typedArgs.requirement },
+          payload: { requirement: typedArgs.requirement, targetPage: typedArgs.target_page, queryName: typedArgs.query_name },
         } as unknown);
 
         try {
-          let queryReferences: Array<{ pageId: number; pageName: string }> = [];
-
-          if (typedArgs.task_type === 'MODIFY') {
-            try {
-              const pagesRes = await listPages(ctx.applicationId);
-              const pages = pagesRes.data;
-              const queriesRes = await listQueries(ctx.applicationId);
-              const allQueries = queriesRes.data;
-              const matchedQuery = allQueries.find((q: { name: string }) => q.name === typedArgs.query_name);
-
-              if (matchedQuery) {
-                for (const page of pages) {
-                  try {
-                    const codeRes = await getCodePage(page.id);
-                    const queryIds: number[] = codeRes.data.codePage?.queryIds || [];
-                    if (queryIds.includes(matchedQuery.id)) {
-                      queryReferences.push({ pageId: page.id, pageName: page.name });
-                    }
-                  } catch {
-                    // 页面可能没有代码页，跳过
-                  }
-                }
-              }
-              if (queryReferences.length > 0) {
-                console.log(`[delegate_query] 查询「${typedArgs.query_name}」被 ${queryReferences.length} 个页面引用: ${queryReferences.map((r) => r.pageName).join(', ')}`);
-              }
-            } catch (e) {
-              console.warn(`[delegate_query] 查询引用分析失败:`, e);
-            }
-          }
-
           const dbaPrompt = buildDataAssistantPrompt({
             applicationId: ctx.applicationId,
-            taskType: typedArgs.task_type,
             targetPage: typedArgs.target_page,
             queryName: typedArgs.query_name,
             requirement: typedArgs.requirement,
-            existingQueries: typedArgs.existing_queries,
-            modifyInstructions: typedArgs.modify_instructions,
-            queryReferences,
           });
 
           const dbaTools = resolveSkills([
@@ -99,32 +69,27 @@ export const delegateSkills: Record<string, SkillFactory> = {
             'api:list', 'api:connect', 'api:test', 'api:delete',
           ], ctx, chatRouter);
 
-          let userMessage: string;
-          if (typedArgs.task_type === 'DELETE') {
-            userMessage = typedArgs.requirement;
-          } else if (typedArgs.task_type === 'MODIFY') {
-            userMessage = `请修改查询「${typedArgs.query_name}」：\n${typedArgs.requirement}${typedArgs.modify_instructions?.length ? `\n\n具体修改说明：\n${typedArgs.modify_instructions.map((m: string, i: number) => `${i + 1}. ${m}`).join('\n')}` : ''}`;
-          } else {
-            userMessage = `请为「${typedArgs.target_page}」创建查询「${typedArgs.query_name}」：\n${typedArgs.requirement}`;
-          }
+          const userMessage = typedArgs.requirement;
 
           console.log(`[delegate_query] 委派 data-assistant | 消息长度: ${userMessage.length}`);
           const routeStart = Date.now();
+          const memoryBefore = getAgentMemory(ctx.applicationId, 'data-assistant');
+          console.log(`[delegate_query] getAgentMemory 返回 ${memoryBefore.length} 条消息 | appId=${ctx.applicationId}`);
           const executor = await chatRouter!.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
             systemPrompt: dbaPrompt,
             tools: dbaTools,
             isDelegated: true,
-            initialMessages: getAgentMemory(ctx.applicationId, 'data-assistant'),
+            initialMessages: memoryBefore,
             agentContext: {
-              taskType: typedArgs.task_type,
+              requirement: typedArgs.requirement,
               targetPage: typedArgs.target_page,
               queryName: typedArgs.query_name,
-              requirement: typedArgs.requirement,
-              existingQueries: typedArgs.existing_queries,
-              modifyInstructions: typedArgs.modify_instructions,
             },
           });
-          setAgentMemory(ctx.applicationId, 'data-assistant', executor.getMessages());
+          const messagesAfter = executor.getMessages();
+          console.log(`[delegate_query] executor.getMessages 返回 ${messagesAfter.length} 条消息 | roles: [${messagesAfter.map((m: unknown) => m.role).join(', ')}]`);
+          setAgentMemory(ctx.applicationId, 'data-assistant', messagesAfter);
+          console.log(`[delegate_query] setAgentMemory 已保存 ${messagesAfter.length} 条消息`);
           console.log(`[delegate_query] data-assistant 完成 | ${Date.now() - routeStart}ms`);
 
           const messages = executor.getMessages();
@@ -136,14 +101,14 @@ export const delegateSkills: Record<string, SkillFactory> = {
 
           const result: DelegateQueryResult = {
             success: true,
-            message: `数据辅助智能体完成「${typedArgs.task_type}」任务`,
+            message: `数据辅助智能体完成任务`,
             details: dbaResponse || '任务完成',
             data: { messages },
           };
 
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
-            payload: { taskType: typedArgs.task_type, queryName: typedArgs.query_name, success: true, details: dbaResponse },
+            payload: { requirement: typedArgs.requirement, success: true, details: dbaResponse },
           } as unknown);
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
@@ -152,9 +117,11 @@ export const delegateSkills: Record<string, SkillFactory> = {
           console.error(`[delegate_query] 失败:`, e);
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
-            payload: { taskType: typedArgs.task_type, queryName: typedArgs.query_name, success: false, error: e.message },
+            payload: { requirement: typedArgs.requirement, success: false, error: (e as Error).message },
           } as unknown);
           return { success: false, message: `数据辅助智能体执行失败: ${e.message}`, _noRetry: true };
+        } finally {
+          activeDelegations.delete(guardKey);
         }
       },
     };
@@ -188,6 +155,13 @@ export const delegateSkills: Record<string, SkillFactory> = {
       },
       async execute(args) {
         const { requirement, context } = args as unknown;
+
+        if (activeDelegations.has('workflow')) {
+          console.warn(`[delegate_workflow] 流程设计助手正在工作中，拒绝重复调用`);
+          return { success: false, message: '流程设计助手正在工作中，请等待其完成后再试', _noRetry: true };
+        }
+        activeDelegations.add('workflow');
+
         const execStart = Date.now();
         console.log(`[delegate_workflow] 开始委派流程设计任务`);
 
@@ -197,47 +171,86 @@ export const delegateSkills: Record<string, SkillFactory> = {
         } as unknown);
 
         try {
+          let existingFormsInfo = '';
+          try {
+            const forms = await formApi.list({ applicationId: ctx.applicationId });
+            if (forms && forms.length > 0) {
+              existingFormsInfo = `\n## 当前应用已有表单\n${forms.map((f: { id: number; name: string }) => `- ${f.name} (ID: ${f.id})`).join('\n')}\n\n⚠️ 如果已有表单能满足需求，直接用已有表单 ID 绑定，不要重复创建！`;
+            }
+          } catch {
+            // 查询失败不阻塞流程
+          }
+
           const systemPrompt = `你是流程设计专家，负责设计和管理业务流程。你必须调用工具来实际创建表单和流程，禁止只输出文本方案而不调用工具。
 
 当前应用 ID: ${ctx.applicationId}
-页面 ID: ${ctx.pageId}
-
+${existingFormsInfo}
 ${context ? `上下文信息：${context}` : ''}
 
-## 工作流程（必须按顺序执行）
-1. 先用 search_members 或 search_roles 查询可用的审批人/角色
-2. 用 design_form 创建表单（name 必填，fields 为字段列表）
-3. 用 design_workflow 创建流程（name 必填，applicationId=${ctx.applicationId}，nodes 和 edges 必填）
-4. 用 bind_workflow 将表单绑定到流程（formId 为步骤2返回的表单 ID，processId 为步骤3返回的流程 ID）
+## 工作流程
 
-## 流程节点类型（nodeType 用于后端校验，type 用于前端渲染，两者不同）
+### 完整流程（用户描述了表单字段时）
+1. 先用 search_members 或 search_roles 查询可用的审批人/角色
+2. 用 design_form 创建表单（name 必填，fields 为字段列表）。⚠️ 如果上面已列出可复用的表单，跳过此步，直接用已有表单 ID
+3. 用 design_workflow 创建流程（name 必填，applicationId=${ctx.applicationId}，nodes 和 edges 必填）
+4. 用 bind_workflow 将表单绑定到流程（formId 为已有表单 ID 或步骤2返回的表单 ID，processId 为步骤3返回的流程 ID）
+
+### 仅设计流程（用户明确说不需要表单，或页面通过自己的弹窗发起流程时）
+1. 先用 search_members 或 search_roles 查询可用的审批人/角色
+2. 如果已有可复用表单，用 bind_workflow 绑定到流程（可选）
+3. 用 design_workflow 创建流程
+4. 汇报结果时，必须包含以下信息：
+   - 流程名称和 ID
+   - 页面弹窗发起流程的 JS 代码示例：
+   \`\`\`js
+   window.__LUBAN__.startWorkflow(流程ID, { 字段1: '值1', 字段2: '值2' })
+     .then(function(instance) { alert('流程已发起，实例ID：' + instance.id); })
+     .catch(function(err) { alert('发起失败：' + err.message); });
+   \`\`\`
+   - 说明：startWorkflow 的 formData 参数应与页面弹窗表单的字段对应
+
+## 表单字段类型（design_form 的 fields 中 type 必须使用以下值）
+text（单行文本）、number（数字）、date（日期）、datetime（日期时间）、textarea（多行文本）、select（下拉选择）、multi_select（多选下拉）、radio（单选）、checkbox（复选框）、switch（开关）、file（文件上传）、excel（Excel导入）、member（人员选择）、department（部门选择）、detail_table（明细表/子表格）、computed（计算字段）
+
+每个字段格式：{ "key": "字段标识", "label": "字段显示名", "type": "字段类型", "required": true/false }
+select/radio 类型需额外提供 options: [{ "label": "选项名", "value": "选项值" }]
+detail_table 类型需额外提供 columns 数组，每个子字段同上格式
+
+## 流程节点类型（nodeType 用于后端校验，type 用于前端渲染，两者不同，**都必须传入**）
 - start: nodeType: "start", type: "startNode"
-- approval: nodeType: "approval", type: "approvalNode"，需设置 approverType（member/role/leader/department_head）
+- approval: nodeType: "approval", type: "approvalNode"，需设置 approverType（member/role/leader/department_head/form_field/script）
+- condition: nodeType: "condition", type: "conditionNode"
 - end: nodeType: "end", type: "endNode"
 
 ## 审批人类型
-- member: 指定人员，需 memberIds 数组
-- role: 指定角色，需 roleIds 数组
-- leader: 发起人的直属上级
-- department_head: 发起人所在部门负责人
+- member: 指定人员，需 memberIds 数组（数字ID，来自 search_members 结果）
+- role: 指定角色，需 roleIds 数组（数字ID，来自 search_roles 结果）
+- leader: 发起人的直属上级，需 leaderOf: "initiator"
+- department_head: 发起人所在部门负责人，需 departmentSource: "initiator"
+- form_field: 从表单字段获取审批人，需 formFieldKey: "字段key"
+- script: 动态脚本，需 script: "代码"
 
-## 每个节点必须包含 nodeId、id、nodeType、position: { x, y }、data
-- start: nodeId: "start", id: "start", nodeType: "start", position: { x: 300, y: 50 }
-- 各审批节点 y 依次递增 120（如 170, 290, 410），nodeId 和 id 设为 "approval_1"、"approval_2" 等，nodeType: "approval"
-- end: nodeId: "end", id: "end", nodeType: "end", position: { x: 300, y: 最后一个节点 y + 120 }
+## 每个节点必须包含 nodeId、id、type、nodeType、position: { x, y }、data
+- start: nodeId: "start", id: "start", type: "startNode", nodeType: "start", position: { x: 300, y: 50 }
+- 各审批节点 y 依次递增 120（如 170, 290, 410），nodeId 和 id 设为 "approval_1"、"approval_2" 等，type: "approvalNode", nodeType: "approval"
+- condition: type: "conditionNode", nodeType: "condition"
+- end: nodeId: "end", id: "end", type: "endNode", nodeType: "end", position: { x: 300, y: 最后一个节点 y + 120 }
 
 ## 每个节点必须包含 data
 - start: data: { label: "发起人提交申请", nodeType: "start", config: { nodeName: "发起人提交申请" } }
-- approval: data: { label: "直属上级审批", nodeType: "approval", config: { nodeName: "直属上级审批", approverType: "leader" } }
+- approval: data: { label: "直属上级审批", nodeType: "approval", config: { nodeName: "直属上级审批", approverType: "leader", leaderOf: "initiator" } }
+- condition: data: { label: "判断预算", nodeType: "condition", config: { nodeName: "预算判断" } }
 - end: data: { label: "结束", nodeType: "end", config: { nodeName: "结束" } }
 
 ## 连线（edges）
 每条连线格式：{ id: "边ID", source: "源节点ID", target: "目标节点ID", type: "smoothstep", markerEnd: { type: "arrowclosed" } }
+**条件分支连线必须包含 data 字段**：{ ..., data: { condition: "amount < 5000", label: "小于5000" } }
 
 ## 重要规则
 - 禁止只输出设计方案而不调用工具，必须实际创建
 - 每个流程必须包含 start 和 end 节点
 - 审批节点必须设置审批人
+- 已有可复用表单时不要重复创建，直接使用已有表单 ID
 - 创建完成后汇报实际结果`;
 
           const executor = await chatRouter!.routeTo('workflow-assistant', `请设计流程：${requirement}`, `wf-${Date.now()}`, {
@@ -267,6 +280,8 @@ ${context ? `上下文信息：${context}` : ''}
             payload: { success: false, error: e.message },
           } as unknown);
           return { success: false, message: `流程设计智能体执行失败: ${e.message}`, _noRetry: true };
+        } finally {
+          activeDelegations.delete('workflow');
         }
       },
     };
@@ -313,41 +328,75 @@ ${context ? `上下文信息：${context}` : ''}
 当前应用 ID: ${ctx.applicationId}
 ${context ? `上下文信息：${context}` : ''}`;
 
-          const executor = await chatRouter!.routeTo(
+          const baseOverrides = {
+            systemPrompt,
+            isDelegated: true,
+            agentContext: { requirement, context },
+          };
+
+          // ===== 第1轮：list_pages + 话题拆解 =====
+          console.log(`[delegate_analysis] === 第1轮：页面探查 + 话题拆解 ===`);
+          const round1 = await chatRouter!.routeTo(
             'analysis-assistant',
-            `请分析以下需求，先调用 list_pages 了解项目现状。完成后只回复"已了解"，不要继续分析。\n\n需求：${requirement}`,
-            `analysis-${Date.now()}`,
-            {
-              systemPrompt,
-              isDelegated: true,
-              agentContext: { requirement, context },
-            },
+            `请完成以下两步，一步完成后再进行下一步：
+
+【步骤1】调用 list_pages 了解项目现状。然后调用 list_queries 查看已有查询。对需求中涉及的每个目标查询，调用 get_query 获取查询的 SQL 和字段名。完成后输出"已了解"。
+
+【步骤2】根据页面列表和查询信息，将需求拆解为独立话题，输出话题列表（每个话题标注类型）。
+
+需求：${requirement}`,
+            `analysis-r1-${Date.now()}`,
+            baseOverrides,
           );
+          const messages1 = round1.getMessages();
+          console.log(`[delegate_analysis] 第1轮完成 | messages: ${messages1.length}`);
 
-          console.log(`[delegate_analysis] 第1步完成：了解项目现状`);
+          // ===== 第2轮：需求分析报告 =====
+          console.log(`[delegate_analysis] === 第2轮：需求分析报告 ===`);
+          const round2 = await chatRouter!.routeTo(
+            'analysis-assistant',
+            `根据上面的话题列表，对每个话题按规范进行完整分析，输出需求分析报告（7个章节）：
 
-          await executor.run('根据页面列表，将需求拆解为独立话题，输出话题列表（每个话题标注类型）。完成后不要再继续。');
+1. 需求概述
+2. 功能模块
+3. 页面规划
+4. UI分析
+5. 用户操作流程
+6. 数据字段
+7. 待确认问题
 
-          console.log(`[delegate_analysis] 第2步完成：话题拆解`);
+注意：待确认问题中，已知的事情不要提问，不确定的事情才问。`,
+            `analysis-r2-${Date.now()}`,
+            { ...baseOverrides, initialMessages: messages1 },
+          );
+          const messages2 = round2.getMessages();
+          console.log(`[delegate_analysis] 第2轮完成 | messages: ${messages2.length}`);
 
-          await executor.run('对每个话题按规范进行完整分析，输出需求分析报告（7个章节：需求概述、功能模块、页面规划、UI分析、用户操作流程、数据字段、待确认问题）。待确认问题中，已知的事情不要提问，不确定的事情才问。');
+          // 合并第1轮和第2轮的消息
+          const allMessages = [...messages1, ...messages2];
 
-          console.log(`[delegate_analysis] 第3步完成：逐话题分析`);
+          // ===== 第3轮：创建执行计划 =====
+          console.log(`[delegate_analysis] === 第3轮：创建执行计划 ===`);
+          const round3 = await chatRouter!.routeTo(
+            'analysis-assistant',
+            `根据上面的分析报告，调用 create_plan 创建执行计划。`,
+            `analysis-r3-${Date.now()}`,
+            { ...baseOverrides, initialMessages: allMessages },
+          );
+          const messages3 = round3.getMessages();
+          console.log(`[delegate_analysis] 第3轮完成 | messages: ${messages3.length}`);
 
-          await executor.run('根据分析报告，调用 create_plan 创建执行计划。');
-
-          console.log(`[delegate_analysis] 第4步完成：创建计划`);
-
-          const messages = executor.getMessages();
-          const response = messages
+          // 合并所有消息
+          const finalMessages = [...messages1, ...messages2, ...messages3];
+          const response = finalMessages
             .filter((m: unknown) => m.role === 'assistant')
             .map((m: unknown) => m.content)
             .join('\n\n')
             .trim();
 
-          // 从分析助手的消息中提取 plan_id（create_plan 工具返回的 planId）
+          // 从消息中提取 planId
           let planId: string | null = null;
-          for (const m of messages) {
+          for (const m of finalMessages) {
             if (m.role === 'tool' && m.content) {
               try {
                 const parsed = JSON.parse(m.content);
@@ -359,7 +408,7 @@ ${context ? `上下文信息：${context}` : ''}`;
             }
           }
 
-          console.log(`[delegate_analysis] 完成 | 总耗时: ${Date.now() - execStart}ms | planId: ${planId}`);
+          console.log(`[delegate_analysis] 全部完成 | 总耗时: ${Date.now() - execStart}ms | planId: ${planId}`);
 
           ctx.dispatch?.({
             type: 'DELEGATE_ANALYSIS_END',
@@ -369,7 +418,7 @@ ${context ? `上下文信息：${context}` : ''}`;
           return {
             success: true,
             message: '需求分析完成',
-            data: { analysis: response, planId, messages },
+            data: { analysis: response, planId, messages: finalMessages },
           };
         } catch (e: unknown) {
           console.error(`[delegate_analysis] 失败:`, e);

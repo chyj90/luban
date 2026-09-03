@@ -19,6 +19,19 @@ export const querySkills: Record<string, SkillFactory> = {
   'query:create': (ctx) => {
     const testedDatasources = new Set<number>();
 
+    function validateSqlQuoting(body: string): string | null {
+      const doubleQuotePattern = /'{{\s*this\.params\.\w+\s*}}'/g;
+      const matches = body.match(doubleQuotePattern);
+      if (matches) {
+        const examples = [...new Set(matches)].slice(0, 3).join('、');
+        return `SQL 引号错误：{{ }} 会自动给字符串加引号，SQL 中不能再手写引号。\n` +
+          `检测到 ${matches.length} 处双重引号（如 ${examples}），请去掉 {{ }} 外层的单引号。\n` +
+          `例：'{{ this.params.name }}' → {{ this.params.name }}\n` +
+          `LIKE 场景：'%{{ this.params.name }}%' → CONCAT('%', {{ this.params.name }}, '%')`;
+      }
+      return null;
+    }
+
     async function ensureConnected(datasourceId: number): Promise<string | null> {
       if (testedDatasources.has(datasourceId)) return null;
       try {
@@ -44,8 +57,13 @@ body 填写 SQL 语句，使用 {{ this.params.xxx }} 绑定参数：
   SELECT * FROM users WHERE name = {{ this.params.userName }}
 
 支持动态 SQL 标签（<if>、<where>、<set>、<foreach>），统一使用 this.params.X 访问参数：
-正确：<if test="this.params.status != null and this.params.status != ''">AND o.status = '{{ this.params.status }}'</if>
-OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，必须用 and、or）`,
+正确：<if test="this.params.status != null and this.params.status != ''">AND o.status = {{ this.params.status }}</if>
+OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，必须用 and、or）
+
+⚠️ {{ }} 会自动给字符串值加引号，SQL 中不要再手写引号：
+  错误：WHERE name = '{{ this.params.name }}'（双重引号 → ''x''）
+  正确：WHERE name = {{ this.params.name }}
+  LIKE 场景：LIKE CONCAT('%', {{ this.params.name }}, '%')（不要写 '%{{}}%'）`,
       parameters: {
         type: 'object',
         properties: {
@@ -60,6 +78,13 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
       },
       async execute(args) {
         const datasourceId = args.datasourceId as number;
+        const body = args.body as string;
+
+        const quoteError = validateSqlQuoting(body);
+        if (quoteError) {
+          return { success: false, message: quoteError };
+        }
+
         const connError = await ensureConnected(datasourceId);
         if (connError) return { success: false, message: connError, _pause: true };
         try {
@@ -72,7 +97,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
             applicationId: ctx.applicationId,
             name: args.name as string,
             datasourceId,
-            body: args.body as string,
+            body,
             params,
             description: (args.description as string) || '',
           });

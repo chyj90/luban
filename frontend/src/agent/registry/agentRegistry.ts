@@ -11,11 +11,10 @@ export interface AgentContext {
   pageId: number;
   pageName: string;
   allPages: Array<{ id: number; name: string }>;
-  taskType?: string;
   targetPage?: string;
+  queryName?: string;
+  requirement?: string;
   requirements?: string[];
-  existingQueries?: Array<{ id: number; name: string; description: string }>;
-  modifyInstructions?: string[];
 }
 
 export interface AgentDefinition {
@@ -78,11 +77,9 @@ export const AGENTS: AgentDefinition[] = [
     buildSystemPrompt: (ctx) =>
       buildDataAssistantPrompt({
         applicationId: ctx.applicationId,
-        taskType: ctx.taskType || 'B单页面',
         targetPage: ctx.targetPage || ctx.pageName,
-        requirements: ctx.requirements || [],
-        existingQueries: ctx.existingQueries,
-        modifyInstructions: ctx.modifyInstructions,
+        queryName: ctx.queryName || '',
+        requirement: ctx.requirement || ctx.requirements?.join(', ') || '',
       }),
     allowedSkills: [
       'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
@@ -116,6 +113,7 @@ export const AGENTS: AgentDefinition[] = [
       'observation:list_pages',
       'observation:list_queries',
       'observation:list_apis',
+      'query:get',
       'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
     ],

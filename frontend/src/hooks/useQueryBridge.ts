@@ -3,17 +3,19 @@ import { runQuery, runAppTool, runRuntimeQuery, runRuntimeTool } from '@/api';
 import type { Query } from '@/types/query';
 
 interface BridgeRequest {
-  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME' | 'CALL_API';
+  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME' | 'CALL_API' | 'START_WORKFLOW';
   id: string;
   queryName?: string;
   params?: Record<string, unknown>;
   pageId?: number;
   pageName?: string;
   apiName?: string;
+  definitionId?: number;
+  formData?: string;
 }
 
 interface BridgeResponse {
-  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT';
+  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT' | 'WORKFLOW_RESULT';
   id: string;
   queryName?: string;
   result?: { columns: string[]; rows: Record<string, unknown>[]; totalCount: number };
@@ -21,6 +23,8 @@ interface BridgeResponse {
   success?: boolean;
   apiName?: string;
   apiResult?: unknown;
+  instanceId?: number;
+  instance?: unknown;
 }
 
 interface UserInfo {
@@ -104,12 +108,12 @@ export function useQueryBridge(
           queryName: msg.queryName,
           result: { columns, rows: objectRows, totalCount },
         });
-      } catch {
+      } catch (err: unknown) {
         respond({
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
-          error: (e as Error).message,
+          error: (err as Error).message || '查询执行失败',
         });
       }
     } else if (msg.type === 'NAVIGATE_TO_PAGE') {
@@ -160,6 +164,32 @@ export function useQueryBridge(
           error: (e as Error).message,
         });
       }
+    } else if (msg.type === 'START_WORKFLOW') {
+      if (!msg.definitionId) {
+        respond({ type: 'WORKFLOW_RESULT', id: msg.id, success: false, error: '缺少 definitionId 参数' });
+        return;
+      }
+      try {
+        const { instanceApi } = await import('@/api/workflow');
+        const instance = await instanceApi.start({
+          definitionId: msg.definitionId,
+          formData: msg.formData || '{}',
+        });
+        respond({
+          type: 'WORKFLOW_RESULT',
+          id: msg.id,
+          success: true,
+          instanceId: instance.id,
+          instance,
+        });
+      } catch (e: unknown) {
+        respond({
+          type: 'WORKFLOW_RESULT',
+          id: msg.id,
+          success: false,
+          error: (e as Error).message,
+        });
+      }
     }
   }, []);
 
@@ -180,6 +210,28 @@ export function useQueryBridge(
 
   window.__bridge_pending = _pending;
   window.__bridge_results = _results;
+
+  var _origAddEventListener = document.addEventListener;
+  var _origRemoveEventListener = document.removeEventListener;
+  var _domReadyListeners = [];
+
+  document.addEventListener = function(type, listener, options) {
+    if (type === 'DOMContentLoaded') {
+      _domReadyListeners.push({ listener: listener, options: options });
+    }
+    return _origAddEventListener.call(this, type, listener, options);
+  };
+
+  document.removeEventListener = function(type, listener, options) {
+    if (type === 'DOMContentLoaded') {
+      for (var i = _domReadyListeners.length - 1; i >= 0; i--) {
+        if (_domReadyListeners[i].listener === listener) {
+          _domReadyListeners.splice(i, 1);
+        }
+      }
+    }
+    return _origRemoveEventListener.call(this, type, listener, options);
+  };
 
   window.__LUBAN_USER__ = ${userJson};
 
@@ -224,6 +276,15 @@ export function useQueryBridge(
         _pending[id] = { resolve: resolve, reject: reject };
         window.parent.postMessage({
           type: 'CALL_API', id: id, apiName: apiName, params: params
+        }, '*');
+      });
+    },
+    startWorkflow: function(definitionId, formData) {
+      return new Promise(function(resolve, reject) {
+        var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        _pending[id] = { resolve: resolve, reject: reject };
+        window.parent.postMessage({
+          type: 'START_WORKFLOW', id: id, definitionId: definitionId, formData: typeof formData === 'string' ? formData : JSON.stringify(formData || {})
         }, '*');
       });
     }
@@ -284,12 +345,39 @@ export function useQueryBridge(
         delete _pending[d.id];
       }
     }
+    if (d.type === 'WORKFLOW_RESULT') {
+      var cb = _pending[d.id];
+      if (cb) {
+        if (d.error) { cb.reject(new Error(d.error)); }
+        else { cb.resolve(d.instance || { success: true, instanceId: d.instanceId }); }
+        delete _pending[d.id];
+      }
+    }
 
     if (d.type === 'UPDATE_PAGE') {
       var libs = d.libraries || [];
       var pending = libs.length;
 
       function applyPage() {
+        var bodyScripts = document.body.querySelectorAll('script');
+        for (var i = 0; i < bodyScripts.length; i++) {
+          bodyScripts[i].remove();
+        }
+
+        for (var i = 0; i < _domReadyListeners.length; i++) {
+          var item = _domReadyListeners[i];
+          _origRemoveEventListener.call(document, 'DOMContentLoaded', item.listener, false);
+        }
+        _domReadyListeners = [];
+
+        var bridgePending = window.__bridge_pending;
+        for (var key in bridgePending) {
+          if (bridgePending.hasOwnProperty(key)) {
+            delete bridgePending[key];
+          }
+        }
+        window.__bridge_results = {};
+
         if (d.bridgeScript) {
           var bridgeEl = document.createElement('script');
           bridgeEl.textContent = d.bridgeScript;
@@ -304,12 +392,13 @@ export function useQueryBridge(
 
         if (d.js) {
           var script = document.createElement('script');
+          script.setAttribute('data-luban-page', '1');
           script.textContent = 'try {\\n' + d.js + '\\n} catch(e) { console.error("[鲁班] 页面脚本错误:", e); }';
           document.body.appendChild(script);
-          if (document.readyState === 'complete' || document.readyState === 'interactive') {
-            document.dispatchEvent(new Event('DOMContentLoaded'));
-            window.dispatchEvent(new Event('load'));
-          }
+        }
+
+        if (document.readyState === 'complete' || document.readyState === 'interactive') {
+          document.dispatchEvent(new Event('DOMContentLoaded'));
         }
       }
 
@@ -421,6 +510,16 @@ window.__LUBAN__ = {
       pending[id] = { resolve: resolve, reject: reject };
       window.parent.postMessage({
         type: 'CALL_API', id: id, apiName: apiName, params: params
+      }, '*');
+    });
+  },
+  startWorkflow: function(definitionId, formData) {
+    return new Promise(function(resolve, reject) {
+      var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      var pending = window.__bridge_pending || {};
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({
+        type: 'START_WORKFLOW', id: id, definitionId: definitionId, formData: typeof formData === 'string' ? formData : JSON.stringify(formData || {})
       }, '*');
     });
   }

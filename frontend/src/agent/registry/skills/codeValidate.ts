@@ -49,7 +49,9 @@ export async function validateCode(
   try { if (html) validateHtml(html, errors, warnings); } catch (e: any) { errors.push(`[HTML] 校验器异常: ${e?.message || e}`); }
   try { if (css) validateCss(css, errors, warnings); } catch (e: any) { errors.push(`[CSS] 校验器异常: ${e?.message || e}`); }
   try { if (js) validateJs(js, errors, warnings); } catch (e: any) { errors.push(`[JS] 校验器异常: ${e?.message || e}`); }
+  try { if (js) validateDomInit(js, errors); } catch (e: any) { errors.push(`[DOM初始化] 校验异常: ${e?.message || e}`); }
   try { if (js) validateCrossPageParams(js, errors, warnings); } catch (e: any) { errors.push(`[跨页面参数校验] 异常: ${e?.message || e}`); }
+  try { if (js && validateOptions) await validateMockData(js, validateOptions, errors); } catch (e: any) { errors.push(`[Mock数据] 校验异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
 
   return { valid: errors.length === 0, errors, warnings };
@@ -220,7 +222,7 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
 
   // 检查 __LUBAN__ API 调用：只允许文档中列出的方法
   const VALID_LUBAN_METHODS = new Set([
-    'navigateToPage', 'navigateToPageByName', 'getPageParams', 'getAllPages', 'callApi',
+    'navigateToPage', 'navigateToPageByName', 'getPageParams', 'getAllPages', 'callApi', 'startWorkflow',
   ]);
   const lubanApiPattern = /window\.__LUBAN__\.(\w+)\s*\(/g;
   let lubanMatch: RegExpExecArray | null;
@@ -256,6 +258,68 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
     warnings.push(
       `[JS] 第 ${lineNum} 行：addEventListener 在 SPA 中可能多次触发，` +
       `请使用 addEventListener('load', fn, { once: true }) 确保只执行一次。`
+    );
+  }
+}
+
+function validateDomInit(js: string, errors: string[]) {
+  const hasDOMContentLoaded = /addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/.test(js);
+  if (!hasDOMContentLoaded) return;
+
+  const hasReadyState = /document\.readyState\s*===?\s*['"]loading['"]/.test(js);
+  if (hasReadyState) return;
+
+  const lineNum = js.substring(0, js.search(/addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/)).split('\n').length;
+  errors.push(
+    `[JS 初始化] 第 ${lineNum} 行：使用 addEventListener('DOMContentLoaded', ...) 但缺少 readyState 兼容处理。` +
+    '平台在 about:srcdoc 中注入 JS 时 DOMContentLoaded 可能已触发，导致回调中 DOM 元素为 null。' +
+    '请改用以下模式：\n' +
+    'function init() { /* 原有初始化逻辑 */ }\n' +
+    'if (document.readyState === \'loading\') {\n' +
+    '  document.addEventListener(\'DOMContentLoaded\', init, { once: true });\n' +
+    '} else {\n' +
+    '  init();\n' +
+    '}'
+  );
+}
+
+async function validateMockData(
+  js: string,
+  options: ValidateFieldNamesOptions,
+  errors: string[],
+) {
+  const { queryIds, toolIds } = options;
+  const hasQueryIds = queryIds && queryIds.length > 0;
+  const hasToolIds = toolIds && toolIds.length > 0;
+
+  if (hasQueryIds || hasToolIds) return;
+
+  const hasArrayIteration = /(?:forEach|map|filter|reduce)\s*\(/.test(js);
+  if (!hasArrayIteration) return;
+
+  const hasMathRandom = /Math\.random\s*\(\s*\)/.test(js);
+  const hasSimulatedAsync = /setTimeout\s*\([^)]*,\s*\d+\s*\)/.test(js);
+
+  let mockPattern = '';
+  let details = '';
+
+  if (hasMathRandom && hasSimulatedAsync) {
+    mockPattern = 'Math.random() 和 setTimeout 模拟数据';
+    details = '检测到 Math.random() 生成随机数据和 setTimeout 模拟异步数据返回。';
+  } else if (hasMathRandom) {
+    mockPattern = 'Math.random() 模拟数据';
+    details = '检测到 Math.random() 生成随机数据。';
+  } else if (hasSimulatedAsync) {
+    mockPattern = 'setTimeout 模拟异步数据';
+    details = '检测到 setTimeout 模拟异步数据返回。';
+  }
+
+  if (mockPattern) {
+    const lineNum = js.substring(0, js.search(/Math\.random|setTimeout/)).split('\n').length;
+    errors.push(
+      `[JS Mock数据] 第 ${lineNum} 行：页面未绑定任何数据源（queryIds 和 toolIds 均为空），` +
+      `但检测到 ${mockPattern}。${details}` +
+      '禁止使用 mock 数据创建页面。请先确认数据来源（查询或 API），绑定后再创建页面。'
     );
   }
 }
@@ -648,14 +712,14 @@ function getBuiltins(): Set<string> {
 function findUnknownFieldNames(
   js: string,
   actualFieldNames: Set<string>,
-  queryNames: string[] = [],
+  _queryNames: string[] = [],
 ): { line: number; used: string; suggestion?: string }[] {
   const unknownFields: { line: number; used: string; suggestion?: string }[] = [];
 
-  const rowVars = collectQueryRowVars(js, queryNames);
-  if (rowVars.size === 0) return unknownFields;
+  const iterVars = collectAllIterParamNames(js);
+  if (iterVars.size === 0) return unknownFields;
 
-  const varPattern = [...rowVars].join('|');
+  const varPattern = [...iterVars].join('|');
   const fieldPattern = new RegExp(
     `\\b(${varPattern})\\.([\\u4e00-\\u9fff\\w]+)\\b`,
     'g',
@@ -698,38 +762,33 @@ function findUnknownFieldNames(
   return unknownFields;
 }
 
-function collectQueryRowVars(js: string, queryNames: string[]): Set<string> {
-  const rowVars = new Set<string>();
-  if (queryNames.length === 0) return rowVars;
-
+function collectAllIterParamNames(js: string): Set<string> {
+  const iterVars = new Set<string>();
   let ast: acorn.Node;
   try {
     ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as acorn.Node;
   } catch {
-    return rowVars;
+    return iterVars;
   }
 
-  const querySet = new Set(queryNames);
+  const ITER_METHODS = new Set(['forEach', 'map', 'filter', 'reduce', 'some', 'every', 'find']);
 
   function walk(node: any): void {
     if (!node || typeof node !== 'object') return;
 
     if (node.type === 'CallExpression') {
       const callee = node.callee;
-      if (callee?.type === 'MemberExpression' && callee.property?.name === 'then') {
-        const runCall = callee.object;
-        if (
-          runCall?.type === 'CallExpression' &&
-          runCall.callee?.type === 'MemberExpression' &&
-          runCall.callee.property?.name === 'run' &&
-          runCall.callee.object?.type === 'Identifier' &&
-          querySet.has(runCall.callee.object.name)
-        ) {
-          const thenCallback = node.arguments[0];
-          if (thenCallback) {
-            const thenParam = getFirstParamName(thenCallback);
-            if (thenParam) {
-              collectRowVarsFromBody(thenCallback, thenParam, rowVars);
+      if (callee?.type === 'MemberExpression' && ITER_METHODS.has(callee.property?.name)) {
+        const callback = node.arguments[0];
+        if (callback) {
+          const paramName = getFirstParamName(callback);
+          if (paramName) {
+            iterVars.add(paramName);
+          }
+          if (callee.property?.name === 'reduce') {
+            const secondParam = getSecondParamName(callback);
+            if (secondParam) {
+              iterVars.add(secondParam);
             }
           }
         }
@@ -749,7 +808,7 @@ function collectQueryRowVars(js: string, queryNames: string[]): Set<string> {
   }
 
   walk(ast);
-  return rowVars;
+  return iterVars;
 }
 
 function getFirstParamName(node: any): string | null {
@@ -770,41 +829,22 @@ function getFirstParamName(node: any): string | null {
   return null;
 }
 
-function collectRowVarsFromBody(node: any, thenParam: string, rowVars: Set<string>): void {
-  if (!node || typeof node !== 'object') return;
-
-  if (node.type === 'CallExpression') {
-    const callee = node.callee;
-    if (
-      callee?.type === 'MemberExpression' &&
-      (callee.property?.name === 'forEach' ||
-        callee.property?.name === 'map' ||
-        callee.property?.name === 'filter') &&
-      callee.object?.type === 'MemberExpression' &&
-      callee.object.object?.type === 'Identifier' &&
-      callee.object.object.name === thenParam &&
-      callee.object.property?.name === 'rows'
-    ) {
-      const iterCallback = node.arguments[0];
-      if (iterCallback) {
-        const iterParam = getFirstParamName(iterCallback);
-        if (iterParam) {
-          rowVars.add(iterParam);
-        }
-      }
-    }
+function getSecondParamName(node: any): string | null {
+  if (
+    (node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration') &&
+    node.params?.length > 1 &&
+    node.params[1].type === 'Identifier'
+  ) {
+    return node.params[1].name;
   }
-
-  for (const key of Object.keys(node)) {
-    const child = (node as any)[key];
-    if (Array.isArray(child)) {
-      for (const item of child) {
-        if (item && typeof item === 'object') collectRowVarsFromBody(item, thenParam, rowVars);
-      }
-    } else if (child && typeof child === 'object' && child.type) {
-      collectRowVarsFromBody(child, thenParam, rowVars);
-    }
+  if (
+    node.type === 'ArrowFunctionExpression' &&
+    node.params?.length > 1 &&
+    node.params[1].type === 'Identifier'
+  ) {
+    return node.params[1].name;
   }
+  return null;
 }
 
 function validateApiCalls(

@@ -24,6 +24,8 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, allPages, onNavigate, applicationId, appTools);
 
   const queryNames = useMemo(() => queries.map((q) => q.name), [queries]);
+  const queryNamesRef = useRef(queryNames);
+  queryNamesRef.current = queryNames;
 
   const sendUpdatePage = useCallback((cp: CodePageData) => {
     const iframe = iframeRef.current;
@@ -34,9 +36,9 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
       html: cp.html || '',
       js: cp.js || '',
       libraries: cp.libraries || [],
-      bridgeScript: buildBridgeContent(queryNames),
+      bridgeScript: buildBridgeContent(queryNamesRef.current),
     }, '*');
-  }, [queryNames, buildBridgeContent]);
+  }, [buildBridgeContent]);
 
   const sendUpdatePageRef = useRef(sendUpdatePage);
   sendUpdatePageRef.current = sendUpdatePage;
@@ -91,8 +93,8 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
     const iframe = iframeRef.current;
     if (!iframe || !shellReadyRef.current) return;
 
-    sendUpdatePage(codePage);
-  }, [codePage, sendUpdatePage]);
+    sendUpdatePageRef.current(codePage);
+  }, [codePage]);
 
   // Update bridge (query globals) when queries change
   useEffect(() => {
