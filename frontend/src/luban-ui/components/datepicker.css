@@ -1,0 +1,38 @@
+/* ============================================
+   Datepicker — 日期选择
+   ============================================ */
+
+.luban-datepicker {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  outline: none;
+  transition: border-color var(--luban-transition), box-shadow var(--luban-transition);
+}
+.luban-datepicker:hover {
+  border-color: var(--luban-primary-hover);
+}
+.luban-datepicker:focus {
+  border-color: var(--luban-primary);
+  box-shadow: 0 0 0 2px var(--luban-primary-light);
+}
+
+/* 日期范围 */
+.luban-date-range {
+  display: flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+}
+.luban-date-range .luban-datepicker {
+  flex: 1;
+}
+.luban-date-range-separator {
+  color: var(--luban-text-muted);
+  font-size: var(--luban-text-base);
+  flex-shrink: 0;
+}

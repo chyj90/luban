@@ -53,6 +53,7 @@ export async function validateCode(
   try { if (js) validateCrossPageParams(js, errors, warnings); } catch (e: any) { errors.push(`[跨页面参数校验] 异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateMockData(js, validateOptions, errors); } catch (e: any) { errors.push(`[Mock数据] 校验异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
+  try { if (html || js) validateLubanUIUsage(html, js, errors, warnings); } catch (e: any) { errors.push(`[LubanUI] 校验异常: ${e?.message || e}`); }
 
   return { valid: errors.length === 0, errors, warnings };
 }
@@ -904,4 +905,491 @@ function findApiRefLines(js: string, apiName: string): number[] {
     lines.push(js.substring(0, match.index).split('\n').length);
   }
   return lines;
+}
+
+// ==========================================
+// LubanUI 组件使用校验
+// ==========================================
+
+function validateLubanUIUsage(
+  html: string | undefined,
+  js: string | undefined,
+  errors: string[],
+  warnings: string[],
+) {
+  if (html) validateLubanUIHtml(html, warnings);
+  if (js) validateLubanUIJs(js, errors, warnings);
+}
+
+/**
+ * 检查 HTML 中是否使用了原生元素替代 LubanUI 组件 → 警告
+ */
+function validateLubanUIHtml(html: string, warnings: string[]) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+  const container = doc.querySelector('div');
+  if (!container) return;
+
+  const warningItems: string[] = [];
+
+  // 1. 原生 button 未使用 luban-btn → 排除 tab 按钮、modal 关闭按钮、clearable 按钮
+  const buttons = container.querySelectorAll('button');
+  const nativeButtons: string[] = [];
+  for (const btn of buttons) {
+    const cls = btn.getAttribute('class') || '';
+    if (cls.includes('luban-btn')) continue;
+    if (cls.includes('luban-tab-item')) continue;
+    if (cls.includes('luban-modal-close')) continue;
+    if (btn.hasAttribute('data-modal-close')) continue;
+    if (cls.includes('luban-input-clear')) continue;
+    nativeButtons.push(btn.outerHTML.substring(0, 60));
+  }
+  if (nativeButtons.length > 0) {
+    warningItems.push(`${nativeButtons.length} 个原生 <button> 未使用 luban-btn 样式（建议添加 class="luban-btn luban-btn-primary" 等）`);
+  }
+
+  // 2. 原生 table 未使用 luban-table
+  const tables = container.querySelectorAll('table:not([class*="luban-table"])');
+  if (tables.length > 0) {
+    warningItems.push(`${tables.length} 个原生 <table> 未使用 class="luban-table"（建议使用 LubanUI.table() 初始化）`);
+  }
+
+  // 3. 原生 select 未使用 luban-select
+  const selects = container.querySelectorAll('select:not([class*="luban-select"])');
+  if (selects.length > 0) {
+    warningItems.push(`${selects.length} 个原生 <select> 未使用 class="luban-select"（建议使用 LubanUI.select() 初始化）`);
+  }
+
+  // 4. 原生 input[type=text] 或 input:not([type]) 未使用 luban-input
+  const textInputs = container.querySelectorAll('input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="tel"], input[type="url"], input[type="password"]');
+  const nativeInputs: string[] = [];
+  for (const inp of textInputs) {
+    const cls = inp.getAttribute('class') || '';
+    if (cls.includes('luban-input')) continue;
+    if (cls.includes('luban-input-number')) continue;
+    const parent = inp.closest('.luban-input-clearable, .luban-input-affix, .luban-checkbox, .luban-radio, .luban-switch');
+    if (parent) continue;
+    nativeInputs.push(inp.outerHTML.substring(0, 60));
+  }
+  if (nativeInputs.length > 0) {
+    warningItems.push(`${nativeInputs.length} 个原生输入框未使用 class="luban-input"（建议添加）`);
+  }
+
+  // 5. 原生 textarea 未使用 luban-textarea
+  const textareas = container.querySelectorAll('textarea:not([class*="luban-textarea"])');
+  if (textareas.length > 0) {
+    warningItems.push(`${textareas.length} 个原生 <textarea> 未使用 class="luban-textarea"（建议添加）`);
+  }
+
+  // 6. 原生 input[type=number] 未使用 luban-input-number
+  const numInputs = container.querySelectorAll('input[type="number"]:not([class*="luban-input-number"])');
+  if (numInputs.length > 0) {
+    warningItems.push(`${numInputs.length} 个原生 <input type="number"> 未使用 class="luban-input-number"（建议添加）`);
+  }
+
+  // 7. 原生 input[type=date] 未使用 luban-datepicker
+  const dateInputs = container.querySelectorAll('input[type="date"]:not([class*="luban-datepicker"])');
+  if (dateInputs.length > 0) {
+    warningItems.push(`${dateInputs.length} 个原生 <input type="date"> 未使用 class="luban-datepicker"（建议添加）`);
+  }
+
+  // 8. 原生 checkbox 未包裹在 luban-checkbox 中
+  const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+  const nativeCheckboxes: string[] = [];
+  for (const cb of checkboxes) {
+    const parent = cb.closest('.luban-checkbox, .luban-switch');
+    if (parent) continue;
+    const cls = cb.getAttribute('class') || '';
+    if (cls.includes('luban-checkbox')) continue;
+    nativeCheckboxes.push(cb.outerHTML.substring(0, 60));
+  }
+  if (nativeCheckboxes.length > 0) {
+    warningItems.push(`${nativeCheckboxes.length} 个原生复选框未包裹在 <label class="luban-checkbox"> 中（建议使用）`);
+  }
+
+  // 9. 原生 radio 未包裹在 luban-radio 中
+  const radios = container.querySelectorAll('input[type="radio"]');
+  const nativeRadios: string[] = [];
+  for (const r of radios) {
+    const parent = r.closest('.luban-radio');
+    if (parent) continue;
+    nativeRadios.push(r.outerHTML.substring(0, 60));
+  }
+  if (nativeRadios.length > 0) {
+    warningItems.push(`${nativeRadios.length} 个原生单选框未包裹在 <label class="luban-radio"> 中（建议使用）`);
+  }
+
+  // 10. 表单结构 — 有 label+input 配对但未使用 luban-form
+  const labels = container.querySelectorAll('label');
+  let formWithoutLuban = 0;
+  for (const label of labels) {
+    const hasInput = label.querySelector('input, select, textarea') || label.nextElementSibling?.matches('input, select, textarea');
+    if (hasInput && !label.closest('.luban-form') && !label.closest('.luban-filter-bar') && !label.closest('.luban-checkbox') && !label.closest('.luban-radio')) {
+      formWithoutLuban++;
+    }
+  }
+  if (formWithoutLuban > 0) {
+    warningItems.push(`检测到 ${formWithoutLuban} 个 label+input 表单结构，未使用 class="luban-form" 包裹（建议使用 <div class="luban-form">）`);
+  }
+
+  // 11. 卡片 — 带有 inline shadow/border 样式的 div 未使用 luban-card
+  const styledDivs = container.querySelectorAll('div[style]');
+  let cardLikeDivs = 0;
+  for (const div of styledDivs) {
+    const style = div.getAttribute('style') || '';
+    const cls = div.getAttribute('class') || '';
+    if (cls.includes('luban-card') || cls.includes('luban-stat-card') || cls.includes('luban-modal') || cls.includes('luban-chart-item')) continue;
+    if ((style.includes('box-shadow') || style.includes('border-radius')) && (style.includes('background') || style.includes('padding'))) {
+      cardLikeDivs++;
+    }
+  }
+  if (cardLikeDivs > 0) {
+    warningItems.push(`检测到 ${cardLikeDivs} 个使用 inline style 的卡片容器，未使用 class="luban-card"（建议使用 <div class="luban-card">）`);
+  }
+
+  // 12. 标签 Badge — 小尺寸彩色文字标签未使用 luban-badge
+  const badgeSpans = container.querySelectorAll('span');
+  let badgeLike = 0;
+  const statusKeywords = /成功|失败|进行中|已完成|待处理|已取消|已关闭|正常|异常|警告|启用|禁用|在线|离线|已审核|未审核|草稿|已发布|待审批/;
+  for (const span of badgeSpans) {
+    const cls = span.getAttribute('class') || '';
+    const style = span.getAttribute('style') || '';
+    if (cls.includes('luban-badge') || cls.includes('luban-stat') || cls.includes('luban-tab-item')) continue;
+    if (span.closest('.luban-badge, .luban-stat-card, .luban-tabs')) continue;
+    const text = span.textContent?.trim() || '';
+    if (statusKeywords.test(text) && (style.includes('background') || style.includes('color') || style.includes('padding') || style.includes('border-radius'))) {
+      badgeLike++;
+    }
+  }
+  if (badgeLike > 0) {
+    warningItems.push(`检测到 ${badgeLike} 个 inline style 状态标签，未使用 class="luban-badge"（建议使用 <span class="luban-badge luban-badge-success">）`);
+  }
+
+  // 13. 标签页 Tabs — 有 data-tab 或 tab 类结构但未使用 luban-tabs
+  const tabTriggers = container.querySelectorAll('[data-tab], .tab, .tab-item, .tab-btn');
+  let tabWithoutLuban = 0;
+  for (const el of tabTriggers) {
+    const cls = el.getAttribute('class') || '';
+    if (cls.includes('luban-tab-item') || cls.includes('luban-tab-content')) continue;
+    if (el.closest('.luban-tabs')) continue;
+    tabWithoutLuban++;
+  }
+  if (tabWithoutLuban > 0) {
+    warningItems.push(`检测到 ${tabWithoutLuban} 个标签页结构，未使用 class="luban-tabs"（建议使用 LubanUI.initTabs()）`);
+  }
+
+  // 14. 弹窗 Modal — 有 overlay 或 display:none 的弹窗结构未使用 luban-modal
+  const overlays = container.querySelectorAll('[style*="display:none"], [style*="display: none"], [style*="position:fixed"], [style*="position: fixed"]');
+  let modalWithoutLuban = 0;
+  for (const el of overlays) {
+    const cls = el.getAttribute('class') || '';
+    if (cls.includes('luban-modal') || cls.includes('luban-loading')) continue;
+    if (el.closest('.luban-modal-overlay')) continue;
+    const hasHeader = el.querySelector('[class*="title"], [class*="header"], h1, h2, h3, h4');
+    const hasClose = el.querySelector('[class*="close"], button');
+    if (hasHeader && hasClose) {
+      modalWithoutLuban++;
+    }
+  }
+  if (modalWithoutLuban > 0) {
+    warningItems.push(`检测到 ${modalWithoutLuban} 个自定义弹窗结构，未使用 class="luban-modal-overlay"（建议使用 LubanUI.modal.open()）`);
+  }
+
+  // 15. 空状态 Empty — 有"暂无数据"文字但未使用 luban-empty
+  const emptyTexts = container.querySelectorAll('*');
+  let emptyWithoutLuban = 0;
+  const emptyPattern = /暂无数据|暂无内容|无数据|没有数据|空空如也|暂无记录|无搜索结果/;
+  for (const el of emptyTexts) {
+    if (el.children.length > 0) continue; // 只检查叶子节点
+    const text = el.textContent?.trim() || '';
+    if (emptyPattern.test(text) && text.length < 20) {
+      if (!el.closest('.luban-empty') && !el.closest('.luban-table')) {
+        emptyWithoutLuban++;
+      }
+    }
+  }
+  if (emptyWithoutLuban > 0) {
+    warningItems.push(`检测到 ${emptyWithoutLuban} 个空状态提示，未使用 class="luban-empty"（建议使用 <div class="luban-empty">）`);
+  }
+
+  // 16. 加载 Loading — 有 spinner 或"加载中"文字但未使用 luban-loading
+  const loadingTexts = container.querySelectorAll('*');
+  let loadingWithoutLuban = 0;
+  const loadingPattern = /加载中|loading|Loading|拼命加载|努力加载/;
+  for (const el of loadingTexts) {
+    if (el.children.length > 0) continue;
+    const text = el.textContent?.trim() || '';
+    const cls = el.getAttribute('class') || '';
+    if (loadingPattern.test(text) && text.length < 20) {
+      if (!el.closest('.luban-loading') && !cls.includes('luban-loading')) {
+        loadingWithoutLuban++;
+      }
+    }
+  }
+  // 也检查 spinner 动画（有 animation 且 border-radius:50% 的 div）
+  const spinnerDivs = container.querySelectorAll('div[style*="animation"]');
+  for (const div of spinnerDivs) {
+    const style = div.getAttribute('style') || '';
+    const cls = div.getAttribute('class') || '';
+    if (cls.includes('luban-spinner') || cls.includes('luban-loading')) continue;
+    if (div.closest('.luban-loading') || div.closest('.luban-btn-loading')) continue;
+    if (style.includes('border-radius') && (style.includes('50%') || style.includes('999'))) {
+      loadingWithoutLuban++;
+    }
+  }
+  if (loadingWithoutLuban > 0) {
+    warningItems.push(`检测到 ${loadingWithoutLuban} 个加载状态结构，未使用 class="luban-loading"（建议使用 <div class="luban-loading"><div class="luban-spinner">）`);
+  }
+
+  // 17. 筛选栏 FilterBar — 有 input+select+button 组合但未使用 luban-filter-bar
+  const filterRows = container.querySelectorAll('div');
+  let filterBarWithoutLuban = 0;
+  for (const div of filterRows) {
+    const cls = div.getAttribute('class') || '';
+    if (cls.includes('luban-filter-bar') || cls.includes('luban-form') || cls.includes('luban-card')) continue;
+    const style = div.getAttribute('style') || '';
+    const hasInput = div.querySelector('input, select');
+    const hasButton = div.querySelector('button');
+    const isFlex = style.includes('display:flex') || style.includes('display: flex') || cls.includes('flex');
+    if (hasInput && hasButton && isFlex && div.children.length >= 2 && div.children.length <= 8) {
+      filterBarWithoutLuban++;
+    }
+  }
+  if (filterBarWithoutLuban > 0) {
+    warningItems.push(`检测到 ${filterBarWithoutLuban} 个筛选栏结构，未使用 class="luban-filter-bar"（建议使用 <div class="luban-filter-bar">）`);
+  }
+
+  // 18. 统计卡 Stats — 有 grid + 数值+标签 结构但未使用 luban-stats-grid
+  const statGrids = container.querySelectorAll('div[style*="grid"], div[style*="display:grid"], div[class*="grid"]');
+  let statsWithoutLuban = 0;
+  for (const grid of statGrids) {
+    const cls = grid.getAttribute('class') || '';
+    if (cls.includes('luban-stats-grid') || cls.includes('luban-form')) continue;
+    const children = grid.children;
+    if (children.length >= 2 && children.length <= 6) {
+      let statCount = 0;
+      for (const child of children) {
+        const hasNumber = /\d+/.test(child.textContent || '');
+        const hasLabel = child.querySelector('*') && child.textContent!.length > 3;
+        if (hasNumber && hasLabel) statCount++;
+      }
+      if (statCount >= 2) {
+        statsWithoutLuban++;
+      }
+    }
+  }
+  if (statsWithoutLuban > 0) {
+    warningItems.push(`检测到 ${statsWithoutLuban} 个统计卡网格结构，未使用 class="luban-stats-grid"（建议使用 <div class="luban-stats-grid">）`);
+  }
+
+  // 19. 图表 Chart — 有 canvas 或 chart ID 但未使用 luban-chart-item
+  const chartContainers = container.querySelectorAll('div[id]');
+  let chartWithoutLuban = 0;
+  for (const div of chartContainers) {
+    const id = div.getAttribute('id') || '';
+    const cls = div.getAttribute('class') || '';
+    if (cls.includes('luban-chart') || cls.includes('luban-chart-item')) continue;
+    if (div.closest('.luban-chart-item')) continue;
+    const hasChart = /chart|echart|graph|pie|bar|line/i.test(id);
+    const hasCanvas = div.querySelector('canvas');
+    if (hasChart || hasCanvas) {
+      chartWithoutLuban++;
+    }
+  }
+  if (chartWithoutLuban > 0) {
+    warningItems.push(`检测到 ${chartWithoutLuban} 个图表容器，未使用 class="luban-chart-item"（建议使用 <div class="luban-chart-item"><div class="luban-chart">）`);
+  }
+
+  // 20. 分页 Pagination — 有分页结构但未使用 luban-pagination
+  const paginationPattern = /上一页|下一页|首页|末页|第\s*\d+\s*页|共\s*\d+\s*页|共\s*\d+\s*条/;
+  const pageElements = container.querySelectorAll('*');
+  let paginationWithoutLuban = 0;
+  const paginationContainers = new Set<Element>();
+  for (const el of pageElements) {
+    if (el.children.length > 0) continue;
+    if (el.closest('.luban-pagination') || el.closest('.luban-table')) continue;
+    const text = el.textContent?.trim() || '';
+    if (paginationPattern.test(text) && text.length < 30) {
+      const parent = el.parentElement;
+      if (parent && !paginationContainers.has(parent)) {
+        paginationContainers.add(parent);
+        paginationWithoutLuban++;
+      }
+    }
+  }
+  if (paginationWithoutLuban > 0) {
+    warningItems.push(`检测到 ${paginationWithoutLuban} 个分页结构，未使用 class="luban-pagination"（建议使用 LubanUI.table() 内置分页）`);
+  }
+
+  if (warningItems.length > 0) {
+    warnings.push(
+      `[LubanUI] 以下元素未使用 LubanUI 组件库，建议替换以保持风格一致：\n` +
+      warningItems.map((w) => `  - ${w}`).join('\n')
+    );
+  }
+}
+
+/**
+ * 检查 JS 中 LubanUI API 调用是否正确 → 错误
+ */
+function validateLubanUIJs(js: string, errors: string[], _warnings: string[]) {
+  // 1. LubanUI.table() — 第一个参数必须是字符串（元素 ID）
+  const tableCalls = js.matchAll(/LubanUI\.table\s*\(\s*(['"])?(\w+)\1?\s*,/g);
+  for (const m of tableCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const id = m[2];
+    if (!m[1]) {
+      // 第一个参数不是字符串字面量
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.table() 第一个参数必须是表格元素 ID 字符串，如 LubanUI.table('myTable', {...})`
+      );
+    }
+  }
+
+  // 2. LubanUI.modal.open() — 第一个参数必须是字符串（弹窗 ID）
+  const modalOpenCalls = js.matchAll(/LubanUI\.modal\.open\s*\(\s*/g);
+  for (const m of modalOpenCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterOpen = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterOpen.match(/^\s*(['"])(\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.modal.open() 第一个参数必须是弹窗 ID 字符串，如 LubanUI.modal.open('myModal')`
+      );
+    }
+  }
+
+  // 3. LubanUI.modal.close() — 第一个参数必须是字符串
+  const modalCloseCalls = js.matchAll(/LubanUI\.modal\.close\s*\(\s*/g);
+  for (const m of modalCloseCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterClose = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterClose.match(/^\s*(['"])(\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.modal.close() 第一个参数必须是弹窗 ID 字符串，如 LubanUI.modal.close('myModal')`
+      );
+    }
+  }
+
+  // 4. LubanUI.toast.xxx() — 方法名必须合法
+  const VALID_TOAST_METHODS = ['success', 'error', 'warning', 'info'];
+  const toastCalls = js.matchAll(/LubanUI\.toast\.(\w+)\s*\(/g);
+  for (const m of toastCalls) {
+    const method = m[1];
+    if (!VALID_TOAST_METHODS.includes(method)) {
+      const lineNum = js.substring(0, m.index!).split('\n').length;
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.toast.${method}() 不存在。可用方法：${VALID_TOAST_METHODS.join('、')}`
+      );
+    }
+  }
+
+  // 5. LubanUI.select() — 参数必须是 CSS 选择器字符串
+  const selectCalls = js.matchAll(/LubanUI\.select\s*\(\s*/g);
+  for (const m of selectCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterCall = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterCall.match(/^\s*(['"])([#.]?\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.select() 参数必须是 CSS 选择器字符串，如 LubanUI.select('#mySelect')`
+      );
+    }
+  }
+
+  // 6. LubanUI.chart() — 第一个参数必须是字符串，第二个参数必须是对象
+  const chartCalls = js.matchAll(/LubanUI\.chart\s*\(\s*/g);
+  for (const m of chartCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterCall = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterCall.match(/^\s*(['"])(\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.chart() 第一个参数必须是图表容器 ID 字符串，如 LubanUI.chart('myChart', {...})`
+      );
+    }
+  }
+
+  // 7. LubanUI.initTabs() — 参数必须是字符串
+  const initTabsCalls = js.matchAll(/LubanUI\.initTabs\s*\(\s*/g);
+  for (const m of initTabsCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterCall = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterCall.match(/^\s*(['"])(\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.initTabs() 参数必须是标签页容器 ID 字符串，如 LubanUI.initTabs('myTabs')`
+      );
+    }
+  }
+
+  // 8. LubanUI.getFormData() — 参数必须是字符串
+  const formDataCalls = js.matchAll(/LubanUI\.getFormData\s*\(\s*/g);
+  for (const m of formDataCalls) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const afterCall = js.substring(m.index! + m[0].length);
+    const firstArgMatch = afterCall.match(/^\s*(['"])(\w+)\1/);
+    if (!firstArgMatch) {
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：LubanUI.getFormData() 参数必须是表单 ID 字符串，如 LubanUI.getFormData('myForm')`
+      );
+    }
+  }
+
+  // 9. 检查 JS 字符串中是否使用了不存在的 luban-* 类名
+  const ALL_VALID_LUBAN_CLASSES = new Set([
+    'luban-btn', 'luban-btn-primary', 'luban-btn-secondary', 'luban-btn-danger',
+    'luban-btn-success', 'luban-btn-text', 'luban-btn-sm', 'luban-btn-lg',
+    'luban-btn-block', 'luban-btn-loading', 'luban-btn-group',
+    'luban-table', 'luban-table-sort', 'luban-table-pagination',
+    'luban-form', 'luban-form-inline', 'luban-form-horizontal',
+    'luban-form-item', 'luban-form-label', 'luban-form-label-required',
+    'luban-form-help', 'luban-form-error',
+    'luban-input', 'luban-input-sm', 'luban-input-lg', 'luban-input-error',
+    'luban-input-clearable', 'luban-input-clear', 'luban-input-affix',
+    'luban-input-prefix', 'luban-input-suffix',
+    'luban-textarea', 'luban-input-number', 'luban-datepicker',
+    'luban-select', 'luban-select-option', 'luban-select-expand',
+    'luban-checkbox', 'luban-checkbox-group', 'luban-checkbox-group-vertical',
+    'luban-radio', 'luban-radio-group',
+    'luban-switch',
+    'luban-stats-grid', 'luban-stat-card', 'luban-stat-card-primary',
+    'luban-stat-card-success', 'luban-stat-card-warning', 'luban-stat-card-danger',
+    'luban-stat-loading', 'luban-stat-label', 'luban-stat-value', 'luban-stat-change',
+    'luban-stat-up', 'luban-stat-down',
+    'luban-card', 'luban-card-hoverable', 'luban-card-bordered', 'luban-card-shadow',
+    'luban-card-header', 'luban-card-title', 'luban-card-body',
+    'luban-modal-overlay', 'luban-modal', 'luban-modal-narrow', 'luban-modal-wide',
+    'luban-modal-header', 'luban-modal-title', 'luban-modal-close',
+    'luban-modal-body', 'luban-modal-footer',
+    'luban-tabs', 'luban-tabs-card', 'luban-tabs-nav', 'luban-tab-item',
+    'luban-tab-content', 'luban-tab-content',
+    'luban-badge', 'luban-badge-success', 'luban-badge-warning',
+    'luban-badge-danger', 'luban-badge-primary', 'luban-badge-info',
+    'luban-badge-dot', 'luban-badge-count',
+    'luban-filter-bar', 'luban-filter-item', 'luban-filter-label',
+    'luban-filter-actions',
+    'luban-toast', 'luban-toast-success', 'luban-toast-error',
+    'luban-toast-warning', 'luban-toast-info',
+    'luban-empty', 'luban-empty-action', 'luban-empty-simple',
+    'luban-empty-icon', 'luban-empty-text', 'luban-empty-description',
+    'luban-loading', 'luban-loading-inline', 'luban-loading-fullscreen',
+    'luban-loading-overlay', 'luban-loading-skeleton',
+    'luban-spinner', 'luban-loading-text',
+    'luban-chart-item', 'luban-chart-title', 'luban-chart',
+    'luban-pagination',
+  ]);
+
+  // 在 JS 字符串中查找 class="luban-xxx" 或 className 中出现的 luban- 类名
+  const classInJs = js.matchAll(/["']luban-(\w+(?:-\w+)*)["']/g);
+  for (const m of classInJs) {
+    const fullClass = 'luban-' + m[1];
+    if (!ALL_VALID_LUBAN_CLASSES.has(fullClass)) {
+      const lineNum = js.substring(0, m.index!).split('\n').length;
+      errors.push(
+        `[LubanUI] 第 ${lineNum} 行：类名 "${fullClass}" 不是有效的 LubanUI 组件类名，请检查拼写`
+      );
+    }
+  }
 }

@@ -2,7 +2,6 @@ import type { ToolDefinition, ToolContext } from '@/types/agent';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
 import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
-import { ANALYSIS_AGENT_PROMPT } from '../prompts/analysisAgent';
 import { resolveSkills } from './skillRegistry';
 import type { ChatRouter } from '../core/chatRouter';
 
@@ -62,10 +61,11 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'page:delete', 'page:rename',
       'code:create', 'code:get', 'code:update',
-      'observation:list_pages', 'observation:record',
+      'observation:list_pages', 'observation:list_queries', 'observation:record',
+      'query:get',
       'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
-      'delegate:query', 'delegate:workflow', 'delegate:analysis',
+      'delegate:query', 'delegate:workflow',
     ],
   },
   {
@@ -100,22 +100,6 @@ export const AGENTS: AgentDefinition[] = [
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
       'workflow:lint', 'workflow:copy', 'workflow:preview',
-    ],
-  },
-  {
-    id: 'analysis-assistant',
-    name: '需求分析助手',
-    icon: '',
-    description: '需求分析助手，负责从业务视角分析用户需求，不涉及技术实现',
-    isDefault: false,
-    buildSystemPrompt: () => ANALYSIS_AGENT_PROMPT,
-    allowedSkills: [
-      'observation:list_pages',
-      'observation:list_queries',
-      'observation:list_apis',
-      'query:get',
-      'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
-      'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
     ],
   },
 ];

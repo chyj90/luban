@@ -1,0 +1,76 @@
+/* ============================================
+   Tabs — 标签页
+   ============================================ */
+
+.luban-tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.luban-tabs-nav {
+  display: flex;
+  border-bottom: 1px solid var(--luban-border);
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.luban-tabs-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.luban-tab-item {
+  padding: 10px 20px;
+  font-size: var(--luban-text-base);
+  font-weight: 500;
+  color: var(--luban-text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--luban-transition);
+  white-space: nowrap;
+  user-select: none;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  border-radius: 0;
+}
+
+.luban-tab-item:hover {
+  color: var(--luban-primary);
+  background: transparent;
+}
+
+.luban-tab-item.active {
+  color: var(--luban-primary);
+  border-bottom-color: var(--luban-primary);
+}
+
+.luban-tab-content {
+  display: none;
+  padding: var(--luban-space-md) 0;
+}
+
+.luban-tab-content.active {
+  display: block;
+}
+
+/* 卡片式标签 */
+.luban-tabs-card .luban-tabs-nav {
+  border-bottom: none;
+  gap: var(--luban-space-sm);
+}
+
+.luban-tabs-card .luban-tab-item {
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius) var(--luban-radius) 0 0;
+  border-bottom: none;
+  background: var(--luban-bg);
+}
+
+.luban-tabs-card .luban-tab-item.active {
+  background: var(--luban-bg-card);
+  color: var(--luban-text);
+  border-bottom: 1px solid var(--luban-bg-card);
+  margin-bottom: -1px;
+}

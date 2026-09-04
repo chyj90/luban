@@ -1,0 +1,55 @@
+/* ============================================
+   Pagination — 分页
+   ============================================ */
+
+.luban-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--luban-space-sm);
+  padding: 12px 16px;
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-top: none;
+  border-radius: 0 0 var(--luban-radius-md) var(--luban-radius-md);
+  flex-wrap: wrap;
+}
+
+.luban-pagination-info {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+  margin-right: auto;
+}
+
+.luban-pagination .luban-btn {
+  min-width: 32px;
+  padding: 0 8px;
+}
+
+.luban-pagination .luban-btn-primary {
+  pointer-events: none;
+}
+
+.luban-page-size {
+  display: flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+  margin-left: var(--luban-space-md);
+}
+
+.luban-page-size select {
+  height: 28px;
+  padding: 0 24px 0 8px;
+  font-size: var(--luban-text-sm);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-sm);
+  color: var(--luban-text);
+  background: var(--luban-bg-card);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2364748b' d='M5 6.5L1 2.5h8z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+}

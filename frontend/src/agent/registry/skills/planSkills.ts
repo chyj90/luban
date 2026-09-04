@@ -245,6 +245,8 @@ export const planSkills: Record<string, SkillFactory> = {
     async execute(args): Promise<ToolExecuteResult> {
       const { plan_id, action } = args as unknown;
       const store = useAgentStore.getState();
+      const plan = store.plans.find((p: unknown) => p.id === plan_id);
+      if (!plan) return { success: false, message: `未找到计划 ${plan_id}，当前计划列表：${store.plans.map((p: unknown) => p.id).join(', ') || '无'}` };
       if (action === 'confirm') { store.updatePlan(plan_id, { status: 'confirmed' }); upsertPlanMessage(plan_id); return { success: true, message: '计划已确认，开始执行' }; }
       store.updatePlan(plan_id, { status: 'rejected' }); upsertPlanMessage(plan_id);
       return { success: true, message: '计划已放弃' };
@@ -334,9 +336,11 @@ export const planSkills: Record<string, SkillFactory> = {
         plan_id: { type: 'string', description: '计划 ID' },
         reason: { type: 'string', description: '调整原因' },
         changes: { type: 'string', description: '调整内容描述' },
-        action: { type: 'string', enum: ['append', 'remove', 'replace'], description: '操作类型：append=追加步骤，remove=删除步骤，replace=替换步骤' },
-        step_index: { type: 'number', description: '步骤索引（从0开始，remove/replace 时必填）' },
-        new_description: { type: 'string', description: '新步骤描述（append/replace 时必填）' },
+        action: { type: 'string', enum: ['append', 'remove', 'replace'], description: '操作类型：append=追加步骤，remove=删除步骤，replace=替换步骤（支持单个 step_index 或批量 step_indices 数组）' },
+        step_index: { type: 'number', description: '步骤索引（从0开始，remove/replace 单个步骤时必填）' },
+        step_indices: { type: 'array', items: { type: 'number' }, description: '批量替换的步骤索引数组（从0开始，replace 批量操作时与 new_descriptions 配合使用）' },
+        new_description: { type: 'string', description: '新步骤描述（append 或 replace 单个步骤时必填）' },
+        new_descriptions: { type: 'array', items: { type: 'string' }, description: '批量替换的新步骤描述数组（与 step_indices 一一对应）' },
         new_tool_name: { type: 'string', description: '新步骤工具名称（append/replace 时可选）' },
         new_id: { type: 'string', description: '新步骤 ID（append 时可选，不提供则自动生成）。⚠️ 重要：后续 update_plan_item 需要用此 ID 来更新步骤状态，请务必记录此 ID。' },
       },
@@ -381,15 +385,35 @@ export const planSkills: Record<string, SkillFactory> = {
           break;
         }
         case 'replace': {
-          if (typedArgs.step_index === undefined || !typedArgs.new_description) return { success: false, message: 'replace 操作需要 step_index 和 new_description' };
-          if (!plan.steps[typedArgs.step_index]) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
-          const updated = plan.steps.map((s: unknown, i: number) =>
-            i === typedArgs.step_index
-              ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name || s.toolName }
-              : s,
-          );
-          store.updatePlan(typedArgs.plan_id, { steps: updated });
-          actionMessage = `已替换步骤 ${typedArgs.step_index + 1} 为：${typedArgs.new_description}`;
+          const stepArray = typedArgs.step_indices as number[] | undefined;
+          if (stepArray && Array.isArray(stepArray) && stepArray.length > 0) {
+            const descArray = typedArgs.new_descriptions as string[] | undefined;
+            if (!descArray || !Array.isArray(descArray) || descArray.length !== stepArray.length) {
+              return { success: false, message: `批量替换需要 new_descriptions 数组与 step_indices 长度一致（step_indices: ${stepArray.length}，new_descriptions: ${descArray?.length || 0}）` };
+            }
+            const updated = plan.steps.map((s: unknown, i: number) => {
+              const idx = stepArray.indexOf(i);
+              if (idx >= 0) {
+                return { ...s, description: descArray[idx], toolName: typedArgs.new_tool_name || s.toolName };
+              }
+              return s;
+            });
+            store.updatePlan(typedArgs.plan_id, { steps: updated });
+            const replacedLabels = stepArray.map((si: number) => si + 1).join('、');
+            actionMessage = `已批量替换步骤 ${replacedLabels}`;
+          } else {
+            if (typedArgs.step_index === undefined || !typedArgs.new_description) {
+              return { success: false, message: 'replace 操作需要 step_index + new_description（单个替换）或 step_indices + new_descriptions（批量替换）' };
+            }
+            if (!plan.steps[typedArgs.step_index]) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
+            const updated = plan.steps.map((s: unknown, i: number) =>
+              i === typedArgs.step_index
+                ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name || s.toolName }
+                : s,
+            );
+            store.updatePlan(typedArgs.plan_id, { steps: updated });
+            actionMessage = `已替换步骤 ${typedArgs.step_index + 1} 为：${typedArgs.new_description}`;
+          }
           break;
         }
         default: {

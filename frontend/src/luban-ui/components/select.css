@@ -1,0 +1,172 @@
+/* ============================================
+   Select — 下拉选择（div 模拟）
+   ============================================ */
+
+.luban-select {
+  position: relative;
+  width: 100%;
+  display: inline-block;
+}
+
+.luban-select-native {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+
+.luban-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  cursor: pointer;
+  box-shadow: var(--luban-shadow-xs);
+  transition: border-color var(--luban-transition), box-shadow var(--luban-transition);
+  user-select: none;
+}
+
+.luban-select-trigger:hover {
+  border-color: var(--luban-primary);
+}
+
+.luban-select-open .luban-select-trigger {
+  border-color: var(--luban-primary);
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.1);
+}
+
+.luban-select-disabled .luban-select-trigger {
+  background: var(--luban-bg);
+  color: var(--luban-text-muted);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.luban-select-disabled .luban-select-trigger:hover {
+  border-color: var(--luban-border);
+}
+
+.luban-select-placeholder {
+  color: var(--luban-text-placeholder);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.luban-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.luban-select-arrow {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  color: var(--luban-text-muted);
+  transition: transform var(--luban-transition);
+}
+
+.luban-select-open .luban-select-arrow {
+  transform: rotate(180deg);
+}
+
+.luban-select-arrow svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.luban-select-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-md);
+  box-shadow: var(--luban-shadow);
+  z-index: 1000;
+  max-height: 240px;
+  overflow-y: auto;
+  display: none;
+  padding: 4px;
+}
+
+.luban-select-open .luban-select-dropdown {
+  display: block;
+}
+
+.luban-select-dropup {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.luban-select-option {
+  padding: 8px 12px;
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text);
+  border-radius: var(--luban-radius-sm);
+  cursor: pointer;
+  transition: background var(--luban-transition);
+}
+
+.luban-select-option:hover {
+  background: var(--luban-bg);
+}
+
+.luban-select-option.selected {
+  color: var(--luban-primary);
+  background: var(--luban-primary-bg);
+  font-weight: 500;
+}
+
+.luban-select-option.disabled {
+  color: var(--luban-text-muted);
+  cursor: not-allowed;
+}
+
+.luban-select-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  font-size: 9px;
+  color: var(--luban-text-muted);
+  flex-shrink: 0;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background var(--luban-transition);
+}
+
+.luban-select-expand:hover {
+  background: var(--luban-border-light);
+}
+
+.luban-select-filter {
+  padding: 0 12px 4px;
+}
+
+.luban-select-filter input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  font-size: var(--luban-text-xs);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-sm);
+  outline: none;
+}
+
+.luban-select-filter input:focus {
+  border-color: var(--luban-primary);
+}

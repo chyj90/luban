@@ -1,0 +1,32 @@
+/* ============================================
+   Input Number — 数字输入
+   ============================================ */
+
+.luban-input-number {
+  -moz-appearance: textfield;
+  width: 100%;
+}
+.luban-input-number::-webkit-inner-spin-button,
+.luban-input-number::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.luban-input-number-group {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+.luban-input-number-group .luban-input {
+  text-align: center;
+  border-radius: 0;
+  flex: 1;
+}
+.luban-input-number-group .luban-btn {
+  border-radius: var(--luban-radius) 0 0 var(--luban-radius);
+  padding: 0 12px;
+  height: auto;
+}
+.luban-input-number-group .luban-btn:last-child {
+  border-radius: 0 var(--luban-radius) var(--luban-radius) 0;
+}

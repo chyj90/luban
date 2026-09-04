@@ -354,6 +354,11 @@ export function useQueryBridge(
       }
     }
 
+    if (d.type === 'UPDATE_CSS') {
+      var styleEl = document.getElementById('__luban_ui__');
+      if (styleEl && d.css) styleEl.textContent = d.css;
+    }
+
     if (d.type === 'UPDATE_PAGE') {
       var libs = d.libraries || [];
       var pending = libs.length;
@@ -361,7 +366,9 @@ export function useQueryBridge(
       function applyPage() {
         var bodyScripts = document.body.querySelectorAll('script');
         for (var i = 0; i < bodyScripts.length; i++) {
-          bodyScripts[i].remove();
+          if (bodyScripts[i].id !== '__luban_ui_js__' && bodyScripts[i].id !== '__echarts__') {
+            bodyScripts[i].remove();
+          }
         }
 
         for (var i = 0; i < _domReadyListeners.length; i++) {

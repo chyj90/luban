@@ -1,0 +1,51 @@
+/* ============================================
+   Switch — 开关
+   ============================================ */
+
+.luban-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+}
+
+.luban-switch input[type="checkbox"] {
+  appearance: none;
+  width: 44px;
+  height: 22px;
+  background: var(--luban-border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background var(--luban-transition);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.luban-switch input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform var(--luban-transition);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.luban-switch input[type="checkbox"]:checked {
+  background: var(--luban-primary);
+}
+
+.luban-switch input[type="checkbox"]:checked::after {
+  transform: translateX(22px);
+}
+
+.luban-switch input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

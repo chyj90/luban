@@ -1,0 +1,106 @@
+/* ============================================
+   Table — 表格
+   分页内嵌在 table.js 动态渲染
+   ============================================ */
+
+.luban-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--luban-bg-card);
+  border-radius: var(--luban-radius-md);
+  overflow: hidden;
+  table-layout: auto;
+}
+
+.luban-table thead {
+  background: var(--luban-bg-header);
+}
+
+.luban-table th {
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+  border-bottom: 1px solid var(--luban-border);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.luban-table th.sortable {
+  cursor: pointer;
+  transition: color var(--luban-transition);
+}
+
+.luban-table th.sortable:hover {
+  color: var(--luban-primary);
+}
+
+.luban-table th.sort-asc::after {
+  content: ' ▲';
+  font-size: 10px;
+  color: var(--luban-primary);
+}
+
+.luban-table th.sort-desc::after {
+  content: ' ▼';
+  font-size: 10px;
+  color: var(--luban-primary);
+}
+
+.luban-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--luban-border-light);
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+}
+
+.luban-table tbody tr {
+  transition: background var(--luban-transition);
+}
+
+.luban-table tbody tr:hover {
+  background: var(--luban-bg-hover);
+}
+
+.luban-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.luban-table .luban-table-empty {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--luban-text-muted);
+  font-size: var(--luban-text-base);
+}
+
+/* 表格工具栏 */
+.luban-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-bottom: none;
+  border-radius: var(--luban-radius-md) var(--luban-radius-md) 0 0;
+}
+
+.luban-table-toolbar + .luban-table {
+  border-radius: 0 0 var(--luban-radius-md) var(--luban-radius-md);
+  border: 1px solid var(--luban-border);
+  border-top: none;
+}
+
+.luban-table-info {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+}
+
+.luban-table-page-size {
+  display: flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+}

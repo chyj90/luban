@@ -1,6 +1,5 @@
 import { SkillCategory, type SkillFactory, resolveSkills } from '../skillRegistry';
 import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
-import { ANALYSIS_AGENT_PROMPT } from '../../prompts/analysisAgent';
 import { getAgentMemory, setAgentMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
@@ -287,148 +286,23 @@ detail_table 类型需额外提供 columns 数组，每个子字段同上格式
     };
   },
 
-  'delegate:analysis': (ctx, chatRouter) => {
-    if (!chatRouter) {
+  'delegate:analysis': () => ({
+    id: 'delegate:analysis',
+    category: SkillCategory.DELEGATE,
+    name: 'delegate_analysis',
+    description: '【已废弃】需求分析已由主智能体自行完成，请直接调用 list_pages/list_queries/get_query 探查后输出分析报告，再调用 create_plan',
+    parameters: {
+      type: 'object',
+      properties: {
+        requirement: { type: 'string', description: '用户需求描述' },
+      },
+      required: ['requirement'],
+    },
+    async execute() {
       return {
-        id: 'delegate:analysis',
-        category: SkillCategory.DELEGATE,
-        name: 'delegate_analysis',
-        description: '向需求分析智能体委派任务（不可用：缺少 ChatRouter）',
-        parameters: { type: 'object', properties: {} },
-        async execute() { return { success: false, message: 'ChatRouter 不可用' }; },
+        success: false,
+        message: 'delegate_analysis 已废弃。需求分析由主智能体自行完成：请调用 list_pages → list_queries → get_query → 输出分析报告 → create_plan 创建计划。',
       };
-    }
-
-    return {
-      id: 'delegate:analysis',
-      category: SkillCategory.DELEGATE,
-      name: 'delegate_analysis',
-      description: `向需求分析智能体委派需求分析任务。
-需求分析智能体会分析用户需求，拆解为结构化任务，输出分析报告。`,
-      parameters: {
-        type: 'object',
-        properties: {
-          requirement: { type: 'string', description: '用户需求描述' },
-          context: { type: 'string', description: '当前应用上下文' },
-        },
-        required: ['requirement'],
-      },
-      async execute(args) {
-        const { requirement, context } = args as unknown;
-        const execStart = Date.now();
-        console.log(`[delegate_analysis] 开始委派需求分析任务`);
-
-        ctx.dispatch?.({
-          type: 'DELEGATE_ANALYSIS_START',
-          payload: { requirement },
-        } as unknown);
-
-        try {
-          const systemPrompt = `${ANALYSIS_AGENT_PROMPT}
-当前应用 ID: ${ctx.applicationId}
-${context ? `上下文信息：${context}` : ''}`;
-
-          const baseOverrides = {
-            systemPrompt,
-            isDelegated: true,
-            agentContext: { requirement, context },
-          };
-
-          // ===== 第1轮：list_pages + 话题拆解 =====
-          console.log(`[delegate_analysis] === 第1轮：页面探查 + 话题拆解 ===`);
-          const round1 = await chatRouter!.routeTo(
-            'analysis-assistant',
-            `请完成以下两步，一步完成后再进行下一步：
-
-【步骤1】调用 list_pages 了解项目现状。然后调用 list_queries 查看已有查询。对需求中涉及的每个目标查询，调用 get_query 获取查询的 SQL 和字段名。完成后输出"已了解"。
-
-【步骤2】根据页面列表和查询信息，将需求拆解为独立话题，输出话题列表（每个话题标注类型）。
-
-需求：${requirement}`,
-            `analysis-r1-${Date.now()}`,
-            baseOverrides,
-          );
-          const messages1 = round1.getMessages();
-          console.log(`[delegate_analysis] 第1轮完成 | messages: ${messages1.length}`);
-
-          // ===== 第2轮：需求分析报告 =====
-          console.log(`[delegate_analysis] === 第2轮：需求分析报告 ===`);
-          const round2 = await chatRouter!.routeTo(
-            'analysis-assistant',
-            `根据上面的话题列表，对每个话题按规范进行完整分析，输出需求分析报告（7个章节）：
-
-1. 需求概述
-2. 功能模块
-3. 页面规划
-4. UI分析
-5. 用户操作流程
-6. 数据字段
-7. 待确认问题
-
-注意：待确认问题中，已知的事情不要提问，不确定的事情才问。`,
-            `analysis-r2-${Date.now()}`,
-            { ...baseOverrides, initialMessages: messages1 },
-          );
-          const messages2 = round2.getMessages();
-          console.log(`[delegate_analysis] 第2轮完成 | messages: ${messages2.length}`);
-
-          // 合并第1轮和第2轮的消息
-          const allMessages = [...messages1, ...messages2];
-
-          // ===== 第3轮：创建执行计划 =====
-          console.log(`[delegate_analysis] === 第3轮：创建执行计划 ===`);
-          const round3 = await chatRouter!.routeTo(
-            'analysis-assistant',
-            `根据上面的分析报告，调用 create_plan 创建执行计划。`,
-            `analysis-r3-${Date.now()}`,
-            { ...baseOverrides, initialMessages: allMessages },
-          );
-          const messages3 = round3.getMessages();
-          console.log(`[delegate_analysis] 第3轮完成 | messages: ${messages3.length}`);
-
-          // 合并所有消息
-          const finalMessages = [...messages1, ...messages2, ...messages3];
-          const response = finalMessages
-            .filter((m: unknown) => m.role === 'assistant')
-            .map((m: unknown) => m.content)
-            .join('\n\n')
-            .trim();
-
-          // 从消息中提取 planId
-          let planId: string | null = null;
-          for (const m of finalMessages) {
-            if (m.role === 'tool' && m.content) {
-              try {
-                const parsed = JSON.parse(m.content);
-                if (parsed?.data?.planId) {
-                  planId = parsed.data.planId;
-                  break;
-                }
-              } catch { /* 非 JSON 内容，跳过 */ }
-            }
-          }
-
-          console.log(`[delegate_analysis] 全部完成 | 总耗时: ${Date.now() - execStart}ms | planId: ${planId}`);
-
-          ctx.dispatch?.({
-            type: 'DELEGATE_ANALYSIS_END',
-            payload: { success: true, details: response, planId },
-          } as unknown);
-
-          return {
-            success: true,
-            message: '需求分析完成',
-            data: { analysis: response, planId, messages: finalMessages },
-          };
-        } catch (e: unknown) {
-          console.error(`[delegate_analysis] 失败:`, e);
-          ctx.dispatch?.({
-            type: 'DELEGATE_ANALYSIS_END',
-            payload: { success: false, error: e.message },
-          } as unknown);
-          return { success: false, message: `需求分析智能体执行失败: ${e.message}`, _noRetry: true };
-        }
-      },
-    };
-  },
+    },
+  }),
 };

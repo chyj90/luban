@@ -1,0 +1,11 @@
+/* ============================================
+   Textarea — 多行文本
+   ============================================ */
+
+.luban-textarea {
+  min-height: 80px;
+  height: auto;
+  padding: 8px 12px;
+  resize: vertical;
+  line-height: 1.6;
+}

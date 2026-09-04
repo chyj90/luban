@@ -1,0 +1,80 @@
+/* ============================================
+   Badge — 标签 / 徽章
+   ============================================ */
+
+.luban-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  font-size: var(--luban-text-xs);
+  font-weight: 500;
+  border-radius: 100px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+/* 语义色 */
+.luban-badge-default {
+  background: var(--luban-bg);
+  color: var(--luban-text-secondary);
+  border: 1px solid var(--luban-border);
+}
+
+.luban-badge-primary {
+  background: var(--luban-primary-bg);
+  color: var(--luban-primary);
+}
+
+.luban-badge-success {
+  background: var(--luban-success-bg);
+  color: var(--luban-success);
+}
+
+.luban-badge-warning {
+  background: var(--luban-warning-bg);
+  color: var(--luban-warning);
+}
+
+.luban-badge-danger {
+  background: var(--luban-danger-bg);
+  color: var(--luban-danger);
+}
+
+.luban-badge-info {
+  background: var(--luban-info-bg);
+  color: var(--luban-info);
+}
+
+/* 圆点样式 */
+.luban-badge-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.luban-badge-dot.luban-badge-success { background: var(--luban-success); }
+.luban-badge-dot.luban-badge-warning { background: var(--luban-warning); }
+.luban-badge-dot.luban-badge-danger { background: var(--luban-danger); }
+.luban-badge-dot.luban-badge-default { background: var(--luban-border); }
+
+/* 数字角标 */
+.luban-badge-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--luban-danger);
+  border-radius: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}

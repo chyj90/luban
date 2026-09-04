@@ -1,0 +1,77 @@
+/* ============================================
+   Radio — 单选框
+   ============================================ */
+
+.luban-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+}
+
+.luban-radio input[type="radio"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--luban-border);
+  border-radius: 50%;
+  background: var(--luban-bg-card);
+  cursor: pointer;
+  transition: all var(--luban-transition);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.luban-radio input[type="radio"]:hover {
+  border-color: var(--luban-primary);
+}
+
+.luban-radio input[type="radio"]:checked {
+  border-color: var(--luban-primary);
+}
+
+.luban-radio input[type="radio"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 8px;
+  height: 8px;
+  background: var(--luban-primary);
+  border-radius: 50%;
+}
+
+.luban-radio input[type="radio"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 单选组 */
+.luban-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--luban-space);
+}
+
+.luban-radio-group-vertical {
+  flex-direction: column;
+}
+
+/* 按钮样式单选组 */
+.luban-radio-group-button .luban-radio {
+  padding: 6px 16px;
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  transition: all var(--luban-transition);
+}
+.luban-radio-group-button .luban-radio input[type="radio"] {
+  display: none;
+}
+.luban-radio-group-button .luban-radio:has(input:checked) {
+  background: var(--luban-primary);
+  border-color: var(--luban-primary);
+  color: #fff;
+}

@@ -1,0 +1,105 @@
+/* ============================================
+   LubanUI — CSS 变量 & 全局重置
+   从平台公共组件提取，保持视觉一致
+   ============================================ */
+
+:root {
+  /* 主色 */
+  --luban-primary: #1677ff;
+  --luban-primary-hover: #4096ff;
+  --luban-primary-active: #0958d9;
+  --luban-primary-light: rgba(22, 119, 255, 0.08);
+  --luban-primary-bg: #e6f4ff;
+
+  /* 文字 */
+  --luban-text: #1e293b;
+  --luban-text-secondary: #64748b;
+  --luban-text-muted: #94a3b8;
+  --luban-text-placeholder: #cbd5e1;
+
+  /* 背景 */
+  --luban-bg: #f8fafc;
+  --luban-bg-card: #ffffff;
+  --luban-bg-hover: #f1f5f9;
+  --luban-bg-header: #f8fafc;
+
+  /* 边框 */
+  --luban-border: #e2e8f0;
+  --luban-border-light: #f1f5f9;
+
+  /* 语义色 */
+  --luban-success: #22c55e;
+  --luban-success-bg: #f0fdf4;
+  --luban-warning: #f59e0b;
+  --luban-warning-bg: #fffbeb;
+  --luban-danger: #ef4444;
+  --luban-danger-bg: #fef2f2;
+  --luban-info: #1677ff;
+  --luban-info-bg: #eff6ff;
+
+  /* 圆角 */
+  --luban-radius-sm: 3px;
+  --luban-radius: 5px;
+  --luban-radius-md: 7px;
+  --luban-radius-lg: 10px;
+  --luban-radius-xl: 14px;
+
+  /* 阴影 */
+  --luban-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03);
+  --luban-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --luban-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --luban-shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+
+  /* 间距 */
+  --luban-space-xs: 4px;
+  --luban-space-sm: 6px;
+  --luban-space: 10px;
+  --luban-space-md: 14px;
+  --luban-space-lg: 20px;
+  --luban-space-xl: 28px;
+  --luban-space-2xl: 40px;
+
+  /* 字体 */
+  --luban-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Pro Text', Helvetica, Arial, sans-serif;
+  --luban-font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  --luban-text-xs: 11px;
+  --luban-text-sm: 12px;
+  --luban-text-base: 13px;
+  --luban-text-md: 14px;
+  --luban-text-lg: 16px;
+  --luban-text-xl: 20px;
+  --luban-text-2xl: 24px;
+
+  /* 过渡 */
+  --luban-transition: 0.15s ease;
+  --luban-transition-slow: 0.2s ease;
+}
+
+/* 全局重置 */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--luban-font);
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+  background: var(--luban-bg);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+input, button, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+a {
+  color: var(--luban-primary);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--luban-primary-hover);
+}

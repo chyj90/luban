@@ -1,0 +1,64 @@
+/* ============================================
+   Checkbox — 复选框
+   ============================================ */
+
+.luban-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--luban-space-sm);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+}
+
+.luban-checkbox input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-sm);
+  background: var(--luban-bg-card);
+  cursor: pointer;
+  transition: all var(--luban-transition);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.luban-checkbox input[type="checkbox"]:hover {
+  border-color: var(--luban-primary);
+}
+
+.luban-checkbox input[type="checkbox"]:checked {
+  background: var(--luban-primary);
+  border-color: var(--luban-primary);
+}
+
+.luban-checkbox input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 6px;
+  height: 10px;
+  border: 2px solid #fff;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
+
+.luban-checkbox input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 复选框组 */
+.luban-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--luban-space);
+}
+
+.luban-checkbox-group-vertical {
+  flex-direction: column;
+}

@@ -1,0 +1,82 @@
+/* ============================================
+   Loading — 加载状态
+   ============================================ */
+
+.luban-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+.luban-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--luban-border);
+  border-top-color: var(--luban-primary);
+  border-radius: 50%;
+  animation: lubanSpin 0.8s linear infinite;
+}
+
+@keyframes lubanSpin {
+  to { transform: rotate(360deg); }
+}
+
+.luban-loading-text {
+  margin-top: var(--luban-space);
+  font-size: var(--luban-text-base);
+  color: var(--luban-text-muted);
+}
+
+.luban-loading-inline {
+  display: inline-flex;
+  padding: 0;
+  flex-direction: row;
+  gap: var(--luban-space-sm);
+}
+
+.luban-loading-inline .luban-spinner {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+
+.luban-loading-inline .luban-loading-text {
+  margin-top: 0;
+}
+
+.luban-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  border-radius: inherit;
+}
+
+/* 全屏遮罩 */
+.luban-loading-fullscreen {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.luban-loading-skeleton {
+  background: linear-gradient(90deg, var(--luban-border-light) 25%, var(--luban-bg) 50%, var(--luban-border-light) 75%);
+  background-size: 200% 100%;
+  animation: lubanSkeleton 1.5s ease infinite;
+  border-radius: var(--luban-radius-sm);
+}
+
+@keyframes lubanSkeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}

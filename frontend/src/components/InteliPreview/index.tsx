@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo, useCallback } from 'react';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
+import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE } from '@/luban-ui';
 import './InteliPreview.css';
 
 interface InteliPreviewProps {
@@ -60,10 +61,13 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style id="__page_style__"></style>
+  <style id="__luban_ui__">${LUBAN_UI_CSS}</style>
   ${buildShellScript(queryNames)}
 </head>
 <body>
   <div id="__page_root__"></div>
+  <script id="__luban_ui_js__">${LUBAN_UI_JS}</script>
+  <script id="__echarts__">${ECHARTS_SOURCE}</script>
 </body>
 </html>`;
 
@@ -106,6 +110,18 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
       script: buildBridgeContent(queryNames),
     }, '*');
   }, [queryNames, buildBridgeContent]);
+
+  // Push LubanUI CSS/JS into the iframe when shell is ready
+  // (ensures the iframe always has the latest CSS/JS, even without shell rebuild)
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe || !shellReadyRef.current) return;
+
+    iframe.contentWindow?.postMessage({
+      type: 'UPDATE_CSS',
+      css: LUBAN_UI_CSS,
+    }, '*');
+  }, [LUBAN_UI_CSS]);
 
   return (
     <div className="ip-frame-wrap">

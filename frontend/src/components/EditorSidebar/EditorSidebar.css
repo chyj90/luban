@@ -250,7 +250,9 @@
 }
 
 .editor-sidebar-item-dropdown button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   padding: 8px 14px;
   border: none;
@@ -267,14 +269,11 @@
 }
 
 .editor-sidebar-item-dropdown button.danger {
-  color: #1677ff;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  color: #e34d59;
 }
 
 .editor-sidebar-item-dropdown button.danger:hover {
-  background: #e6f4ff;
+  background: #fff0f1;
 }
 
 .editor-sidebar-item-rename-input {

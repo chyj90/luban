@@ -1,0 +1,90 @@
+/* ============================================
+   Stats — 统计数字卡片
+   ============================================ */
+
+.luban-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--luban-space-md);
+}
+
+.luban-stat-card {
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-md);
+  padding: 16px 18px;
+  transition: box-shadow var(--luban-transition);
+}
+
+.luban-stat-card:hover {
+  box-shadow: var(--luban-shadow);
+}
+
+.luban-stat-label {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-secondary);
+  margin-bottom: 6px;
+}
+
+.luban-stat-value {
+  font-size: var(--luban-text-2xl);
+  font-weight: 700;
+  color: var(--luban-text);
+  line-height: 1.3;
+  margin-bottom: 4px;
+  letter-spacing: -0.02em;
+}
+
+.luban-stat-change {
+  font-size: var(--luban-text-xs);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.luban-stat-up {
+  color: var(--luban-success);
+}
+
+.luban-stat-down {
+  color: var(--luban-danger);
+}
+
+/* 颜色变体 */
+.luban-stat-card-primary { border-left: 3px solid var(--luban-primary); }
+.luban-stat-card-success { border-left: 3px solid var(--luban-success); }
+.luban-stat-card-warning { border-left: 3px solid var(--luban-warning); }
+.luban-stat-card-danger { border-left: 3px solid var(--luban-danger); }
+
+/* 骨架占位 */
+.luban-stat-loading .luban-stat-value,
+.luban-stat-loading .luban-stat-label {
+  background: linear-gradient(90deg, var(--luban-border-light) 25%, var(--luban-bg) 50%, var(--luban-border-light) 75%);
+  background-size: 200% 100%;
+  animation: lubanSkeleton 1.5s ease infinite;
+  border-radius: var(--luban-radius-sm);
+  color: transparent;
+}
+.luban-stat-loading .luban-stat-value { height: 32px; width: 60%; }
+.luban-stat-loading .luban-stat-label { height: 14px; width: 40%; }
+
+.luban-stat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--luban-radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  margin-bottom: var(--luban-space);
+}
+
+.luban-stat-card-horizontal {
+  display: flex;
+  align-items: center;
+  gap: var(--luban-space-md);
+}
+
+.luban-stat-card-horizontal .luban-stat-icon {
+  margin-bottom: 0;
+}

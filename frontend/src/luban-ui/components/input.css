@@ -1,0 +1,128 @@
+/* ============================================
+   Input — 文本输入
+   ============================================ */
+
+.luban-input,
+.luban-textarea,
+.luban-input-number {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--luban-text-base);
+  color: var(--luban-text);
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  outline: none;
+  transition: border-color var(--luban-transition), box-shadow var(--luban-transition);
+  letter-spacing: -0.01em;
+}
+
+.luban-input:hover,
+.luban-textarea:hover {
+  border-color: var(--luban-primary-hover);
+}
+
+.luban-input:focus,
+.luban-textarea:focus {
+  border-color: var(--luban-primary);
+  box-shadow: 0 0 0 3px var(--luban-primary-light);
+}
+
+.luban-input::placeholder,
+.luban-textarea::placeholder {
+  color: var(--luban-text-placeholder);
+}
+
+.luban-input:disabled,
+.luban-textarea:disabled,
+.luban-select:disabled {
+  background: var(--luban-bg);
+  color: var(--luban-text-muted);
+  cursor: not-allowed;
+}
+
+.luban-input-error {
+  border-color: var(--luban-danger) !important;
+}
+.luban-input-error:focus {
+  box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.1) !important;
+}
+
+/* 尺寸 */
+.luban-input-sm {
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--luban-text-sm);
+}
+.luban-input-lg {
+  height: 38px;
+  padding: 0 14px;
+  font-size: var(--luban-text-md);
+}
+
+/* 可清空 */
+.luban-input-clearable {
+  position: relative;
+}
+.luban-input-clearable .luban-input {
+  padding-right: 30px;
+}
+.luban-input-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--luban-text-muted);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--luban-transition), background var(--luban-transition);
+  pointer-events: none;
+}
+.luban-input-clearable:hover .luban-input-clear,
+.luban-input-clearable .luban-input:focus ~ .luban-input-clear {
+  opacity: 1;
+  pointer-events: auto;
+}
+.luban-input-clear:hover {
+  background: var(--luban-border);
+  color: var(--luban-text);
+}
+
+/* 前缀/后缀 */
+.luban-input-affix {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  background: var(--luban-bg-card);
+  transition: border-color var(--luban-transition), box-shadow var(--luban-transition);
+}
+.luban-input-affix:focus-within {
+  border-color: var(--luban-primary);
+  box-shadow: 0 0 0 2px var(--luban-primary-light);
+}
+.luban-input-affix .luban-input {
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  flex: 1;
+}
+.luban-input-affix .luban-input:focus {
+  box-shadow: none;
+}
+.luban-input-prefix,
+.luban-input-suffix {
+  padding: 0 12px;
+  color: var(--luban-text-muted);
+  font-size: var(--luban-text-base);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

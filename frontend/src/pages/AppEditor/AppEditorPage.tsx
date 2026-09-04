@@ -17,9 +17,10 @@ import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
-import { listPages, listQueries, listApplicationTools } from '@/api';
+import { listPages, listQueries, listApplicationTools, createCodePage } from '@/api';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
+import { SHOWCASE_PAGE } from '@/luban-ui/showcase';
 import './AppEditorPage.css';
 
 type EditingFile = 'html' | 'css' | 'js';
@@ -82,6 +83,24 @@ export function AppEditorPage() {
             fetchPage(defaultPage.id);
             setDataReady(true);
           });
+        } else {
+          createCodePage({
+            applicationId: Number(appId),
+            name: 'LubanUI 组件库',
+            html: SHOWCASE_PAGE.html,
+            css: SHOWCASE_PAGE.css,
+            js: SHOWCASE_PAGE.js,
+            libraries: SHOWCASE_PAGE.libraries,
+            queryIds: SHOWCASE_PAGE.queryIds,
+            toolIds: SHOWCASE_PAGE.toolIds,
+          }).then(() => {
+            listPages(Number(appId)).then((res) => {
+              const newList = res.data.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+              setPages(newList);
+              if (newList.length > 0) fetchPage(newList[0].id);
+              setDataReady(true);
+            }).catch(() => setDataReady(true));
+          }).catch(() => setDataReady(true));
         }
       });
     }
@@ -193,7 +212,7 @@ export function AppEditorPage() {
 
   if (!dataReady || !appId) return null;
 
-  if (!currentPage && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources') return null;
+  if (!currentPage && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources' && sidebarTab !== 'queries') return null;
 
   return (
     <div className="app-editor">

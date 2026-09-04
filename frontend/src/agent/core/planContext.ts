@@ -26,7 +26,7 @@ export function formatUnfinishedPlansForPrompt(): string {
     const isFocused = plan.id === state.focusPlanId;
     const statusLabel = plan.status === 'draft' ? '[待确认]' : plan.status === 'confirmed' ? '[已确认]' : plan.status === 'executing' ? '[执行中]' : '[异常中断]';
     lines.push(
-      `### ${isFocused ? '【当前焦点】' : ''}${plan.agentName} [${statusLabel}]: ${plan.steps.map((s) => s.description).join(' → ')}`,
+      `### ${isFocused ? '【当前焦点】' : ''}${plan.id} | ${plan.agentName} [${statusLabel}]: ${plan.steps.map((s) => s.description).join(' → ')}`,
     );
     lines.push('- 步骤:');
     plan.steps.forEach((s) => {

@@ -1,0 +1,69 @@
+/* ============================================
+   Empty — 空状态
+   ============================================ */
+
+.luban-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  color: var(--luban-text-muted);
+}
+
+.luban-empty-icon {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--luban-bg);
+  border-radius: var(--luban-radius-xl);
+  color: var(--luban-text-muted);
+}
+
+.luban-empty-icon svg {
+  width: 28px;
+  height: 28px;
+  opacity: 0.5;
+}
+
+.luban-empty-text {
+  font-size: var(--luban-text-md);
+  font-weight: 500;
+  color: var(--luban-text);
+  margin-bottom: 4px;
+}
+
+.luban-empty-description {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-muted);
+  margin-bottom: 16px;
+  max-width: 260px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* 紧凑版 */
+.luban-empty-simple {
+  padding: 20px;
+}
+.luban-empty-simple .luban-empty-icon {
+  width: 40px;
+  height: 40px;
+  margin-bottom: 8px;
+  border-radius: var(--luban-radius-md);
+}
+.luban-empty-simple .luban-empty-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 带操作 */
+.luban-empty-action {
+  padding: 40px 24px;
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-md);
+  background: var(--luban-bg-card);
+}

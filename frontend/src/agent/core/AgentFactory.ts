@@ -47,12 +47,12 @@ function handleToolResultTransition(
   result: { success: boolean; data?: { planId?: string } },
   stateMachine: AgentStateMachine,
 ) {
-  if (toolName === 'delegate_analysis' && result.success) {
+  if (toolName === 'create_plan' && result.success) {
     const store = useAgentStore.getState();
     const draftPlan = store.plans.find((p) => p.status === 'draft');
     if (draftPlan) {
       stateMachine.transition(AgentState.AWAITING_CONFIRM, draftPlan.id);
-      console.log(`[AgentFactory] delegate_analysis 完成，发现 draft plan: ${draftPlan.id}，切换到 AWAITING_CONFIRM`);
+      console.log(`[AgentFactory] create_plan 完成，发现 draft plan: ${draftPlan.id}，切换到 AWAITING_CONFIRM`);
     }
     return;
   }
@@ -158,6 +158,24 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         } else {
           stateMachine.transition(AgentState.IDLE, null);
           console.log(`[AgentFactory:${name}] 用户消息非确认，切换回 IDLE`);
+        }
+      }
+
+      if (stateMachine && stateMachine.planId && stateMachine.state === AgentState.EXECUTING) {
+        const store = useAgentStore.getState();
+        const plan = store.plans.find((p) => p.id === stateMachine.planId);
+        if (plan) {
+          const steps = plan.steps.map((s) => {
+            const statusIcon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
+            return `${statusIcon} ${s.description}`;
+          }).join('\n');
+          conversationMessages.push({
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `当前活跃计划 ID: ${plan.id}\n状态: ${plan.status}\n步骤:\n${steps}`,
+            timestamp: Date.now(),
+          });
+          console.log(`[AgentFactory:${name}] 注入活跃计划 ${plan.id}，共 ${plan.steps.length} 个步骤`);
         }
       }
 

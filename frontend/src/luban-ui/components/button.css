@@ -1,0 +1,211 @@
+/* ============================================
+   Button — 按钮
+   .luban-btn / .luban-btn-primary / .luban-btn-secondary
+   .luban-btn-danger / .luban-btn-success / .luban-btn-text
+   ============================================ */
+
+.luban-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  min-width: 80px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  font-size: var(--luban-text-base);
+  font-weight: 500;
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  background: var(--luban-bg-card);
+  color: var(--luban-text);
+  cursor: pointer;
+  transition: all var(--luban-transition);
+  white-space: nowrap;
+  user-select: none;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.luban-btn:hover {
+  color: var(--luban-primary);
+  border-color: var(--luban-primary);
+  background: var(--luban-primary-light);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.luban-btn:active {
+  color: var(--luban-primary-active);
+  border-color: var(--luban-primary-active);
+  transform: scale(0.98);
+}
+
+.luban-btn:disabled,
+.luban-btn.disabled {
+  background: var(--luban-bg);
+  border-color: var(--luban-border);
+  color: var(--luban-text-muted);
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* 主按钮禁用 */
+.luban-btn-primary:disabled,
+.luban-btn-primary.disabled {
+  background: var(--luban-primary-light);
+  border-color: var(--luban-primary-light);
+  color: var(--luban-primary);
+  opacity: 0.6;
+}
+
+/* 危险按钮禁用 */
+.luban-btn-danger:disabled,
+.luban-btn-danger.disabled {
+  background: var(--luban-bg);
+  border-color: var(--luban-border);
+  color: var(--luban-text-muted);
+}
+
+/* 成功按钮禁用 */
+.luban-btn-success:disabled,
+.luban-btn-success.disabled {
+  background: var(--luban-bg);
+  border-color: var(--luban-border);
+  color: var(--luban-text-muted);
+}
+
+/* 文字按钮禁用 */
+.luban-btn-text:disabled,
+.luban-btn-text.disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--luban-text-muted);
+}
+
+/* 主按钮 */
+.luban-btn-primary {
+  background: var(--luban-primary);
+  border-color: var(--luban-primary);
+  color: #fff;
+}
+.luban-btn-primary:hover {
+  background: var(--luban-primary-hover);
+  border-color: var(--luban-primary-hover);
+  color: #fff;
+}
+.luban-btn-primary:active {
+  background: var(--luban-primary-active);
+  border-color: var(--luban-primary-active);
+}
+
+/* 次要按钮 */
+.luban-btn-secondary {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-border);
+  color: var(--luban-text);
+}
+.luban-btn-secondary:hover {
+  color: var(--luban-primary);
+  border-color: var(--luban-primary);
+  background: var(--luban-primary-light);
+}
+
+/* 危险按钮 */
+.luban-btn-danger {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-danger);
+  color: var(--luban-danger);
+}
+.luban-btn-danger:hover {
+  background: var(--luban-danger);
+  border-color: var(--luban-danger);
+  color: #fff;
+}
+
+/* 成功按钮 */
+.luban-btn-success {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-success);
+  color: var(--luban-success);
+}
+.luban-btn-success:hover {
+  background: var(--luban-success);
+  border-color: var(--luban-success);
+  color: #fff;
+}
+
+/* 文字按钮 */
+.luban-btn-text {
+  background: transparent;
+  border-color: transparent;
+  color: var(--luban-primary);
+  padding: 0 8px;
+  height: 32px;
+}
+.luban-btn-text:hover {
+  background: var(--luban-primary-light);
+  border-color: transparent;
+  color: var(--luban-primary-hover);
+}
+
+/* 尺寸 */
+.luban-btn-sm {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--luban-text-sm);
+  border-radius: var(--luban-radius-sm);
+}
+.luban-btn-lg {
+  height: 38px;
+  padding: 0 20px;
+  font-size: var(--luban-text-md);
+  border-radius: var(--luban-radius-md);
+}
+
+/* 全宽 */
+.luban-btn-block {
+  display: flex;
+  width: 100%;
+}
+
+/* 加载中 */
+.luban-btn-loading {
+  pointer-events: none;
+  opacity: 0.75;
+}
+.luban-btn-loading::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: luban-spin 0.6s linear infinite;
+  margin-right: 6px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+@keyframes luban-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 按钮组 */
+.luban-btn-group {
+  display: inline-flex;
+  gap: 0;
+}
+.luban-btn-group .luban-btn {
+  border-radius: 0;
+}
+.luban-btn-group .luban-btn:first-child {
+  border-radius: var(--luban-radius) 0 0 var(--luban-radius);
+}
+.luban-btn-group .luban-btn:last-child {
+  border-radius: 0 var(--luban-radius) var(--luban-radius) 0;
+}
+.luban-btn-group .luban-btn + .luban-btn {
+  margin-left: -1px;
+}

@@ -1,0 +1,95 @@
+/* ============================================
+   Modal — 弹窗
+   ============================================ */
+
+.luban-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: lubanFadeIn 0.2s ease;
+}
+
+@keyframes lubanFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes lubanSlideUp {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.luban-modal {
+  background: var(--luban-bg-card);
+  border-radius: var(--luban-radius-lg);
+  box-shadow: var(--luban-shadow-lg);
+  width: 90%;
+  max-width: 480px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  animation: lubanSlideUp 0.2s ease;
+}
+
+.luban-modal-wide {
+  max-width: 680px;
+}
+
+.luban-modal-narrow {
+  max-width: 360px;
+}
+
+.luban-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--luban-border-light);
+  flex-shrink: 0;
+}
+
+.luban-modal-title {
+  font-size: var(--luban-text-md);
+  font-weight: 600;
+  color: var(--luban-text);
+}
+
+.luban-modal-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--luban-text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: var(--luban-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--luban-transition);
+  padding: 0;
+}
+.luban-modal-close:hover {
+  background: var(--luban-bg);
+  color: var(--luban-text);
+}
+
+.luban-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.luban-modal-footer {
+  padding: 12px 24px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--luban-space-sm);
+  border-top: 1px solid var(--luban-border-light);
+  flex-shrink: 0;
+}

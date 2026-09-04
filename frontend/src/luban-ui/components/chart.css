@@ -1,0 +1,29 @@
+/* ============================================
+   Chart — 图表容器
+   ============================================ */
+
+.luban-chart {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+
+.luban-chart-title {
+  font-size: var(--luban-text-md);
+  font-weight: 600;
+  color: var(--luban-text);
+  margin-bottom: var(--luban-space-md);
+}
+
+.luban-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--luban-space-md);
+}
+
+.luban-chart-item {
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius-md);
+  padding: 20px;
+}
