@@ -1,21 +1,56 @@
-MIT License
+Business Source License 1.1
 
-Copyright (c) 2026 小飞狗
+Parameters
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Licensor:             小飞狗
+Licensed Work:        Luban
+Additional Use Grant: You may use the Licensed Work in non-commercial
+                     environments (personal study, research, evaluation,
+                     testing, or internal prototyping) without obtaining
+                     a commercial license. Any production deployment,
+                     embedding into a commercial product or service, or
+                     use in a revenue-generating context requires a
+                     separate Commercial License from the Licensor.
+Change Date:          2029-01-01
+Change License:       GNU General Public License v3.0 or later
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+Terms
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The Licensor hereby grants you a non-exclusive, non-transferable,
+non-sublicensable license to use and modify the Licensed Work, subject
+to the following conditions:
+
+1.  Non-Commercial Use.  You may use, modify, and distribute the
+    Licensed Work solely for non-commercial purposes as defined in the
+    Additional Use Grant above, provided that you include the above
+    copyright notice, this license, and the following disclaimer in
+    all copies or substantial portions of the Licensed Work.
+
+2.  Commercial Use Restriction.  Any use of the Licensed Work in a
+    commercial context—including but not limited to production
+    deployment, offering the Licensed Work as part of a commercial
+    product or service, or any use that directly or indirectly
+    generates revenue—requires a separate Commercial License from the
+    Licensor.  Contact the Licensor to obtain pricing and terms for
+    commercial licensing.
+
+3.  Change Date.  On or after the Change Date, the Licensed Work
+    shall be licensed under the Change License (GNU General Public
+    License v3.0 or later), and you may use and distribute the
+    Licensed Work under the terms of the Change License without
+    obtaining a Commercial License.
+
+4.  If the Licensed Work is provided as part of a larger work, the
+    restrictions of this license apply only to the Licensed Work
+    itself, not to the larger work as a whole, provided the larger
+    work is not itself a mere aggregation of the Licensed Work with
+    other works.
+
+5.  THE LICENSED WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+    KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+    WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+    AND NONINFRINGEMENT.  IN NO EVENT SHALL THE LICENSOR OR COPYRIGHT
+    HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+    WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE LICENSED WORK OR THE USE OR OTHER
+    DEALINGS IN THE LICENSED WORK.
