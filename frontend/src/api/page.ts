@@ -28,3 +28,7 @@ export async function renamePage(id: number, name: string) {
 export async function getRuntimePageCode(pageId: number) {
   return get<CodePage>(`/runtime/${pageId}/code`);
 }
+
+export async function getRuntimePageResources(pageId: number) {
+  return get<{ queries: unknown[]; tools: unknown[] }>(`/runtime/${pageId}/resources`);
+}

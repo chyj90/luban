@@ -2,9 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
-import { getCodePage } from '@/api/page';
-import { listQueries } from '@/api/query';
-import { listApplicationTools } from '@/api/tool';
+import { getRuntimePageCode, getRuntimePageResources } from '@/api/page';
 import { getApplication } from '@/api/application';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
@@ -42,18 +40,15 @@ export function WorkAppPageViewer() {
     setLoading(true);
     Promise.allSettled([
       getApplication(aid),
-      listQueries(aid),
-      listApplicationTools(aid),
+      getRuntimePageResources(pid),
     ]).then((results) => {
-      const [appResult, queriesResult, toolsResult] = results;
+      const [appResult, resourcesResult] = results;
       if (appResult.status === 'fulfilled') {
         setAppName(appResult.value.data.name);
       }
-      if (queriesResult.status === 'fulfilled') {
-        setQueries(queriesResult.value.data);
-      }
-      if (toolsResult.status === 'fulfilled') {
-        const tools = ((toolsResult.value.data as Record<string, unknown>[]) || [])
+      if (resourcesResult.status === 'fulfilled') {
+        setQueries((resourcesResult.value.data.queries as Query[]) || []);
+        const tools = ((resourcesResult.value.data.tools as Record<string, unknown>[]) || [])
           .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
         setAppTools(tools);
       }
@@ -76,7 +71,7 @@ export function WorkAppPageViewer() {
 
   useEffect(() => {
     if (!pid) return;
-    getCodePage(Number(pid)).then(res => {
+    getRuntimePageCode(Number(pid)).then(res => {
       codePageRef.current = res.data.codePage;
       if (shellReadyRef.current) {
         sendPageToIframe(res.data.codePage);

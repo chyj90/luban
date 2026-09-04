@@ -41,6 +41,15 @@
       });
     }
 
+    var columns = config.columns || [];
+    var ths = container.querySelectorAll('thead th');
+    ths.forEach(function(th, idx) {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (sortKey && columns[idx] === sortKey) {
+        th.classList.add('sort-' + sortDir);
+      }
+    });
+
     var total = rows.length;
     var paged = rows.slice((page - 1) * pageSize, page * pageSize);
 
@@ -51,11 +60,26 @@
       var td = document.createElement('td');
       td.colSpan = container.querySelectorAll('thead th').length || 1;
       td.className = 'luban-table-empty';
-      td.textContent = config._loading ? (config.loadingText || defaultConfig.loadingText) : (data.length === 0 ? (config.emptyText || defaultConfig.emptyText) : '');
+      if (config._loading) {
+        td.textContent = config.loadingText || defaultConfig.loadingText;
+      } else if (data.length === 0) {
+        var emptyHtml = '<div class="luban-empty luban-empty-simple">'
+          + '<div class="luban-empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>'
+          + '<div class="luban-empty-text">' + (config.emptyText || defaultConfig.emptyText) + '</div>';
+        if (config.emptyDescription) {
+          emptyHtml += '<div class="luban-empty-description">' + config.emptyDescription + '</div>';
+        }
+        if (config.emptyAction) {
+          emptyHtml += '<button class="luban-btn luban-btn-sm luban-btn-primary" onclick="' + config.emptyAction + '">' + (config.emptyActionText || '立即创建') + '</button>';
+        }
+        emptyHtml += '</div>';
+        td.innerHTML = emptyHtml;
+      } else {
+        td.textContent = '';
+      }
       tr.appendChild(td);
       _tbody.appendChild(tr);
     } else {
-      var columns = config.columns || [];
       paged.forEach(function(row, rowIdx) {
         var tr = document.createElement('tr');
         if (config.onRowClick) {
@@ -156,8 +180,11 @@
     });
 
     if (config.initialSort) {
-      ths.forEach(function(th) {
+      ths.forEach(function(th, idx) {
         th.classList.remove('sort-asc', 'sort-desc');
+        if (config.columns && config.columns[idx] === config.initialSort.key) {
+          th.classList.add('sort-' + (config.initialSort.dir || 'asc'));
+        }
       });
     }
 

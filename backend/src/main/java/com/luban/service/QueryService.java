@@ -263,6 +263,119 @@ public class QueryService {
         return runJdbcQuery(ds.getType(), config, sql);
     }
 
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> executeSqlBatch(Long datasourceId, String sql) {
+        Datasource ds = datasourceRepository.findById(datasourceId)
+                .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof User user)) {
+            throw new IllegalArgumentException("未登录或登录已过期");
+        }
+
+        Application app = applicationRepository.findById(ds.getOwnerId())
+                .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
+        if (!app.getCreatedBy().equals(user.getId())) {
+            throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+        }
+
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            HttpServletRequest request = attrs.getRequest();
+            String apiKeyHeader = request.getHeader("X-API-Key");
+            if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
+                String keyPrefix = apiKeyHeader.length() > 8 ? apiKeyHeader.substring(0, 8) : apiKeyHeader;
+                Optional<ApiKey> keyOpt = apiKeyRepository.findByKeyPrefix(keyPrefix);
+                if (keyOpt.isPresent()) {
+                    List<ApiKeyDatasource> permissions = apiKeyDatasourceRepository
+                            .findByApiKeyIdAndStatus(keyOpt.get().getId(), "APPROVED");
+                    boolean hasPermission = permissions.stream()
+                            .anyMatch(p -> p.getDatasourceId().equals(datasourceId));
+                    if (!hasPermission) {
+                        throw new IllegalArgumentException("该 KEY 无权访问此数据源");
+                    }
+                }
+            }
+        }
+
+        String[] statements = sql.split(";\\s*");
+        List<Map<String, Object>> results = new ArrayList<>();
+        Map<String, Object> config = fromJsonMap(ds.getConfig());
+        String url = datasourceService.buildJdbcUrl(ds.getType(), config);
+
+        try (Connection conn = DriverManager.getConnection(url,
+                String.valueOf(config.get("username")),
+                datasourceService.decryptPassword(config))) {
+            conn.setAutoCommit(false);
+            try {
+                for (String stmt : statements) {
+                    String trimmed = stmt.trim();
+                    if (trimmed.isEmpty()) continue;
+
+                    RunQueryResponse resp = runJdbcQueryWithConn(conn, trimmed);
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("sql", trimmed.length() > 200 ? trimmed.substring(0, 200) + "..." : trimmed);
+                    item.put("columns", resp.getColumns());
+                    item.put("rows", resp.getRows());
+                    item.put("totalCount", resp.getTotalCount());
+                    item.put("executionTime", resp.getExecutionTime());
+                    results.add(item);
+                }
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("批量 SQL 执行失败: " + e.getMessage());
+        }
+
+        return results;
+    }
+
+    private RunQueryResponse runJdbcQueryWithConn(Connection conn, String sql) throws SQLException {
+        long startTime = System.currentTimeMillis();
+        String trimmedSql = sql.trim();
+        String upperSql = trimmedSql.toUpperCase();
+
+        boolean isQuery = upperSql.startsWith("SELECT")
+                || upperSql.startsWith("SHOW")
+                || upperSql.startsWith("DESCRIBE")
+                || upperSql.startsWith("DESC")
+                || upperSql.startsWith("EXPLAIN")
+                || upperSql.startsWith("WITH");
+
+        try (Statement stmt = conn.createStatement()) {
+            if (isQuery) {
+                try (ResultSet rs = stmt.executeQuery(trimmedSql)) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int colCount = meta.getColumnCount();
+
+                    List<String> columns = new ArrayList<>();
+                    for (int i = 1; i <= colCount; i++) {
+                        columns.add(meta.getColumnLabel(i));
+                    }
+
+                    List<List<Object>> rows = new ArrayList<>();
+                    while (rs.next()) {
+                        List<Object> row = new ArrayList<>();
+                        for (int i = 1; i <= colCount; i++) {
+                            row.add(rs.getObject(i));
+                        }
+                        rows.add(row);
+                    }
+
+                    long executionTime = System.currentTimeMillis() - startTime;
+                    return new RunQueryResponse(columns, rows, rows.size(), executionTime);
+                }
+            } else {
+                int affectedRows = stmt.executeUpdate(trimmedSql);
+                long executionTime = System.currentTimeMillis() - startTime;
+                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime);
+            }
+        }
+    }
+
     private RunQueryResponse runJdbcQuery(String type, Map<String, Object> config, String sql) {
         String url = datasourceService.buildJdbcUrl(type, config);
         long startTime = System.currentTimeMillis();

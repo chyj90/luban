@@ -21,8 +21,8 @@ export async function runQuery(id: number, data?: RunQueryRequest) {
   return post<RunQueryResponse>(`/queries/${id}/run`, data);
 }
 
-export async function executeSql(datasourceId: number, sql: string) {
-  return post<RunQueryResponse>('/queries/execute', { datasourceId, sql });
+export async function executeSql(datasourceId: number, sql: string, multi?: boolean) {
+  return post<any>('/queries/execute', { datasourceId, sql, multi: multi || undefined });
 }
 
 export async function runRuntimeQuery(pageId: number, queryId: number, data?: RunQueryRequest) {

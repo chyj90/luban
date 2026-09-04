@@ -2,9 +2,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
 import { listPages } from '@/api/page';
-import { getCodePage } from '@/api/page';
-import { listQueries } from '@/api/query';
-import { listApplicationTools } from '@/api/tool';
+import { getRuntimePageCode, getRuntimePageResources } from '@/api/page';
 import type { Application } from '@/types/application';
 import type { Page, CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
@@ -53,34 +51,28 @@ export function AppUserPage({ app }: AppUserPageProps) {
   useEffect(() => {
     if (!app.id) return;
 
-    Promise.allSettled([
-      listPages(app.id),
-      listQueries(app.id),
-      listApplicationTools(app.id),
-    ]).then((results) => {
-      const [pagesResult, queriesResult, toolsResult] = results;
-
-      if (pagesResult.status === 'fulfilled') {
-        const allPages = pagesResult.value.data as Page[];
-        setTotalPages(allPages.length);
-        const accessiblePages = allPages.filter(p => p.accessible !== false);
-        setPages(accessiblePages);
-        if (accessiblePages.length > 0) {
-          const defaultPage = accessiblePages.find((p: Page) => p.isDefault) || accessiblePages[0];
-          setCurrentPageId(defaultPage.id);
-        }
-      }
-      if (queriesResult.status === 'fulfilled') {
-        setQueries(queriesResult.value.data);
-      }
-      if (toolsResult.status === 'fulfilled') {
-        const tools = ((toolsResult.value.data as Record<string, unknown>[]) || [])
-          .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
-        setAppTools(tools);
+    listPages(app.id).then(res => {
+      const allPages = res.data as Page[];
+      setTotalPages(allPages.length);
+      const accessiblePages = allPages.filter(p => p.accessible !== false);
+      setPages(accessiblePages);
+      if (accessiblePages.length > 0) {
+        const defaultPage = accessiblePages.find((p: Page) => p.isDefault) || accessiblePages[0];
+        setCurrentPageId(defaultPage.id);
       }
       setLoading(false);
     });
   }, [app.id]);
+
+  useEffect(() => {
+    if (!currentPageId) return;
+    getRuntimePageResources(currentPageId).then(res => {
+      setQueries((res.data.queries as Query[]) || []);
+      const tools = ((res.data.tools as Record<string, unknown>[]) || [])
+        .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
+      setAppTools(tools);
+    });
+  }, [currentPageId]);
 
   const sendPageToIframe = useCallback((cp: CodePageData) => {
     const iframe = iframeRef.current;
@@ -99,7 +91,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
   // Load code page content when currentPageId changes
   useEffect(() => {
     if (!currentPageId) return;
-    getCodePage(currentPageId).then(res => {
+    getRuntimePageCode(currentPageId).then(res => {
       codePageRef.current = res.data.codePage;
       if (shellReadyRef.current) {
         sendPageToIframe(res.data.codePage);

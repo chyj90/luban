@@ -6,4 +6,5 @@ import lombok.Data;
 public class ExecuteSqlRequest {
     private Long datasourceId;
     private String sql;
+    private Boolean multi;
 }

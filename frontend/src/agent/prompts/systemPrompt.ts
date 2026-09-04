@@ -112,7 +112,53 @@ function getBehaviorRules(): string {
 function getDesignSpec(): string {
   return `## LubanUI 组件库
 
-⚠️ **强制规则：必须优先使用 LubanUI 组件库构建页面。** 页面预置了完整的 LubanUI 组件库（按钮、表格、表单、弹窗、图表等），所有组件风格与平台一致。禁止使用原生 HTML 元素替代已有组件（如用原生 <button> 代替 luban-btn），仅当组件库确实无法满足需求时才可自定义 CSS/HTML。违反此规则会导致校验警告。
+⚠️ **强制规则：必须优先使用 LubanUI 组件库构建页面。** 页面预置了完整的 LubanUI 组件库，所有组件风格与平台一致。禁止使用原生 HTML 元素替代已有组件（如用原生 <button> 代替 luban-btn），仅当组件库确实无法满足需求时才可自定义 CSS/HTML。违反此规则会导致校验警告。
+
+### 页面容器结构
+
+所有页面必须使用以下标准容器：
+\`\`\`html
+<div class="page-container">
+  <div id="pageHeader"></div>
+  <div class="content-container">
+    <!-- 筛选栏 / 表格 / 图表 等 -->
+  </div>
+</div>
+\`\`\`
+\`\`\`css
+.page-container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+.content-container { background: #fff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); padding: 20px; }
+\`\`\`
+
+⚠️ **页面标题必须使用 pageHeader 组件，禁止手写裸 \`<h1>\` 标题。**
+
+### 页头 PageHeader
+
+\`\`\`js
+LubanUI.pageHeader('pageHeader', {
+  title: '员工管理',                          // 必填
+  description: '管理公司员工信息与部门归属',   // 可选，标题下方灰色描述
+  breadcrumb: [                              // 可选，面包屑导航
+    { label: '首页', href: '#' },
+    { label: '员工管理', active: true }
+  ],
+  stats: [                                   // 可选，标题上方统计卡
+    { label: '员工总数', value: 128, color: 'primary' },
+    { label: '本月入职', value: 12, color: 'success' },
+    { label: '待审批', value: 5, color: 'warning' }
+  ],
+  actions: [                                 // 可选，右侧操作按钮（HTML 字符串）
+    '<button class="luban-btn luban-btn-primary" onclick="openAdd()">新增员工</button>',
+    '<button class="luban-btn" onclick="exportData()">导出</button>'
+  ],
+  badge: {                                   // 可选，右侧状态标签（与 actions 二选一）
+    text: '已完成',
+    color: 'success'                         // default | primary | success | warning | danger | info
+  }
+});
+\`\`\`
+
+使用场景：列表页 → stats + actions；简单页 → title + description + actions；详情页 → breadcrumb + badge；仪表盘 → title + description，统计卡放内容区。
 
 ### 表格 Table
 \`\`\`html
@@ -127,6 +173,9 @@ var table = LubanUI.table('myTable', {
   data: result.data.rows,
   pageSize: 10,
   emptyText: '暂无数据',
+  emptyDescription: '请先添加数据或调整筛选条件',
+  emptyAction: 'showAddModal()',
+  emptyActionText: '添加数据',
   render: {
     status: function(v) { return '<span class="luban-badge luban-badge-success">'+v+'</span>'; }
   },
@@ -137,6 +186,13 @@ var table = LubanUI.table('myTable', {
 // 加载态：table.setLoading(true) / table.setLoading(false)
 // 手动翻页：table.setPage(2)
 \`\`\`
+表格空状态规范：
+- 使用 LubanUI.table() 时，空态由组件自动渲染（图标+文字+描述+操作按钮），无需手写空状态 HTML
+- emptyText：空态主文案（默认"暂无数据"）
+- emptyDescription：空态描述文字（可选，建议提供，引导用户下一步操作）
+- emptyAction：操作按钮的 onclick 表达式（可选，如 'showAddModal()'）
+- emptyActionText：操作按钮文字（可选，默认"立即创建"）
+- 禁止在表格外部单独写空状态 div 再用 display 切换，这会导致代码冗余和样式不一致
 
 ### 统计卡 Stats
 \`\`\`html
@@ -178,27 +234,28 @@ btn.classList.remove('luban-btn-loading');
 ### 表单 Form
 \`\`\`html
 <!-- 纵向（默认） -->
-<div class="luban-form" id="myForm">
+<form class="luban-form" id="myForm">
   <div class="luban-form-item">
     <label class="luban-form-label luban-form-label-required">名称</label>
     <input class="luban-input" name="name" placeholder="请输入">
   </div>
-</div>
+</form>
 <!-- 行内搜索 -->
-<div class="luban-form luban-form-inline">
+<form class="luban-form luban-form-inline">
   <div class="luban-form-item">
     <input class="luban-input" name="keyword" placeholder="搜索">
   </div>
   <button class="luban-btn luban-btn-primary">查询</button>
-</div>
+</form>
 <!-- 水平标签 -->
-<div class="luban-form luban-form-horizontal">
+<form class="luban-form luban-form-horizontal">
   <div class="luban-form-item">
     <label class="luban-form-label">名称</label>
     <input class="luban-input" name="name">
   </div>
-</div>
+</form>
 \`\`\`
+重要：表单容器必须使用 \`<form>\` 标签（不是 \`<div>\`），否则 \`form.name.value\` 等 DOM 表单 API 无法工作。
 取值：\`LubanUI.getFormData('myForm')\` 返回 { name: value, ... }
 
 ### 输入组件

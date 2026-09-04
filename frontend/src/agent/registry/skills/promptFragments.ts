@@ -21,6 +21,7 @@ export function getCodePageSkillSummary(): string {
 - 使用第三方库（Chart.js、Three.js 等）时，代码校验会自动检查库的使用规范，无需在 Prompt 中记忆
 - 页面中使用 {{ QueryName.data }} 绑定查询结果
 - 调用查询使用 QueryName.run({ 参数 }) 返回 Promise，结果结构 { columns, rows, totalCount }，其中 rows 是对象数组，每个对象以字段名（如 order_no）为 key 访问
+- ⚠️ **result 就是 { columns, rows, totalCount }，不要写 result.data.rows**，直接写 result.rows、result.columns。禁止套 .data
 - **JS 代码中访问字段名必须与查询 columns 完全一致，一个字母都不能差**，禁止编造字段名（如查询返回 name 就写 row.name，不要写成 row.customer_name）
 - **queryIds 必须填写实际查询 ID，不能留空数组**，否则页面无法加载数据
 - **toolIds 必须填写实际 API 工具 ID，不能留空数组**，否则页面无法调用 API

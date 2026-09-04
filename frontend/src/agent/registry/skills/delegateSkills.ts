@@ -73,12 +73,13 @@ export const delegateSkills: Record<string, SkillFactory> = {
           console.log(`[delegate_query] 委派 data-assistant | 消息长度: ${userMessage.length}`);
           const routeStart = Date.now();
           const memoryBefore = getAgentMemory(ctx.applicationId, 'data-assistant');
-          console.log(`[delegate_query] getAgentMemory 返回 ${memoryBefore.length} 条消息 | appId=${ctx.applicationId}`);
+          const memoryFiltered = memoryBefore.filter((m: { role: string }) => m.role !== 'system');
+          console.log(`[delegate_query] getAgentMemory 返回 ${memoryBefore.length} 条消息，过滤 system 后 ${memoryFiltered.length} 条 | appId=${ctx.applicationId}`);
           const executor = await chatRouter!.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
             systemPrompt: dbaPrompt,
             tools: dbaTools,
             isDelegated: true,
-            initialMessages: memoryBefore,
+            initialMessages: memoryFiltered,
             agentContext: {
               requirement: typedArgs.requirement,
               targetPage: typedArgs.target_page,

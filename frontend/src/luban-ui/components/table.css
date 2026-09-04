@@ -36,16 +36,24 @@
   color: var(--luban-primary);
 }
 
+.luban-table th.sort-asc::after,
+.luban-table th.sort-desc::after {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-left: 6px;
+  vertical-align: middle;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+}
+
 .luban-table th.sort-asc::after {
-  content: ' ▲';
-  font-size: 10px;
-  color: var(--luban-primary);
+  border-bottom: 5px solid var(--luban-primary);
 }
 
 .luban-table th.sort-desc::after {
-  content: ' ▼';
-  font-size: 10px;
-  color: var(--luban-primary);
+  border-top: 5px solid var(--luban-primary);
 }
 
 .luban-table td {
@@ -69,9 +77,40 @@
 
 .luban-table .luban-table-empty {
   text-align: center;
-  padding: 48px 16px;
-  color: var(--luban-text-muted);
+  padding: 0;
+}
+
+.luban-table .luban-table-empty .luban-empty {
+  padding: 40px 24px;
+}
+
+.luban-table .luban-table-empty .luban-empty-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 10px;
+  border-radius: var(--luban-radius-lg);
+}
+
+.luban-table .luban-table-empty .luban-empty-icon svg {
+  width: 24px;
+  height: 24px;
+  opacity: 0.4;
+}
+
+.luban-table .luban-table-empty .luban-empty-text {
   font-size: var(--luban-text-base);
+  color: var(--luban-text-secondary);
+  margin-bottom: 4px;
+}
+
+.luban-table .luban-table-empty .luban-empty-description {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-muted);
+  margin-bottom: 12px;
+}
+
+.luban-table .luban-table-empty .luban-empty .luban-btn {
+  margin-top: 4px;
 }
 
 /* 表格工具栏 */

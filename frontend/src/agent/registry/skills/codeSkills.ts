@@ -1,5 +1,5 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { createCodePage, getCodePage, updateCodePage, runQuery, listApplicationTools, runAppTool } from '@/api';
+import { createCodePage, getCodePage, updateCodePage, runQuery, listApplicationTools, runAppTool, listPages } from '@/api';
 import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
 
 function extractQueryNamesFromJS(js: string): string[] {
@@ -149,10 +149,24 @@ export const codeSkills: Record<string, SkillFactory> = {
           apiResults,
         });
         if (!validation.valid) {
-          return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };
+          return { success: false, message: `代码语法校验不通过，页面尚未创建。请修正报错部分后重新调用 create_code_page（不要改用 update_code_page，因为页面还不存在）：\n${validation.errors.join('\n')}` };
         }
         if (validation.warnings.length > 0) {
           console.warn('[code:create]', validation.warnings.join('\n'));
+        }
+
+        try {
+          const pagesRes = await listPages(ctx.applicationId);
+          const existing = (pagesRes.data || []).find((p: { name: string }) => p.name === name);
+          if (existing) {
+            return {
+              success: false,
+              message: `页面「${name}」已存在（id: ${existing.id}），请使用 update_code_page 更新该页面，而不是 create_code_page。调用示例：update_code_page({ pageId: ${existing.id}, html, css, js, ... })`,
+              _noRetry: true,
+            };
+          }
+        } catch {
+          // listPages 失败不阻塞，继续走后端创建（后端仍有唯一约束兜底）
         }
 
         const res = await createCodePage({
@@ -323,7 +337,7 @@ export const codeSkills: Record<string, SkillFactory> = {
           apiResults,
         });
         if (!validation.valid) {
-          return { success: false, message: `代码语法校验不通过，请修正后重试（只修正报错部分，其余代码保持不变）：\n${validation.errors.join('\n')}` };
+          return { success: false, message: `代码语法校验不通过，页面代码未更新。请修正报错部分后重新调用 update_code_page（页面已存在，不要改用 create_code_page）：\n${validation.errors.join('\n')}` };
         }
         if (validation.warnings.length > 0) {
           console.warn('[code:update]', validation.warnings.join('\n'));

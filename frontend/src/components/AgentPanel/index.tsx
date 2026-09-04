@@ -500,6 +500,9 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     const value = e.target.value;
     setInput(value);
 
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+
     const cursorPos = e.target.selectionStart || 0;
     const textBeforeCursor = value.slice(0, cursorPos);
     const atMatch = textBeforeCursor.match(/@(\S*)$/);
@@ -917,7 +920,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder="描述你想要创建的应用... 输入 @ 可以指定智能体"
+                placeholder="描述你想要创建的应用... 输入 @ 可以指定智能体，Shift+Enter 换行"
                 rows={2}
                 className="ap-input"
               />

@@ -22,12 +22,14 @@ import filterBarCSS from './components/filter-bar.css?raw';
 import toastCSS from './components/toast.css?raw';
 import emptyCSS from './components/empty.css?raw';
 import loadingCSS from './components/loading.css?raw';
+import pageHeaderCSS from './components/page-header.css?raw';
 import showcaseCSS from './showcase.css?raw';
 
 import tableJS from './components/table.js?raw';
 import modalJS from './components/modal.js?raw';
 import toastJS from './components/toast.js?raw';
 import selectJS from './components/select.js?raw';
+import pageHeaderJS from './components/page-header.js?raw';
 import lubanUIJS from './LubanUI.js?raw';
 
 import echartsSource from 'echarts/dist/echarts.min.js?raw';
@@ -56,6 +58,7 @@ export const LUBAN_UI_CSS = [
   toastCSS,
   emptyCSS,
   loadingCSS,
+  pageHeaderCSS,
   showcaseCSS,
 ].join('\n');
 
@@ -64,6 +67,7 @@ export const LUBAN_UI_JS = [
   modalJS,
   toastJS,
   selectJS,
+  pageHeaderJS,
   lubanUIJS,
 ].join('\n');
 

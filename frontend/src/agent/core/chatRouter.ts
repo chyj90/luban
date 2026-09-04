@@ -113,10 +113,11 @@ export class ChatRouter {
       };
     }
 
-    const executor = await this.createExecutor(agentDef, sessionId, {
-        initialMessages: agentDef.id !== 'main-agent'
+    const rawMemory = agentDef.id !== 'main-agent'
           ? getAgentMemory(Number(this.sessionOptions.applicationId), agentDef.id)
-          : undefined,
+          : undefined;
+    const executor = await this.createExecutor(agentDef, sessionId, {
+        initialMessages: rawMemory?.filter((m) => m.role !== 'system'),
       });
     this.allExecutors.add(executor);
     this.activeAgentId = agentDef.id;

@@ -140,6 +140,27 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         });
       }
 
+      if (isMainAgent && stateMachine && stateMachine.state === AgentState.IDLE) {
+        const store = useAgentStore.getState();
+        const recentCompleted = store.plans
+          .filter((p) => p.status === 'completed')
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 1);
+        for (const plan of recentCompleted) {
+          const doneSteps = plan.steps.filter((s) => s.status === 'done' && s.result);
+          if (doneSteps.length > 0) {
+            const summary = doneSteps.map((s) => `- ${s.result}`).join('\n');
+            conversationMessages.push({
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `## 上轮操作摘要\n${summary}`,
+              timestamp: Date.now(),
+            });
+            console.log(`[AgentFactory:${name}] 注入上轮操作摘要，共 ${doneSteps.length} 个步骤结果`);
+          }
+        }
+      }
+
       if (stateMachine && stateMachine.state === AgentState.AWAITING_CONFIRM) {
         if (isUserConfirming(userMessage)) {
           const store = useAgentStore.getState();

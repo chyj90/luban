@@ -1,0 +1,69 @@
+/* ============================================
+   PageHeader — 页面标题栏
+   LubanUI.pageHeader(containerId, config)
+   ============================================ */
+
+.luban-page-header {
+  margin-bottom: var(--luban-space-lg);
+}
+
+/* 面包屑 */
+.luban-page-header-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-muted);
+}
+.luban-page-header-breadcrumb a {
+  color: var(--luban-text-muted);
+  text-decoration: none;
+}
+.luban-page-header-breadcrumb a:hover {
+  color: var(--luban-primary);
+}
+.luban-page-header-breadcrumb .luban-breadcrumb-sep {
+  margin: 0 2px;
+  color: var(--luban-border);
+}
+.luban-page-header-breadcrumb .luban-breadcrumb-active {
+  color: var(--luban-text);
+  font-weight: 500;
+}
+
+/* 统计卡行（在标题上方） */
+.luban-page-header-stats {
+  margin-bottom: 14px;
+}
+
+/* 标题行 */
+.luban-page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--luban-space-lg);
+}
+.luban-page-header-left {
+  flex: 1;
+  min-width: 0;
+}
+.luban-page-header-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--luban-text);
+  margin: 0 0 4px 0;
+  line-height: 1.4;
+}
+.luban-page-header-desc {
+  font-size: var(--luban-text-sm);
+  color: var(--luban-text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.luban-page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}

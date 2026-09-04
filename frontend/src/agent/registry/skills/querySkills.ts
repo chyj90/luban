@@ -228,18 +228,26 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     name: 'execute_sql',
     description: `直接执行任意 SQL 语句（SELECT/INSERT/UPDATE/DELETE/DDL），不经过模板解析。
 用于建表（CREATE TABLE/ALTER TABLE）、插入数据（INSERT）、更新数据（UPDATE）等操作。
-返回查询结果（SELECT）或影响行数（DML/DDL）。`,
+返回查询结果（SELECT）或影响行数（DML/DDL）。
+支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
+批量模式返回每条语句的执行结果数组。`,
     parameters: {
       type: 'object',
       properties: {
         datasourceId: { type: 'number', description: '数据源 ID' },
-        sql: { type: 'string', description: '要执行的 SQL 语句' },
+        sql: { type: 'string', description: '要执行的 SQL 语句。multi=true 时可用分号分隔多条语句' },
+        multi: { type: 'boolean', description: '是否批量执行模式。true 时按分号分隔多条语句，在同一事务中执行' },
       },
       required: ['datasourceId', 'sql'],
     },
     async execute(args) {
       try {
-        const res = await executeSql(args.datasourceId as number, args.sql as string);
+        const res = await executeSql(args.datasourceId as number, args.sql as string, args.multi as boolean);
+        if (args.multi) {
+          const results = res.data as any[];
+          const summary = results.map((r: any, i: number) => `语句${i + 1}: ${r.totalCount ?? 0} 条结果`).join('；');
+          return { success: true, message: `批量 SQL 执行成功（${results.length} 条语句）：${summary}`, data: res.data };
+        }
         return { success: true, message: `SQL 执行成功，${res.data?.totalCount ?? 0} 条结果`, data: res.data };
       } catch (e) {
         return { success: false, message: `SQL 执行失败: ${(e as Error).message}` };

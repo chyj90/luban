@@ -4,12 +4,16 @@ import com.luban.dto.ApiResponse;
 import com.luban.dto.RunQueryRequest;
 import com.luban.dto.RunQueryResponse;
 import com.luban.entity.Application;
+import com.luban.entity.CodePage;
 import com.luban.entity.Page;
+import com.luban.entity.Query;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.entity.ApplicationApiKey;
 import com.luban.repository.ApplicationRepository;
+import com.luban.repository.CodePageRepository;
 import com.luban.repository.PageRepository;
+import com.luban.repository.QueryRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.repository.ApplicationApiKeyRepository;
 import com.luban.repository.ApiKeyToolRepository;
@@ -35,6 +39,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +56,8 @@ public class RuntimeController {
     private final QueryService queryService;
     private final PageRepository pageRepository;
     private final ApplicationRepository applicationRepository;
+    private final CodePageRepository codePageRepository;
+    private final QueryRepository queryRepository;
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final RolePermissionRepository rolePermissionRepository;
@@ -68,6 +75,8 @@ public class RuntimeController {
                              QueryService queryService,
                              PageRepository pageRepository,
                              ApplicationRepository applicationRepository,
+                             CodePageRepository codePageRepository,
+                             QueryRepository queryRepository,
                              RoleRepository roleRepository,
                              RoleUserRepository roleUserRepository,
                              RolePermissionRepository rolePermissionRepository,
@@ -78,6 +87,8 @@ public class RuntimeController {
         this.queryService = queryService;
         this.pageRepository = pageRepository;
         this.applicationRepository = applicationRepository;
+        this.codePageRepository = codePageRepository;
+        this.queryRepository = queryRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
         this.rolePermissionRepository = rolePermissionRepository;
@@ -92,6 +103,28 @@ public class RuntimeController {
             @AuthenticationPrincipal User user) {
         checkPageAccess(pageId, user);
         return ResponseEntity.ok(ApiResponse.ok(pageService.getCodePage(pageId)));
+    }
+
+    @GetMapping("/{pageId}/resources")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getPageResources(
+            @PathVariable Long pageId,
+            @AuthenticationPrincipal User user) {
+        checkPageAccess(pageId, user);
+
+        CodePage codePage = codePageRepository.findByPageId(pageId)
+                .orElseThrow(() -> new RuntimeException("页面资源不存在"));
+
+        List<Long> queryIds = fromJsonLongList(codePage.getQueryIds());
+        List<Long> toolIds = fromJsonLongList(codePage.getToolIds());
+
+        List<Query> queries = queryIds.isEmpty() ? List.of() : queryRepository.findAllById(queryIds);
+        List<ToolDefinition> tools = toolIds.isEmpty() ? List.of() : toolDefinitionRepository.findAllById(toolIds);
+
+        Map<String, Object> resources = new HashMap<>();
+        resources.put("queries", queries);
+        resources.put("tools", tools);
+
+        return ResponseEntity.ok(ApiResponse.ok(resources));
     }
 
     @PostMapping("/{pageId}/query/{queryId}/run")
@@ -298,5 +331,15 @@ public class RuntimeController {
 
     private String encode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private List<Long> fromJsonLongList(String json) {
+        if (json == null || json.isEmpty()) return List.of();
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory().constructCollectionType(List.class, Long.class));
+        } catch (Exception e) {
+            log.warn("Failed to parse JSON long list: {}", json, e);
+            return List.of();
+        }
     }
 }

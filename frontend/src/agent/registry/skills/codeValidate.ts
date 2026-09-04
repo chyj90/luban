@@ -54,6 +54,9 @@ export async function validateCode(
   try { if (js && validateOptions) await validateMockData(js, validateOptions, errors); } catch (e: any) { errors.push(`[Mock数据] 校验异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
   try { if (html || js) validateLubanUIUsage(html, js, errors, warnings); } catch (e: any) { errors.push(`[LubanUI] 校验异常: ${e?.message || e}`); }
+  try { if (js) validateTableEmptyState(js, warnings); } catch (e: any) { errors.push(`[表格空态] 校验异常: ${e?.message || e}`); }
+  try { if (css) validateCssComponentOverride(css, errors); } catch (e: any) { errors.push(`[CSS组件覆盖] 校验异常: ${e?.message || e}`); }
+  try { if (html && js) validateFormContainer(html, js, errors); } catch (e: any) { errors.push(`[表单容器] 校验异常: ${e?.message || e}`); }
 
   return { valid: errors.length === 0, errors, warnings };
 }
@@ -710,6 +713,85 @@ function getBuiltins(): Set<string> {
   return _builtins;
 }
 
+function collectQueryDataVars(js: string): Set<string> {
+  const queryDataVars = new Set<string>();
+  const queryResultVars = new Set<string>();
+
+  let ast: acorn.Node;
+  try {
+    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as acorn.Node;
+  } catch {
+    return queryDataVars;
+  }
+
+  function isRunCall(node: any): boolean {
+    return node?.type === 'CallExpression' &&
+      node.callee?.type === 'MemberExpression' &&
+      node.callee.property?.name === 'run';
+  }
+
+  function walk(node: any): void {
+    if (!node || typeof node !== 'object') return;
+
+    if (node.type === 'CallExpression' && node.callee?.type === 'MemberExpression') {
+      if (node.callee.property?.name === 'then' && isRunCall(node.callee.object)) {
+        const callback = node.arguments[0];
+        if (callback) {
+          const paramName = getFirstParamName(callback);
+          if (paramName) {
+            queryResultVars.add(paramName);
+          }
+        }
+      }
+    }
+
+    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier') {
+      if (node.init) {
+        if (node.init.type === 'AwaitExpression' && isRunCall(node.init.argument)) {
+          queryResultVars.add(node.id.name);
+        }
+        if (node.init.type === 'MemberExpression' &&
+            node.init.property?.name === 'rows' &&
+            node.init.object?.type === 'Identifier' &&
+            queryResultVars.has(node.init.object.name)) {
+          queryDataVars.add(node.id.name);
+        }
+      }
+    }
+
+    if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier') {
+      if (node.right?.type === 'AwaitExpression' && isRunCall(node.right.argument)) {
+        queryResultVars.add(node.left.name);
+      }
+      if (node.right?.type === 'MemberExpression' &&
+          node.right.property?.name === 'rows' &&
+          node.right.object?.type === 'Identifier' &&
+          queryResultVars.has(node.right.object.name)) {
+        queryDataVars.add(node.left.name);
+      }
+    }
+
+    for (const key of Object.keys(node)) {
+      const child = (node as any)[key];
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (item && typeof item === 'object') walk(item);
+        }
+      } else if (child && typeof child === 'object' && child.type) {
+        walk(child);
+      }
+    }
+  }
+
+  walk(ast);
+
+  for (const v of queryResultVars) {
+    queryDataVars.add(v);
+  }
+
+  return queryDataVars;
+}
+
 function findUnknownFieldNames(
   js: string,
   actualFieldNames: Set<string>,
@@ -717,7 +799,8 @@ function findUnknownFieldNames(
 ): { line: number; used: string; suggestion?: string }[] {
   const unknownFields: { line: number; used: string; suggestion?: string }[] = [];
 
-  const iterVars = collectAllIterParamNames(js);
+  const queryDataVars = collectQueryDataVars(js);
+  const iterVars = collectAllIterParamNames(js, queryDataVars);
   if (iterVars.size === 0) return unknownFields;
 
   const varPattern = [...iterVars].join('|');
@@ -763,7 +846,15 @@ function findUnknownFieldNames(
   return unknownFields;
 }
 
-function collectAllIterParamNames(js: string): Set<string> {
+function getRootIdentifier(node: any): string | null {
+  if (!node || typeof node !== 'object') return null;
+  if (node.type === 'Identifier') return node.name;
+  if (node.type === 'MemberExpression') return getRootIdentifier(node.object);
+  if (node.type === 'CallExpression') return getRootIdentifier(node.callee);
+  return null;
+}
+
+function collectAllIterParamNames(js: string, queryDataVars?: Set<string>): Set<string> {
   const iterVars = new Set<string>();
   let ast: acorn.Node;
   try {
@@ -772,7 +863,8 @@ function collectAllIterParamNames(js: string): Set<string> {
     return iterVars;
   }
 
-  const ITER_METHODS = new Set(['forEach', 'map', 'filter', 'reduce', 'some', 'every', 'find']);
+  const ITER_METHODS = new Set(['forEach', 'map', 'filter', 'reduce', 'some', 'every', 'find', 'sort']);
+  const hasQueryDataVars = queryDataVars && queryDataVars.size > 0;
 
   function walk(node: any): void {
     if (!node || typeof node !== 'object') return;
@@ -780,13 +872,20 @@ function collectAllIterParamNames(js: string): Set<string> {
     if (node.type === 'CallExpression') {
       const callee = node.callee;
       if (callee?.type === 'MemberExpression' && ITER_METHODS.has(callee.property?.name)) {
+        if (hasQueryDataVars) {
+          const rootId = getRootIdentifier(callee.object);
+          if (!rootId || !queryDataVars!.has(rootId)) {
+            return;
+          }
+        }
+
         const callback = node.arguments[0];
         if (callback) {
           const paramName = getFirstParamName(callback);
           if (paramName) {
             iterVars.add(paramName);
           }
-          if (callee.property?.name === 'reduce') {
+          if (callee.property?.name === 'reduce' || callee.property?.name === 'sort') {
             const secondParam = getSecondParamName(callback);
             if (secondParam) {
               iterVars.add(secondParam);
@@ -1391,5 +1490,132 @@ function validateLubanUIJs(js: string, errors: string[], _warnings: string[]) {
         `[LubanUI] 第 ${lineNum} 行：类名 "${fullClass}" 不是有效的 LubanUI 组件类名，请检查拼写`
       );
     }
+  }
+
+  // 10. 禁止 result.data.xxx — QueryName.run() 直接返回 { columns, rows, totalCount }
+  const dataAccessPattern = /(\w+)\.data\.(rows|columns|totalCount)\b/g;
+  for (const m of js.matchAll(dataAccessPattern)) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    const varName = m[1];
+    const prop = m[2];
+    errors.push(
+      `[LubanUI] 第 ${lineNum} 行：${varName}.data.${prop} 写法错误。QueryName.run() 返回的就是 { columns, rows, totalCount }，没有 .data 包装，请改为 ${varName}.${prop}`
+    );
+  }
+}
+
+function validateTableEmptyState(js: string, warnings: string[]) {
+  const hasLubanTable = /LubanUI\.table\s*\(/.test(js);
+  if (hasLubanTable) return;
+
+  const handWrittenPatterns: { pattern: RegExp; name: string }[] = [
+    { pattern: /function\s+renderEmpty\s*\(/g, name: 'renderEmpty()' },
+    { pattern: /function\s+renderTable\s*\(/g, name: 'renderTable()' },
+    { pattern: /\.innerHTML\s*=\s*['"`][^'"`]*colspan[^'"`]*暂无/gi, name: 'innerHTML 中手写空态' },
+    { pattern: /\.textContent\s*=\s*['"`][^'"`]*(?:暂无|没有|无数据)/gi, name: 'textContent 手写空态文案' },
+  ];
+
+  const detected: string[] = [];
+  let firstLine = 0;
+
+  for (const { pattern, name } of handWrittenPatterns) {
+    pattern.lastIndex = 0;
+    const m = pattern.exec(js);
+    if (m) {
+      detected.push(name);
+      const lineNum = js.substring(0, m.index).split('\n').length;
+      if (firstLine === 0 || lineNum < firstLine) firstLine = lineNum;
+    }
+  }
+
+  if (detected.length > 0) {
+    warnings.push(
+      `[表格空态] 第 ${firstLine} 行：检测到手写表格空态模式（${detected.join('、')}），` +
+      '未使用 LubanUI.table() 组件。LubanUI.table() 内置空态渲染（图标+文字+描述+操作按钮），' +
+      '配置 emptyText / emptyDescription / emptyAction 即可。' +
+      '如手写方案有更好的用户体验，可保持现状；否则建议改用 LubanUI.table()。'
+    );
+  }
+}
+
+function validateCssComponentOverride(css: string, errors: string[]) {
+  const LUBAN_COMPONENT_SELECTORS = [
+    '.luban-table', '.luban-btn', '.luban-badge', '.luban-card',
+    '.luban-modal', '.luban-tabs', '.luban-form', '.luban-input',
+    '.luban-select', '.luban-checkbox', '.luban-radio', '.luban-switch',
+    '.luban-pagination', '.luban-toast', '.luban-empty', '.luban-loading',
+    '.luban-spinner', '.luban-stat-card', '.luban-filter-bar', '.luban-chart',
+  ];
+
+  const lines = css.split('\n');
+  const violations: { line: number; selector: string }[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    for (const selector of LUBAN_COMPONENT_SELECTORS) {
+      if (line === selector + '{' || line === selector + ' {' || line.startsWith(selector + ',') || line.startsWith(selector + ' ')) {
+        violations.push({ line: i + 1, selector });
+        break;
+      }
+    }
+  }
+
+  if (violations.length > 0) {
+    const details = violations.slice(0, 5).map((v) => `第 ${v.line} 行：${v.selector}`).join('、');
+    errors.push(
+      `[CSS 组件覆盖] 禁止重新定义 LubanUI 组件样式，组件样式由组件库统一管理。` +
+      `检测到 ${violations.length} 处覆盖（${details}${violations.length > 5 ? ' 等' : ''}）。` +
+      '如需定制样式，请使用自定义类名（如 .my-table），不要直接修改 .luban-table 等组件类。'
+    );
+  }
+}
+
+function validateFormContainer(html: string, js: string, errors: string[]) {
+  const divFormPattern = /<div[^>]*class="[^"]*luban-form[^"]*"[^>]*>/g;
+  const divFormMatches: { line: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = divFormPattern.exec(html)) !== null) {
+    const lineNum = html.substring(0, m.index).split('\n').length;
+    divFormMatches.push({ line: lineNum });
+  }
+
+  if (divFormMatches.length === 0) return;
+
+  const formDotNamePattern = /(\w+)\.\w+\.value\b/g;
+  const formDotNameInBrackets = /(\w+)\[['"]\w+['"]\]\.value\b/g;
+  const getElementByIdForm = /getElementById\s*\(\s*['"](\w+)['"]\s*\)/g;
+
+  const formVarNames = new Set<string>();
+  let gm: RegExpExecArray | null;
+  while ((gm = getElementByIdForm.exec(js)) !== null) {
+    formVarNames.add(gm[1]);
+  }
+
+  const dangerousAccess: { line: number; code: string }[] = [];
+
+  for (const match of js.matchAll(formDotNamePattern)) {
+    const lineNum = js.substring(0, match.index!).split('\n').length;
+    const code = match[0];
+    const varName = match[1];
+
+    const isFormVar = formVarNames.has(varName) || /form/i.test(varName);
+    if (isFormVar) {
+      const existing = dangerousAccess.find((d) => d.line === lineNum);
+      if (!existing) {
+        dangerousAccess.push({ line: lineNum, code });
+      }
+    }
+  }
+
+  if (divFormMatches.length > 0 && dangerousAccess.length > 0) {
+    const htmlLines = divFormMatches.slice(0, 3).map((d) => `第 ${d.line} 行`).join('、');
+    const jsLines = dangerousAccess.slice(0, 3).map((d) => `第 ${d.line} 行：\`${d.code}\``).join('、');
+    errors.push(
+      `[表单容器] HTML 中使用了 <div class="luban-form">（${htmlLines}），` +
+      `但 JS 中使用了 \`form.name.value\` 风格的属性访问（${jsLines}）。` +
+      '`<div>` 不是 `<form>` 元素，`div.name` 返回 undefined，访问 `.value` 会抛 TypeError。' +
+      '请将 `<div class="luban-form">` 改为 `<form class="luban-form">`，' +
+      '或使用 `LubanUI.getFormData(\'formId\')` 获取表单数据。'
+    );
   }
 }

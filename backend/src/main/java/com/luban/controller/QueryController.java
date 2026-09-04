@@ -81,8 +81,12 @@ public class QueryController {
     }
 
     @PostMapping("/execute")
-    public ResponseEntity<ApiResponse<RunQueryResponse>> execute(
+    public ResponseEntity<ApiResponse<Object>> execute(
             @RequestBody ExecuteSqlRequest request) {
+        if (Boolean.TRUE.equals(request.getMulti())) {
+            return ResponseEntity.ok(ApiResponse.ok(
+                    queryService.executeSqlBatch(request.getDatasourceId(), request.getSql())));
+        }
         return ResponseEntity.ok(ApiResponse.ok(
                 queryService.executeSql(request.getDatasourceId(), request.getSql())));
     }

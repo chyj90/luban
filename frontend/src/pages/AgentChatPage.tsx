@@ -1359,18 +1359,23 @@ export default function AgentChatPage() {
 
         <div className="agent-chat-input-area">
           <div className="agent-chat-input-row">
-            <input
+            <textarea
               className="agent-chat-input"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                e.target.style.height = 'auto';
+                e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px';
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   handleSend();
                 }
               }}
-              placeholder="输入你的问题，如：你可以帮我做什么..."
+              placeholder="输入你的问题，Shift+Enter 换行"
               disabled={sending}
+              rows={1}
             />
             <button
               className="agent-chat-send-btn"

@@ -123,6 +123,7 @@ export const planSkills: Record<string, SkillFactory> = {
         return { success: false, message: invalidMsg };
       }
       const store = useAgentStore.getState();
+      const activePlans = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing');
       const planId = generatePlanId();
       const plan = {
         id: planId,
@@ -142,7 +143,15 @@ export const planSkills: Record<string, SkillFactory> = {
       store.addPlan(plan);
       store.setStatus('idle');
       upsertPlanMessage(planId);
-      return { success: true, message: `计划「${title}」已创建，共 ${items.length} 个步骤，等待用户确认。`, data: { planId, title, summary, items }, _pause: true };
+      let message = `计划「${title}」已创建，计划 ID: ${planId}，共 ${items.length} 个步骤，等待用户确认。`;
+      if (activePlans.length > 0) {
+        const activeList = activePlans.map((p: unknown) => {
+          const doneCount = p.steps.filter((s: unknown) => s.status === 'done').length;
+          return `  - ${p.id}「${p.agentName}」${doneCount}/${p.steps.length} 已完成`;
+        }).join('\n');
+        message += `\n\n⚠️ 当前存在 ${activePlans.length} 个活跃计划，新计划创建后将覆盖旧计划：\n${activeList}\n\n如本次创建是用户明确要求的新需求，请忽略此提醒。如为误操作，请调用 abandon_plan 放弃旧计划后再创建。`;
+      }
+      return { success: true, message, data: { planId, title, summary, items }, _pause: true };
     },
   }),
 
@@ -219,7 +228,11 @@ export const planSkills: Record<string, SkillFactory> = {
       const { plan_id, item_id, status, result } = args as unknown;
       const store = useAgentStore.getState();
       const plan = store.plans.find((p: unknown) => p.id === plan_id);
-      if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
+      if (!plan) {
+        const activeIds = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing').map((p: unknown) => p.id);
+        const hint = activeIds.length > 0 ? `，当前活跃计划 ID: ${activeIds.join(', ')}` : '，当前无活跃计划';
+        return { success: false, message: `未找到计划 "${plan_id}"${hint}。请使用 create_plan 返回的正确 planId 重试 update_plan_item，不要重新创建计划。` };
+      }
       const step = plan.steps.find((s: unknown) => String(s.id) === String(item_id));
       if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s: unknown) => s.id).join(', ')}` };
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
