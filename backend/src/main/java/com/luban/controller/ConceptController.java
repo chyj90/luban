@@ -128,6 +128,26 @@ public class ConceptController {
         return ResponseEntity.ok(ApiResponse.ok(Map.of("authorized", authorized, "denied", denied)));
     }
 
+    @PostMapping("/auto-match-mappings-v2")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> autoMatchMappingsV2(
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> conceptIdNumbers = (List<Number>) body.get("conceptIds");
+        @SuppressWarnings("unchecked")
+        List<Number> datasourceIdNumbers = (List<Number>) body.get("datasourceIds");
+        if (conceptIdNumbers == null || conceptIdNumbers.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("缺少 conceptIds 参数"));
+        }
+        if (datasourceIdNumbers == null || datasourceIdNumbers.isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("缺少 datasourceIds 参数"));
+        }
+        Long userId = getCurrentUserId();
+        List<Long> conceptIds = conceptIdNumbers.stream().map(Number::longValue).toList();
+        List<Long> datasourceIds = datasourceIdNumbers.stream().map(Number::longValue).toList();
+        long taskId = conceptMappingService.submitAutoMatchV2(conceptIds, datasourceIds, userId);
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("taskId", taskId)));
+    }
+
     @PostMapping("/auto-match-mappings")
     public ResponseEntity<ApiResponse<Map<String, Object>>> autoMatchMappings(
             @RequestBody Map<String, Object> body) {
@@ -155,11 +175,7 @@ public class ConceptController {
         if (taskId == null) {
             return ResponseEntity.badRequest().body(ApiResponse.error("缺少 taskId 参数"));
         }
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> selected = (List<Map<String, Object>>) body.get("mappings");
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> selectedJoins = (List<Map<String, Object>>) body.get("joinMappings");
-        return ResponseEntity.ok(ApiResponse.ok(conceptMappingService.applyAutoMatch(taskId, selected != null ? selected : Collections.emptyList(), selectedJoins != null ? selectedJoins : Collections.emptyList())));
+        return ResponseEntity.ok(ApiResponse.ok(conceptMappingService.applyAutoMatch(taskId)));
     }
 
     @PostMapping("/retry-auto-match-mappings")

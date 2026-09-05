@@ -2192,13 +2192,16 @@ public class AgentService {
                     if (idObj instanceof Number) {
                         ConceptMapping mapping = conceptMappingRepository.findById(((Number) idObj).longValue()).orElse(null);
                         if (mapping != null) {
-                            return objectMapper.writeValueAsString(Map.of(
-                                    "id", mapping.getId(),
-                                    "tableName", mapping.getTableName(),
-                                    "columnName", mapping.getColumnName(),
-                                    "mappingType", mapping.getMappingType() != null ? mapping.getMappingType() : "",
-                                    "datasourceId", mapping.getDatasourceId()
-                            ));
+                            Map<String, Object> snap = new LinkedHashMap<>();
+                            snap.put("id", mapping.getId());
+                            snap.put("tableName", mapping.getTableName());
+                            snap.put("columnName", mapping.getColumnName());
+                            snap.put("mappingType", mapping.getMappingType() != null ? mapping.getMappingType() : "");
+                            snap.put("datasourceId", mapping.getDatasourceId());
+                            if (mapping.getComputedExpr() != null && !mapping.getComputedExpr().isBlank()) {
+                                snap.put("computedExpr", mapping.getComputedExpr());
+                            }
+                            return objectMapper.writeValueAsString(snap);
                         }
                     }
                     break;
@@ -2279,7 +2282,7 @@ public class AgentService {
             body.put("max_tokens", 4096);
             body.put("stream", true);
 
-            String chatUrl = normalizeChatUrl(config.getModelEndpoint());
+            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
             log.info("LLM call: url={}, model={}, stream=true, messagesCount={}",
                     chatUrl, config.getModelName(), fullMessages.size());
             HttpRequest request = HttpRequest.newBuilder()
@@ -2516,21 +2519,6 @@ public class AgentService {
             sb.append("变更不会自动生效，需管理员审核确认。变更数量不做限制，按实际需求完整配置。");
         }
         return sb.toString();
-    }
-
-    /**
-     * 规范化 chat completions URL。
-     * 如果已包含 /chat/completions 则直接使用，否则拼接 /chat/completions。
-     */
-    private String normalizeChatUrl(String endpoint) {
-        String url = endpoint.replaceAll("/+$", "");
-        if (url.endsWith("/chat/completions")) {
-            return url;
-        }
-        if (!url.matches(".*/v\\d+$")) {
-            url += "/v1";
-        }
-        return url + "/chat/completions";
     }
 
     private Object safeParseJson(String json) {

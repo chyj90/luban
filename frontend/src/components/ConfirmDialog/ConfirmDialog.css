@@ -61,6 +61,16 @@
   line-height: 1.6;
 }
 
+.confirm-dialog--rich {
+  width: 680px;
+}
+
+.confirm-dialog-body--rich {
+  padding: 12px 24px 24px 24px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
 .confirm-dialog-footer {
   display: flex;
   justify-content: flex-end;

@@ -232,13 +232,16 @@ public class OntologyChangeService {
                     if (idObj instanceof Number) {
                         ConceptMapping mapping = conceptMappingRepository.findById(((Number) idObj).longValue()).orElse(null);
                         if (mapping != null) {
-                            changeLog.setBeforeSnapshot(objectMapper.writeValueAsString(Map.of(
-                                    "id", mapping.getId(),
-                                    "tableName", mapping.getTableName(),
-                                    "columnName", mapping.getColumnName(),
-                                    "mappingType", mapping.getMappingType() != null ? mapping.getMappingType() : "",
-                                    "datasourceId", mapping.getDatasourceId()
-                            )));
+                            Map<String, Object> before = new LinkedHashMap<>();
+                            before.put("id", mapping.getId());
+                            before.put("tableName", mapping.getTableName());
+                            before.put("columnName", mapping.getColumnName());
+                            before.put("mappingType", mapping.getMappingType() != null ? mapping.getMappingType() : "");
+                            before.put("datasourceId", mapping.getDatasourceId());
+                            if (mapping.getComputedExpr() != null && !mapping.getComputedExpr().isBlank()) {
+                                before.put("computedExpr", mapping.getComputedExpr());
+                            }
+                            changeLog.setBeforeSnapshot(objectMapper.writeValueAsString(before));
                         }
                     }
                     break;

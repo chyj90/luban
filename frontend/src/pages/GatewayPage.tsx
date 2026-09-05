@@ -56,10 +56,10 @@ export default function GatewayPage() {
     setRebuilding(true);
     try {
       const res = await rebuildConceptIndex();
-      toast(res.data.message || '索引重建任务已提交', 'success');
+      toast(res.data.message || '索引重建完成', 'success');
       fetchEmbeddingHealth();
     } catch {
-      toast('提交重建任务失败', 'error');
+      toast('索引重建失败', 'error');
     } finally {
       setRebuilding(false);
     }
@@ -69,10 +69,10 @@ export default function GatewayPage() {
     setRegenerating(true);
     try {
       const res = await regenerateAllEmbeddings();
-      toast(res.data.message || '全量重新生成任务已提交', 'success');
+      toast(res.data.message || '全量 Embedding 生成完成', 'success');
       fetchEmbeddingHealth();
     } catch {
-      toast('提交全量生成任务失败', 'error');
+      toast('全量 Embedding 生成失败', 'error');
     } finally {
       setRegenerating(false);
     }
@@ -307,18 +307,6 @@ export default function GatewayPage() {
           </div>
           {embeddingHealth && !healthLoading && (
             <div className="healthMeta">
-              <span className="healthMetaItem">
-                最后重建：{embeddingHealth.lastRebuildAt ? new Date(embeddingHealth.lastRebuildAt).toLocaleString('zh-CN') : '从未'}
-                <span className={`healthMetaStatus status-${embeddingHealth.lastRebuildStatus?.toLowerCase()}`}>
-                  {embeddingHealth.lastRebuildStatus === 'COMPLETED' ? '✓' : embeddingHealth.lastRebuildStatus === 'FAILED' ? '✗' : embeddingHealth.lastRebuildStatus === 'never' ? '—' : '○'}
-                </span>
-              </span>
-              <span className="healthMetaItem">
-                最后全量生成：{embeddingHealth.lastRegenerateAt ? new Date(embeddingHealth.lastRegenerateAt).toLocaleString('zh-CN') : '从未'}
-                <span className={`healthMetaStatus status-${embeddingHealth.lastRegenerateStatus?.toLowerCase()}`}>
-                  {embeddingHealth.lastRegenerateStatus === 'COMPLETED' ? '✓' : embeddingHealth.lastRegenerateStatus === 'FAILED' ? '✗' : embeddingHealth.lastRegenerateStatus === 'never' ? '—' : '○'}
-                </span>
-              </span>
               {embeddingHealth.coverageRate < 80 && embeddingHealth.totalConcepts > 0 && (
                 <span className="healthMetaWarn">
                   <AlertTriangle size={13} />

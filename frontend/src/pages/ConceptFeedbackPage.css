@@ -438,6 +438,41 @@
   cursor: not-allowed;
 }
 
+.cfb-page__btn-secondary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1677ff;
+  background: #fff;
+  border: 1px solid #1677ff;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cfb-page__btn-secondary:hover:not(:disabled) {
+  color: #4096ff;
+  border-color: #4096ff;
+}
+
+.cfb-page__btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cfb-page__pipeline-id {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: #666;
+  background: #f5f5f5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
 .cfb-page__btn-success {
   display: flex;
   align-items: center;
@@ -754,16 +789,10 @@
   white-space: nowrap;
 }
 
-.cfb-page__type-badge.like {
-  color: #52c41a;
-  background: #f6ffed;
-  border: 1px solid #b7eb8f;
-}
-
-.cfb-page__type-badge.dislike {
-  color: #ff4d4f;
-  background: #fff2f0;
-  border: 1px solid #ffccc7;
+.cfb-page__type-badge.problem {
+  color: #fa8c16;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
 }
 
 /* —— 状态流转提示 —— */

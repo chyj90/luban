@@ -881,18 +881,6 @@
   color: #1677ff;
 }
 
-.agent-chat-feedback-btn.like:hover {
-  background: #f6ffed;
-  border-color: #52c41a;
-  color: #52c41a;
-}
-
-.agent-chat-feedback-btn.dislike:hover {
-  background: #fff2f0;
-  border-color: #ff4d4f;
-  color: #ff4d4f;
-}
-
 .agent-chat-feedback-label {
   font-size: 12px;
   color: #555;

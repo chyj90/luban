@@ -1,14 +1,12 @@
 package com.luban.service;
 
 import com.luban.entity.Concept;
-import com.luban.entity.ConceptEmbeddingTask;
-import com.luban.entity.AsyncTask;
-import com.luban.repository.ConceptEmbeddingTaskRepository;
 import com.luban.repository.ConceptRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -23,9 +21,7 @@ import java.util.Map;
 public class ConceptEmbeddingService {
 
     private final ConceptRepository conceptRepository;
-    private final ConceptEmbeddingTaskRepository taskRepository;
     private final FaissService faissService;
-    private final AsyncTaskService asyncTaskService;
 
     @Value("${embedding.model.version:default}")
     private String embeddingModelVersion;
@@ -36,6 +32,7 @@ public class ConceptEmbeddingService {
         return bytesToFloats(concept.getEmbedding());
     }
 
+    @Transactional
     public void generateAndSave(Long conceptId, String name, String description) {
         String text = (name != null ? name : "") + " " + (description != null ? description : "");
         List<Float> embedding = faissService.getEmbedding(text);
@@ -64,38 +61,15 @@ public class ConceptEmbeddingService {
         return result;
     }
 
-    public void rebuildIndex() {
+    public int rebuildIndex() {
         List<Map<String, Object>> all = loadAllEmbeddings();
         faissService.buildIndex(all);
         log.info("FAISS index rebuilt with {} concepts", all.size());
+        return all.size();
     }
 
-    public long rebuildIndexAsync(Long userId) {
-        AsyncTask task = asyncTaskService.createTask("REBUILD_INDEX", 1, userId);
-        asyncTaskService.startTask(task.getId());
-        Thread.startVirtualThread(() -> {
-            try {
-                asyncTaskService.updateProgress(task.getId(), 0, "正在重建索引...");
-                List<Map<String, Object>> all = loadAllEmbeddings();
-                faissService.buildIndex(all);
-                asyncTaskService.completeTask(task.getId(), "FAISS 索引重建完成，共 " + all.size() + " 个概念");
-                log.info("FAISS index rebuilt async with {} concepts", all.size());
-            } catch (Exception e) {
-                log.error("Async rebuild index failed", e);
-                asyncTaskService.failTask(task.getId(), e.getMessage());
-            }
-        });
-        return task.getId();
-    }
-
-    public void regenerateAll() {
+    public int regenerateAll() {
         List<Concept> concepts = conceptRepository.findAll();
-        ConceptEmbeddingTask task = new ConceptEmbeddingTask();
-        task.setConceptId(0L);
-        task.setTaskType("regenerate_all");
-        task.setStatus("RUNNING");
-        task = taskRepository.save(task);
-
         int processed = 0;
         for (Concept c : concepts) {
             try {
@@ -105,38 +79,8 @@ public class ConceptEmbeddingService {
                 log.error("Failed to generate embedding for concept {}", c.getId(), e);
             }
         }
-        task.setStatus("COMPLETED");
-        task.setFinishedAt(java.time.LocalDateTime.now());
-        taskRepository.save(task);
         rebuildIndex();
-    }
-
-    public long regenerateAllAsync(Long userId) {
-        List<Concept> concepts = conceptRepository.findAll();
-        AsyncTask task = asyncTaskService.createTask("REGENERATE_EMBEDDINGS", concepts.size(), userId);
-        asyncTaskService.startTask(task.getId());
-        Thread.startVirtualThread(() -> {
-            try {
-                int processed = 0;
-                for (Concept c : concepts) {
-                    try {
-                        asyncTaskService.updateProgress(task.getId(), processed,
-                                "正在生成 Embedding: " + c.getName() + " (" + (processed + 1) + "/" + concepts.size() + ")");
-                        generateAndSave(c.getId(), c.getName(), c.getDescription());
-                        processed++;
-                    } catch (Exception e) {
-                        log.error("Failed to generate embedding for concept {}", c.getId(), e);
-                    }
-                }
-                asyncTaskService.updateProgress(task.getId(), processed, "正在重建 FAISS 索引...");
-                rebuildIndex();
-                asyncTaskService.completeTask(task.getId(), "全量重新生成完成，共 " + processed + " 个概念");
-            } catch (Exception e) {
-                log.error("Async regenerate all failed", e);
-                asyncTaskService.failTask(task.getId(), e.getMessage());
-            }
-        });
-        return task.getId();
+        return processed;
     }
 
     public void regenerateForConcept(Long conceptId) {
@@ -164,28 +108,6 @@ public class ConceptEmbeddingService {
 
         Map<String, Object> indexStats = faissService.getIndexStats();
         health.put("indexStats", indexStats);
-
-        List<AsyncTask> rebuildTasks = asyncTaskService.getTasksByType("REBUILD_INDEX");
-        if (!rebuildTasks.isEmpty()) {
-            AsyncTask lastRebuild = rebuildTasks.get(0);
-            health.put("lastRebuildAt", lastRebuild.getFinishedAt() != null
-                    ? lastRebuild.getFinishedAt().toString() : null);
-            health.put("lastRebuildStatus", lastRebuild.getStatus());
-        } else {
-            health.put("lastRebuildAt", null);
-            health.put("lastRebuildStatus", "never");
-        }
-
-        List<AsyncTask> regenerateTasks = asyncTaskService.getTasksByType("REGENERATE_EMBEDDINGS");
-        if (!regenerateTasks.isEmpty()) {
-            AsyncTask lastRegen = regenerateTasks.get(0);
-            health.put("lastRegenerateAt", lastRegen.getFinishedAt() != null
-                    ? lastRegen.getFinishedAt().toString() : null);
-            health.put("lastRegenerateStatus", lastRegen.getStatus());
-        } else {
-            health.put("lastRegenerateAt", null);
-            health.put("lastRegenerateStatus", "never");
-        }
 
         return health;
     }

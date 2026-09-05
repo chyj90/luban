@@ -153,10 +153,22 @@ export function autoMatchConceptMappings(conceptIds: number[], datasourceIds: nu
   return post<{ taskId: number }>('/concepts/auto-match-mappings', { conceptIds, datasourceIds });
 }
 
-export function applyAutoMatchMappings(taskId: number, mappings: Record<string, unknown>[], joinMappings?: Record<string, unknown>[]) {
-  return post<{ created: number; createdJoins: number; message: string }>(
+export function autoMatchConceptMappingsV2(conceptIds: number[], datasourceIds: number[]) {
+  return post<{ taskId: number }>('/concepts/auto-match-mappings-v2', { conceptIds, datasourceIds });
+}
+
+export function applyAutoMatchMappings(taskId: number) {
+  return post<{
+    created: number;
+    skipped: number;
+    createdJoins: number;
+    skippedJoins: number;
+    savedDetails: { conceptId: number; tableName?: string; columnName?: string; joinTable?: string; mappingType: string }[];
+    skippedDetails: { conceptId: number; tableName?: string; columnName?: string; joinTable?: string; reason: string }[];
+    message: string;
+  }>(
     `/concepts/apply-auto-match-mappings`,
-    { taskId, mappings, joinMappings },
+    { taskId },
   );
 }
 
@@ -208,20 +220,38 @@ export function createConceptFeedback(data: Partial<ConceptFeedback>) {
   return post<ConceptFeedback>('/concept-feedback', data);
 }
 
-export function quickConceptFeedback(data: {
+export function createProblemFeedback(data: {
   sessionId: string;
   messageId: string;
-  feedbackType: 'like' | 'dislike';
-  userQuestion: string;
-  answer?: string;
-  faissConcepts?: { conceptId: number; conceptName: string; confidence?: number }[];
-  ontologyConcepts?: { conceptId: number; conceptName: string; depth?: number }[];
-  usedConcepts?: { conceptId: number; conceptName: string }[];
-  correctConceptId?: number;
-  correctConceptName?: string;
-  userDescription?: string;
+  pipelineId?: string;
+  userDescription: string;
 }) {
-  return post<ConceptFeedback>('/concept-feedback/quick', data);
+  return post<ConceptFeedback>('/concept-feedback', data);
+}
+
+export function confirmConceptFeedback(id: number, confirmed: boolean) {
+  return put<ConceptFeedback>(`/concept-feedback/${id}/confirm`, { confirmed });
+}
+
+export function locateConceptFeedback(id: number) {
+  return post<Record<string, unknown>>(`/concept-feedback/${id}/locate`);
+}
+
+export function batchAnalyzeFeedback(feedbackIds: number[]) {
+  return post<Record<string, unknown>>('/concept-feedback/batch-analyze', { feedbackIds });
+}
+
+export function getFeedbackStats(conceptId?: number, industryId?: number) {
+  const params = new URLSearchParams();
+  if (conceptId) params.set('conceptId', String(conceptId));
+  if (industryId) params.set('industryId', String(industryId));
+  return get<Record<string, unknown>>(`/concept-feedback/stats?${params.toString()}`);
+}
+
+export function getFeedbackDashboard(industryId?: number) {
+  const params = new URLSearchParams();
+  if (industryId) params.set('industryId', String(industryId));
+  return get<Record<string, unknown>>(`/concept-feedback/dashboard?${params.toString()}`);
 }
 
 export function reviewConceptFeedback(id: number, data: { reviewedBy: string; reviewComment: string }) {
@@ -260,10 +290,6 @@ export function rebuildConceptIndex() {
   return post<{ status: string; message: string }>('/concept-embeddings/rebuild');
 }
 
-export function getEmbeddingTasks() {
-  return get<Array<{ id: number; conceptId: number; taskType: string; status: string; errorMsg: string; createdAt: string; finishedAt: string }>>('/concept-embeddings/tasks');
-}
-
 export interface EmbeddingHealth {
   totalConcepts: number;
   embeddedConcepts: number;
@@ -271,10 +297,6 @@ export interface EmbeddingHealth {
   embeddingModelVersion: string;
   faissHealthy: boolean;
   indexStats: Record<string, unknown>;
-  lastRebuildAt: string | null;
-  lastRebuildStatus: string;
-  lastRegenerateAt: string | null;
-  lastRegenerateStatus: string;
 }
 
 export function getEmbeddingHealth() {
@@ -313,7 +335,7 @@ export function getProcessedAsyncTasks(page: number, size: number) {
 }
 
 export function markTaskProcessed(taskId: number) {
-  return put<void>(`/async-tasks/${taskId}/mark-processed`);
+  return put<null>(`/async-tasks/${taskId}/mark-processed`);
 }
 
 export function executeImportFromTask(taskId: number, selectedItems: Array<Record<string, unknown>>) {

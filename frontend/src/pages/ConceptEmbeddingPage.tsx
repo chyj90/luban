@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react';
 import { Check, Loader2, RefreshCw, ChevronLeft, ChevronRight, ListTodo } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
+import DataTable from '@/components/DataTable';
+import type { Column } from '@/components/DataTable';
 import { useToastStore } from '@/stores/toastStore';
 import {
   getPendingAsyncTasks,
@@ -16,10 +18,9 @@ import { confirm } from '@/stores/confirmStore';
 import './ConceptEmbeddingPage.css';
 
 const TASK_TYPE_LABELS: Record<string, string> = {
-  REBUILD_INDEX: '重建索引',
-  REGENERATE_EMBEDDINGS: '全量生成向量',
   IMPORT_CONCEPTS: '导入概念',
   AUTO_MATCH_MAPPINGS: '自动映射',
+  AUTO_MATCH_MAPPINGS_V2: '自动映射(规则优先)',
 };
 
 const STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -114,7 +115,7 @@ export default function ConceptEmbeddingPage() {
   }, [expandedTask]);
 
   const autoMatchData = useMemo(() => {
-    if (!expandedTask || expandedTask.taskType !== 'AUTO_MATCH_MAPPINGS' || expandedTask.status !== 'COMPLETED' || !expandedTask.result) {
+    if (!expandedTask || !(expandedTask.taskType === 'AUTO_MATCH_MAPPINGS' || expandedTask.taskType === 'AUTO_MATCH_MAPPINGS_V2') || expandedTask.status !== 'COMPLETED' || !expandedTask.result) {
       return null;
     }
     try {
@@ -128,6 +129,7 @@ export default function ConceptEmbeddingPage() {
           candidates: Array<Record<string, unknown>>;
           joinCandidates?: Array<Record<string, unknown>>;
           total: number;
+          source?: string;
         }>;
         failedConcepts: Array<{
           conceptId: number;
@@ -137,6 +139,8 @@ export default function ConceptEmbeddingPage() {
         totalConcepts: number;
         matchedConcepts: number;
         unmatchedConcepts: number;
+        ruleCoveredConcepts?: number;
+        llmFallbackConcepts?: number;
       };
     } catch {
       return null;
@@ -167,32 +171,78 @@ export default function ConceptEmbeddingPage() {
 
   const handleApplyAutoMatch = async () => {
     if (!autoMatchData || !expandedTask) return;
-    const allMappings: Record<string, unknown>[] = [];
-    const allJoinMappings: Record<string, unknown>[] = [];
-    for (const cr of autoMatchData.conceptResults) {
-      for (const c of cr.candidates) {
-        allMappings.push({ ...c, conceptId: cr.conceptId });
-      }
-      if (cr.joinCandidates) {
-        for (const jc of cr.joinCandidates) {
-          allJoinMappings.push({ ...jc, conceptId: cr.conceptId });
-        }
-      }
-    }
-    if (allMappings.length === 0 && allJoinMappings.length === 0) {
+    const mappingCount = autoMatchData.conceptResults.reduce((sum: number, cr: { candidates?: unknown[] }) => sum + (cr.candidates?.length || 0), 0);
+    const joinCount = autoMatchData.conceptResults.reduce((sum: number, cr: { joinCandidates?: unknown[] }) => sum + (cr.joinCandidates?.length || 0), 0);
+    if (mappingCount === 0 && joinCount === 0) {
       toast('没有可应用的映射', 'warning');
       return;
     }
-    const totalCount = allMappings.length + allJoinMappings.length;
     const ok = await confirm({
       title: '确认应用映射',
-      message: `将为 ${autoMatchData.matchedConcepts} 个概念应用 ${allMappings.length} 条字段映射、${allJoinMappings.length} 条 JOIN 映射，共 ${totalCount} 条，是否继续？`,
+      message: `将先清除 ${autoMatchData.matchedConcepts} 个概念的已有映射，再写入 ${mappingCount} 条字段映射、${joinCount} 条 JOIN 映射，共 ${mappingCount + joinCount} 条，是否继续？`,
     });
     if (!ok) return;
     setAutoMatchApplying(true);
     try {
-      const res = await applyAutoMatchMappings(expandedTask.id, allMappings, allJoinMappings);
-      toast(res.data.message, 'success');
+      const res = await applyAutoMatchMappings(expandedTask.id);
+      toast(res.data.message, res.data.skipped > 0 || res.data.skippedJoins > 0 ? 'warning' : 'success');
+
+      const hasDetails = (res.data.savedDetails?.length || 0) + (res.data.skippedDetails?.length || 0) > 0;
+      if (hasDetails) {
+        type MappingRow = {
+          conceptId: number;
+          target: string;
+          mappingType: string;
+          status: '成功' | '跳过';
+          reason: string;
+        };
+        const rows: MappingRow[] = [
+          ...(res.data.savedDetails || []).map(d => ({
+            conceptId: d.conceptId,
+            target: d.joinTable ? `${d.joinTable}(JOIN)` : `${d.tableName || ''}.${d.columnName || ''}`,
+            mappingType: d.mappingType || 'direct',
+            status: '成功' as const,
+            reason: '',
+          })),
+          ...(res.data.skippedDetails || []).map(d => ({
+            conceptId: d.conceptId,
+            target: d.joinTable ? `${d.joinTable}(JOIN)` : `${d.tableName || ''}.${d.columnName || ''}`,
+            mappingType: d.reason?.includes('JOIN') ? 'join' : 'direct',
+            status: '跳过' as const,
+            reason: d.reason || '',
+          })),
+        ];
+        const detailColumns: Column<MappingRow>[] = [
+          { key: 'conceptId', title: '概念ID', render: (r) => r.conceptId },
+          { key: 'target', title: '目标对象', render: (r) => r.target },
+          { key: 'mappingType', title: '类型', render: (r) => r.mappingType === 'join' ? 'JOIN' : '字段' },
+          {
+            key: 'status',
+            title: '状态',
+            render: (r) => (
+              <span style={{ color: r.status === '成功' ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>
+                {r.status}
+              </span>
+            ),
+          },
+          { key: 'reason', title: '原因', render: (r) => r.reason || '-' },
+        ];
+        const skippedCount = res.data.skippedDetails?.length || 0;
+        await confirm({
+          title: `映射应用结果（${res.data.savedDetails?.length || 0} 成功 / ${skippedCount} 跳过）`,
+          content: (
+            <DataTable<MappingRow>
+              columns={detailColumns}
+              data={rows}
+              rowKey={(_, i) => i}
+              className="confirm-detail-table"
+            />
+          ),
+          width: 680,
+          confirmText: '知道了',
+          cancelText: undefined as unknown as string,
+        });
+      }
 
       const failedConceptIds = autoMatchData.failedConcepts.map((fc: { conceptId: number }) => fc.conceptId);
       if (failedConceptIds.length > 0) {
@@ -305,7 +355,7 @@ export default function ConceptEmbeddingPage() {
 
   const renderTaskDetail = (task: AsyncTaskInfo) => {
     const isPreview = task.taskType === 'IMPORT_CONCEPTS' && task.status === 'COMPLETED';
-    const isAutoMatch = task.taskType === 'AUTO_MATCH_MAPPINGS' && task.status === 'COMPLETED';
+    const isAutoMatch = (task.taskType === 'AUTO_MATCH_MAPPINGS' || task.taskType === 'AUTO_MATCH_MAPPINGS_V2') && task.status === 'COMPLETED';
     const isPreviewData = isPreview && previewData;
     const isAutoMatchData = isAutoMatch && autoMatchData;
 
@@ -435,6 +485,12 @@ export default function ConceptEmbeddingPage() {
                   {autoMatchData!.failedConcepts.length > 0 && (
                     <span className="autoMatchSummaryItem failed">✗ 失败: {autoMatchData!.failedConcepts.length} 个概念</span>
                   )}
+                  {autoMatchData!.ruleCoveredConcepts != null && (
+                    <span className="autoMatchSummaryItem" style={{ color: '#722ed1' }}>⚙ 规则覆盖: {autoMatchData!.ruleCoveredConcepts} 个</span>
+                  )}
+                  {autoMatchData!.llmFallbackConcepts != null && autoMatchData!.llmFallbackConcepts > 0 && (
+                    <span className="autoMatchSummaryItem" style={{ color: '#fa8c16' }}>🤖 LLM兜底: {autoMatchData!.llmFallbackConcepts} 个</span>
+                  )}
                   <span className="autoMatchSummaryItem total">共 {autoMatchData!.totalConcepts} 个概念</span>
                 </div>
 
@@ -458,7 +514,14 @@ export default function ConceptEmbeddingPage() {
                   <div key={cr.conceptId} className="autoMatchConceptGroup">
                     <div className="autoMatchConceptHeader">
                       <span className="autoMatchConceptName">{cr.conceptName}</span>
-                      <span className="autoMatchConceptCount">{cr.total} 条字段映射{cr.joinCandidates ? ` + ${cr.joinCandidates.length} JOIN` : ''}</span>
+                      <span className="autoMatchConceptCount">
+                        {cr.total} 条字段映射{cr.joinCandidates ? ` + ${cr.joinCandidates.length} JOIN` : ''}
+                        {cr.source != null && (
+                          <span style={{ marginLeft: 8, fontSize: 11, color: cr.source === 'rule' ? '#722ed1' : '#fa8c16' }}>
+                            [{cr.source === 'rule' ? '规则' : '规则+LLM'}]
+                          </span>
+                        )}
+                      </span>
                     </div>
                     {cr.candidates.length === 0 ? (
                       <div className="autoMatchEmpty">未匹配到字段</div>
@@ -471,12 +534,14 @@ export default function ConceptEmbeddingPage() {
                           const attr = String(item.attributeName ?? '');
                           const type = String(item.mappingType ?? 'direct');
                           const conf = Number(item.confidence ?? 0);
+                          const rule = String(item.rule ?? '');
                           return (
                             <div key={idx} className="importConceptItem" style={{ cursor: 'default' }}>
                               <div className="importConceptInfo">
                                 <span className="importConceptName">
                                   {attr} ← {table}.{col}
                                   <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>{item.datasourceName || `数据源${dsId}`}</span>
+                                  {rule && <span style={{ marginLeft: 4, fontSize: 10, color: '#722ed1', background: '#f9f0ff', padding: '0 4px', borderRadius: 3 }}>{rule}</span>}
                                 </span>
                                 <span className="importConceptSlug">
                                   <span className={`importMappingTypeTag type-${type}`}>{type}</span>

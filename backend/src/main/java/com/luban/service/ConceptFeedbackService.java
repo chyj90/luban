@@ -8,12 +8,16 @@ import com.luban.entity.ConceptFeedback;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
+import com.luban.entity.PipelineStage;
+import com.luban.entity.PipelineTrace;
 import com.luban.entity.ToolConcept;
 import com.luban.repository.ConceptFeedbackRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.PipelineStageRepository;
+import com.luban.repository.PipelineTraceRepository;
 import com.luban.repository.ToolConceptRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,6 +47,8 @@ public class ConceptFeedbackService {
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptRelationRepository conceptRelationRepository;
     private final ToolConceptRepository toolConceptRepository;
+    private final PipelineTraceRepository pipelineTraceRepository;
+    private final PipelineStageRepository pipelineStageRepository;
     private final AgentConfigService agentConfigService;
     private final OntologyService ontologyService;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -54,6 +60,8 @@ public class ConceptFeedbackService {
                                   ConceptJoinMappingRepository conceptJoinMappingRepository,
                                   ConceptRelationRepository conceptRelationRepository,
                                   ToolConceptRepository toolConceptRepository,
+                                  PipelineTraceRepository pipelineTraceRepository,
+                                  PipelineStageRepository pipelineStageRepository,
                                   AgentConfigService agentConfigService,
                                   OntologyService ontologyService) {
         this.feedbackRepository = feedbackRepository;
@@ -62,6 +70,8 @@ public class ConceptFeedbackService {
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
         this.conceptRelationRepository = conceptRelationRepository;
         this.toolConceptRepository = toolConceptRepository;
+        this.pipelineTraceRepository = pipelineTraceRepository;
+        this.pipelineStageRepository = pipelineStageRepository;
         this.agentConfigService = agentConfigService;
         this.ontologyService = ontologyService;
     }
@@ -81,47 +91,10 @@ public class ConceptFeedbackService {
         return feedbackRepository.findAll();
     }
 
-    @Transactional
-    public ConceptFeedback create(ConceptFeedback feedback) {
-        return feedbackRepository.save(feedback);
-    }
-
-    @Transactional
-    public ConceptFeedback createQuickFeedback(Map<String, Object> body) {
-        ConceptFeedback feedback = new ConceptFeedback();
-        feedback.setSessionId((String) body.get("sessionId"));
-        feedback.setMessageId((String) body.get("messageId"));
-        feedback.setUserQuestion((String) body.get("userQuestion"));
-        feedback.setUserFeedback((String) body.getOrDefault("userDescription", ""));
-        feedback.setFeedbackType((String) body.get("feedbackType"));
-
-        if (body.get("correctConceptId") instanceof Number) {
-            feedback.setCorrectConceptId(((Number) body.get("correctConceptId")).longValue());
-        }
-
-        // 将概念数据序列化为 JSON 存入 resolvedConcepts
-        try {
-            Map<String, Object> concepts = new LinkedHashMap<>();
-            if (body.get("faissConcepts") != null) concepts.put("faiss", body.get("faissConcepts"));
-            if (body.get("ontologyConcepts") != null) concepts.put("ontology", body.get("ontologyConcepts"));
-            if (body.get("usedConcepts") != null) concepts.put("used", body.get("usedConcepts"));
-            if (!concepts.isEmpty()) {
-                feedback.setResolvedConcepts(objectMapper.writeValueAsString(concepts));
-            }
-        } catch (Exception e) {
-            log.warn("Failed to serialize concept data for feedback: {}", e.getMessage());
-        }
-
-        // 点赞：仅记录，用于回归分析，无需处理
-        // 点踩：进入待处理流程
-        if ("like".equals(feedback.getFeedbackType())) {
-            feedback.setReasoning((String) body.get("answer"));
-            feedback.setStatus("recorded");
-        } else {
-            feedback.setStatus("pending");
-        }
-
-        return feedbackRepository.save(feedback);
+    @Transactional(readOnly = true)
+    public ConceptFeedback getById(Long id) {
+        return feedbackRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("反馈记录不存在: " + id));
     }
 
     @Transactional
@@ -133,6 +106,212 @@ public class ConceptFeedbackService {
         feedback.setReviewComment(reviewComment);
         feedback.setReviewedAt(LocalDateTime.now());
         return feedbackRepository.save(feedback);
+    }
+
+    @Transactional
+    public ConceptFeedback createProblemFeedback(String sessionId, String messageId,
+                                                   String pipelineId, String userDescription) {
+        ConceptFeedback feedback = new ConceptFeedback();
+        feedback.setSessionId(sessionId);
+        feedback.setMessageId(messageId);
+        feedback.setPipelineId(pipelineId);
+        feedback.setUserDescription(userDescription);
+        feedback.setUserFeedback(userDescription);
+        feedback.setFeedbackType("problem_feedback");
+        feedback.setStatus("pending");
+
+        if (pipelineId != null) {
+            pipelineTraceRepository.findByPipelineId(pipelineId).ifPresent(trace -> {
+                feedback.setUserQuestion(trace.getUserQuestion());
+            });
+        }
+
+        return feedbackRepository.save(feedback);
+    }
+
+    @Transactional
+    public ConceptFeedback confirm(Long id, boolean confirmed) {
+        ConceptFeedback feedback = feedbackRepository.findById(id)
+                .orElseThrow(() -> new NoSuchElementException("反馈记录不存在: " + id));
+        if (confirmed) {
+            feedback.setStatus("confirmed");
+        } else {
+            feedback.setStatus("ignored");
+            feedback.setReviewedAt(LocalDateTime.now());
+        }
+        return feedbackRepository.save(feedback);
+    }
+
+    @Transactional
+    public Map<String, Object> locate(Long feedbackId) {
+        ConceptFeedback feedback = feedbackRepository.findById(feedbackId)
+                .orElseThrow(() -> new NoSuchElementException("反馈记录不存在: " + feedbackId));
+
+        if (feedback.getLlmAnalysis() != null && !feedback.getLlmAnalysis().isBlank()) {
+            try {
+                Map<String, Object> cached = objectMapper.readValue(feedback.getLlmAnalysis(),
+                        new TypeReference<Map<String, Object>>() {});
+                cached.put("cached", true);
+                return cached;
+            } catch (Exception e) {
+                log.warn("Failed to parse cached llm_analysis, re-analyzing: {}", e.getMessage());
+            }
+        }
+
+        String pipelineContext = buildPipelineContext(feedback.getPipelineId());
+
+        try {
+            AgentConfig config = agentConfigService.getDefault();
+            String prompt = buildLocatePrompt(feedback, pipelineContext);
+            String llmResponse = callLlm(config, prompt);
+
+            Map<String, Object> analysis = parseLocateResult(llmResponse);
+            analysis.put("cached", false);
+
+            feedback.setLlmAnalysis(objectMapper.writeValueAsString(analysis));
+            feedbackRepository.save(feedback);
+
+            return analysis;
+        } catch (Exception e) {
+            log.error("LLM 阶段定位失败: {}", e.getMessage());
+            throw new RuntimeException("LLM 阶段定位失败: " + e.getMessage());
+        }
+    }
+
+    @Transactional
+    public Map<String, Object> batchAnalyze(List<Long> feedbackIds) {
+        List<ConceptFeedback> feedbacks = feedbackRepository.findAllById(feedbackIds);
+        if (feedbacks.isEmpty()) {
+            return Map.of("summary", "无反馈记录", "patterns", List.of(), "suggestions", List.of());
+        }
+
+        StringBuilder promptBuilder = new StringBuilder();
+        promptBuilder.append("你是本体调整助手，请分析以下多条反馈，找出共性问题和模式。\n\n");
+        promptBuilder.append("## 反馈列表\n");
+
+        for (int i = 0; i < feedbacks.size(); i++) {
+            ConceptFeedback fb = feedbacks.get(i);
+            promptBuilder.append("### 反馈 ").append(i + 1).append("\n");
+            promptBuilder.append("- 用户描述: ").append(fb.getUserDescription() != null ? fb.getUserDescription() : fb.getUserFeedback()).append("\n");
+            if (fb.getLlmAnalysis() != null) {
+                promptBuilder.append("- LLM定位: ").append(fb.getLlmAnalysis()).append("\n");
+            }
+            promptBuilder.append("- 涉及概念: ").append(fb.getResolvedConcepts() != null ? fb.getResolvedConcepts() : "无").append("\n\n");
+        }
+
+        promptBuilder.append("## 输出格式\n");
+        promptBuilder.append("请输出JSON：\n");
+        promptBuilder.append("```json\n");
+        promptBuilder.append("{\n");
+        promptBuilder.append("  \"summary\": \"共性模式总结\",\n");
+        promptBuilder.append("  \"patterns\": [{ \"type\": \"...\", \"conceptId\": 0, \"conceptName\": \"...\", \"count\": 0, \"commonIssue\": \"...\" }],\n");
+        promptBuilder.append("  \"suggestions\": [{ \"type\": \"...\", \"params\": {}, \"reasoning\": \"...\" }]\n");
+        promptBuilder.append("}\n");
+        promptBuilder.append("```\n");
+
+        try {
+            AgentConfig config = agentConfigService.getDefault();
+            String llmResponse = callLlm(config, promptBuilder.toString());
+            return parseBatchResult(llmResponse);
+        } catch (Exception e) {
+            log.error("批量分析失败: {}", e.getMessage());
+            throw new RuntimeException("批量分析失败: " + e.getMessage());
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> stats(Long conceptId, Long industryId) {
+        List<ConceptFeedback> allFeedback = feedbackRepository.findAll();
+        long totalFeedback = allFeedback.size();
+
+        Map<Integer, Integer> stageBreakdown = new LinkedHashMap<>();
+        for (int i = 1; i <= 6; i++) {
+            stageBreakdown.put(i, 0);
+        }
+
+        int conceptFeedbackCount = 0;
+        for (ConceptFeedback fb : allFeedback) {
+            if (fb.getLlmAnalysis() != null && !fb.getLlmAnalysis().isBlank()) {
+                try {
+                    Map<String, Object> analysis = objectMapper.readValue(fb.getLlmAnalysis(),
+                            new TypeReference<Map<String, Object>>() {});
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> stages = (Map<String, Object>) analysis.get("stages");
+                    if (stages != null) {
+                        for (Map.Entry<String, Object> entry : stages.entrySet()) {
+                            try {
+                                int stage = Integer.parseInt(entry.getKey());
+                                stageBreakdown.merge(stage, 1, Integer::sum);
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("conceptId", conceptId);
+        result.put("totalFeedback", totalFeedback);
+        result.put("stageBreakdown", stageBreakdown);
+        return result;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> dashboard(Long industryId) {
+        List<ConceptFeedback> allFeedback = feedbackRepository.findAll();
+        long totalFeedback = allFeedback.size();
+        long pendingCount = allFeedback.stream().filter(f -> "pending".equals(f.getStatus())).count();
+
+        LocalDateTime oneWeekAgo = LocalDateTime.now().minusWeeks(1);
+        long thisWeek = allFeedback.stream()
+                .filter(f -> f.getCreatedAt() != null && f.getCreatedAt().isAfter(oneWeekAgo))
+                .count();
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("totalFeedback", totalFeedback);
+        summary.put("pendingCount", pendingCount);
+        summary.put("thisWeek", thisWeek);
+
+        Map<String, Object> stageHealth = new LinkedHashMap<>();
+        String[] stageNames = {"问题理解", "概念匹配", "思维链", "SQL 生成", "查询执行", "最终回答"};
+        for (int i = 1; i <= 6; i++) {
+            Map<String, Object> stageInfo = new LinkedHashMap<>();
+            stageInfo.put("stage", stageNames[i - 1]);
+            stageInfo.put("total", 0);
+            stageInfo.put("health", totalFeedback > 0 ? "100%" : "N/A");
+            stageHealth.put(String.valueOf(i), stageInfo);
+        }
+
+        for (ConceptFeedback fb : allFeedback) {
+            if (fb.getLlmAnalysis() != null && !fb.getLlmAnalysis().isBlank()) {
+                try {
+                    Map<String, Object> analysis = objectMapper.readValue(fb.getLlmAnalysis(),
+                            new TypeReference<Map<String, Object>>() {});
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> stages = (Map<String, Object>) analysis.get("stages");
+                    if (stages != null) {
+                        for (Map.Entry<String, Object> entry : stages.entrySet()) {
+                            try {
+                                int stage = Integer.parseInt(entry.getKey());
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> stageInfo = (Map<String, Object>) stageHealth.get(String.valueOf(stage));
+                                if (stageInfo != null) {
+                                    int current = (int) stageInfo.get("total");
+                                    stageInfo.put("total", current + 1);
+                                    double health = totalFeedback > 0 ? (1.0 - (double)(current + 1) / totalFeedback) * 100 : 100;
+                                    stageInfo.put("health", String.format("%.0f%%", health));
+                                }
+                            } catch (NumberFormatException ignored) {}
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("summary", summary);
+        result.put("stageHealth", stageHealth);
+        return result;
     }
 
     /**
@@ -375,7 +554,7 @@ public class ConceptFeedbackService {
             body.put("max_tokens", 2048);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(config.getModelEndpoint()))
+                    .uri(URI.create(agentConfigService.normalizeChatUrl(config.getModelEndpoint())))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + agentConfigService.decrypt(config.getSecretKeyEnc()))
                     .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
@@ -424,5 +603,86 @@ public class ConceptFeedbackService {
         if (value instanceof Number) return ((Number) value).longValue();
         if (value instanceof String) return Long.parseLong((String) value);
         return null;
+    }
+
+    private String buildPipelineContext(String pipelineId) {
+        if (pipelineId == null) return "管道数据不可用（pipelineId 为空）";
+
+        return pipelineTraceRepository.findByPipelineId(pipelineId)
+                .map(trace -> {
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("用户问题: ").append(trace.getUserQuestion()).append("\n\n");
+
+                    List<PipelineStage> stages = pipelineStageRepository.findByPipelineIdOrderByStageAsc(pipelineId);
+                    String[] stageNames = {"问题理解", "概念匹配", "思维链", "SQL 生成", "查询执行", "最终回答"};
+
+                    for (PipelineStage stage : stages) {
+                        int idx = stage.getStage();
+                        String name = idx >= 1 && idx <= 6 ? stageNames[idx - 1] : stage.getName();
+                        sb.append("### ").append(idx).append(" ").append(name).append("\n");
+                        if (stage.getInputJson() != null) sb.append("输入: ").append(stage.getInputJson()).append("\n");
+                        if (stage.getOutputJson() != null) sb.append("输出: ").append(stage.getOutputJson()).append("\n");
+                        sb.append("\n");
+                    }
+
+                    return sb.toString();
+                })
+                .orElse("管道数据不可用（pipelineId=" + pipelineId + " 未找到）");
+    }
+
+    private String buildLocatePrompt(ConceptFeedback feedback, String pipelineContext) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("你是问题定位助手。用户对一次问数结果提出了反馈。请分析用户描述，对照管道各阶段的输入输出，判断问题出在哪些阶段。\n\n");
+        sb.append("## 管道各阶段\n");
+        sb.append(pipelineContext);
+        sb.append("\n## 用户描述\n");
+        sb.append(feedback.getUserDescription() != null ? feedback.getUserDescription() : feedback.getUserFeedback());
+        sb.append("\n\n## 输出格式\n");
+        sb.append("以 JSON 输出，只列出有问题的阶段（无问题的省略）：\n");
+        sb.append("```json\n");
+        sb.append("{\n");
+        sb.append("  \"stages\": {\n");
+        sb.append("    \"2\": { \"hasIssue\": true, \"reason\": \"概念匹配错误，应匹配营收\" },\n");
+        sb.append("    \"5\": { \"hasIssue\": true, \"reason\": \"安徽数据可能异常\" }\n");
+        sb.append("  },\n");
+        sb.append("  \"primaryStage\": 2,\n");
+        sb.append("  \"summary\": \"一句话总结\"\n");
+        sb.append("}\n");
+        sb.append("```\n");
+        return sb.toString();
+    }
+
+    private Map<String, Object> parseLocateResult(String llmResponse) {
+        try {
+            String json = llmResponse.trim();
+            int start = json.indexOf('{');
+            int end = json.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse locate result: {}", e.getMessage());
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("stages", Map.of());
+            fallback.put("primaryStage", null);
+            fallback.put("summary", "LLM 定位结果解析失败，请人工判断");
+            return fallback;
+        }
+    }
+
+    private Map<String, Object> parseBatchResult(String llmResponse) {
+        try {
+            String json = llmResponse.trim();
+            int start = json.indexOf('{');
+            int end = json.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse batch result: {}", e.getMessage());
+            return Map.of("summary", "分析结果解析失败", "patterns", List.of(), "suggestions", List.of());
+        }
     }
 }

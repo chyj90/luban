@@ -233,18 +233,18 @@ SET @c_mttr              = (SELECT id FROM concept WHERE name = 'MTTR'       AND
 -- 利润 = 营收 - 成本
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
 (@c_profit,       @c_revenue, 'COMPUTED_FROM', '营收 - 成本', '利润=营收-成本', NOW()),
-(@c_profit,       @c_cost,    'COMPUTED_FROM', NULL,          '利润=营收-成本（成本因子）', NOW());
+(@c_profit,       @c_cost,    'COMPUTED_FROM', '营收 - 成本', '利润=营收-成本（成本因子）', NOW());
 
 -- 预算执行率 = 实际发生额 / 预算金额
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
 (@c_budget_rate,  @c_budget,  'COMPUTED_FROM', '实际发生额 / 预算金额', '预算执行率=实际/预算', NOW()),
-(@c_budget_rate,  @c_cost,    'COMPUTED_FROM', NULL,                    '预算执行率=实际/预算（成本因子）', NOW());
+(@c_budget_rate,  @c_cost,    'COMPUTED_FROM', '实际发生额 / 预算金额', '预算执行率=实际/预算（成本因子）', NOW());
 
 -- OEE = 可用率 × 性能率 × 质量率
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
 (@c_oee,           @c_availability, 'COMPUTED_FROM', '可用率 * 性能率 * 质量率', 'OEE=可用率×性能率×质量率', NOW()),
-(@c_oee,           @c_performance,  'COMPUTED_FROM', NULL,                      'OEE=可用率×性能率×质量率（性能率因子）', NOW()),
-(@c_oee,           @c_quality_rate, 'COMPUTED_FROM', NULL,                      'OEE=可用率×性能率×质量率（质量率因子）', NOW());
+(@c_oee,           @c_performance,  'COMPUTED_FROM', '可用率 * 性能率 * 质量率', 'OEE=可用率×性能率×质量率（性能率因子）', NOW()),
+(@c_oee,           @c_quality_rate, 'COMPUTED_FROM', '可用率 * 性能率 * 质量率', 'OEE=可用率×性能率×质量率（质量率因子）', NOW());
 
 -- 可用库存 = 总库存 - 在途库存 - 冻结库存 - 质检库存
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
@@ -260,13 +260,32 @@ INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_typ
 
 -- 人效 = 营收 / 在职人数
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
-(@c_productivity,  @c_revenue,      'COMPUTED_FROM', '营收 / 在职人数', '人效=营收/在职人数', NOW());
+(@c_productivity,  @c_revenue,      'COMPUTED_FROM', '营收 / 在职人数', '人效=营收/在职人数', NOW()),
+(@c_productivity,  @c_employee,    'COMPUTED_FROM', '营收 / 在职人数', '人效=营收/在职人数（员工数因子）', NOW());
+
+-- 离职率 = 离职人数 / ((期初人数 + 期末人数) / 2)
+INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
+(@c_turnover_rate,  @c_employee,    'COMPUTED_FROM', '离职人数 / ((期初人数 + 期末人数) / 2)', '离职率=离职人数/平均在职人数', NOW());
+
+-- 设备可用率 = 运行时长 / (运行时长 + 停机时长 + 待机时长)
+INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
+(@c_equip_avail,    @c_equipment,   'COMPUTED_FROM', '运行时长 / (运行时长 + 停机时长 + 待机时长)', '设备可用率=运行/(运行+停机+待机)', NOW());
+
+-- MTBF = 总运行时间 / 故障次数
+INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
+(@c_mtbf,           @c_maint_order, 'COMPUTED_FROM', '总运行时间 / 故障次数', 'MTBF=总运行时间/故障次数', NOW()),
+(@c_mtbf,           @c_equipment,   'COMPUTED_FROM', '总运行时间 / 故障次数', 'MTBF=总运行时间/故障次数（设备因子）', NOW());
+
+-- MTTR = 总修复时间 / 故障次数
+INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
+(@c_mttr,           @c_maint_order, 'COMPUTED_FROM', '总修复时间 / 故障次数', 'MTTR=总修复时间/故障次数', NOW()),
+(@c_mttr,           @c_equipment,   'COMPUTED_FROM', '总修复时间 / 故障次数', 'MTTR=总修复时间/故障次数（设备因子）', NOW());
 
 -- 成本 = 直接材料成本 + 直接人工成本 + 制造费用
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
 (@c_cost,          @c_direct_material, 'COMPUTED_FROM', '直接材料成本 + 直接人工成本 + 制造费用', '成本=材料+人工+制造费用', NOW()),
-(@c_cost,          @c_direct_labor,    'COMPUTED_FROM', NULL,                                    '成本=材料+人工+制造费用（人工因子）', NOW()),
-(@c_cost,          @c_overhead,        'COMPUTED_FROM', NULL,                                    '成本=材料+人工+制造费用（制造费用因子）', NOW());
+(@c_cost,          @c_direct_labor,    'COMPUTED_FROM', '直接材料成本 + 直接人工成本 + 制造费用', '成本=材料+人工+制造费用（人工因子）', NOW()),
+(@c_cost,          @c_overhead,        'COMPUTED_FROM', '直接材料成本 + 直接人工成本 + 制造费用', '成本=材料+人工+制造费用（制造费用因子）', NOW());
 
 -- 良品率 = 完工数量 / (完工数量 + 报废数量)
 INSERT INTO concept_relation (source_concept_id, target_concept_id, relation_type, expression, description, created_at) VALUES
@@ -512,5 +531,5 @@ SELECT 'industry_relation'     AS tbl, COUNT(*) AS cnt FROM industry_relation   
 --   concept (人力域):  5
 --   concept (设备域):  6
 --   concept (合计):    58
---   concept_relation:  98
+--   concept_relation:  110
 --   industry_relation: 3

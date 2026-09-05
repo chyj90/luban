@@ -188,4 +188,70 @@ public class FaissService {
             return "未知";
         }
     }
+
+    public boolean isColumnIndexBuiltFor(String datasourceId) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(embeddingServiceUrl + "/v1/faiss/column-index-status?datasource_id=" + datasourceId))
+                    .GET()
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() == 200) {
+                Map<String, Object> result = objectMapper.readValue(resp.body(), new TypeReference<>() {});
+                return Boolean.TRUE.equals(result.get("built"));
+            }
+            return false;
+        } catch (Exception e) {
+            log.warn("Column index status check failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    public void buildColumnIndex(String datasourceId, List<Map<String, Object>> columns) {
+        if (columns == null || columns.isEmpty()) {
+            log.info("Column index build skipped: no columns to index");
+            return;
+        }
+        try {
+            String body = objectMapper.writeValueAsString(Map.of(
+                    "datasource_id", datasourceId,
+                    "columns", columns
+            ));
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(embeddingServiceUrl + "/v1/faiss/build-column-index"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                throw new RuntimeException("Column index build failed: " + resp.body());
+            }
+            log.info("Column index built for datasource {} with {} columns", datasourceId, columns.size());
+        } catch (Exception e) {
+            log.error("Column index build error", e);
+            throw new RuntimeException("Column index build failed: " + e.getMessage());
+        }
+    }
+
+    public List<Map<String, Object>> searchColumns(List<Float> embedding, int topK) {
+        try {
+            String body = objectMapper.writeValueAsString(Map.of("embedding", embedding, "top_k", topK));
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(embeddingServiceUrl + "/v1/faiss/search-columns"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                throw new RuntimeException("Column search failed: " + resp.body());
+            }
+            Map<String, Object> result = objectMapper.readValue(resp.body(), new TypeReference<>() {});
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> results = (List<Map<String, Object>>) result.get("results");
+            return results;
+        } catch (Exception e) {
+            log.error("Column search error", e);
+            throw new RuntimeException("Column search failed: " + e.getMessage());
+        }
+    }
 }

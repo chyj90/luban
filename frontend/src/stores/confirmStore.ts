@@ -1,11 +1,14 @@
 import { create } from 'zustand';
+import type { ReactNode } from 'react';
 
 export interface ConfirmOptions {
   title: string;
-  message: string;
+  message?: string;
+  content?: ReactNode;
   confirmText?: string;
   cancelText?: string;
   variant?: 'danger' | 'default';
+  width?: number;
 }
 
 interface ConfirmState {

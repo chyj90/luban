@@ -65,6 +65,15 @@ public class ConceptFeedback {
     @Column(name = "suggestions", columnDefinition = "TEXT")
     private String suggestions;
 
+    @Column(name = "pipeline_id", length = 64)
+    private String pipelineId;
+
+    @Column(name = "user_description", columnDefinition = "TEXT")
+    private String userDescription;
+
+    @Column(name = "llm_analysis", columnDefinition = "JSON")
+    private String llmAnalysis;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

@@ -316,7 +316,7 @@ public class AgentController {
                 body.put("max_tokens", 16384);
                 body.put("stream", true);
 
-                String chatUrl = normalizeChatUrl(config.getModelEndpoint());
+                String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
                 String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
                 log.info("Dev proxy LLM call: url={}, model={}, messagesCount={}, toolsCount={}",
                         chatUrl, config.getModelName(),
@@ -467,18 +467,6 @@ public class AgentController {
                 asyncContext.complete();
             }
         });
-    }
-
-    private String normalizeChatUrl(String endpoint) {
-        String url = endpoint.replaceAll("/+$", "");
-        if (!url.endsWith("/chat/completions")) {
-            if (url.matches(".*/v\\d+$")) {
-                url += "/chat/completions";
-            } else {
-                url += "/v1/chat/completions";
-            }
-        }
-        return url;
     }
 
     private Long getCurrentUserId() {

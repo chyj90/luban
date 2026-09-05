@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
-import { MessageSquare, Check, X, Loader2, Eye, Zap, ChevronRight, AlertTriangle, Trash2 } from 'lucide-react';
+import { MessageSquare, Check, X, Loader2, Eye, Zap, ChevronRight, AlertTriangle, Trash2, BarChart3, Target } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import {
   listConceptFeedback,
@@ -7,6 +7,10 @@ import {
   previewConceptFeedbackSuggestion,
   applyConceptFeedbackSuggestion,
   ignoreConceptFeedback,
+  confirmConceptFeedback,
+  locateConceptFeedback,
+  batchAnalyzeFeedback,
+  getFeedbackDashboard,
 } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -14,24 +18,24 @@ import type { ConceptFeedback } from '@/types/concept';
 import './ConceptFeedbackPage.css';
 
 const STATUS_LABELS: Record<string, string> = {
-  recorded: '已记录',
-  pending: '待处理',
+  pending: '待确认',
+  confirmed: '已确认',
   analyzing: '分析中',
   applied: '已应用',
   ignored: '已忽略',
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  recorded: '#8c8c8c',
   pending: '#fa8c16',
+  confirmed: '#1890ff',
   analyzing: '#722ed1',
   applied: '#52c41a',
   ignored: '#8c8c8c',
 };
 
 const TABS = [
-  { key: 'actionable', label: '需处理', desc: '点踩 · 待分析' },
-  { key: 'recorded', label: '已记录', desc: '点赞 · 回归分析' },
+  { key: 'actionable', label: '需处理', desc: '待确认 · 待分析' },
+  { key: 'confirmed', label: '已确认', desc: '待分析' },
   { key: 'done', label: '已处理', desc: '已应用/已忽略' },
   { key: 'all', label: '全部', desc: '' },
 ] as const;
@@ -169,8 +173,8 @@ export default function ConceptFeedbackPage() {
 
   const filteredList = feedbackList.filter(fb => {
     switch (activeTab) {
-      case 'actionable': return fb.feedbackType === 'dislike' && (fb.status === 'pending' || fb.status === 'analyzing');
-      case 'recorded': return fb.feedbackType === 'like';
+      case 'actionable': return fb.status === 'pending' || fb.status === 'analyzing';
+      case 'confirmed': return fb.status === 'confirmed';
       case 'done': return fb.status === 'applied' || fb.status === 'ignored';
       default: return true;
     }
@@ -251,6 +255,29 @@ export default function ConceptFeedbackPage() {
     }
   };
 
+  const handleConfirm = async (fb: ConceptFeedback, confirmed: boolean) => {
+    try {
+      await confirmConceptFeedback(fb.id, confirmed);
+      toast(confirmed ? '已确认' : '已忽略', 'success');
+      fetchFeedback();
+    } catch {
+      toast('操作失败', 'error');
+    }
+  };
+
+  const handleLocate = async (fb: ConceptFeedback) => {
+    setAnalyzing(fb.id);
+    try {
+      const res = await locateConceptFeedback(fb.id);
+      toast('阶段定位完成', 'success');
+      fetchFeedback();
+    } catch {
+      toast('定位失败', 'error');
+    } finally {
+      setAnalyzing(-1);
+    }
+  };
+
   const formatTime = (iso?: string) => {
     if (!iso) return '-';
     return iso.slice(0, 16).replace('T', ' ');
@@ -275,7 +302,7 @@ export default function ConceptFeedbackPage() {
       <PageTopbar
         icon={<MessageSquare size={22} />}
         title="反馈工作台"
-        subtitle="点赞用于回归分析，点踩触发 LLM 分析建议调整本体概念"
+        subtitle="管道级反馈：精确定位问题阶段，LLM 分析建议调整本体概念"
         actions={
           <div className="cfb-page__header-actions">
             <div className="cfb-page__tabs">
@@ -319,8 +346,8 @@ export default function ConceptFeedbackPage() {
                           onClick={() => toggleExpand(fb)}
                         >
                           <td>
-                            <span className={`cfb-page__type-badge ${fb.feedbackType === 'like' ? 'like' : 'dislike'}`}>
-                              {fb.feedbackType === 'like' ? '赞' : '踩'}
+                            <span className="cfb-page__type-badge problem">
+                              问题
                             </span>
                           </td>
                           <td className="cfb-page__cell-text" title={`Q: ${fb.userQuestion}\nA: ${fb.reasoning || '（无回答）'}`}>{fb.userQuestion}</td>
@@ -346,33 +373,73 @@ export default function ConceptFeedbackPage() {
                                     {renderConceptBreakdown(parseResolvedConcepts(fb.resolvedConcepts))}
                                   </div>
                                   <div className="cfb-page__expand-group">
-                                    <h4>用户反馈</h4>
-                                    <p>{fb.userFeedback || '（无）'}</p>
+                                    <h4>用户描述</h4>
+                                    <p>{fb.userDescription || fb.userFeedback || '（无）'}</p>
                                   </div>
+                                  {fb.pipelineId && (
+                                    <div className="cfb-page__expand-group">
+                                      <h4>管道 ID</h4>
+                                      <p className="cfb-page__pipeline-id">{fb.pipelineId}</p>
+                                    </div>
+                                  )}
+                                  {fb.llmAnalysis && (
+                                    <div className="cfb-page__expand-group cfb-page__expand-group--full">
+                                      <h4><Target size={14} /> LLM 阶段定位</h4>
+                                      <pre className="cfb-page__expand-code">{typeof fb.llmAnalysis === 'string' ? fb.llmAnalysis : JSON.stringify(fb.llmAnalysis, null, 2)}</pre>
+                                    </div>
+                                  )}
                                   <div className="cfb-page__expand-group cfb-page__expand-group--full">
                                     <h4>生成的 SQL</h4>
                                     <pre className="cfb-page__expand-code">{fb.generatedSql || '（无）'}</pre>
                                   </div>
                                 </div>
 
-                                {fb.feedbackType === 'dislike' && (fb.status === 'pending' || fb.status === 'analyzing') && (
-                                  <div className="cfb-page__expand-actions">
-                                    <button
-                                      className="cfb-page__btn-primary"
-                                      onClick={(e) => { e.stopPropagation(); handleAnalyze(fb); }}
-                                      disabled={analyzing === fb.id || fbSuggestions.length > 0}
-                                    >
-                                      {analyzing === fb.id ? (
-                                        <><Loader2 size={14} className="cfb-page__spin" /> 分析中...</>
-                                      ) : (
-                                        <><Zap size={14} /> LLM 分析</>
-                                      )}
-                                    </button>
+                                <div className="cfb-page__expand-actions">
+                                  {fb.status === 'pending' && (
+                                    <>
+                                      <button
+                                        className="cfb-page__btn-primary"
+                                        onClick={(e) => { e.stopPropagation(); handleConfirm(fb, true); }}
+                                      >
+                                        <Check size={14} /> 确认
+                                      </button>
+                                      <button className="cfb-page__btn-cancel" onClick={(e) => { e.stopPropagation(); handleIgnore(fb); }}>
+                                        <Trash2 size={14} /> 忽略
+                                      </button>
+                                    </>
+                                  )}
+                                  {fb.status === 'confirmed' && (
+                                    <>
+                                      <button
+                                        className="cfb-page__btn-primary"
+                                        onClick={(e) => { e.stopPropagation(); handleLocate(fb); }}
+                                        disabled={analyzing === fb.id}
+                                      >
+                                        {analyzing === fb.id ? (
+                                          <><Loader2 size={14} className="cfb-page__spin" /> 定位中...</>
+                                        ) : (
+                                          <><Target size={14} /> LLM 定位</>
+                                        )}
+                                      </button>
+                                      <button
+                                        className="cfb-page__btn-secondary"
+                                        onClick={(e) => { e.stopPropagation(); handleAnalyze(fb); }}
+                                        disabled={analyzing === fb.id || fbSuggestions.length > 0}
+                                      >
+                                        {analyzing === fb.id ? (
+                                          <><Loader2 size={14} className="cfb-page__spin" /> 分析中...</>
+                                        ) : (
+                                          <><Zap size={14} /> LLM 分析</>
+                                        )}
+                                      </button>
+                                    </>
+                                  )}
+                                  {(fb.status === 'pending' || fb.status === 'confirmed') && (
                                     <button className="cfb-page__btn-cancel" onClick={(e) => { e.stopPropagation(); handleIgnore(fb); }}>
                                       <Trash2 size={14} /> 忽略
                                     </button>
-                                  </div>
-                                )}
+                                  )}
+                                </div>
 
                                 {fbSuggestions.length > 0 && (
                                   <div className="cfb-page__expand-suggestions">

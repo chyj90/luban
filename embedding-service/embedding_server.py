@@ -100,6 +100,11 @@ concept_index = None           # faiss.IndexFlatIP
 concept_ids = []               # list of concept IDs (strings)
 concept_index_dim = None       # dimension of the index
 
+column_index = None            # faiss.IndexFlatIP for column-level search
+column_ids = []                # list of "tableName.columnName" (strings)
+column_index_dim = None        # dimension of the column index
+column_index_built_for = None  # datasource_id that the column index was built for
+
 
 @app.route("/v1/faiss/health", methods=["GET"])
 def faiss_health():
@@ -108,6 +113,10 @@ def faiss_health():
         "index_built": concept_index is not None,
         "index_size": len(concept_ids) if concept_ids else 0,
         "dimension": concept_index_dim,
+        "column_index_built": column_index is not None,
+        "column_index_size": len(column_ids) if column_ids else 0,
+        "column_index_dim": column_index_dim,
+        "column_index_built_for": column_index_built_for,
     })
 
 
@@ -235,6 +244,93 @@ def faiss_remove():
     concept_ids = new_concept_ids
 
     return jsonify({"status": "ok", "index_size": concept_index.ntotal})
+
+
+# ---- Column-level FAISS Index for Datasource Structure Pruning ----
+
+@app.route("/v1/faiss/build-column-index", methods=["POST"])
+def faiss_build_column_index():
+    """Build column-level FAISS index from datasource structure.
+    Request: {
+        "datasource_id": "ds_1",
+        "columns": [ { "id": "ACDOCA.HSL", "text": "金额", "embedding": [...] }, ... ]
+    }
+    """
+    global column_index, column_ids, column_index_dim, column_index_built_for
+
+    if not FAISS_AVAILABLE:
+        return jsonify({"error": "FAISS is not installed"}), 503
+
+    data = request.get_json()
+    if not data or "columns" not in data or "datasource_id" not in data:
+        return jsonify({"error": "Missing 'columns' or 'datasource_id' field"}), 400
+
+    ds_id = data["datasource_id"]
+    columns = data["columns"]
+    if not columns:
+        return jsonify({"error": "Empty columns list"}), 400
+
+    dim = len(columns[0]["embedding"])
+    column_index = faiss.IndexFlatIP(dim)
+    column_index_dim = dim
+    column_ids = []
+    column_index_built_for = ds_id
+
+    vectors = np.array([c["embedding"] for c in columns], dtype=np.float32)
+    column_ids = [str(c["id"]) for c in columns]
+    column_index.add(vectors)
+
+    return jsonify({
+        "status": "ok",
+        "datasource_id": ds_id,
+        "index_size": column_index.ntotal,
+        "dimension": dim,
+    })
+
+
+@app.route("/v1/faiss/search-columns", methods=["POST"])
+def faiss_search_columns():
+    """Search similar columns by embedding.
+    Request: { "embedding": [...], "top_k": 30 }
+    Response: { "results": [ { "id": "ACDOCA.HSL", "score": 0.95 }, ... ] }
+    """
+    if not FAISS_AVAILABLE:
+        return jsonify({"error": "FAISS is not installed"}), 503
+    if column_index is None:
+        return jsonify({"error": "Column index not built yet"}), 503
+
+    data = request.get_json()
+    if not data or "embedding" not in data:
+        return jsonify({"error": "Missing 'embedding' field"}), 400
+
+    query_vec = np.array([data["embedding"]], dtype=np.float32)
+    top_k = min(data.get("top_k", 30), len(column_ids))
+
+    scores, indices = column_index.search(query_vec, top_k)
+
+    results = []
+    for score, idx in zip(scores[0], indices[0]):
+        if idx >= 0 and idx < len(column_ids):
+            results.append({
+                "id": column_ids[idx],
+                "score": float(score),
+            })
+
+    return jsonify({"results": results})
+
+
+@app.route("/v1/faiss/column-index-status", methods=["GET"])
+def faiss_column_index_status():
+    """Check if column index is built for a specific datasource.
+    Query param: ?datasource_id=ds_1
+    """
+    ds_id = request.args.get("datasource_id")
+    return jsonify({
+        "built": column_index is not None and column_index_built_for == ds_id,
+        "datasource_id": ds_id,
+        "built_for": column_index_built_for,
+        "index_size": len(column_ids) if column_ids else 0,
+    })
 
 
 import subprocess

@@ -157,4 +157,23 @@ public class AgentConfigService {
             throw new RuntimeException("解密失败", e);
         }
     }
+
+    /**
+     * 将模型端点 URL 规范化为完整的 chat/completions URL。
+     * 规则：
+     *   1. 去除尾部斜杠
+     *   2. 如果已包含 /chat/completions 则直接返回
+     *   3. 如果以 /vN 结尾（如 /v1, /v3, /api/coding/v3），追加 /chat/completions
+     *   4. 否则追加 /v1/chat/completions
+     */
+    public String normalizeChatUrl(String endpoint) {
+        String url = endpoint.replaceAll("/+$", "");
+        if (url.endsWith("/chat/completions")) {
+            return url;
+        }
+        if (url.matches(".*/v\\d+$")) {
+            return url + "/chat/completions";
+        }
+        return url + "/v1/chat/completions";
+    }
 }

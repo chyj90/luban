@@ -39,6 +39,7 @@ import {
   updateConceptMapping,
   deleteConceptMapping,
   autoMatchConceptMappings,
+  autoMatchConceptMappingsV2,
   applyAutoMatchMappings,
   listConceptJoinMappings,
   createConceptJoinMapping,
@@ -390,6 +391,7 @@ export default function ConceptEditorPage() {
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [selectedDatasourceIds, setSelectedDatasourceIds] = useState<number[]>([]);
   const [showDatasourceModal, setShowDatasourceModal] = useState(false);
+  const [autoMatchStrategy, setAutoMatchStrategy] = useState<'llm' | 'rule'>('rule');
   const [showConceptSelectModal, setShowConceptSelectModal] = useState(false);
   const [selectedConceptIds, setSelectedConceptIds] = useState<number[]>([]);
   const [allIndustryConcepts, setAllIndustryConcepts] = useState<Map<number, Concept[]>>(new Map());
@@ -1217,8 +1219,10 @@ export default function ConceptEditorPage() {
     }
     setShowDatasourceModal(false);
     try {
-      const res = await autoMatchConceptMappings(selectedConceptIds, selectedDatasourceIds);
-      toast(`自动映射任务已提交（任务ID: ${res.data.taskId}），请在异步任务列表查看结果`, 'success');
+      const res = autoMatchStrategy === 'rule'
+        ? await autoMatchConceptMappingsV2(selectedConceptIds, selectedDatasourceIds)
+        : await autoMatchConceptMappings(selectedConceptIds, selectedDatasourceIds);
+      toast(`自动映射任务已提交（任务ID: ${res.data.taskId}，策略: ${autoMatchStrategy === 'rule' ? '规则优先' : 'LLM优先'}），请在异步任务列表查看结果`, 'success');
       setSelectedDatasourceIds([]);
       setSelectedConceptIds([]);
     } catch {
@@ -2464,6 +2468,20 @@ export default function ConceptEditorPage() {
           <div className="modalContent" onClick={(e) => e.stopPropagation()}>
             <h3 className="modalTitle">选择数据源</h3>
             <p className="modalDesc">选择要匹配的数据源，将对已选的 {selectedConceptIds.length} 个概念进行字段映射</p>
+            <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'nowrap' }}>
+              <span style={{ fontSize: 13, color: '#666', whiteSpace: 'nowrap' }}>映射策略：</span>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
+                <input type="radio" name="autoMatchStrategy" checked={autoMatchStrategy === 'rule'} onChange={() => setAutoMatchStrategy('rule')} />
+                规则优先
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>
+                <input type="radio" name="autoMatchStrategy" checked={autoMatchStrategy === 'llm'} onChange={() => setAutoMatchStrategy('llm')} />
+                LLM优先
+              </label>
+              <span style={{ fontSize: 12, color: '#999', whiteSpace: 'nowrap' }}>
+                {autoMatchStrategy === 'rule' ? '快，零幻觉' : '慢，覆盖更广'}
+              </span>
+            </div>
             <div className="datasourceCheckList">
               {[...groupedDatasources.groups.entries()].map(([ownerId, dsList]) => (
                 <div key={ownerId} className="datasourceGroup">

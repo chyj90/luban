@@ -180,18 +180,21 @@ export interface ConceptFeedback {
   id: number;
   sessionId: string;
   messageId: string;
-  feedbackType: 'like' | 'dislike';
+  feedbackType: 'problem_feedback';
   userQuestion: string;
   reasoning: string;
   resolvedConcepts: string;
   generatedSql: string;
   queryResult: string;
   userFeedback: string;
-  status: 'recorded' | 'pending' | 'analyzing' | 'applied' | 'ignored';
+  status: 'pending' | 'confirmed' | 'analyzing' | 'applied' | 'ignored';
   reviewedBy: string;
   reviewComment: string;
   createdAt: string;
   reviewedAt: string;
+  pipelineId?: string;
+  userDescription?: string;
+  llmAnalysis?: string;
 }
 
 export interface RelationTypeMeta {

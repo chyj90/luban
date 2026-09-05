@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Database, Search, Sparkles } from 'lucide-react';
 import { fetchAgentChatStream, getSessionMessages, clearChatSession } from '@/api/agent';
-import { quickConceptFeedback, listConcepts, listConceptFeedback } from '@/api/concept';
+import { listConcepts, listConceptFeedback, createProblemFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { fixMarkdownTable } from '@/lib/markdown';
@@ -196,11 +196,8 @@ export default function AgentChatPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [expandedSection, setExpandedSection] = useState<Record<string, string | null>>({});
-  const [feedbackState, setFeedbackState] = useState<Record<string, 'idle' | 'like_dislike' | 'dislike_form' | 'submitted'>>({});
-  const [dislikeComment, setDislikeComment] = useState('');
-  const [dislikeConceptSearch, setDislikeConceptSearch] = useState('');
-  const [dislikeSelectedConcept, setDislikeSelectedConcept] = useState<{ id: number; name: string } | null>(null);
-  const [dislikeConcepts, setDislikeConcepts] = useState<{ id: number; name: string }[]>([]);
+  const [feedbackState, setFeedbackState] = useState<Record<string, 'idle' | 'feedback_form' | 'submitted'>>({});
+  const [feedbackDescription, setFeedbackDescription] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [selectedDatasources, setSelectedDatasources] = useState<Record<number, Set<string>>>({});
   const [expandedDatasources, setExpandedDatasources] = useState<Set<number>>(new Set());
@@ -683,74 +680,31 @@ export default function AgentChatPage() {
     );
   }, [input, sending, activeSessionId, messages, syncSessions]);
 
-  const handleLike = useCallback(async (msg: ChatMessage) => {
+  const handleProblemFeedback = useCallback(async (msg: ChatMessage) => {
     const msgId = msg.messageId || msg.id;
-    setFeedbackState(prev => ({ ...prev, [msgId]: 'submitted' }));
-    const msgIndex = messages.findIndex(m => m.id === msg.id);
-    const userQuestion = msgIndex > 0 ? messages[msgIndex - 1].content : '';
-    try {
-      await quickConceptFeedback({
-        sessionId: activeSessionId,
-        messageId: msgId,
-        feedbackType: 'like',
-        userQuestion: userQuestion,
-        answer: msg.content,
-        faissConcepts: msg.conceptTrace?.find(t => t.type === 'pipeline')?.pipeline?.faiss?.concepts,
-        ontologyConcepts: msg.conceptTrace?.find(t => t.type === 'pipeline')?.pipeline?.ontology?.concepts,
-        usedConcepts: msg.usedConcepts,
-      });
-      toast('感谢反馈', 'success');
-    } catch {
-      toast('反馈提交失败', 'error');
-      setFeedbackState(prev => ({ ...prev, [msgId]: 'idle' }));
-    }
-  }, [activeSessionId, messages, toast]);
-
-  const handleDislike = useCallback(async (msg: ChatMessage) => {
-    const msgId = msg.messageId || msg.id;
-    if (!dislikeSelectedConcept) {
-      toast('请选择一个概念', 'error');
+    if (!feedbackDescription.trim()) {
+      toast('请描述你遇到的问题', 'error');
       return;
     }
     setFeedbackSubmitting(true);
     try {
-      await quickConceptFeedback({
+      const pipeline = msg.conceptTrace?.find((t: ConceptTraceItem) => t.type === 'pipeline');
+      const pipelineId = (pipeline as { pipelineId?: string })?.pipelineId;
+      await createProblemFeedback({
         sessionId: activeSessionId,
         messageId: msgId,
-        feedbackType: 'dislike',
-        userQuestion: msg.content,
-        answer: msg.content,
-        faissConcepts: msg.conceptTrace?.find(t => t.type === 'pipeline')?.pipeline?.faiss?.concepts,
-        ontologyConcepts: msg.conceptTrace?.find(t => t.type === 'pipeline')?.pipeline?.ontology?.concepts,
-        usedConcepts: msg.usedConcepts,
-        correctConceptId: dislikeSelectedConcept.id,
-        correctConceptName: dislikeSelectedConcept.name,
-        userDescription: dislikeComment,
+        pipelineId,
+        userDescription: feedbackDescription,
       });
       toast('感谢反馈', 'success');
       setFeedbackState(prev => ({ ...prev, [msgId]: 'submitted' }));
-      setDislikeSelectedConcept(null);
-      setDislikeComment('');
-      setDislikeConceptSearch('');
+      setFeedbackDescription('');
     } catch {
       toast('反馈提交失败', 'error');
     } finally {
       setFeedbackSubmitting(false);
     }
-  }, [activeSessionId, dislikeSelectedConcept, dislikeComment, toast]);
-
-  const openDislikeForm = useCallback(async (msgId: string) => {
-    setFeedbackState(prev => ({ ...prev, [msgId]: 'dislike_form' }));
-    setDislikeSelectedConcept(null);
-    setDislikeComment('');
-    setDislikeConceptSearch('');
-    try {
-      const res = await listConcepts();
-      setDislikeConcepts((res.data || []).map(c => ({ id: c.id, name: c.name })));
-    } catch {
-      setDislikeConcepts([]);
-    }
-  }, []);
+}, [activeSessionId, feedbackDescription, toast]);
 
   return (
     <div className="agent-chat">
@@ -1120,7 +1074,7 @@ export default function AgentChatPage() {
                         </svg>
                         复制
                       </button>
-                      {(() => {
+                      {msg.conceptTrace && msg.conceptTrace.length > 0 && (() => {
                         const msgId = msg.messageId || msg.id;
                         const state = feedbackState[msgId] || 'idle';
                         if (state === 'submitted') {
@@ -1133,96 +1087,31 @@ export default function AgentChatPage() {
                             </span>
                           );
                         }
-                        if (state === 'like_dislike') {
-                          return (
-                            <div className="agent-chat-feedback-btns">
-                              <button
-                                className="agent-chat-feedback-btn like"
-                                onClick={() => handleLike(msg)}
-                                title="赞"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
-                                </svg>
-                              </button>
-                              <button
-                                className="agent-chat-feedback-btn dislike"
-                                onClick={() => openDislikeForm(msgId)}
-                                title="踩"
-                              >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zM17 2h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" />
-                                </svg>
-                              </button>
-                            </div>
-                          );
-                        }
-                        if (state === 'dislike_form') {
-                          const filteredConcepts = dislikeConcepts.filter(c =>
-                            !dislikeConceptSearch || c.name.toLowerCase().includes(dislikeConceptSearch.toLowerCase())
-                          );
+                        if (state === 'feedback_form') {
                           return (
                             <div className="agent-chat-feedback-form">
-                              <div className="agent-chat-feedback-label">选择正确的概念</div>
-                              <div className="agent-chat-feedback-search">
-                                <input
-                                  type="text"
-                                  value={dislikeConceptSearch}
-                                  onChange={(e) => setDislikeConceptSearch(e.target.value)}
-                                  placeholder="搜索概念..."
-                                  className="agent-chat-feedback-search-input"
-                                />
-                              </div>
-                              {dislikeSelectedConcept && (
-                                <div className="agent-chat-feedback-selected">
-                                  已选：<strong>{dislikeSelectedConcept.name}</strong>
-                                  <button
-                                    className="agent-chat-feedback-remove"
-                                    onClick={() => setDislikeSelectedConcept(null)}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              )}
-                              {!dislikeSelectedConcept && (
-                                <div className="agent-chat-feedback-concept-list">
-                                  {filteredConcepts.slice(0, 20).map(c => (
-                                    <span
-                                      key={c.id}
-                                      className="agent-chat-feedback-concept-item"
-                                      onClick={() => setDislikeSelectedConcept(c)}
-                                    >
-                                      {c.name}
-                                    </span>
-                                  ))}
-                                  {filteredConcepts.length === 0 && (
-                                    <span className="agent-chat-feedback-empty">无匹配概念</span>
-                                  )}
-                                </div>
-                              )}
-                              <div className="agent-chat-feedback-label">补充描述（可选）</div>
+                              <div className="agent-chat-feedback-label">描述你遇到的问题</div>
                               <textarea
                                 className="agent-chat-feedback-input"
-                                value={dislikeComment}
-                                onChange={(e) => setDislikeComment(e.target.value)}
-                                placeholder="请描述哪里不对..."
-                                rows={2}
+                                value={feedbackDescription}
+                                onChange={(e) => setFeedbackDescription(e.target.value)}
+                                placeholder="例如：查询结果不对、概念匹配错误、SQL生成有误..."
+                                rows={3}
                               />
                               <div className="agent-chat-feedback-actions">
                                 <button
                                   className="agent-chat-feedback-cancel"
                                   onClick={() => {
                                     setFeedbackState(prev => ({ ...prev, [msgId]: 'idle' }));
-                                    setDislikeSelectedConcept(null);
-                                    setDislikeComment('');
+                                    setFeedbackDescription('');
                                   }}
                                 >
                                   取消
                                 </button>
                                 <button
                                   className="agent-chat-feedback-submit"
-                                  disabled={!dislikeSelectedConcept || feedbackSubmitting}
-                                  onClick={() => handleDislike(msg)}
+                                  disabled={!feedbackDescription.trim() || feedbackSubmitting}
+                                  onClick={() => handleProblemFeedback(msg)}
                                 >
                                   {feedbackSubmitting ? '提交中...' : '提交反馈'}
                                 </button>
@@ -1233,13 +1122,13 @@ export default function AgentChatPage() {
                         return (
                           <button
                             className="agent-chat-action-btn"
-                            onClick={() => setFeedbackState(prev => ({ ...prev, [msgId]: 'like_dislike' }))}
-                            title="反馈"
+                            onClick={() => setFeedbackState(prev => ({ ...prev, [msgId]: 'feedback_form' }))}
+                            title="问题反馈"
                           >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                             </svg>
-                            反馈
+                            问题反馈
                           </button>
                         );
                       })()}

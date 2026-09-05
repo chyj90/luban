@@ -181,6 +181,7 @@ public class DatasourceService {
                 try (ResultSet rs = meta.getTables(catalog, null, "%", new String[]{"TABLE"})) {
                     while (rs.next()) {
                         String tableName = rs.getString("TABLE_NAME");
+                        String tableRemarks = rs.getString("REMARKS");
                         List<Map<String, Object>> columns = new ArrayList<>();
                         try (ResultSet colRs = meta.getColumns(catalog, null, tableName, "%")) {
                             while (colRs.next()) {
@@ -196,6 +197,7 @@ public class DatasourceService {
                         }
                         Map<String, Object> table = new LinkedHashMap<>();
                         table.put("name", tableName);
+                        table.put("comment", tableRemarks != null && !tableRemarks.isEmpty() ? tableRemarks : "");
                         table.put("columns", columns);
                         tables.add(table);
                     }

@@ -45,8 +45,8 @@ public class Concept {
     private String anomalyThresholdDesc;
 
     @Version
-    @Column(name = "version")
-    private Integer version = 0;
+    @Column(name = "version", columnDefinition = "int default 0")
+    private int version = 0;
 
     @Transient
     private Boolean mapped;

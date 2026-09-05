@@ -297,8 +297,16 @@ public class ContextBuilder {
                 .collect(Collectors.toList()));
         submittedStage.put("tableMappingCount", tableMappings.size());
         submittedStage.put("tableMappings", tableMappings.stream()
-                .map(m -> Map.of("tableName", m.getTableName(), "columnName", m.getColumnName(),
-                        "mappingType", m.getMappingType() != null ? m.getMappingType() : ""))
+                .map(m -> {
+                    Map<String, Object> map = new LinkedHashMap<>();
+                    map.put("tableName", m.getTableName());
+                    map.put("columnName", m.getColumnName());
+                    map.put("mappingType", m.getMappingType() != null ? m.getMappingType() : "");
+                    if (m.getComputedExpr() != null && !m.getComputedExpr().isBlank()) {
+                        map.put("computedExpr", m.getComputedExpr());
+                    }
+                    return map;
+                })
                 .collect(Collectors.toList()));
         submittedStage.put("joinMappingCount", joinMappings.size());
         submittedStage.put("joinMappings", joinMappings.stream()

@@ -300,7 +300,7 @@ export default function OntologyGroupPage() {
     setRebuilding(true);
     try {
       const res = await rebuildConceptIndex();
-      toast(res.data?.message || '索引重建任务已提交', 'success');
+      toast(res.data?.message || '索引重建完成', 'success');
     } catch {
       toast('索引重建失败', 'error');
     } finally {
@@ -312,9 +312,9 @@ export default function OntologyGroupPage() {
     setRegenerating(true);
     try {
       const res = await regenerateAllEmbeddings();
-      toast(res.data?.message || '全量重新生成任务已提交', 'success');
+      toast(res.data?.message || '全量 Embedding 生成完成', 'success');
     } catch {
-      toast('重新生成失败', 'error');
+      toast('全量 Embedding 生成失败', 'error');
     } finally {
       setRegenerating(false);
     }

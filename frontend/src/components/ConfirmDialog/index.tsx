@@ -9,10 +9,17 @@ export function ConfirmDialog() {
   const isDanger = options.variant === 'danger';
   const confirmText = options.confirmText || '确定';
   const cancelText = options.cancelText || '取消';
+  const dialogWidth = options.width ? `${options.width}px` : undefined;
+
+  const bodyContent = options.content ?? options.message ?? null;
 
   return (
     <div className="confirm-overlay" onClick={handleCancel}>
-      <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`confirm-dialog ${options.content ? 'confirm-dialog--rich' : ''}`}
+        style={dialogWidth ? { width: dialogWidth } : undefined}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="confirm-dialog-header">
           <div className={`confirm-dialog-icon ${isDanger ? 'confirm-dialog-icon-danger' : 'confirm-dialog-icon-default'}`}>
             {isDanger ? (
@@ -31,11 +38,15 @@ export function ConfirmDialog() {
           </div>
           <div className="confirm-dialog-title">{options.title}</div>
         </div>
-        <div className="confirm-dialog-body">{options.message}</div>
+        <div className={`confirm-dialog-body ${options.content ? 'confirm-dialog-body--rich' : ''}`}>
+          {bodyContent}
+        </div>
         <div className="confirm-dialog-footer">
-          <button className="confirm-btn confirm-btn-cancel" onClick={handleCancel}>
-            {cancelText}
-          </button>
+          {cancelText && (
+            <button className="confirm-btn confirm-btn-cancel" onClick={handleCancel}>
+              {cancelText}
+            </button>
+          )}
           <button
             className={`confirm-btn confirm-btn-confirm ${isDanger ? 'confirm-btn-confirm-danger' : 'confirm-btn-confirm-default'}`}
             onClick={handleConfirm}

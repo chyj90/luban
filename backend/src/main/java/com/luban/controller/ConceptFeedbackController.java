@@ -35,10 +35,36 @@ public class ConceptFeedbackController {
         return ResponseEntity.ok(ApiResponse.ok(feedbackService.listAll()));
     }
 
+    @GetMapping("/{id}")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<ConceptFeedback>> getById(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.getById(id)));
+    }
+
     @PostMapping
-    public ResponseEntity<ApiResponse<ConceptFeedback>> create(@RequestBody ConceptFeedback feedback) {
+    public ResponseEntity<ApiResponse<ConceptFeedback>> createProblemFeedback(
+            @RequestBody Map<String, Object> body) {
+        String sessionId = (String) body.get("sessionId");
+        String messageId = (String) body.get("messageId");
+        String pipelineId = (String) body.get("pipelineId");
+        String userDescription = (String) body.get("userDescription");
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(feedbackService.create(feedback)));
+                .body(ApiResponse.ok(feedbackService.createProblemFeedback(
+                        sessionId, messageId, pipelineId, userDescription)));
+    }
+
+    @PutMapping("/{id}/confirm")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<ConceptFeedback>> confirm(
+            @PathVariable Long id, @RequestBody Map<String, Object> body) {
+        boolean confirmed = Boolean.TRUE.equals(body.get("confirmed"));
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.confirm(id, confirmed)));
+    }
+
+    @PostMapping("/{id}/locate")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> locate(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.locate(id)));
     }
 
     @PutMapping("/{id}/ignore")
@@ -72,9 +98,28 @@ public class ConceptFeedbackController {
         return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestion(id, index, reviewedBy)));
     }
 
-    @PostMapping("/quick")
-    public ResponseEntity<ApiResponse<ConceptFeedback>> quickFeedback(@RequestBody Map<String, Object> body) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(feedbackService.createQuickFeedback(body)));
+    @PostMapping("/batch-analyze")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> batchAnalyze(
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("feedbackIds");
+        List<Long> feedbackIds = ids.stream().map(Number::longValue).toList();
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.batchAnalyze(feedbackIds)));
+    }
+
+    @GetMapping("/stats")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stats(
+            @RequestParam(required = false) Long conceptId,
+            @RequestParam(required = false) Long industryId) {
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.stats(conceptId, industryId)));
+    }
+
+    @GetMapping("/dashboard")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> dashboard(
+            @RequestParam(required = false) Long industryId) {
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.dashboard(industryId)));
     }
 }

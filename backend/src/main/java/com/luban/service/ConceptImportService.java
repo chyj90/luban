@@ -741,10 +741,7 @@ public class ConceptImportService {
             }
 
             String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
-            String baseUrl = config.getModelEndpoint();
-            if (!baseUrl.endsWith("/v1")) {
-                baseUrl = baseUrl.replaceAll("/+$", "") + "/v1";
-            }
+            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
 
             StringBuilder sb = new StringBuilder();
             for (Map<String, Object> c : rawConcepts) {
@@ -788,7 +785,7 @@ public class ConceptImportService {
             body.put("max_tokens", 32768);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/chat/completions"))
+                    .uri(URI.create(chatUrl))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body)))
@@ -1003,10 +1000,7 @@ public class ConceptImportService {
             }
 
             String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
-            String baseUrl = config.getModelEndpoint();
-            if (!baseUrl.endsWith("/v1")) {
-                baseUrl = baseUrl.replaceAll("/+$", "") + "/v1";
-            }
+            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
 
             String ext = sourceType.toLowerCase();
             String libHint = switch (ext) {
@@ -1097,7 +1091,7 @@ public class ConceptImportService {
             body.put("max_tokens", 32768);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/chat/completions"))
+                    .uri(URI.create(chatUrl))
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body)))

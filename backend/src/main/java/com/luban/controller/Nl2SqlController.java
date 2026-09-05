@@ -10,6 +10,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -60,12 +61,17 @@ public class Nl2SqlController {
                 "errors", validation.getErrors(),
                 "warnings", validation.getWarnings(),
                 "mappings", generated.getMappings().stream()
-                        .map(m -> Map.of(
-                                "tableName", m.getTableName(),
-                                "columnName", m.getColumnName(),
-                                "attributeName", m.getAttributeName() != null ? m.getAttributeName() : "",
-                                "mappingType", m.getMappingType()
-                        ))
+                        .map(m -> {
+                            Map<String, Object> map = new LinkedHashMap<>();
+                            map.put("tableName", m.getTableName());
+                            map.put("columnName", m.getColumnName());
+                            map.put("attributeName", m.getAttributeName() != null ? m.getAttributeName() : "");
+                            map.put("mappingType", m.getMappingType() != null ? m.getMappingType() : "direct");
+                            if (m.getComputedExpr() != null && !m.getComputedExpr().isBlank()) {
+                                map.put("computedExpr", m.getComputedExpr());
+                            }
+                            return map;
+                        })
                         .toList(),
                 "joins", generated.getJoins().stream()
                         .map(j -> Map.of(
