@@ -11,6 +11,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -128,17 +129,25 @@ public class FaissService {
     public Map<String, Object> getIndexStats() {
         try {
             HttpRequest req = HttpRequest.newBuilder()
-                    .uri(URI.create(embeddingServiceUrl + "/v1/faiss/stats"))
+                    .uri(URI.create(embeddingServiceUrl + "/v1/faiss/health"))
                     .GET()
                     .build();
             HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() == 200) {
-                return objectMapper.readValue(resp.body(), new TypeReference<>() {});
+                Map<String, Object> health = objectMapper.readValue(resp.body(), new TypeReference<>() {});
+                Map<String, Object> stats = new LinkedHashMap<>();
+                stats.put("total_indexed", health.getOrDefault("index_size", 0));
+                stats.put("column_indexed", health.getOrDefault("column_index_size", 0));
+                stats.put("index_built", health.getOrDefault("index_built", false));
+                stats.put("column_index_built", health.getOrDefault("column_index_built", false));
+                stats.put("faiss_available", health.getOrDefault("faiss_available", false));
+                stats.put("status", "ok");
+                return stats;
             }
-            log.warn("FAISS stats returned status: {}", resp.statusCode());
+            log.warn("FAISS health returned status: {}", resp.statusCode());
             return Map.of("total_indexed", 0, "status", "unavailable");
         } catch (Exception e) {
-            log.warn("FAISS stats unavailable: {}", e.getMessage());
+            log.warn("FAISS health unavailable: {}", e.getMessage());
             return Map.of("total_indexed", 0, "status", "unavailable");
         }
     }

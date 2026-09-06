@@ -2,6 +2,7 @@ package com.luban.controller;
 
 import com.luban.annotation.RequirePermission;
 import com.luban.constant.ToolType;
+import com.luban.dto.ApiResponse;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.executor.HttpExecutor;
@@ -31,12 +32,12 @@ public class ToolDefinitionController {
     private final HttpServletRequest request;
 
     @GetMapping("/types")
-    public ResponseEntity<List<Map<String, String>>> listToolTypes() {
-        return ResponseEntity.ok(ToolType.toList());
+    public ResponseEntity<ApiResponse<List<Map<String, String>>>> listToolTypes() {
+        return ResponseEntity.ok(ApiResponse.ok(ToolType.toList()));
     }
 
     @GetMapping("/systems")
-    public ResponseEntity<List<Map<String, Object>>> listSystems() {
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listSystems() {
         List<ToolDefinition> tools = toolDefinitionRepository.findByScope("PLATFORM");
         Map<Long, Map<String, Object>> systemMap = new LinkedHashMap<>();
         for (ToolDefinition tool : tools) {
@@ -50,22 +51,22 @@ public class ToolDefinitionController {
             Map<String, Object> system = systemMap.get(groupId);
             system.put("toolCount", (int) system.get("toolCount") + 1);
         }
-        return ResponseEntity.ok(new ArrayList<>(systemMap.values()));
+        return ResponseEntity.ok(ApiResponse.ok(new ArrayList<>(systemMap.values())));
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<Map<String, Object>>> searchTools(
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> searchTools(
             @RequestParam Long systemId,
             @RequestParam String query) {
         List<ToolDefinition> results = toolEmbeddingService.search(systemId, query, 5);
         List<Map<String, Object>> response = results.stream()
                 .map(this::toToolSummary)
                 .collect(Collectors.toList());
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @GetMapping("/{id}/schema")
-    public ResponseEntity<Map<String, Object>> getToolSchema(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getToolSchema(@PathVariable Long id) {
         return toolDefinitionRepository.findById(id)
                 .map(tool -> {
                     Map<String, Object> schema = new LinkedHashMap<>();
@@ -73,14 +74,14 @@ public class ToolDefinitionController {
                     schema.put("description", tool.getDescription());
                     schema.put("input_schema", tool.getInputSchema());
                     schema.put("output_schema", tool.getOutputSchema());
-                    return ResponseEntity.ok(schema);
+                    return ResponseEntity.ok(ApiResponse.ok(schema));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @RequirePermission("connect:tools")
     @PostMapping("/{id}/test")
-    public ResponseEntity<Map<String, Object>> testTool(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> testTool(
             @PathVariable Long id,
             @RequestBody Map<String, Object> arguments,
             @AuthenticationPrincipal User user) {
@@ -90,14 +91,14 @@ public class ToolDefinitionController {
                     if (apiKeyId != null) {
                         Map<String, Object> err = new LinkedHashMap<>();
                         err.put("error", "API KEY 无权调用 /test 端点，请通过 SDK 调用");
-                        return ResponseEntity.status(403).body(err);
+                        return ResponseEntity.status(403).body(ApiResponse.ok(err));
                     }
 
                     if (!tool.getCreatedBy().equals(user.getId())) {
                         Map<String, Object> err = new LinkedHashMap<>();
                         err.put("error", "只能测试自己创建的工具");
                         err.put("tool_name", tool.getName());
-                        return ResponseEntity.status(403).body(err);
+                        return ResponseEntity.status(403).body(ApiResponse.ok(err));
                     }
 
                     long start = System.currentTimeMillis();
@@ -113,7 +114,7 @@ public class ToolDefinitionController {
                     response.put("tool_name", tool.getName());
                     response.put("result", result);
                     response.put("elapsed_ms", elapsed);
-                    return ResponseEntity.ok(response);
+                    return ResponseEntity.ok(ApiResponse.ok(response));
                 })
                 .orElse(ResponseEntity.notFound().build());
     }

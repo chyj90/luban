@@ -91,6 +91,11 @@ public class AgentMetricsService {
                 conceptStats.computeIfAbsent(cid, k -> {
                     Map<String, Object> stat = new LinkedHashMap<>();
                     stat.put("conceptId", cid);
+                    try {
+                        Long idVal = Long.parseLong(cid);
+                        conceptRepository.findById(idVal).ifPresent(c ->
+                                stat.put("conceptName", c.getName()));
+                    } catch (NumberFormatException ignored) {}
                     stat.put("totalQueries", 0L);
                     stat.put("sqlSuccess", 0L);
                     stat.put("sqlTotal", 0L);
@@ -226,12 +231,17 @@ public class AgentMetricsService {
                 ? Math.round(embeddedCount * 10000.0 / totalConcepts) / 100.0 : 0;
 
         boolean isHealthy = faissService.isHealthy();
+        Map<String, Object> indexStats = faissService.getIndexStats();
         int indexCount = faissService.getIndexCount();
 
         health.put("totalConcepts", totalConcepts);
         health.put("embeddedCount", embeddedCount);
         health.put("embeddingCoverage", coverage);
         health.put("indexes", indexCount);
+        health.put("columnIndexes", indexStats.getOrDefault("column_indexed", 0));
+        health.put("indexBuilt", indexStats.getOrDefault("index_built", false));
+        health.put("columnIndexBuilt", indexStats.getOrDefault("column_index_built", false));
+        health.put("faissAvailable", indexStats.getOrDefault("faiss_available", false));
         health.put("isHealthy", isHealthy);
         health.put("lastRebuild", faissService.getLastRebuildTime());
 
