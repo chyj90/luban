@@ -43,7 +43,7 @@ public class OntologyChangeLog {
     @Column(name = "operator_name", nullable = false, length = 64)
     private String operatorName;
 
-    @Column(name = "trigger_type", nullable = false, length = 16)
+    @Column(name = "trigger_type", nullable = false, length = 32)
     private String triggerType;
 
     @Column(name = "reasoning", columnDefinition = "TEXT")

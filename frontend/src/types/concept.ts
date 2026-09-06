@@ -71,7 +71,9 @@ export interface ToolConcept {
   id: number;
   toolId: number;
   conceptId: number;
-  relation: string;
+  bindingType: string;
+  isDefault: boolean;
+  config?: string;
   createdAt: string;
 }
 
@@ -92,7 +94,9 @@ export interface CreateRelationRequest {
 
 export interface CreateToolConceptRequest {
   conceptId: number;
-  relation: string;
+  bindingType: string;
+  isDefault?: boolean;
+  config?: string;
 }
 
 export interface OntologyGroup {
@@ -182,6 +186,7 @@ export interface ConceptFeedback {
   messageId: string;
   feedbackType: 'problem_feedback';
   userQuestion: string;
+  llmAnswer: string;
   reasoning: string;
   resolvedConcepts: string;
   generatedSql: string;
@@ -192,9 +197,9 @@ export interface ConceptFeedback {
   reviewComment: string;
   createdAt: string;
   reviewedAt: string;
-  pipelineId?: string;
   userDescription?: string;
   llmAnalysis?: string;
+  suggestions?: string;
 }
 
 export interface RelationTypeMeta {

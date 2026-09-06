@@ -182,6 +182,11 @@ public class AgentController {
                     out.flush();
                 }
 
+                Object answerType = result.get("answerType");
+                if (answerType != null && !answerType.toString().isEmpty()) {
+                    out.write(buildSSEBytes("answer_type", answerType));
+                    out.flush();
+                }
                 Object rootCause = result.get("rootCause");
                 if (rootCause != null && !rootCause.toString().isEmpty()) {
                     out.write(buildSSEBytes("root_cause", rootCause));

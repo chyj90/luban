@@ -5,9 +5,11 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 @Data
-public class CreateToolConceptRequest {
+public class CreateToolConceptBindingRequest {
     @NotNull
     private Long conceptId;
     @NotBlank
-    private String relation;
+    private String bindingType;
+    private Boolean isDefault;
+    private String config;
 }

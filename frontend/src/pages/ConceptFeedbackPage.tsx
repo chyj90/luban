@@ -1,13 +1,14 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
-import { MessageSquare, Check, X, Loader2, Eye, Zap, ChevronRight, AlertTriangle, Trash2, BarChart3, Target } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { MessageSquare, X, Loader2, Eye, Zap, ChevronRight, AlertTriangle, Trash2, BarChart3, Target, Play, Layers } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import {
   listConceptFeedback,
   analyzeConceptFeedback,
   previewConceptFeedbackSuggestion,
   applyConceptFeedbackSuggestion,
+  applyAllConceptFeedbackSuggestions,
   ignoreConceptFeedback,
-  confirmConceptFeedback,
+  deleteConceptFeedback,
   locateConceptFeedback,
   batchAnalyzeFeedback,
   getFeedbackDashboard,
@@ -18,8 +19,7 @@ import type { ConceptFeedback } from '@/types/concept';
 import './ConceptFeedbackPage.css';
 
 const STATUS_LABELS: Record<string, string> = {
-  pending: '待确认',
-  confirmed: '已确认',
+  pending: '待处理',
   analyzing: '分析中',
   applied: '已应用',
   ignored: '已忽略',
@@ -27,15 +27,13 @@ const STATUS_LABELS: Record<string, string> = {
 
 const STATUS_COLORS: Record<string, string> = {
   pending: '#fa8c16',
-  confirmed: '#1890ff',
   analyzing: '#722ed1',
   applied: '#52c41a',
   ignored: '#8c8c8c',
 };
 
 const TABS = [
-  { key: 'actionable', label: '需处理', desc: '待确认 · 待分析' },
-  { key: 'confirmed', label: '已确认', desc: '待分析' },
+  { key: 'actionable', label: '需处理', desc: '待定位 · 待分析' },
   { key: 'done', label: '已处理', desc: '已应用/已忽略' },
   { key: 'all', label: '全部', desc: '' },
 ] as const;
@@ -119,13 +117,97 @@ function renderConceptBreakdown(concepts: ResolvedConcepts | null) {
   );
 }
 
+const STAGE_NAMES: Record<string, string> = {
+  '1': '问题理解',
+  '2': '概念匹配',
+  '3': '思维链',
+  '4': 'SQL 生成',
+  '5': '查询执行',
+  '6': '最终回答',
+};
+
+interface LlmAnalysisResult {
+  stages?: Record<string, { hasIssue: boolean; reason: string; suggestion?: string | null }>;
+  primaryStage?: number;
+  summary?: string;
+  ontologySuggestions?: { action: string; name: string; description?: string; mapping?: string; relation?: string }[];
+}
+
+function renderLlmAnalysis(analysis: string | LlmAnalysisResult) {
+  let parsed: LlmAnalysisResult | null = null;
+  if (typeof analysis === 'string') {
+    try { parsed = JSON.parse(analysis); } catch { /* ignore */ }
+  } else {
+    parsed = analysis;
+  }
+
+  if (!parsed || !parsed.stages) {
+    return <pre className="cfb-page__expand-code">{typeof analysis === 'string' ? analysis : JSON.stringify(analysis, null, 2)}</pre>;
+  }
+
+  const issueStages = Object.entries(parsed.stages).filter(([, v]) => v.hasIssue);
+  const primaryStage = parsed.primaryStage;
+  const ontologySuggestions = parsed.ontologySuggestions || [];
+
+  return (
+    <div className="cfb-page__analysis">
+      {parsed.summary && (
+        <div className="cfb-page__analysis-summary">{parsed.summary}</div>
+      )}
+      <div className="cfb-page__analysis-stages">
+        {issueStages.map(([stage, info]) => {
+          const stageNum = Number(stage);
+          const isPrimary = stageNum === primaryStage;
+          return (
+            <div key={stage} className={`cfb-page__analysis-stage ${isPrimary ? 'primary' : ''}`}>
+              <div className="cfb-page__analysis-stage-header">
+                <span className="cfb-page__analysis-stage-num">阶段 {stage}</span>
+                <span className="cfb-page__analysis-stage-name">{STAGE_NAMES[stage] || '未知'}</span>
+                {isPrimary && <span className="cfb-page__analysis-primary-badge">根因</span>}
+              </div>
+              <div className="cfb-page__analysis-stage-reason">{info.reason}</div>
+              {info.suggestion && (
+                <div className="cfb-page__analysis-stage-suggestion">
+                  <span className="cfb-page__analysis-suggestion-label">建议</span>
+                  {info.suggestion}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {ontologySuggestions.length > 0 && (
+        <div className="cfb-page__analysis-ontology">
+          <div className="cfb-page__analysis-ontology-title">本体调整建议</div>
+          {ontologySuggestions.map((s, i) => (
+            <div key={i} className="cfb-page__analysis-ontology-item">
+              <span className="cfb-page__analysis-ontology-action">
+                {SUGGESTION_TYPE_LABELS[s.action] || s.action}
+              </span>
+              <span className="cfb-page__analysis-ontology-name">{s.name}</span>
+              {s.mapping && <span className="cfb-page__analysis-ontology-mapping">→ {s.mapping}</span>}
+              {s.relation && <span className="cfb-page__analysis-ontology-relation">({s.relation})</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SUGGESTION_TYPE_LABELS: Record<string, string> = {
-  rename_concept: '重命名概念',
-  update_mapping: '更新映射',
-  add_relation: '添加关系',
-  remove_relation: '移除关系',
+  add_concept: '添加概念',
   add_mapping: '添加映射',
-  remove_mapping: '移除映射',
+  add_join_mapping: '添加JOIN映射',
+  add_relation: '添加关系',
+  update_concept: '更新概念',
+  update_mapping: '更新映射',
+  update_join_mapping: '更新JOIN映射',
+  update_relation: '更新关系',
+  delete_concept: '删除概念',
+  delete_mapping: '删除映射',
+  delete_join_mapping: '删除JOIN映射',
+  delete_relation: '删除关系',
 };
 
 interface Suggestion {
@@ -138,7 +220,9 @@ interface PreviewResult {
   type: string;
   params: Record<string, unknown>;
   impact?: Array<Record<string, unknown>>;
+  errors?: Array<Record<string, unknown>>;
   conflicts?: Array<Record<string, unknown>>;
+  dependsOn?: number[];
 }
 
 export default function ConceptFeedbackPage() {
@@ -147,13 +231,19 @@ export default function ConceptFeedbackPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('actionable');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Record<number, Suggestion[]>>({});
+  const [locating, setLocating] = useState<number | null>(null);
   const [analyzing, setAnalyzing] = useState<number | null>(null);
+  const [locateFailed, setLocateFailed] = useState<number | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewResult | null>(null);
   const [previewingIdx, setPreviewingIdx] = useState<number>(-1);
+  const [previewedIdx, setPreviewedIdx] = useState<number>(-1);
   const [applyingIdx, setApplyingIdx] = useState<number>(-1);
+  const [applyingAll, setApplyingAll] = useState<number | null>(null);
 
   const toast = useToastStore((s) => s.show);
   const user = useAuthStore((s) => s.user);
+
+  const tableWrapRef = useRef<HTMLDivElement>(null);
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -174,7 +264,6 @@ export default function ConceptFeedbackPage() {
   const filteredList = feedbackList.filter(fb => {
     switch (activeTab) {
       case 'actionable': return fb.status === 'pending' || fb.status === 'analyzing';
-      case 'confirmed': return fb.status === 'confirmed';
       case 'done': return fb.status === 'applied' || fb.status === 'ignored';
       default: return true;
     }
@@ -186,9 +275,23 @@ export default function ConceptFeedbackPage() {
     if (expandedId === fb.id) {
       setExpandedId(null);
       setPreviewResult(null);
+      setPreviewedIdx(-1);
     } else {
       setExpandedId(fb.id);
       setPreviewResult(null);
+      setPreviewedIdx(-1);
+      setLocateFailed(null);
+      setTimeout(() => {
+        const wrap = tableWrapRef.current;
+        const el = document.getElementById(`expand-${fb.id}`);
+        if (wrap && el) {
+          const wrapRect = wrap.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          if (elRect.bottom > wrapRect.bottom) {
+            wrap.scrollTop += elRect.bottom - wrapRect.bottom + 12;
+          }
+        }
+      }, 50);
     }
   };
 
@@ -215,6 +318,7 @@ export default function ConceptFeedbackPage() {
     try {
       const res = await previewConceptFeedbackSuggestion(fbId, idx);
       setPreviewResult(res.data as PreviewResult);
+      setPreviewedIdx(idx);
     } catch {
       toast('加载预览失败', 'error');
     } finally {
@@ -233,11 +337,33 @@ export default function ConceptFeedbackPage() {
         return next;
       });
       setPreviewResult(null);
+      setPreviewedIdx(-1);
       fetchFeedback();
     } catch {
       toast('应用建议失败', 'error');
     } finally {
       setApplyingIdx(-1);
+    }
+  };
+
+  const handleApplyAll = async (fbId: number) => {
+    setApplyingAll(fbId);
+    try {
+      await applyAllConceptFeedbackSuggestions(fbId, user?.account || 'admin');
+      toast('全部建议已应用', 'success');
+      setPreviewResult(null);
+      setPreviewedIdx(-1);
+      setSuggestions(prev => {
+        const next = { ...prev };
+        delete next[fbId];
+        return next;
+      });
+      fetchFeedback();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : '批量应用失败';
+      toast(msg, 'error');
+    } finally {
+      setApplyingAll(null);
     }
   };
 
@@ -255,26 +381,29 @@ export default function ConceptFeedbackPage() {
     }
   };
 
-  const handleConfirm = async (fb: ConceptFeedback, confirmed: boolean) => {
+  const handleDelete = async (fb: ConceptFeedback) => {
     try {
-      await confirmConceptFeedback(fb.id, confirmed);
-      toast(confirmed ? '已确认' : '已忽略', 'success');
+      await deleteConceptFeedback(fb.id);
+      toast('已删除', 'success');
+      setExpandedId(null);
       fetchFeedback();
     } catch {
-      toast('操作失败', 'error');
+      toast('删除失败', 'error');
     }
   };
 
   const handleLocate = async (fb: ConceptFeedback) => {
-    setAnalyzing(fb.id);
+    setLocating(fb.id);
     try {
       const res = await locateConceptFeedback(fb.id);
       toast('阶段定位完成', 'success');
+      setLocateFailed(null);
       fetchFeedback();
     } catch {
       toast('定位失败', 'error');
+      setLocateFailed(fb.id);
     } finally {
-      setAnalyzing(-1);
+      setLocating(null);
     }
   };
 
@@ -324,7 +453,7 @@ export default function ConceptFeedbackPage() {
       {filteredList.length === 0 ? (
             <div className="cfb-page__empty">暂无反馈记录</div>
           ) : (
-            <div className="cfb-page__table-wrap">
+            <div className="cfb-page__table-wrap" ref={tableWrapRef}>
               <table className="cfb-page__table">
                 <thead>
                   <tr>
@@ -333,12 +462,13 @@ export default function ConceptFeedbackPage() {
                     <th style={{ width: 280 }}>解析概念</th>
                     <th style={{ width: 80 }}>状态</th>
                     <th style={{ width: 120 }}>时间</th>
+                    <th style={{ width: 80 }}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredList.map((fb) => {
                     const isExpanded = expandedId === fb.id;
-                    const fbSuggestions = suggestions[fb.id] || [];
+                    const fbSuggestions = suggestions[fb.id] || (fb.suggestions ? (JSON.parse(fb.suggestions) as Suggestion[]) : []);
                     return (
                       <Fragment key={fb.id}>
                         <tr
@@ -350,100 +480,114 @@ export default function ConceptFeedbackPage() {
                               问题
                             </span>
                           </td>
-                          <td className="cfb-page__cell-text" title={`Q: ${fb.userQuestion}\nA: ${fb.reasoning || '（无回答）'}`}>{fb.userQuestion}</td>
+                          <td className="cfb-page__cell-text" title={`Q: ${fb.userQuestion}\nA: ${fb.llmAnswer || '（无回答）'}`}>{fb.userQuestion}</td>
                           <td>{renderConceptSummary(parseResolvedConcepts(fb.resolvedConcepts))}</td>
                           <td>{renderStatusBadge(fb.status)}</td>
                           <td className="cfb-page__cell-time">{formatTime(fb.createdAt)}</td>
+                          <td className="cfb-page__row-actions" onClick={(e) => e.stopPropagation()}>
+                            {(fb.status === 'pending' || fb.status === 'analyzing') && (
+                              <>
+                                <button className="cfb-page__icon-btn cfb-page__icon-btn--secondary" title={locating === fb.id ? '定位中...' : '定位'} onClick={() => handleLocate(fb)} disabled={locating === fb.id}>
+                                  {locating === fb.id ? <Loader2 size={16} className="cfb-page__spin" /> : <Target size={16} />}
+                                </button>
+                                <button
+                                  className="cfb-page__icon-btn cfb-page__icon-btn--secondary"
+                                  title={!fb.llmAnalysis ? '请先定位' : (analyzing === fb.id ? '分析中...' : '分析')}
+                                  onClick={() => handleAnalyze(fb)}
+                                  disabled={analyzing === fb.id || !fb.llmAnalysis}
+                                >
+                                  {analyzing === fb.id ? <Loader2 size={16} className="cfb-page__spin" /> : <Zap size={16} />}
+                                </button>
+                                <button className="cfb-page__icon-btn cfb-page__icon-btn--cancel" title="忽略" onClick={() => handleIgnore(fb)}>
+                                  <X size={16} />
+                                </button>
+                              </>
+                            )}
+                            {fb.status === 'applied' && (
+                              <>
+                                <button className="cfb-page__icon-btn cfb-page__icon-btn--secondary" title={locating === fb.id ? '定位中...' : '重新定位'} onClick={() => handleLocate(fb)} disabled={locating === fb.id}>
+                                  {locating === fb.id ? <Loader2 size={16} className="cfb-page__spin" /> : <Target size={16} />}
+                                </button>
+                                <button
+                                  className="cfb-page__icon-btn cfb-page__icon-btn--secondary"
+                                  title={!fb.llmAnalysis ? '请先定位' : (analyzing === fb.id ? '分析中...' : '重新分析')}
+                                  onClick={() => handleAnalyze(fb)}
+                                  disabled={analyzing === fb.id || !fb.llmAnalysis}
+                                >
+                                  {analyzing === fb.id ? <Loader2 size={16} className="cfb-page__spin" /> : <Zap size={16} />}
+                                </button>
+                              </>
+                            )}
+                            {fb.status === 'ignored' && (
+                              <button className="cfb-page__icon-btn cfb-page__icon-btn--danger" title="删除" onClick={() => handleDelete(fb)}>
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </td>
                         </tr>
                         {isExpanded && (
-                          <tr className="cfb-page__expand-row">
-                            <td colSpan={5}>
+                          <tr className="cfb-page__expand-row" id={`expand-${fb.id}`}>
+                            <td colSpan={6}>
                               <div className="cfb-page__expand-content">
-                                <div className="cfb-page__expand-grid">
-                                  <div className="cfb-page__expand-group">
-                                    <h4>用户问题</h4>
-                                    <p>{fb.userQuestion}</p>
-                                  </div>
-                                  <div className="cfb-page__expand-group">
-                                    <h4>LLM 回答</h4>
-                                    <p>{fb.reasoning || '（无）'}</p>
-                                  </div>
-                                  <div className="cfb-page__expand-group">
-                                    <h4>解析的概念</h4>
-                                    {renderConceptBreakdown(parseResolvedConcepts(fb.resolvedConcepts))}
-                                  </div>
-                                  <div className="cfb-page__expand-group">
-                                    <h4>用户描述</h4>
-                                    <p>{fb.userDescription || fb.userFeedback || '（无）'}</p>
-                                  </div>
-                                  {fb.pipelineId && (
+                                <div className="cfb-page__expand-body">
+                                  <div className="cfb-page__expand-grid">
                                     <div className="cfb-page__expand-group">
-                                      <h4>管道 ID</h4>
-                                      <p className="cfb-page__pipeline-id">{fb.pipelineId}</p>
+                                      <h4>用户问题</h4>
+                                      <p>{fb.userQuestion}</p>
                                     </div>
-                                  )}
-                                  {fb.llmAnalysis && (
+                                    <div className="cfb-page__expand-group">
+                                      <h4>LLM 回答</h4>
+                                      <p>{fb.llmAnswer || '（无）'}</p>
+                                    </div>
+                                    <div className="cfb-page__expand-group">
+                                      <h4>解析的概念</h4>
+                                      {renderConceptBreakdown(parseResolvedConcepts(fb.resolvedConcepts))}
+                                    </div>
+                                    <div className="cfb-page__expand-group">
+                                      <h4>用户描述</h4>
+                                      <p>{fb.userDescription || fb.userFeedback || '（无）'}</p>
+                                    </div>
+                                    {locating === fb.id && !fb.llmAnalysis && (
+                                      <div className="cfb-page__expand-group cfb-page__expand-group--full">
+                                        <h4><Target size={14} /> LLM 阶段定位</h4>
+                                        <p className="cfb-page__locating-hint"><Loader2 size={14} className="cfb-page__spin" /> LLM 正在定位问题阶段...</p>
+                                      </div>
+                                    )}
+                                    {locateFailed === fb.id && !fb.llmAnalysis && (
+                                      <div className="cfb-page__expand-group cfb-page__expand-group--full">
+                                        <h4><Target size={14} /> LLM 阶段定位</h4>
+                                        <div className="cfb-page__locate-error">
+                                          <span>定位失败，请点击操作列「定位」按钮重试</span>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {fb.llmAnalysis && (
+                                      <div className="cfb-page__expand-group cfb-page__expand-group--full">
+                                        <h4><Target size={14} /> LLM 阶段定位</h4>
+                                        {renderLlmAnalysis(fb.llmAnalysis)}
+                                      </div>
+                                    )}
                                     <div className="cfb-page__expand-group cfb-page__expand-group--full">
-                                      <h4><Target size={14} /> LLM 阶段定位</h4>
-                                      <pre className="cfb-page__expand-code">{typeof fb.llmAnalysis === 'string' ? fb.llmAnalysis : JSON.stringify(fb.llmAnalysis, null, 2)}</pre>
+                                      <h4>生成的 SQL</h4>
+                                      <pre className="cfb-page__expand-code">{fb.generatedSql || '（无）'}</pre>
                                     </div>
-                                  )}
-                                  <div className="cfb-page__expand-group cfb-page__expand-group--full">
-                                    <h4>生成的 SQL</h4>
-                                    <pre className="cfb-page__expand-code">{fb.generatedSql || '（无）'}</pre>
                                   </div>
-                                </div>
 
-                                <div className="cfb-page__expand-actions">
-                                  {fb.status === 'pending' && (
-                                    <>
-                                      <button
-                                        className="cfb-page__btn-primary"
-                                        onClick={(e) => { e.stopPropagation(); handleConfirm(fb, true); }}
-                                      >
-                                        <Check size={14} /> 确认
-                                      </button>
-                                      <button className="cfb-page__btn-cancel" onClick={(e) => { e.stopPropagation(); handleIgnore(fb); }}>
-                                        <Trash2 size={14} /> 忽略
-                                      </button>
-                                    </>
-                                  )}
-                                  {fb.status === 'confirmed' && (
-                                    <>
-                                      <button
-                                        className="cfb-page__btn-primary"
-                                        onClick={(e) => { e.stopPropagation(); handleLocate(fb); }}
-                                        disabled={analyzing === fb.id}
-                                      >
-                                        {analyzing === fb.id ? (
-                                          <><Loader2 size={14} className="cfb-page__spin" /> 定位中...</>
-                                        ) : (
-                                          <><Target size={14} /> LLM 定位</>
-                                        )}
-                                      </button>
-                                      <button
-                                        className="cfb-page__btn-secondary"
-                                        onClick={(e) => { e.stopPropagation(); handleAnalyze(fb); }}
-                                        disabled={analyzing === fb.id || fbSuggestions.length > 0}
-                                      >
-                                        {analyzing === fb.id ? (
-                                          <><Loader2 size={14} className="cfb-page__spin" /> 分析中...</>
-                                        ) : (
-                                          <><Zap size={14} /> LLM 分析</>
-                                        )}
-                                      </button>
-                                    </>
-                                  )}
-                                  {(fb.status === 'pending' || fb.status === 'confirmed') && (
-                                    <button className="cfb-page__btn-cancel" onClick={(e) => { e.stopPropagation(); handleIgnore(fb); }}>
-                                      <Trash2 size={14} /> 忽略
-                                    </button>
-                                  )}
-                                </div>
-
-                                {fbSuggestions.length > 0 && (
+                                  {fbSuggestions.length > 0 && (
                                   <div className="cfb-page__expand-suggestions">
-                                    <h4>分析建议 <span className="cfb-page__suggestion-count">{fbSuggestions.length} 条</span></h4>
+                                    <div className="cfb-page__suggestions-header">
+                                      <h4>分析建议 <span className="cfb-page__suggestion-count">{fbSuggestions.length} 条</span></h4>
+                                      {fbSuggestions.length > 1 && (
+                                        <button
+                                          className="cfb-page__apply-all-btn"
+                                          onClick={(e) => { e.stopPropagation(); handleApplyAll(fb.id); }}
+                                          disabled={applyingAll === fb.id}
+                                        >
+                                          {applyingAll === fb.id ? <Loader2 size={12} className="cfb-page__spin" /> : <Layers size={12} />}
+                                          全部应用
+                                        </button>
+                                      )}
+                                    </div>
                                     <div className="cfb-page__suggestion-list">
                                       {fbSuggestions.map((s, i) => (
                                         <div key={i} className="cfb-page__suggestion-card">
@@ -452,6 +596,11 @@ export default function ConceptFeedbackPage() {
                                               {SUGGESTION_TYPE_LABELS[s.type] || s.type}
                                             </span>
                                             <span className="cfb-page__suggestion-card-index">#{i + 1}</span>
+                                            {previewResult && previewedIdx === i && previewResult.dependsOn && previewResult.dependsOn.length > 0 && (
+                                              <span className="cfb-page__depends-tag">
+                                                ← 依赖 #{previewResult.dependsOn.map(d => d + 1).join(', #')}
+                                              </span>
+                                            )}
                                           </div>
                                           {s.reasoning && (
                                             <p className="cfb-page__suggestion-card-reasoning">{s.reasoning}</p>
@@ -459,87 +608,73 @@ export default function ConceptFeedbackPage() {
                                           <div className="cfb-page__suggestion-card-params">
                                             {Object.entries(s.params).map(([k, v]) => (
                                               <span key={k} className="cfb-page__suggestion-card-param">
-                                                <em>{k}</em>: {String(v)}
+                                                <em>{k}</em>: {typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}
                                               </span>
                                             ))}
                                           </div>
                                           <div className="cfb-page__suggestion-card-actions">
                                             <button
-                                              className="cfb-page__btn-sm cfb-page__btn-sm--outline"
+                                              className="cfb-page__icon-btn"
                                               onClick={(e) => { e.stopPropagation(); handlePreview(fb.id, i); }}
                                               disabled={previewingIdx === i}
+                                              title="预览变更"
                                             >
-                                              {previewingIdx === i ? <Loader2 size={12} className="cfb-page__spin" /> : <Eye size={12} />}
-                                              预览
+                                              {previewingIdx === i ? <Loader2 size={14} className="cfb-page__spin" /> : <Eye size={14} />}
                                             </button>
                                             <button
-                                              className="cfb-page__btn-sm cfb-page__btn-sm--primary"
+                                              className={`cfb-page__icon-btn ${applyingIdx === i || (previewResult?.errors?.length ?? 0) > 0 ? 'cfb-page__icon-btn--disabled' : 'cfb-page__icon-btn--apply'}`}
                                               onClick={(e) => { e.stopPropagation(); handleApply(fb.id, i); }}
-                                              disabled={applyingIdx === i}
+                                              disabled={applyingIdx === i || (previewResult?.errors?.length ?? 0) > 0}
+                                              title="应用建议"
                                             >
-                                              {applyingIdx === i ? <Loader2 size={12} className="cfb-page__spin" /> : <Check size={12} />}
-                                              应用
+                                              {applyingIdx === i ? <Loader2 size={14} className="cfb-page__spin" /> : <Play size={14} />}
                                             </button>
                                           </div>
+
+                                          {previewResult && previewedIdx === i && (
+                                          <div className="cfb-page__suggestion-preview">
+                                            <div className="cfb-page__suggestion-preview-header">
+                                              <span className="cfb-page__preview-type-tag">
+                                                {SUGGESTION_TYPE_LABELS[previewResult.type] || previewResult.type}
+                                              </span>
+                                              <button className="cfb-page__icon-btn" onClick={(e) => { e.stopPropagation(); setPreviewResult(null); setPreviewedIdx(-1); }} title="关闭预览">
+                                                <X size={14} />
+                                              </button>
+                                            </div>
+                                            <pre className="cfb-page__suggestion-preview-code">{JSON.stringify(previewResult.params, null, 2)}</pre>
+                                            {previewResult.impact && previewResult.impact.length > 0 && (
+                                              <div className="cfb-page__suggestion-preview-section">
+                                                <span className="cfb-page__label-warning"><AlertTriangle size={12} /> 受影响 {previewResult.impact.length} 项</span>
+                                                {previewResult.impact.map((imp, j) => (
+                                                  <span key={j} className="cfb-page__preview-impact-tag">{imp.entity as string}</span>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {previewResult.errors && previewResult.errors.length > 0 && (
+                                              <div className="cfb-page__suggestion-preview-section">
+                                                <span className="cfb-page__label-danger"><AlertTriangle size={12} /> 校验错误 — 无法应用</span>
+                                                {previewResult.errors.map((c, j) => (
+                                                  <p key={j} className="cfb-page__preview-error">{c.message as string}</p>
+                                                ))}
+                                              </div>
+                                            )}
+                                            {previewResult.conflicts && previewResult.conflicts.length > 0 && (
+                                              <div className="cfb-page__suggestion-preview-section">
+                                                <span className="cfb-page__label-warning"><AlertTriangle size={12} /> 软冲突 — 可继续</span>
+                                                {previewResult.conflicts.map((c, j) => (
+                                                  <p key={j} className="cfb-page__preview-conflict">{c.message as string || (c.reason as string)}</p>
+                                                ))}
+                                              </div>
+                                            )}
+                                          </div>
+                                          )}
                                         </div>
                                       ))}
                                     </div>
                                   </div>
                                 )}
 
-                                {previewResult && (
-                                  <div className="cfb-page__expand-preview">
-                                    <div className="cfb-page__expand-preview-header">
-                                      <h4>
-                                        变更预览
-                                        <span className="cfb-page__preview-type-tag">
-                                          {SUGGESTION_TYPE_LABELS[previewResult.type] || previewResult.type}
-                                        </span>
-                                      </h4>
-                                      <button className="cfb-page__back-btn" onClick={(e) => { e.stopPropagation(); setPreviewResult(null); }}>
-                                        <ChevronRight size={16} className="cfb-page__back-icon" />
-                                        返回建议
-                                      </button>
-                                    </div>
-                                    <div className="cfb-page__expand-group">
-                                      <h4>变更参数</h4>
-                                      <pre className="cfb-page__expand-code">{JSON.stringify(previewResult.params, null, 2)}</pre>
-                                    </div>
-                                    {previewResult.impact && previewResult.impact.length > 0 && (
-                                      <div className="cfb-page__expand-group">
-                                        <h4 className="cfb-page__label-warning">
-                                          <AlertTriangle size={14} /> 受影响实体 ({previewResult.impact.length})
-                                        </h4>
-                                        <div className="cfb-page__impact-list">
-                                          {previewResult.impact.map((imp, i) => (
-                                            <div key={i} className="cfb-page__impact-item">
-                                              <span className="cfb-page__impact-entity">{imp.entity as string}</span>
-                                              <span className="cfb-page__impact-id">ID: {String(imp.id)}</span>
-                                              {Object.entries(imp).filter(([k]) => k !== 'entity' && k !== 'id').map(([k, v]) => (
-                                                <span key={k} className="cfb-page__impact-attr">{k}: {String(v)}</span>
-                                              ))}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                    {previewResult.conflicts && previewResult.conflicts.length > 0 && (
-                                      <div className="cfb-page__expand-group">
-                                        <h4 className="cfb-page__label-danger">
-                                          <AlertTriangle size={14} /> 冲突 ({previewResult.conflicts.length})
-                                        </h4>
-                                        <div className="cfb-page__impact-list">
-                                          {previewResult.conflicts.map((c, i) => (
-                                            <div key={i} className="cfb-page__impact-item cfb-page__impact-item--conflict">
-                                              <span className="cfb-page__impact-entity">{c.entity as string}</span>
-                                              <span className="cfb-page__impact-reason">{c.reason as string}</span>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                </div>
                               </div>
                             </td>
                           </tr>

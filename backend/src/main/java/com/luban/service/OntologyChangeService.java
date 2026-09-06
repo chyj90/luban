@@ -14,6 +14,8 @@ import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.ConceptEmbeddingTaskRepository;
+import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyChangeLogRepository;
@@ -38,6 +40,8 @@ public class OntologyChangeService {
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptRelationRepository conceptRelationRepository;
+    private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
+    private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final IndustryRelationRepository industryRelationRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final OntologyService ontologyService;
@@ -49,6 +53,8 @@ public class OntologyChangeService {
                                   ConceptMappingRepository conceptMappingRepository,
                                   ConceptJoinMappingRepository conceptJoinMappingRepository,
                                   ConceptRelationRepository conceptRelationRepository,
+                                  ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository,
+                                  ConceptToolBindingRepository conceptToolBindingRepository,
                                   IndustryRelationRepository industryRelationRepository,
                                   OntologyGroupRepository ontologyGroupRepository,
                                   OntologyService ontologyService,
@@ -59,6 +65,8 @@ public class OntologyChangeService {
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
         this.conceptRelationRepository = conceptRelationRepository;
+        this.conceptEmbeddingTaskRepository = conceptEmbeddingTaskRepository;
+        this.conceptToolBindingRepository = conceptToolBindingRepository;
         this.industryRelationRepository = industryRelationRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.ontologyService = ontologyService;
@@ -432,16 +440,56 @@ public class OntologyChangeService {
     private void executeDeleteConcept(Map<String, Object> data) {
         Object conceptIdObj = data.get("conceptId");
         String conceptName = (String) data.get("conceptName");
+
+        Long conceptId = null;
         if (conceptIdObj instanceof Number) {
-            conceptRepository.deleteById(((Number) conceptIdObj).longValue());
-            log.info("DELETE_CONCEPT executed: id={}", conceptIdObj);
+            conceptId = ((Number) conceptIdObj).longValue();
         } else if (conceptName != null && !conceptName.isEmpty()) {
             List<Concept> concepts = conceptRepository.findByName(conceptName);
             if (!concepts.isEmpty()) {
-                conceptRepository.delete(concepts.get(0));
-                log.info("DELETE_CONCEPT executed: name={}", conceptName);
+                conceptId = concepts.get(0).getId();
             }
         }
+
+        if (conceptId == null) {
+            log.warn("DELETE_CONCEPT skipped: concept not found");
+            return;
+        }
+
+        List<ConceptMapping> mappings = conceptMappingRepository.findByConceptId(conceptId);
+        if (!mappings.isEmpty()) {
+            conceptMappingRepository.deleteAll(mappings);
+            log.info("DELETE_CONCEPT cascade: deleted {} mappings", mappings.size());
+        }
+
+        List<ConceptJoinMapping> joinMappings = conceptJoinMappingRepository.findByConceptId(conceptId);
+        if (!joinMappings.isEmpty()) {
+            conceptJoinMappingRepository.deleteAll(joinMappings);
+            log.info("DELETE_CONCEPT cascade: deleted {} join mappings", joinMappings.size());
+        }
+
+        List<ConceptRelation> sourceRelations = conceptRelationRepository.findBySourceConceptId(conceptId);
+        List<ConceptRelation> targetRelations = conceptRelationRepository.findByTargetConceptId(conceptId);
+        List<ConceptRelation> allRelations = new ArrayList<>(sourceRelations);
+        for (ConceptRelation r : targetRelations) {
+            if (!sourceRelations.contains(r)) {
+                allRelations.add(r);
+            }
+        }
+        if (!allRelations.isEmpty()) {
+            conceptRelationRepository.deleteAll(allRelations);
+            log.info("DELETE_CONCEPT cascade: deleted {} relations (source={}, target={})",
+                    allRelations.size(), sourceRelations.size(), targetRelations.size());
+        }
+
+        conceptEmbeddingTaskRepository.deleteByConceptIdIn(List.of(conceptId));
+        log.info("DELETE_CONCEPT cascade: deleted embedding tasks");
+
+        conceptToolBindingRepository.deleteByConceptIdIn(List.of(conceptId));
+        log.info("DELETE_CONCEPT cascade: deleted tool bindings");
+
+        conceptRepository.deleteById(conceptId);
+        log.info("DELETE_CONCEPT executed: id={}", conceptId);
     }
 
     @SuppressWarnings("unchecked")

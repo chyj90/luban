@@ -3,7 +3,7 @@ package com.luban.controller;
 import com.luban.dto.*;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
-import com.luban.entity.ToolConcept;
+import com.luban.entity.ConceptToolBinding;
 import com.luban.service.ConceptMappingService;
 import com.luban.service.ConceptService;
 import com.luban.service.RoleConceptPermissionService;
@@ -96,7 +96,7 @@ public class ConceptController {
     }
 
     @GetMapping("/{id}/tools")
-    public ResponseEntity<ApiResponse<List<ToolConcept>>> getConceptTools(@PathVariable Long id) {
+    public ResponseEntity<ApiResponse<List<ConceptToolBinding>>> getConceptTools(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(conceptService.getConceptTools(id)));
     }
 

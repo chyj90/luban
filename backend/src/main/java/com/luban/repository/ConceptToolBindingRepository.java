@@ -10,6 +10,7 @@ public interface ConceptToolBindingRepository extends JpaRepository<ConceptToolB
     List<ConceptToolBinding> findByToolId(Long toolId);
     Optional<ConceptToolBinding> findByConceptIdAndToolIdAndBindingType(Long conceptId, Long toolId, String bindingType);
     List<ConceptToolBinding> findByConceptIdAndBindingType(Long conceptId, String bindingType);
+    List<ConceptToolBinding> findByToolIdAndBindingType(Long toolId, String bindingType);
     List<ConceptToolBinding> findByConceptIdIn(List<Long> conceptIds);
     void deleteByConceptIdIn(List<Long> conceptIds);
 }

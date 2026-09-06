@@ -223,14 +223,10 @@ export function createConceptFeedback(data: Partial<ConceptFeedback>) {
 export function createProblemFeedback(data: {
   sessionId: string;
   messageId: string;
-  pipelineId?: string;
   userDescription: string;
+  userQuestion?: string;
 }) {
   return post<ConceptFeedback>('/concept-feedback', data);
-}
-
-export function confirmConceptFeedback(id: number, confirmed: boolean) {
-  return put<ConceptFeedback>(`/concept-feedback/${id}/confirm`, { confirmed });
 }
 
 export function locateConceptFeedback(id: number) {
@@ -274,8 +270,16 @@ export function applyConceptFeedbackSuggestion(id: number, suggestionIndex: numb
   return post<Record<string, unknown>>(`/concept-feedback/${id}/apply-suggestion`, { suggestionIndex, reviewedBy });
 }
 
+export function applyAllConceptFeedbackSuggestions(id: number, reviewedBy: string) {
+  return post<Record<string, unknown>[]>(`/concept-feedback/${id}/apply-all-suggestions`, { reviewedBy });
+}
+
 export function ignoreConceptFeedback(id: number, data: { reviewedBy: string; reviewComment: string }) {
   return put<ConceptFeedback>(`/concept-feedback/${id}/ignore`, data);
+}
+
+export function deleteConceptFeedback(id: number) {
+  return del<void>(`/concept-feedback/${id}`);
 }
 
 export function getRoleConceptPermissions(roleId: number) {

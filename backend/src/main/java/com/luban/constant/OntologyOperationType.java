@@ -17,7 +17,7 @@ public enum OntologyOperationType {
             "{\"name\":\"概念名\",\"description\":\"描述\",\"industryId\":1,\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\">0触发CRITICAL告警\",\"groupName\":\"所属领域\",\"parentConceptName\":\"父概念名\"}",
             "新增概念"),
     ADD_MAPPING(2, true, "MAPPING", "mapping",
-            "{\"conceptName\":\"概念名\",\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct\",\"dataSourceId\":1}",
+            "{\"conceptName\":\"概念名\",\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct|computed\",\"computedExpr\":\"计算表达式(仅computed需要)\",\"dataSourceId\":1}",
             "新增概念映射"),
     ADD_JOIN_MAPPING(3, true, "JOIN_MAPPING", "joinMapping",
             "{\"conceptName\":\"概念名\",\"joinTable\":\"表B\",\"joinCondition\":\"表A.id = 表B.a_id\",\"relationType\":\"LEFT JOIN\",\"dataSourceId\":1,\"targetConcept\":\"表B对应的概念名\"}",
@@ -30,7 +30,7 @@ public enum OntologyOperationType {
             "{\"id\":1,\"name\":\"概念名\",\"description\":\"更新描述\",\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\"异常阈值说明\"}",
             "更新概念"),
     UPDATE_MAPPING(6, true, "MAPPING", "mapping",
-            "{\"mappingId\":1,\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct\",\"dataSourceId\":1}",
+            "{\"mappingId\":1,\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct|computed\",\"computedExpr\":\"计算表达式(仅computed需要)\",\"dataSourceId\":1}",
             "更新概念映射"),
     UPDATE_JOIN_MAPPING(7, true, "JOIN_MAPPING", "joinMapping",
             "{\"joinMappingId\":1,\"joinTable\":\"表名\",\"joinCondition\":\"连接条件\",\"relationType\":\"LEFT JOIN\"}",
@@ -135,6 +135,31 @@ public enum OntologyOperationType {
                 sb.append(inner).append("}");
             }
             sb.append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 生成反馈分析用的建议类型及参数说明（小写蛇形命名 + 扁平 params）。
+     * 用于 ConceptFeedbackService.buildAnalysisPrompt，避免维护两套格式。
+     */
+    public static String toFeedbackPromptFormat() {
+        StringBuilder sb = new StringBuilder();
+        int idx = 1;
+        for (OntologyOperationType t : values()) {
+            String lowerName = t.name().toLowerCase();
+            sb.append(idx).append(". **").append(lowerName).append("** — ").append(t.description).append("\n");
+
+            if (t.nested && t.dataKey != null) {
+                sb.append("   params: { \"").append(t.dataKey).append("\": ").append(t.jsonSchema).append(" }\n\n");
+            } else {
+                String inner = t.jsonSchema.trim();
+                if (inner.startsWith("{") && inner.endsWith("}")) {
+                    inner = inner.substring(1, inner.length() - 1);
+                }
+                sb.append("   params: { ").append(inner).append(" }\n\n");
+            }
+            idx++;
         }
         return sb.toString();
     }

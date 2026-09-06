@@ -4,7 +4,7 @@ import com.luban.dto.*;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.OntologyGroup;
-import com.luban.entity.ToolConcept;
+import com.luban.entity.ConceptToolBinding;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
@@ -13,7 +13,7 @@ import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptEmbeddingTaskRepository;
 import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyGroupRepository;
-import com.luban.repository.ToolConceptRepository;
+import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +35,7 @@ public class ConceptService {
     private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
     private final IndustryRelationRepository industryRelationRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
-    private final ToolConceptRepository toolConceptRepository;
+    private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final OntologyService ontologyService;
 
@@ -88,14 +88,14 @@ public class ConceptService {
         relations.addAll(conceptRelationRepository.findBySourceConceptId(id));
         relations.addAll(conceptRelationRepository.findByTargetConceptId(id));
 
-        List<ToolConcept> toolBindings = toolConceptRepository.findByConceptId(id);
+        List<ConceptToolBinding> toolBindings = conceptToolBindingRepository.findByConceptId(id);
 
         Map<Long, Concept> conceptMap = conceptRepository.findAll().stream()
                 .collect(Collectors.toMap(Concept::getId, c -> c));
 
         Map<Long, String> toolNameMap = new HashMap<>();
-        for (ToolConcept tc : toolBindings) {
-            toolDefinitionRepository.findById(tc.getToolId()).ifPresent(t -> toolNameMap.put(tc.getToolId(), t.getDisplayName()));
+        for (ConceptToolBinding ctb : toolBindings) {
+            toolDefinitionRepository.findById(ctb.getToolId()).ifPresent(t -> toolNameMap.put(ctb.getToolId(), t.getDisplayName()));
         }
 
         return ConceptDetailResponse.from(concept, relations, toolBindings, conceptMap, toolNameMap);
@@ -153,10 +153,7 @@ public class ConceptService {
             conceptRelationRepository.deleteAll(relations);
         }
 
-        List<ToolConcept> bindings = toolConceptRepository.findByConceptIdIn(ids);
-        if (!bindings.isEmpty()) {
-            toolConceptRepository.deleteAll(bindings);
-        }
+        conceptToolBindingRepository.deleteByConceptIdIn(ids);
 
         conceptRepository.deleteAllById(ids);
     }
@@ -329,29 +326,31 @@ public class ConceptService {
     }
 
     @Transactional(readOnly = true)
-    public List<ToolConcept> getToolConcepts(Long toolId) {
-        return toolConceptRepository.findByToolId(toolId);
+    public List<ConceptToolBinding> getToolConcepts(Long toolId) {
+        return conceptToolBindingRepository.findByToolId(toolId);
     }
 
     @Transactional
-    public ToolConcept bindToolConcept(Long toolId, CreateToolConceptRequest request) {
-        ToolConcept binding = new ToolConcept();
+    public ConceptToolBinding bindToolConcept(Long toolId, CreateToolConceptBindingRequest request) {
+        ConceptToolBinding binding = new ConceptToolBinding();
         binding.setToolId(toolId);
         binding.setConceptId(request.getConceptId());
-        binding.setRelation(request.getRelation());
-        ToolConcept saved = toolConceptRepository.save(binding);
+        binding.setBindingType(request.getBindingType());
+        binding.setIsDefault(request.getIsDefault() != null ? request.getIsDefault() : false);
+        binding.setConfig(request.getConfig());
+        ConceptToolBinding saved = conceptToolBindingRepository.save(binding);
         ontologyService.reload();
         return saved;
     }
 
     @Transactional
     public void unbindToolConcept(Long bindId) {
-        toolConceptRepository.deleteById(bindId);
+        conceptToolBindingRepository.deleteById(bindId);
         ontologyService.reload();
     }
 
     @Transactional(readOnly = true)
-    public List<ToolConcept> getConceptTools(Long conceptId) {
-        return toolConceptRepository.findByConceptId(conceptId);
+    public List<ConceptToolBinding> getConceptTools(Long conceptId) {
+        return conceptToolBindingRepository.findByConceptId(conceptId);
     }
 }

@@ -2,7 +2,7 @@ package com.luban.dto;
 
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
-import com.luban.entity.ToolConcept;
+import com.luban.entity.ConceptToolBinding;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -36,12 +36,13 @@ public class ConceptDetailResponse {
         private Long id;
         private Long toolId;
         private String toolName;
-        private String relation;
+        private String bindingType;
+        private Boolean isDefault;
     }
 
     public static ConceptDetailResponse from(Concept concept,
                                               List<ConceptRelation> relations,
-                                              List<ToolConcept> toolBindings,
+                                              List<ConceptToolBinding> toolBindings,
                                               java.util.Map<Long, Concept> conceptMap,
                                               java.util.Map<Long, String> toolNameMap) {
         ConceptDetailResponse resp = new ConceptDetailResponse();
@@ -67,12 +68,13 @@ public class ConceptDetailResponse {
             resp.getRelations().add(ri);
         }
 
-        for (ToolConcept tc : toolBindings) {
+        for (ConceptToolBinding ctb : toolBindings) {
             ToolBindingInfo tbi = new ToolBindingInfo();
-            tbi.setId(tc.getId());
-            tbi.setToolId(tc.getToolId());
-            tbi.setToolName(toolNameMap.getOrDefault(tc.getToolId(), "ID:" + tc.getToolId()));
-            tbi.setRelation(tc.getRelation());
+            tbi.setId(ctb.getId());
+            tbi.setToolId(ctb.getToolId());
+            tbi.setToolName(toolNameMap.getOrDefault(ctb.getToolId(), "ID:" + ctb.getToolId()));
+            tbi.setBindingType(ctb.getBindingType());
+            tbi.setIsDefault(ctb.getIsDefault());
             resp.getToolBindings().add(tbi);
         }
 

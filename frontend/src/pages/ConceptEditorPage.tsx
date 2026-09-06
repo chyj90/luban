@@ -1149,7 +1149,7 @@ export default function ConceptEditorPage() {
     try {
       await bindToolConcept(selectedToolId, {
         conceptId: selectedConcept.id,
-        relation: selectedToolRelation,
+        bindingType: selectedToolRelation,
       });
       toast('工具绑定成功', 'success');
       setShowToolPicker(false);
@@ -1684,10 +1684,10 @@ export default function ConceptEditorPage() {
                 {selectedTools.length > 0 && <span className="sidebarCardBadge">{selectedTools.length}</span>}
               </div>
               <div className="sidebarCardSubTitle">生产概念的工具</div>
-              {selectedTools.filter((t) => t.relation === 'PRODUCES').length === 0 ? (
+              {selectedTools.filter((t) => t.bindingType === 'PRODUCES').length === 0 ? (
                 <div className="emptyHint">暂无</div>
               ) : (
-                selectedTools.filter((t) => t.relation === 'PRODUCES').map((tb) => (
+                selectedTools.filter((t) => t.bindingType === 'PRODUCES').map((tb) => (
                   <div key={tb.id} className="sidebarItem">
                     <div className="sidebarItemMain">
                       <span className="sidebarItemTag" style={{ background: '#52c41a' }}>生产</span>
@@ -1698,10 +1698,10 @@ export default function ConceptEditorPage() {
                 ))
               )}
               <div className="sidebarCardSubTitle">消费概念的工具</div>
-              {selectedTools.filter((t) => t.relation === 'CONSUMES').length === 0 ? (
+              {selectedTools.filter((t) => t.bindingType === 'CONSUMES').length === 0 ? (
                 <div className="emptyHint">暂无</div>
               ) : (
-                selectedTools.filter((t) => t.relation === 'CONSUMES').map((tb) => (
+                selectedTools.filter((t) => t.bindingType === 'CONSUMES').map((tb) => (
                   <div key={tb.id} className="sidebarItem">
                     <div className="sidebarItemMain">
                       <span className="sidebarItemTag" style={{ background: '#1677ff' }}>消费</span>

@@ -24,7 +24,7 @@ public class ContextBuilder {
     private final ConceptRepository conceptRepository;
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
-    private final ToolConceptRepository toolConceptRepository;
+    private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final DatasourceService datasourceService;
     private final RoleConceptPermissionService roleConceptPermissionService;
@@ -199,8 +199,8 @@ public class ContextBuilder {
                 }
             }
             if (!conceptIds.isEmpty()) {
-                List<Long> toolIds = toolConceptRepository.findByConceptIdIn(conceptIds).stream()
-                        .map(ToolConcept::getToolId).distinct().collect(Collectors.toList());
+                List<Long> toolIds = conceptToolBindingRepository.findByConceptIdIn(conceptIds).stream()
+                        .map(ConceptToolBinding::getToolId).distinct().collect(Collectors.toList());
                 if (!toolIds.isEmpty()) {
                     for (ToolDefinition t : toolDefinitionRepository.findAllById(toolIds)) {
                         if (apiTools.stream().noneMatch(e -> e.getId().equals(t.getId()))) {
@@ -385,8 +385,8 @@ public class ContextBuilder {
                 result.put("tableMappings", mappings);
                 List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptIdIn(new ArrayList<>(currentConceptIds));
                 result.put("joinMappings", joins);
-                List<Long> toolIds = toolConceptRepository.findByConceptIdIn(new ArrayList<>(currentConceptIds))
-                        .stream().map(ToolConcept::getToolId).distinct().collect(Collectors.toList());
+                List<Long> toolIds = conceptToolBindingRepository.findByConceptIdIn(new ArrayList<>(currentConceptIds))
+                        .stream().map(ConceptToolBinding::getToolId).distinct().collect(Collectors.toList());
                 if (!toolIds.isEmpty()) result.put("apiTools", toolDefinitionRepository.findAllById(toolIds));
                 return result;
             }
@@ -587,6 +587,11 @@ public class ContextBuilder {
             sb.append("用户想查数据、分析指标、下钻根因。请使用 tool_call/nl2sql/code_mode/final_answer 完成查询。\n");
             sb.append("final_answer 必须展示证据链：先列出执行的 SQL 与关键查询结果，再给出结论。\n");
             sb.append("禁止不引用任何查询数据就直接输出答案。\n");
+            sb.append("【强制】当前为数据查询意图，禁止输出 ontology_action。如果发现概念缺失或映射不完整，用 final_answer 告知用户，**answer 字段必须包含具体缺失细节**：\n");
+            sb.append("- 缺概念：说明哪个概念不存在，如\"XX概念未配置\"\n");
+            sb.append("- 缺映射：说明概念存在但缺少表/列映射，如\"XX概念已存在，但未配置到任何数据表列的映射，无法按该维度筛选数据\"\n");
+            sb.append("- 缺数据：说明概念和映射都存在但列无数据，如\"XX概念已映射到某表某列，但该列无实际数据\"\n");
+            sb.append("禁止输出笼统的\"请联系管理员补充相关配置\"，必须让用户明确知道是缺概念、缺映射还是缺数据。以上XX和某表某列需替换为当前上下文中实际的概念名和映射信息。\n");
         }
         sb.append("\n");
 
@@ -819,7 +824,8 @@ public class ContextBuilder {
         sb.append("**情况 1 - 信息足够且全部有权限**：如果匹配的概念全部标记为 ✅，且表结构足够回答用户问题，请生成 SQL 或调用工具。\n\n");
         sb.append("**情况 2 - 信息足够但部分无权限**：如果匹配的概念中含有 🔒 标记，且这些概念对回答用户问题至关重要，请在 final_answer 中明确告知用户。不要对未授权概念生成 SQL。\n\n");
         sb.append("**情况 3 - 信息不足**：如果匹配的概念无法回答用户问题，请直接告知用户需要补充哪些信息。\n");
-        sb.append("   - 如果上方「可用的数据库表结构」显示「未找到与问题相关的表结构」，说明当前系统没有配置对应的数据映射，请使用 final_answer 告知用户。\n\n");
+        sb.append("   - 如果上方「可用的数据库表结构」显示「未找到与问题相关的表结构」，说明当前系统没有配置对应的数据映射，请使用 final_answer 告知用户。\n");
+        sb.append("   - **answer 必须具体说明缺失内容**：区分「概念不存在」「概念存在但缺映射」「概念和映射都存在但列无数据」三种情况，禁止笼统说\"请联系管理员补充相关配置\"。\n\n");
 
         sb.append("1. **调用 API 工具**：\n   ```json\n   {\"type\": \"tool_call\", \"reasoning\": \"...\", \"tool_call\": {\"name\": \"工具名\", \"arguments\": {...}}}\n   ```\n\n");
         sb.append("2. **生成 SQL 查询**：只能对标记为 ✅ 的表生成 SQL。\n");

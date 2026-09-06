@@ -37,6 +37,9 @@ public class ChatRootCause {
     @Column(name = "evidence", columnDefinition = "JSON")
     private String evidence;
 
+    @Column(name = "answer_type", length = 32)
+    private String answerType;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

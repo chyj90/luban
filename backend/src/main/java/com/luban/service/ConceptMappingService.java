@@ -671,11 +671,11 @@ public class ConceptMappingService {
                 m.setConfidence(confidence instanceof Number n ? BigDecimal.valueOf(n.doubleValue()) : BigDecimal.valueOf(0.8));
                 m.setIsAuto(true);
                 m.setIsRequired(item.get("isRequired") instanceof Boolean b ? b : false);
-                String key = m.getConceptId() + "-" + m.getAttributeName() + "-" + m.getDatasourceId();
+                String key = m.getConceptId() + "-" + m.getTableName() + "-" + m.getColumnName() + "-" + m.getDatasourceId();
                 if (mappingKeys.add(key)) {
                     allMappings.add(m);
                 } else {
-                    log.warn("[apply-auto-match] 跳过重复映射: conceptId={}, attributeName={}, datasourceId={}", m.getConceptId(), m.getAttributeName(), m.getDatasourceId());
+                    log.warn("[apply-auto-match] 跳过重复映射: conceptId={}, tableName={}, columnName={}, datasourceId={}", m.getConceptId(), m.getTableName(), m.getColumnName(), m.getDatasourceId());
                 }
             }
 

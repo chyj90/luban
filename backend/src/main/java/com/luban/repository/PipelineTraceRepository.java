@@ -6,4 +6,5 @@ import java.util.Optional;
 
 public interface PipelineTraceRepository extends JpaRepository<PipelineTrace, Long> {
     Optional<PipelineTrace> findByPipelineId(String pipelineId);
+    Optional<PipelineTrace> findByMessageId(String messageId);
 }

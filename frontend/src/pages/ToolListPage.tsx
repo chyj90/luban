@@ -54,6 +54,7 @@ export default function ToolListPage() {
   const [allConcepts, setAllConcepts] = useState<Concept[]>([]);
   const [selectedConceptId, setSelectedConceptId] = useState<number | null>(null);
   const [selectedBindRelation, setSelectedBindRelation] = useState('PRODUCES');
+  const [selectedBindIsDefault, setSelectedBindIsDefault] = useState(false);
   const [activeTab, setActiveTab] = useState<'tools' | 'datasources'>('tools');
   const [dsList, setDsList] = useState<Datasource[]>([]);
   const [dsShowForm, setDsShowForm] = useState(false);
@@ -652,7 +653,7 @@ export default function ToolListPage() {
   const handleBindConcept = async () => {
     if (!bindingTool || !selectedConceptId) return;
     try {
-      await bindToolConcept(bindingTool.id, { conceptId: selectedConceptId, relation: selectedBindRelation });
+      await bindToolConcept(bindingTool.id, { conceptId: selectedConceptId, bindingType: selectedBindRelation, isDefault: selectedBindIsDefault });
       toast('绑定成功', 'success');
       const res = await getToolConcepts(bindingTool.id);
       setConceptBindings(res.data);
@@ -1556,8 +1557,8 @@ export default function ToolListPage() {
                   return (
                     <div key={tb.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 6 }}>
                       <div>
-                        <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 3, marginRight: 8, color: '#fff', background: tb.relation === 'PRODUCES' ? '#52c41a' : '#1677ff' }}>
-                          {tb.relation === 'PRODUCES' ? '生产' : '消费'}
+                        <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 3, marginRight: 8, color: '#fff', background: tb.bindingType === 'PRODUCES' ? '#52c41a' : '#1677ff' }}>
+                          {tb.bindingType === 'PRODUCES' ? '生产' : '消费'}
                         </span>
                         <span style={{ fontSize: 13, color: '#333' }}>{conceptName}</span>
                       </div>

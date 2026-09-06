@@ -7,7 +7,7 @@ import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.IndustryRelation;
 import com.luban.entity.OntologyGroup;
-import com.luban.entity.ToolConcept;
+import com.luban.entity.ConceptToolBinding;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
@@ -15,7 +15,7 @@ import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyGroupRepository;
-import com.luban.repository.ToolConceptRepository;
+import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -46,7 +46,7 @@ public class OntologyService {
     private final ConceptRelationRepository conceptRelationRepository;
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
-    private final ToolConceptRepository toolConceptRepository;
+    private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final OntologyGroupRepository groupRepository;
     private final IndustryRelationRepository industryRelationRepository;
@@ -65,7 +65,7 @@ public class OntologyService {
                            ConceptRelationRepository conceptRelationRepository,
                            ConceptMappingRepository conceptMappingRepository,
                            ConceptJoinMappingRepository conceptJoinMappingRepository,
-                           ToolConceptRepository toolConceptRepository,
+                           ConceptToolBindingRepository conceptToolBindingRepository,
                            ToolDefinitionRepository toolDefinitionRepository,
                            OntologyGroupRepository groupRepository,
                            IndustryRelationRepository industryRelationRepository) {
@@ -73,7 +73,7 @@ public class OntologyService {
         this.conceptRelationRepository = conceptRelationRepository;
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
-        this.toolConceptRepository = toolConceptRepository;
+        this.conceptToolBindingRepository = conceptToolBindingRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.groupRepository = groupRepository;
         this.industryRelationRepository = industryRelationRepository;
@@ -254,9 +254,9 @@ public class OntologyService {
 
             Set<Long> consumedConceptIds = new HashSet<>();
             for (ToolDefinition tool : topK) {
-                List<ToolConcept> bindings = toolConceptRepository.findByToolIdAndRelation(tool.getId(), "CONSUMES");
-                for (ToolConcept tc : bindings) {
-                    consumedConceptIds.add(tc.getConceptId());
+                List<ConceptToolBinding> bindings = conceptToolBindingRepository.findByToolIdAndBindingType(tool.getId(), "CONSUMES");
+                for (ConceptToolBinding ctb : bindings) {
+                    consumedConceptIds.add(ctb.getConceptId());
                 }
             }
 
@@ -327,10 +327,10 @@ public class OntologyService {
 
             for (Long conceptId : expandedConceptIds) {
                 if (result.size() >= maxExpanded) break;
-                List<ToolConcept> producers = toolConceptRepository.findByConceptIdAndRelation(conceptId, "PRODUCES");
-                for (ToolConcept tc : producers) {
+                List<ConceptToolBinding> producers = conceptToolBindingRepository.findByConceptIdAndBindingType(conceptId, "PRODUCES");
+                for (ConceptToolBinding ctb : producers) {
                     if (result.size() >= maxExpanded) break;
-                    toolDefinitionRepository.findById(tc.getToolId()).ifPresent(result::add);
+                    toolDefinitionRepository.findById(ctb.getToolId()).ifPresent(result::add);
                 }
             }
 
@@ -415,9 +415,9 @@ public class OntologyService {
                 List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptId(conceptId);
                 joinMappings.addAll(joins);
 
-                List<ToolConcept> toolBindings = toolConceptRepository.findByConceptId(conceptId);
-                for (ToolConcept tc : toolBindings) {
-                    toolDefinitionRepository.findById(tc.getToolId()).ifPresent(td -> {
+                List<ConceptToolBinding> toolBindings = conceptToolBindingRepository.findByConceptId(conceptId);
+                for (ConceptToolBinding ctb : toolBindings) {
+                    toolDefinitionRepository.findById(ctb.getToolId()).ifPresent(td -> {
                         if (!"HTTP".equals(td.getToolType())) return;
                         boolean exists = apiTools.stream().anyMatch(t -> t.getId().equals(td.getId()));
                         if (!exists && apiTools.size() < MAX_API_TOOLS) {

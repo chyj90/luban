@@ -1,9 +1,9 @@
 package com.luban.controller;
 
 import com.luban.dto.ApiResponse;
-import com.luban.dto.CreateToolConceptRequest;
+import com.luban.dto.CreateToolConceptBindingRequest;
 import com.luban.dto.CreateToolRequest;
-import com.luban.entity.ToolConcept;
+import com.luban.entity.ConceptToolBinding;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.service.ConceptService;
@@ -60,13 +60,13 @@ public class ToolController {
     }
 
     @GetMapping("/{toolId}/concepts")
-    public ResponseEntity<ApiResponse<List<ToolConcept>>> getToolConcepts(@PathVariable Long toolId) {
+    public ResponseEntity<ApiResponse<List<ConceptToolBinding>>> getToolConcepts(@PathVariable Long toolId) {
         return ResponseEntity.ok(ApiResponse.ok(conceptService.getToolConcepts(toolId)));
     }
 
     @PostMapping("/{toolId}/concepts")
-    public ResponseEntity<ApiResponse<ToolConcept>> bindConcept(@PathVariable Long toolId,
-                                    @RequestBody CreateToolConceptRequest request) {
+    public ResponseEntity<ApiResponse<ConceptToolBinding>> bindConcept(@PathVariable Long toolId,
+                                    @RequestBody CreateToolConceptBindingRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(conceptService.bindToolConcept(toolId, request)));
     }

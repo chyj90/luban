@@ -402,6 +402,7 @@ public class AgentService {
             Object rootCause = finalAnswer.get("rootCause");
             Object suggestion = finalAnswer.get("suggestion");
             Object evidence = finalAnswer.get("evidence");
+            Object answerType = finalAnswer.get("answerType");
             if ((rootCause != null && !rootCause.toString().isEmpty())
                     || (suggestion != null && !suggestion.toString().isEmpty())
                     || (evidence instanceof List && !((List<?>) evidence).isEmpty())) {
@@ -411,6 +412,7 @@ public class AgentService {
                         .rootCause(rootCause != null ? rootCause.toString() : null)
                         .suggestion(suggestion != null ? suggestion.toString() : null)
                         .evidence(evidence != null ? objectMapper.writeValueAsString(evidence) : null)
+                        .answerType(answerType != null ? answerType.toString() : null)
                         .build();
                 chatRootCauseRepository.save(cr);
             }
@@ -472,6 +474,7 @@ public class AgentService {
             } catch (Exception e) {
                 rcm.put("evidence", List.of());
             }
+            rcm.put("answerType", cr.getAnswerType());
             rcMap.put(cr.getMessageId(), rcm);
         }
 
@@ -581,7 +584,10 @@ public class AgentService {
         graph.addNode("final_answer", buildFinalAnswerNode());
 
         graph.addEdge("__START__", "intent_recognition");
-        graph.addEdge("intent_recognition", "agent");
+        graph.addConditionalEdges("intent_recognition", buildIntentRouterEdge(), Map.of(
+                "agent", "agent",
+                "final_answer", "final_answer"
+        ));
 
         graph.addConditionalEdges("agent", buildRouterEdge(), Map.of(
                 "tool_call", "tool_executor",
@@ -601,6 +607,16 @@ public class AgentService {
         return graph.compile();
     }
 
+    private AsyncEdgeAction<AgentState> buildIntentRouterEdge() {
+        return (state) -> {
+            String intent = (String) state.data().getOrDefault("intent", "query");
+            if ("general".equals(intent)) {
+                return CompletableFuture.completedFuture("final_answer");
+            }
+            return CompletableFuture.completedFuture("agent");
+        };
+    }
+
     private AsyncNodeAction<AgentState> buildIntentRecognitionNode(AgentConfig config) {
         return (state) -> {
             Map<String, Object> data = new LinkedHashMap<>(state.data());
@@ -612,38 +628,54 @@ public class AgentService {
 
             boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
             String intent = "query";
-            if (isAdmin) {
-                String intentPrompt = "判断以下用户消息的意图，仅输出一个 JSON 对象，不要输出其他内容：\n"
-                        + "- 如果用户想查询数据、分析指标、下钻根因，输出 {\"intent\": \"query\"}\n"
-                        + "- 如果用户想配置本体（创建概念、添加映射、表连接、配置关系等），输出 {\"intent\": \"ontology\"}\n\n"
-                        + "用户消息：" + userQuery;
-                List<Map<String, Object>> intentMessages = new ArrayList<>();
-                intentMessages.add(Map.of("role", "system", "content", "你是一个意图分类器。只输出 JSON，不要输出任何其他内容。"));
-                intentMessages.add(Map.of("role", "user", "content", intentPrompt));
-                java.util.function.Consumer<String> savedCallback = STREAM_CALLBACK.get();
-                java.util.function.Consumer<String> savedReasoning = REASONING_CALLBACK.get();
-                STREAM_CALLBACK.set(null);
-                REASONING_CALLBACK.set(null);
+            String generalAnswer = null;
+
+            String intentPrompt = "判断以下用户消息的意图，仅输出一个 JSON 对象，不要输出其他内容：\n"
+                    + "- 如果用户想查询企业数据、分析指标、下钻根因，输出 {\"intent\": \"query\"}\n"
+                    + "- 如果用户想配置本体（创建概念、添加映射、表连接、配置关系等），输出 {\"intent\": \"ontology\"}\n"
+                    + "- 如果是寒暄、闲聊、常识问答等与企业数据无关的内容，输出 {\"intent\": \"general\", \"answer\": \"<你的回答>\"}\n\n"
+                    + "用户消息：" + userQuery;
+            List<Map<String, Object>> intentMessages = new ArrayList<>();
+            intentMessages.add(Map.of("role", "system", "content", "你是一个意图分类器。只输出 JSON，不要输出任何其他内容。"));
+            intentMessages.add(Map.of("role", "user", "content", intentPrompt));
+            java.util.function.Consumer<String> savedCallback = STREAM_CALLBACK.get();
+            java.util.function.Consumer<String> savedReasoning = REASONING_CALLBACK.get();
+            STREAM_CALLBACK.set(null);
+            REASONING_CALLBACK.set(null);
+            try {
+                String llmResponse = callLlm(config, intentMessages, null, isAdmin);
                 try {
-                    String llmResponse = callLlm(config, intentMessages, null, isAdmin);
-                    try {
-                        String cleaned = llmResponse.trim();
-                        if (cleaned.startsWith("```")) {
-                            cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
-                        }
-                        Map<String, Object> parsed = objectMapper.readValue(cleaned, new TypeReference<>() {});
-                        intent = (String) parsed.getOrDefault("intent", "query");
-                    } catch (Exception e) {
-                        log.warn("Intent recognition parse failed, defaulting to query: {}", e.getMessage());
+                    String cleaned = llmResponse.trim();
+                    if (cleaned.startsWith("```")) {
+                        cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
                     }
-                } finally {
-                    STREAM_CALLBACK.set(savedCallback);
-                    REASONING_CALLBACK.set(savedReasoning);
+                    Map<String, Object> parsed = objectMapper.readValue(cleaned, new TypeReference<>() {});
+                    intent = (String) parsed.getOrDefault("intent", "query");
+                    if ("general".equals(intent)) {
+                        generalAnswer = (String) parsed.getOrDefault("answer", "");
+                    }
+                } catch (Exception e) {
+                    log.warn("Intent recognition parse failed, defaulting to query: {}", e.getMessage());
                 }
+            } finally {
+                STREAM_CALLBACK.set(savedCallback);
+                REASONING_CALLBACK.set(savedReasoning);
             }
+
             data.put("intent", intent);
             data.put("iteration", 0);
-            sendProgress("正在分析您的需求...");
+
+            if ("general".equals(intent) && generalAnswer != null && !generalAnswer.isBlank()) {
+                data.put("next_action", "final_answer");
+                data.put("final_answer", generalAnswer);
+                data.put("answer_type", "general");
+                messages.add(Map.of("role", "assistant", "content", generalAnswer));
+                log.info("Intent recognition: general (short-circuit), userQuery={}", userQuery.length() > 50 ? userQuery.substring(0, 50) : userQuery);
+            } else {
+                sendProgress("正在分析您的需求...");
+                log.info("Intent recognition: {}, userQuery={}", intent, userQuery.length() > 50 ? userQuery.substring(0, 50) : userQuery);
+            }
+
             return CompletableFuture.completedFuture(data);
         };
     }
@@ -773,6 +805,17 @@ public class AgentService {
         agentDebug.info("[NORMAL_ITER] extracted {} JSONs, llmResponseLen={}", allJsons.size(), llmResponse.length());
         Map<String, Object> parsed;
         if (allJsons.isEmpty()) {
+            if (llmResponse.length() > 20 && !llmResponse.trim().startsWith("{")) {
+                log.warn("Agent iteration {}: LLM returned only reasoning/text without JSON action, requesting JSON output", iteration);
+                messages.add(Map.of("role", "system", "content",
+                        "你的上一轮回复只包含了思考过程，但没有输出任何 JSON 动作。请根据你的思考，输出一个 JSON 动作（nl2sql、final_answer 等），格式如：\n"
+                        + "{\"type\": \"nl2sql\", \"reasoning\": \"...\", \"sql\": \"...\", \"concept_ids\": [...]}\n"
+                        + "或\n"
+                        + "{\"type\": \"final_answer\", \"reasoning\": \"...\", \"answer\": \"...\", \"concept_ids\": [...]}"));
+                data.put("next_action", "continue");
+                data.put("iteration", iteration + 1);
+                return Map.of("type", "_no_json_continue");
+            }
             parsed = parseResponse(llmResponse);
             agentDebug.info("[NORMAL_ITER] allJsons EMPTY, parsed type={}", parsed.get("type"));
         } else {
@@ -809,7 +852,8 @@ public class AgentService {
                         "joinTable", ((ConceptJoinMapping) jm).getJoinTable())));
         data.put("_tableMappings", toMapList(unifiedContext.get("tableMappings"),
                 cm -> Map.of("conceptId", ((ConceptMapping) cm).getConceptId(),
-                        "tableName", ((ConceptMapping) cm).getTableName())));
+                        "tableName", ((ConceptMapping) cm).getTableName(),
+                        "columnName", ((ConceptMapping) cm).getColumnName())));
     }
 
     @SuppressWarnings("unchecked")
@@ -941,7 +985,9 @@ public class AgentService {
         log.info("Agent iteration {}: action type={}, preview={}",
                 iteration, type, parsed.toString().length() > 200 ? parsed.toString().substring(0, 200) : parsed.toString());
 
-        if ("final_answer".equals(type)) {
+        if ("_no_json_continue".equals(type)) {
+            log.info("Agent iteration {}: _no_json_continue, already set next_action=continue", iteration);
+        } else if ("final_answer".equals(type)) {
             routeFinalAnswer(data, messages, parsed);
         } else if ("tool_call".equals(type)) {
             routeToolCall(data, messages, parsed);
@@ -987,6 +1033,10 @@ public class AgentService {
         }
 
         String answer = (String) parsed.get("answer");
+        if (answer != null && isGenericMissingConfigAnswer(answer) && conceptIds != null && !conceptIds.isEmpty()) {
+            String enhanced = enhanceMissingConfigAnswer(answer, conceptIds, data);
+            if (enhanced != null) answer = enhanced;
+        }
         agentDebug.info("[ROUTE_FINAL] answerLen={}, answerPreview={}",
                 answer != null ? answer.length() : 0,
                 answer != null ? answer.substring(0, Math.min(300, answer.length())) : "null");
@@ -998,11 +1048,88 @@ public class AgentService {
         data.put("answer_type", parsed.getOrDefault("answer_type", ""));
         data.put("root_cause", parsed.getOrDefault("root_cause", ""));
         data.put("suggestion", parsed.getOrDefault("suggestion", ""));
-        data.put("evidence", parsed.getOrDefault("evidence", List.of()));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> llmEvidence = (List<Map<String, Object>>) parsed.getOrDefault("evidence", List.of());
+        if (!llmEvidence.isEmpty()) {
+            data.put("evidence", llmEvidence);
+        } else {
+            List<Map<String, Object>> autoEvidence = buildAutoEvidence(data);
+            data.put("evidence", autoEvidence);
+        }
         if (conceptIds != null) {
             data.put("recognized_concept_ids", conceptIds);
         }
         messages.add(Map.of("role", "assistant", "content", answer));
+    }
+
+    private boolean isGenericMissingConfigAnswer(String answer) {
+        if (answer == null) return false;
+        String lower = answer.toLowerCase();
+        return lower.contains("联系管理员补充") || lower.contains("补充相关配置")
+                || lower.contains("缺少相关配置") || lower.contains("无法查询该数据");
+    }
+
+    private String enhanceMissingConfigAnswer(String originalAnswer, List<Long> conceptIds,
+            Map<String, Object> data) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conceptTrace = (List<Map<String, Object>>)
+                data.getOrDefault("concept_trace", List.of());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tableMappings = (List<Map<String, Object>>)
+                data.getOrDefault("_tableMappings", List.of());
+        @SuppressWarnings("unchecked")
+        List<String> emptyEnumColumns = (List<String>) data.getOrDefault("_enum_empty_columns", List.of());
+        @SuppressWarnings("unchecked")
+        Map<String, List<String>> enumWhitelist = (Map<String, List<String>>)
+                data.getOrDefault("_enum_whitelist", Map.of());
+
+        Map<Long, String> traceNames = new LinkedHashMap<>();
+        for (Map<String, Object> ct : conceptTrace) {
+            Object cid = ct.get("conceptId");
+            Object cname = ct.get("conceptName");
+            if (cid instanceof Number && cname instanceof String) {
+                traceNames.put(((Number) cid).longValue(), (String) cname);
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (Long cid : conceptIds) {
+            String name = traceNames.getOrDefault(cid, "概念" + cid);
+            List<Map<String, Object>> mappings = tableMappings.stream()
+                    .filter(m -> cid.equals(m.get("conceptId")))
+                    .collect(Collectors.toList());
+
+            if (mappings.isEmpty()) {
+                sb.append("概念「").append(name).append("」（ID ").append(cid)
+                        .append("）已存在，但未配置到任何数据表列的映射，无法按该维度筛选数据。\n");
+            } else {
+                for (Map<String, Object> mapping : mappings) {
+                    String tableName = (String) mapping.get("tableName");
+                    String columnName = (String) mapping.get("columnName");
+                    String key = (tableName != null && columnName != null) ? tableName + "." + columnName : null;
+
+                    sb.append("概念「").append(name).append("」（ID ").append(cid).append("）已映射到 ");
+                    sb.append(tableName != null ? tableName : "?");
+                    if (columnName != null) sb.append(".").append(columnName);
+
+                    if (key != null && emptyEnumColumns.contains(key)) {
+                        sb.append("，但该列**无实际数据**（数据缺失，非配置缺失）。\n");
+                    } else if (key != null && enumWhitelist.containsKey(key)) {
+                        List<String> values = enumWhitelist.get(key);
+                        if (values.isEmpty()) {
+                            sb.append("，但该列**无实际数据**（数据缺失，非配置缺失）。\n");
+                        } else {
+                            sb.append("，该列现有值：").append(values).append("。\n");
+                        }
+                    } else {
+                        sb.append("，尚未通过 get_enum_values 验证该列是否有数据。\n");
+                    }
+                }
+            }
+        }
+
+        if (sb.length() == 0) return null;
+        return sb.toString();
     }
 
     private String validateComputedFromChannels(List<Long> conceptIds, List<Map<String, Object>> messages) {
@@ -1088,6 +1215,56 @@ public class AgentService {
         return sb.toString();
     }
 
+    private List<Map<String, Object>> buildAutoEvidence(Map<String, Object> data) {
+        List<Map<String, Object>> evidence = new ArrayList<>();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nl2sql = (Map<String, Object>) data.get("nl2sql");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> queryResult = (Map<String, Object>) data.get("query_result");
+        if (nl2sql == null || queryResult == null) {
+            return evidence;
+        }
+        String sql = (String) nl2sql.get("sql");
+        if (sql == null || sql.isBlank()) {
+            return evidence;
+        }
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("step", 1);
+        ev.put("dimension", "数据查询");
+        ev.put("sql", sql);
+        String error = (String) queryResult.get("error");
+        if (error != null && !error.isBlank()) {
+            ev.put("finding", "查询失败: " + error);
+            ev.put("anomaly", true);
+        } else {
+            Object rowCountObj = queryResult.getOrDefault("rowCount", 0);
+            int rowCount = rowCountObj instanceof Number ? ((Number) rowCountObj).intValue() : 0;
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) queryResult.getOrDefault("rows", List.of());
+            if (!rows.isEmpty()) {
+                StringBuilder finding = new StringBuilder("查询结果 " + rowCount + " 行: ");
+                int limit = Math.min(rows.size(), 3);
+                for (int i = 0; i < limit; i++) {
+                    if (i > 0) finding.append("; ");
+                    Map<String, Object> row = rows.get(i);
+                    boolean first = true;
+                    for (Map.Entry<String, Object> e : row.entrySet()) {
+                        if (!first) finding.append(", ");
+                        finding.append(e.getKey()).append("=").append(e.getValue());
+                        first = false;
+                    }
+                }
+                if (rows.size() > 3) finding.append(" ...");
+                ev.put("finding", finding.toString());
+            } else {
+                ev.put("finding", "查询返回 0 行");
+                ev.put("anomaly", true);
+            }
+        }
+        evidence.add(ev);
+        return evidence;
+    }
+
     private void routeToolCall(Map<String, Object> data, List<Map<String, Object>> messages,
             Map<String, Object> parsed) {
         @SuppressWarnings("unchecked")
@@ -1139,6 +1316,20 @@ public class AgentService {
             return;
         }
 
+        String emptyColumnError = validateEmptyEnumColumns(sql, data);
+        if (emptyColumnError != null) {
+            messages.add(Map.of("role", "system", "content", emptyColumnError));
+            data.put("next_action", "continue");
+            return;
+        }
+
+        String enumNotCheckedError = validateEnumCheckRequired(sql, data);
+        if (enumNotCheckedError != null) {
+            messages.add(Map.of("role", "system", "content", enumNotCheckedError));
+            data.put("next_action", "continue");
+            return;
+        }
+
         if (hasDateFilter(sql) && !Boolean.TRUE.equals(data.get("_date_range_queried"))) {
             messages.add(Map.of("role", "system", "content",
                     "SQL 包含日期过滤条件，但尚未执行日期范围查询。请先执行 SELECT MIN(日期列), MAX(日期列) FROM 表名 确认日期范围，再重新生成正式查询 SQL。"));
@@ -1168,6 +1359,89 @@ public class AgentService {
         return (lower.contains("min(") || lower.contains("max("))
                 && java.util.regex.Pattern.compile("\\b(date|time|dt|day|month|year)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
                         .matcher(lower).find();
+    }
+
+    private String validateEnumCheckRequired(String sql, Map<String, Object> data) {
+        if (sql == null) return null;
+
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "(?i)\\b(\\w+)\\s*(!?=)\\s*'([^']+)'");
+        java.util.regex.Matcher matcher = pattern.matcher(sql);
+        List<String> stringValues = new ArrayList<>();
+        while (matcher.find()) {
+            String value = matcher.group(3);
+            if (!value.matches("\\d+")) {
+                stringValues.add(value);
+            }
+        }
+        if (stringValues.isEmpty()) return null;
+
+        @SuppressWarnings("unchecked")
+        Map<String, List<String>> whitelist = (Map<String, List<String>>) data.get("_enum_whitelist");
+        @SuppressWarnings("unchecked")
+        List<String> emptyColumns = (List<String>) data.get("_enum_empty_columns");
+        boolean enumChecked = (whitelist != null && !whitelist.isEmpty())
+                || (emptyColumns != null && !emptyColumns.isEmpty());
+        if (enumChecked) return null;
+
+        return "SQL 包含字符串等值条件（" + String.join(", ", stringValues) + "），"
+                + "但尚未执行 get_enum_values 验证这些值是否存在于对应列中。"
+                + "请先使用 get_enum_values 查询相关列的实际值，确认数据存在后再生成 SQL。"
+                + "禁止在未验证的情况下直接使用字符串右值。";
+    }
+
+    private String validateEmptyEnumColumns(String sql, Map<String, Object> data) {
+        if (sql == null) return null;
+        @SuppressWarnings("unchecked")
+        List<String> emptyColumns = (List<String>) data.get("_enum_empty_columns");
+        if (emptyColumns == null || emptyColumns.isEmpty()) return null;
+
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                "(\\w+)\\.(\\w+)\\s*=\\s*'[^']*'", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher matcher = pattern.matcher(sql);
+        List<String> violations = new ArrayList<>();
+        while (matcher.find()) {
+            String table = matcher.group(1);
+            String column = matcher.group(2);
+            String key = table + "." + column;
+            if (emptyColumns.contains(key)) {
+                violations.add(key);
+            }
+        }
+
+        if (violations.isEmpty()) return null;
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tableMappings = (List<Map<String, Object>>) data.get("_tableMappings");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conceptTrace = (List<Map<String, Object>>)
+                data.getOrDefault("concept_trace", List.of());
+
+        StringBuilder sb = new StringBuilder("SQL 引用了无实际数据的列，禁止执行：\n");
+        for (String key : violations) {
+            sb.append("- ").append(key).append("：该列经 get_enum_values 验证无任何数据\n");
+            if (tableMappings != null) {
+                for (Map<String, Object> mapping : tableMappings) {
+                    String tableName = (String) mapping.get("tableName");
+                    String columnName = (String) mapping.get("columnName");
+                    if (key.equalsIgnoreCase(tableName + "." + columnName)) {
+                        Object conceptId = mapping.get("conceptId");
+                        if (conceptId instanceof Number) {
+                            for (Map<String, Object> ct : conceptTrace) {
+                                if (conceptId.equals(ct.get("conceptId")) && ct.get("conceptName") instanceof String) {
+                                    sb.append("  对应概念：「").append(ct.get("conceptName")).append("」（ID ")
+                                            .append(conceptId).append("）\n");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        sb.append("这属于**数据缺失**而非配置缺失——概念和映射已存在，但数据库中该列无实际数据。\n");
+        sb.append("请使用 final_answer 告知用户具体缺失的数据列，不要尝试生成 SQL。");
+        return sb.toString();
     }
 
     private String validateJoinConditions(String sql, Map<String, Object> data) {
@@ -1255,7 +1529,7 @@ public class AgentService {
 
         if (!"ontology".equals(intent)) {
             data.put("next_action", "final_answer");
-            data.put("final_answer", "当前意图为数据查询，不允许直接生成本体变更。如需配置本体，请明确告知。");
+            data.put("final_answer", buildMissingConfigMessage(data, parsed));
             return;
         }
 
@@ -1280,6 +1554,88 @@ public class AgentService {
         data.put("pending_ontology_changes", changes);
         data.put("pending_ontology_tool_call_id", toolCallId);
         addAssistantToolCallMsg(messages, toolCallId, "ontology_advisor", Map.of("changes", changes.size()));
+    }
+
+    private String buildMissingConfigMessage(Map<String, Object> data, Map<String, Object> parsed) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conceptTrace = (List<Map<String, Object>>)
+                data.getOrDefault("concept_trace", List.of());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> tableMappings = (List<Map<String, Object>>)
+                data.getOrDefault("_tableMappings", List.of());
+
+        Map<Long, String> conceptNames = new LinkedHashMap<>();
+        for (Map<String, Object> ct : conceptTrace) {
+            Object cid = ct.get("conceptId");
+            Object cname = ct.get("conceptName");
+            if (cid instanceof Number && cname instanceof String) {
+                conceptNames.put(((Number) cid).longValue(), (String) cname);
+            }
+        }
+
+        List<?> parsedConceptIds = (List<?>) parsed.getOrDefault("concept_ids", List.of());
+        List<Long> requestedIds = parsedConceptIds.stream()
+                .filter(v -> v instanceof Number)
+                .map(v -> ((Number) v).longValue())
+                .collect(Collectors.toList());
+
+        @SuppressWarnings("unchecked")
+        Map<String, List<String>> enumWhitelist = (Map<String, List<String>>)
+                data.getOrDefault("_enum_whitelist", Map.of());
+        @SuppressWarnings("unchecked")
+        List<String> emptyEnumColumns = (List<String>) data.getOrDefault("_enum_empty_columns", List.of());
+
+        if (!requestedIds.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (Long cid : requestedIds) {
+                String name = conceptNames.getOrDefault(cid, "未知概念");
+                sb.append("概念「").append(name).append("」（ID ").append(cid).append("）");
+
+                List<Map<String, Object>> mappingsForConcept = tableMappings.stream()
+                        .filter(m -> cid.equals(m.get("conceptId")))
+                        .collect(Collectors.toList());
+
+                if (mappingsForConcept.isEmpty()) {
+                    sb.append("未配置数据映射（无表/列映射），属于**配置缺失**，请联系管理员补充映射。\n");
+                } else {
+                    for (Map<String, Object> mapping : mappingsForConcept) {
+                        String tableName = (String) mapping.get("tableName");
+                        String columnName = (String) mapping.get("columnName");
+                        String key = (tableName != null && columnName != null) ? tableName + "." + columnName : null;
+
+                        sb.append("已映射到 ").append(tableName != null ? tableName : "?");
+                        if (columnName != null) {
+                            sb.append(".").append(columnName);
+                        }
+
+                        if (key != null && emptyEnumColumns.contains(key)) {
+                            sb.append("，但该列**无实际数据**，属于数据缺失而非配置缺失。\n");
+                        } else if (key != null && enumWhitelist.containsKey(key)
+                                && enumWhitelist.get(key).isEmpty()) {
+                            sb.append("，但该列**无实际数据**，属于数据缺失而非配置缺失。\n");
+                        } else {
+                            sb.append("。");
+                            if (key != null && enumWhitelist.containsKey(key)) {
+                                List<String> values = enumWhitelist.get(key);
+                                sb.append(" 该列现有值：").append(values).append("。\n");
+                            } else {
+                                sb.append(" 未通过 get_enum_values 验证数据，可能存在数据缺失。\n");
+                            }
+                        }
+                    }
+                }
+            }
+            if (sb.length() > 0) {
+                return sb.toString();
+            }
+        }
+
+        if (!conceptNames.isEmpty()) {
+            return "当前查询涉及的概念已存在，但可能缺少有效的数据映射或数据。"
+                    + "请通过 get_enum_values 验证相关列是否有实际数据，或联系管理员确认数据源状态。";
+        }
+
+        return "当前无法查询该数据，可能缺少相关概念或数据映射配置，请联系管理员补充。";
     }
 
     private void routeRequestContext(Map<String, Object> data, List<Map<String, Object>> messages,
@@ -1381,6 +1737,9 @@ public class AgentService {
         @SuppressWarnings("unchecked")
         Map<String, List<String>> whitelist = (Map<String, List<String>>) data
                 .computeIfAbsent("_enum_whitelist", k -> new LinkedHashMap<>());
+        @SuppressWarnings("unchecked")
+        List<String> emptyColumns = (List<String>) data
+                .computeIfAbsent("_enum_empty_columns", k -> new ArrayList<>());
 
         StringBuilder result = new StringBuilder("以下是你请求的枚举列实际值（请严格使用这些值，不要自行编造）：\n\n");
         result.append("| 表 | 列 | 实际值 |\n");
@@ -1397,13 +1756,14 @@ public class AgentService {
             Long dsId = ((Number) dsIdObj).longValue();
             try {
                 Set<String> values = datasourceService.queryDistinctValues(dsId, table, column);
+                String key = table + "." + column;
                 if (values.isEmpty()) {
                     result.append("| `").append(table).append("` | `").append(column)
                             .append("` | (无数据) |\n");
+                    if (!emptyColumns.contains(key)) emptyColumns.add(key);
                 } else {
                     result.append("| `").append(table).append("` | `").append(column)
                             .append("` | ").append(values).append(" |\n");
-                    String key = table + "." + column;
                     whitelist.put(key, new ArrayList<>(values));
                 }
                 fetched++;
@@ -2465,18 +2825,19 @@ public class AgentService {
         if (isAdmin) {
             sb.append("你有六种方式回答用户问题：\n");
             sb.append("1. 调用 API 工具获取数据\n");
-            sb.append("2. 生成 SQL 查询数据库（仅限 SELECT）\n");
-            sb.append("3. 执行 Python 代码分析数据（code_mode）\n");
-            sb.append("4. 获取数据源表结构（get_table_schema，本体管理前置步骤，在生成本体变更前必须执行）\n");
-            sb.append("5. 获取枚举列实际值（get_enum_values，在 ontology_action 前必须执行，声明 JOIN 条件中会用到的枚举列，获取实际值）\n");
+            sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 和 ontology_action 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
+            sb.append("3. 生成 SQL 查询数据库（仅限 SELECT，**仅当 get_enum_values 确认所有右值列有数据时才执行**，禁止臆造右值）\n");
+            sb.append("4. 执行 Python 代码分析数据（code_mode）\n");
+            sb.append("5. 获取数据源表结构（get_table_schema，本体管理前置步骤，在生成本体变更前必须执行）\n");
             sb.append("6. 生成本体管理建议（ontology_action，仅超管可用，必须在 get_table_schema 和 get_enum_values 之后）\n");
             sb.append("7. 直接回答（final_answer）\n\n");
         } else {
-            sb.append("你有四种方式回答用户问题：\n");
+            sb.append("你有五种方式回答用户问题：\n");
             sb.append("1. 调用 API 工具获取数据\n");
-            sb.append("2. 生成 SQL 查询数据库（仅限 SELECT）\n");
-            sb.append("3. 执行 Python 代码分析数据（code_mode）\n");
-            sb.append("4. 直接回答（final_answer）\n\n");
+            sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
+            sb.append("3. 生成 SQL 查询数据库（仅限 SELECT，**仅当 get_enum_values 确认所有右值列有数据时才执行**，禁止臆造右值）\n");
+            sb.append("4. 执行 Python 代码分析数据（code_mode）\n");
+            sb.append("5. 直接回答（final_answer）\n\n");
         }
 
         sb.append("请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n");

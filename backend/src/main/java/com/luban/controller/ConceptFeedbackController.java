@@ -8,6 +8,8 @@ import com.luban.service.ConceptFeedbackService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -46,19 +48,11 @@ public class ConceptFeedbackController {
             @RequestBody Map<String, Object> body) {
         String sessionId = (String) body.get("sessionId");
         String messageId = (String) body.get("messageId");
-        String pipelineId = (String) body.get("pipelineId");
         String userDescription = (String) body.get("userDescription");
+        String userQuestion = (String) body.get("userQuestion");
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(feedbackService.createProblemFeedback(
-                        sessionId, messageId, pipelineId, userDescription)));
-    }
-
-    @PutMapping("/{id}/confirm")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<ConceptFeedback>> confirm(
-            @PathVariable Long id, @RequestBody Map<String, Object> body) {
-        boolean confirmed = Boolean.TRUE.equals(body.get("confirmed"));
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.confirm(id, confirmed)));
+                        sessionId, messageId, userDescription, userQuestion)));
     }
 
     @PostMapping("/{id}/locate")
@@ -73,6 +67,13 @@ public class ConceptFeedbackController {
             @PathVariable Long id, @RequestBody Map<String, String> body) {
         return ResponseEntity.ok(ApiResponse.ok(
                 feedbackService.ignore(id, body.get("reviewedBy"), body.get("reviewComment"))));
+    }
+
+    @DeleteMapping("/{id}")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
+        feedbackService.delete(id);
+        return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
     @PostMapping("/{id}/analyze")
@@ -95,7 +96,17 @@ public class ConceptFeedbackController {
             @PathVariable Long id, @RequestBody Map<String, Object> body) {
         int index = ((Number) body.getOrDefault("suggestionIndex", 0)).intValue();
         String reviewedBy = (String) body.get("reviewedBy");
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestion(id, index, reviewedBy)));
+        Long operatorId = getCurrentUserId();
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestion(id, index, reviewedBy, operatorId)));
+    }
+
+    @PostMapping("/{id}/apply-all-suggestions")
+    @RequirePermission(Permissions.CONNECT_CONCEPTS)
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> applyAllSuggestions(
+            @PathVariable Long id, @RequestBody Map<String, String> body) {
+        String reviewedBy = body.getOrDefault("reviewedBy", "system");
+        Long operatorId = getCurrentUserId();
+        return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestionChain(id, reviewedBy, operatorId)));
     }
 
     @PostMapping("/batch-analyze")
@@ -121,5 +132,13 @@ public class ConceptFeedbackController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> dashboard(
             @RequestParam(required = false) Long industryId) {
         return ResponseEntity.ok(ApiResponse.ok(feedbackService.dashboard(industryId)));
+    }
+
+    private Long getCurrentUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof com.luban.entity.User user) {
+            return user.getId();
+        }
+        return null;
     }
 }

@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "concept_mapping", uniqueConstraints = {
-    @UniqueConstraint(columnNames = {"concept_id", "attribute_name", "datasource_id"})
+    @UniqueConstraint(columnNames = {"concept_id", "table_name", "column_name", "datasource_id"})
 })
 @Data
 @NoArgsConstructor

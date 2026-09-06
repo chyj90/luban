@@ -9,6 +9,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { fixMarkdownTable } from '@/lib/markdown';
 import ConceptTracePanel from '@/components/ConceptTracePanel';
+import Select from '@/components/Select';
 import './AgentChatPage.css';
 
 const HISTORY_KEY = 'wenShu_chat_history';
@@ -65,15 +66,6 @@ interface Nl2sqlInfo {
   conceptIds: number[];
 }
 
-interface QueryResult {
-  executed: boolean;
-  data?: Record<string, unknown>[];
-  rowCount?: number;
-  truncated?: boolean;
-  columnNames?: string[];
-  error?: string;
-}
-
 interface DrillDimension {
   conceptId: number;
   dimension: string;
@@ -124,14 +116,13 @@ interface ChatMessage {
   reasoning?: string;
   thinking?: string;
   nl2sql?: Nl2sqlInfo;
-  queryResult?: QueryResult;
   usedConcepts?: { conceptId: number; conceptName: string }[];
   messageId?: string;
   drillDimensions?: DrillDimension[];
   ontologyChanges?: OntologyChangeEvent;
-  rootCause?: {
-    reasoning: string;
-    root_cause: {
+  analysisMeta?: {
+    answerType: string;
+    rootCause: {
       summary: string;
       items: Array<{
         entity: string;
@@ -154,23 +145,26 @@ interface ChatSession {
   updatedAt: string;
 }
 
-function parseRootCause(content: string | undefined): ChatMessage['rootCause'] {
+function parseAnalysisMeta(content: string | undefined): ChatMessage['analysisMeta'] {
   if (!content) return undefined;
   try {
-    const jsonMatch = content.match(/\{[\s\S]*"answer_type"\s*:\s*"root_cause"[\s\S]*\}/);
+    const jsonMatch = content.match(/\{[\s\S]*"answer_type"\s*:[\s\S]*\}/);
     if (!jsonMatch) return undefined;
     const parsed = JSON.parse(jsonMatch[0]);
-    if (parsed.answer_type === 'root_cause' && parsed.root_cause) {
+    const answerType = parsed.answer_type || '';
+    if (answerType) {
       const rc = parsed.root_cause;
       const isOldFormat = typeof rc === 'string';
       return {
-        reasoning: parsed.reasoning || '',
-        root_cause: isOldFormat
-          ? { summary: rc, items: [] }
-          : {
-              summary: rc.summary || '',
-              items: Array.isArray(rc.items) ? rc.items : [],
-            },
+        answerType,
+        rootCause: rc
+          ? (isOldFormat
+            ? { summary: rc, items: [] }
+            : {
+                summary: rc.summary || '',
+                items: Array.isArray(rc.items) ? rc.items : [],
+              })
+          : { summary: '', items: [] },
         evidence: parsed.evidence || [],
         suggestion: parsed.suggestion || '',
       };
@@ -199,6 +193,7 @@ export default function AgentChatPage() {
   const [feedbackState, setFeedbackState] = useState<Record<string, 'idle' | 'feedback_form' | 'submitted'>>({});
   const [feedbackDescription, setFeedbackDescription] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackUserQuestion, setFeedbackUserQuestion] = useState<string | null>(null);
   const [selectedDatasources, setSelectedDatasources] = useState<Record<number, Set<string>>>({});
   const [expandedDatasources, setExpandedDatasources] = useState<Set<number>>(new Set());
   const [confirmedDatasources, setConfirmedDatasources] = useState<Set<string>>(new Set());
@@ -238,9 +233,14 @@ export default function AgentChatPage() {
         nl2sql: item.nl2sql,
         conceptTrace: item.conceptTrace,
         selectDatasources: item.selectDatasources,
-        rootCause: item.rootCause ? {
-          reasoning: item.reasoning || '',
-          root_cause: item.rootCause.root_cause || { summary: '', items: [] },
+        analysisMeta: item.analysisMeta ? {
+          answerType: item.analysisMeta.answerType || '',
+          rootCause: item.analysisMeta.rootCause || { summary: '', items: [] },
+          evidence: item.analysisMeta.evidence || [],
+          suggestion: item.analysisMeta.suggestion || '',
+        } : item.rootCause ? {
+          answerType: item.rootCause.answerType || '',
+          rootCause: item.rootCause.root_cause || { summary: '', items: [] },
           evidence: item.rootCause.evidence || [],
           suggestion: item.rootCause.suggestion || '',
         } : undefined,
@@ -385,12 +385,6 @@ export default function AgentChatPage() {
       if (msg.nl2sql) {
         lines.push(`[SQL]`);
         lines.push(msg.nl2sql.sql);
-        if (msg.queryResult) {
-          lines.push(`查询结果: ${msg.queryResult.rowCount ?? 0} 行`);
-          if (msg.queryResult.error) {
-            lines.push(`错误: ${msg.queryResult.error}`);
-          }
-        }
         lines.push('');
       }
 
@@ -492,12 +486,12 @@ export default function AgentChatPage() {
     let streamReasoning: string | undefined;
     let streamThinking: string | undefined;
     let streamNl2sql: ChatMessage['nl2sql'] = undefined;
-    let streamQueryResult: ChatMessage['queryResult'] = undefined;
     let streamUsedConcepts: ChatMessage['usedConcepts'] = undefined;
     let streamDrillDimensions: ChatMessage['drillDimensions'] = undefined;
     let streamOntologyChanges: ChatMessage['ontologyChanges'] = undefined;
     let streamSelectDatasources: ChatMessage['selectDatasources'] = undefined;
     let streamMessageId: string | undefined;
+    let streamAnswerType: string | undefined;
     let streamRootCause: any = undefined;
     let streamSuggestion: string | undefined;
     let streamEvidence: RootCauseEvidence[] | undefined;
@@ -516,14 +510,13 @@ export default function AgentChatPage() {
                   reasoning: streamReasoning !== undefined ? streamReasoning : m.reasoning,
                   thinking: streamThinking !== undefined ? streamThinking : m.thinking,
                   nl2sql: streamNl2sql,
-                  queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
                   messageId: streamMessageId,
                   selectDatasources: streamSelectDatasources,
-                  rootCause: (streamRootCause || streamSuggestion || streamEvidence)
+                  analysisMeta: (streamRootCause || streamSuggestion || streamEvidence)
                     ? {
-                        reasoning: streamReasoning || '',
-                        root_cause: typeof streamRootCause === 'object' && streamRootCause !== null
+                        answerType: streamAnswerType || '',
+                        rootCause: typeof streamRootCause === 'object' && streamRootCause !== null
                           ? streamRootCause
                           : { summary: streamRootCause || '', items: [] },
                         evidence: streamEvidence || [],
@@ -572,9 +565,6 @@ export default function AgentChatPage() {
             case 'nl2sql':
               streamNl2sql = JSON.parse(data);
               break;
-            case 'query_result':
-              streamQueryResult = JSON.parse(data);
-              break;
             case 'used_concepts':
               streamUsedConcepts = JSON.parse(data);
               break;
@@ -593,6 +583,9 @@ export default function AgentChatPage() {
               try {
                 streamSelectDatasources = JSON.parse(data);
               } catch { /* ignore */ }
+              break;
+            case 'answer_type':
+              streamAnswerType = data;
               break;
             case 'root_cause':
               try {
@@ -653,20 +646,19 @@ export default function AgentChatPage() {
                   reasoning: streamReasoning !== undefined ? streamReasoning : m.reasoning,
                   thinking: streamThinking !== undefined ? streamThinking : m.thinking,
                   nl2sql: streamNl2sql,
-                  queryResult: streamQueryResult,
                   usedConcepts: streamUsedConcepts,
                   drillDimensions: streamDrillDimensions,
                   ontologyChanges: streamOntologyChanges,
-                  rootCause: (streamRootCause || streamSuggestion || streamEvidence)
+                  analysisMeta: (streamRootCause || streamSuggestion || streamEvidence)
                     ? {
-                        reasoning: streamReasoning || '',
-                        root_cause: typeof streamRootCause === 'object' && streamRootCause !== null
+                        answerType: streamAnswerType || '',
+                        rootCause: typeof streamRootCause === 'object' && streamRootCause !== null
                           ? streamRootCause
                           : { summary: streamRootCause || '', items: [] },
                         evidence: streamEvidence || [],
                         suggestion: streamSuggestion || '',
                       }
-                    : parseRootCause(streamContent),
+                    : parseAnalysisMeta(streamContent),
                   messageId: streamMessageId,
                   selectDatasources: streamSelectDatasources,
                 }
@@ -688,23 +680,26 @@ export default function AgentChatPage() {
     }
     setFeedbackSubmitting(true);
     try {
-      const pipeline = msg.conceptTrace?.find((t: ConceptTraceItem) => t.type === 'pipeline');
-      const pipelineId = (pipeline as { pipelineId?: string })?.pipelineId;
+      const msgIndex = messages.indexOf(msg);
+      const prevMsg = msgIndex > 0 ? messages[msgIndex - 1] : undefined;
+      const autoUserQuestion = prevMsg?.role === 'user' ? prevMsg.content : '';
+      const effectiveUserQuestion = feedbackUserQuestion || autoUserQuestion || undefined;
       await createProblemFeedback({
         sessionId: activeSessionId,
         messageId: msgId,
-        pipelineId,
         userDescription: feedbackDescription,
+        userQuestion: effectiveUserQuestion,
       });
       toast('感谢反馈', 'success');
       setFeedbackState(prev => ({ ...prev, [msgId]: 'submitted' }));
       setFeedbackDescription('');
+      setFeedbackUserQuestion(null);
     } catch {
       toast('反馈提交失败', 'error');
     } finally {
       setFeedbackSubmitting(false);
     }
-}, [activeSessionId, feedbackDescription, toast]);
+}, [activeSessionId, feedbackDescription, feedbackUserQuestion, messages, toast]);
 
   return (
     <div className="agent-chat">
@@ -926,36 +921,36 @@ export default function AgentChatPage() {
                     ) : (
                       <div className="agent-chat-message-content">{msg.content}</div>
                     )}
-                  {/* 根因分析 - 融入气泡内 */}
-                  {msg.rootCause && (msg.rootCause.root_cause?.summary || msg.rootCause.root_cause?.items?.length > 0 || msg.rootCause.evidence.length > 0 || msg.rootCause.suggestion) && (
-                    <div className="agent-chat-root-cause-inline">
-                      <div className="agent-chat-root-cause-inline-header">
+                  {/* 分析元数据 - 融入气泡内 */}
+                  {msg.analysisMeta && (msg.analysisMeta.rootCause?.summary || msg.analysisMeta.rootCause?.items?.length > 0 || msg.analysisMeta.evidence.length > 0 || msg.analysisMeta.suggestion) && (
+                    <div className="agent-chat-analysis-inline">
+                      <div className="agent-chat-analysis-inline-header">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <circle cx="12" cy="12" r="10" />
                           <line x1="12" y1="8" x2="12" y2="12" />
                           <line x1="12" y1="16" x2="12.01" y2="16" />
                         </svg>
-                        根因分析
+                        {msg.analysisMeta.answerType === 'root_cause' ? '根因分析' : '证据链'}
                       </div>
-                      <div className="agent-chat-root-cause-inline-body">
-                        {msg.rootCause.root_cause?.summary && (
-                          <div className="agent-chat-root-cause-inline-summary">
-                            {msg.rootCause.root_cause.summary}
+                      <div className="agent-chat-analysis-inline-body">
+                        {msg.analysisMeta.rootCause?.summary && (
+                          <div className="agent-chat-analysis-inline-summary">
+                            {msg.analysisMeta.rootCause.summary}
                           </div>
                         )}
-                        {msg.rootCause.root_cause?.items?.length > 0 && (
-                          <div className="agent-chat-root-cause-inline-items">
-                            {msg.rootCause.root_cause.items.map((item, i) => (
-                              <div key={i} className="agent-chat-root-cause-inline-item">
-                                <span className="agent-chat-root-cause-item-entity">{item.entity}</span>
-                                <span className="agent-chat-root-cause-item-finding">{item.finding}</span>
+                        {msg.analysisMeta.rootCause?.items?.length > 0 && (
+                          <div className="agent-chat-analysis-inline-items">
+                            {msg.analysisMeta.rootCause.items.map((item, i) => (
+                              <div key={i} className="agent-chat-analysis-inline-item">
+                                <span className="agent-chat-analysis-item-entity">{item.entity}</span>
+                                <span className="agent-chat-analysis-item-finding">{item.finding}</span>
                                 {item.evidence_refs && item.evidence_refs.length > 0 && (
-                                  <span className="agent-chat-root-cause-item-refs">
+                                  <span className="agent-chat-analysis-item-refs">
                                     {item.evidence_refs.map(r => `[${r}]`).join(' ')}
                                   </span>
                                 )}
                                 {item.detail && (
-                                  <span className="agent-chat-root-cause-item-detail" title={item.detail}>
+                                  <span className="agent-chat-analysis-item-detail" title={item.detail}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                       <circle cx="12" cy="12" r="10" />
                                       <line x1="12" y1="16" x2="12" y2="12" />
@@ -967,32 +962,31 @@ export default function AgentChatPage() {
                             ))}
                           </div>
                         )}
-                        {msg.rootCause.evidence.length > 0 && (
-                          <div className="agent-chat-root-cause-inline-evidence">
-                            <strong>证据链：</strong>
-                            {msg.rootCause.evidence.map((e, i) => (
-                              <div key={i} className="agent-chat-root-cause-inline-evidence-item">
-                                <span className="agent-chat-evidence-inline-round">[{e.step}] {e.dimension}</span>
-                                {e.anomaly && <span className="agent-chat-evidence-inline-anomaly">异常</span>}
-                                <span>{e.finding}</span>
+                        {msg.analysisMeta.evidence.length > 0 && (
+                          <div className="agent-chat-analysis-inline-evidence">
+                            {msg.analysisMeta.evidence.map((e, i) => (
+                              <div key={i} className="agent-chat-analysis-inline-evidence-item">
+                                <div className="agent-chat-evidence-kvr">
+                                  <span className="agent-chat-evidence-k">证据描述</span>
+                                  <span className="agent-chat-evidence-kv">{e.dimension}</span>
+                                </div>
                                 {e.sql && (
-                                  <span className="agent-chat-evidence-sql-badge">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <polyline points="16 18 22 12 16 6" />
-                                      <polyline points="8 6 2 12 8 18" />
-                                    </svg>
-                                    <span className="agent-chat-evidence-sql-tooltip">
-                                      <code>{e.sql}</code>
-                                    </span>
-                                  </span>
+                                  <div className="agent-chat-evidence-kvr">
+                                    <span className="agent-chat-evidence-v">SQL</span>
+                                    <code className="agent-chat-evidence-code">{e.sql}</code>
+                                  </div>
                                 )}
+                                <div className="agent-chat-evidence-kvr">
+                                  <span className="agent-chat-evidence-r">结果摘要</span>
+                                  <span className="agent-chat-evidence-rv">{e.finding}</span>
+                                </div>
                               </div>
                             ))}
                           </div>
                         )}
-                        {msg.rootCause.suggestion && (
-                          <div className="agent-chat-root-cause-inline-suggestion">
-                            <strong>建议：</strong>{msg.rootCause.suggestion}
+                        {msg.analysisMeta.suggestion && (
+                          <div className="agent-chat-analysis-inline-suggestion">
+                            <strong>建议：</strong>{msg.analysisMeta.suggestion}
                           </div>
                         )}
                       </div>
@@ -1074,7 +1068,7 @@ export default function AgentChatPage() {
                         </svg>
                         复制
                       </button>
-                      {msg.conceptTrace && msg.conceptTrace.length > 0 && (() => {
+                      {(msg.nl2sql || msg.reasoning || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary')) && (() => {
                         const msgId = msg.messageId || msg.id;
                         const state = feedbackState[msgId] || 'idle';
                         if (state === 'submitted') {
@@ -1085,38 +1079,6 @@ export default function AgentChatPage() {
                               </svg>
                               已反馈
                             </span>
-                          );
-                        }
-                        if (state === 'feedback_form') {
-                          return (
-                            <div className="agent-chat-feedback-form">
-                              <div className="agent-chat-feedback-label">描述你遇到的问题</div>
-                              <textarea
-                                className="agent-chat-feedback-input"
-                                value={feedbackDescription}
-                                onChange={(e) => setFeedbackDescription(e.target.value)}
-                                placeholder="例如：查询结果不对、概念匹配错误、SQL生成有误..."
-                                rows={3}
-                              />
-                              <div className="agent-chat-feedback-actions">
-                                <button
-                                  className="agent-chat-feedback-cancel"
-                                  onClick={() => {
-                                    setFeedbackState(prev => ({ ...prev, [msgId]: 'idle' }));
-                                    setFeedbackDescription('');
-                                  }}
-                                >
-                                  取消
-                                </button>
-                                <button
-                                  className="agent-chat-feedback-submit"
-                                  disabled={!feedbackDescription.trim() || feedbackSubmitting}
-                                  onClick={() => handleProblemFeedback(msg)}
-                                >
-                                  {feedbackSubmitting ? '提交中...' : '提交反馈'}
-                                </button>
-                              </div>
-                            </div>
                           );
                         }
                         return (
@@ -1136,6 +1098,98 @@ export default function AgentChatPage() {
                         )}
                       </div>
                     </div>
+                    {(msg.nl2sql || msg.reasoning || (msg.conceptTrace && msg.conceptTrace.length > 0 && msg.conceptTrace[0]?.type !== 'capability_summary')) && (() => {
+                      const msgId = msg.messageId || msg.id;
+                      const state = feedbackState[msgId] || 'idle';
+                      if (state !== 'feedback_form') return null;
+                      const prevMsg = messages[messages.indexOf(msg) - 1];
+                      const autoUserQuestion = prevMsg?.role === 'user' ? prevMsg.content : '';
+                      const displayUserQuestion = feedbackUserQuestion !== null ? feedbackUserQuestion : autoUserQuestion;
+                      const sessionUserMessages = messages.filter((m: ChatMessage) => m.role === 'user' && m.content?.trim());
+                      return (
+                        <div className="agent-chat-feedback-panel">
+                          <div className="agent-chat-feedback-panel-header">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            问题反馈
+                          </div>
+                          <div className="agent-chat-feedback-context">
+                            <div className="agent-chat-feedback-context-title">上下文预览</div>
+                            <div className="agent-chat-feedback-context-item">
+                              <span className="agent-chat-feedback-context-label">用户问题</span>
+                              <div className="agent-chat-feedback-user-question-select">
+                                <Select
+                                  value={displayUserQuestion}
+                                  onChange={(v) => setFeedbackUserQuestion(v)}
+                                  placeholder="选择关联问题"
+                                  options={[
+                                    ...(autoUserQuestion ? [{ value: autoUserQuestion, label: autoUserQuestion }] : []),
+                                    ...sessionUserMessages
+                                      .filter((m: ChatMessage) => m.content !== autoUserQuestion)
+                                      .map((m: ChatMessage) => ({ value: m.content, label: m.content })),
+                                  ]}
+                                />
+                              </div>
+                            </div>
+                            {msg.analysisMeta?.evidence && msg.analysisMeta.evidence.length > 0 && (
+                              <div className="agent-chat-feedback-context-item agent-chat-feedback-context-item-block">
+                                <span className="agent-chat-feedback-context-label">证据链</span>
+                                <div className="agent-chat-feedback-context-evidence">
+                                  {msg.analysisMeta.evidence.map((e, i) => (
+                                    <div key={i} className="agent-chat-feedback-context-evidence-step">
+                                      <div className="agent-chat-feedback-context-evidence-kvr">
+                                        <span className="agent-chat-feedback-context-evidence-k">证据描述</span>
+                                        <span className="agent-chat-feedback-context-evidence-kv">{e.dimension}</span>
+                                      </div>
+                                      {e.sql && (
+                                        <div className="agent-chat-feedback-context-evidence-kvr">
+                                          <span className="agent-chat-feedback-context-evidence-v">SQL</span>
+                                          <code className="agent-chat-feedback-context-evidence-code">{e.sql}</code>
+                                        </div>
+                                      )}
+                                      <div className="agent-chat-feedback-context-evidence-kvr">
+                                        <span className="agent-chat-feedback-context-evidence-r">结果摘要</span>
+                                        <span className="agent-chat-feedback-context-evidence-rv">{e.finding}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="agent-chat-feedback-input-area">
+                            <div className="agent-chat-feedback-input-label">描述你遇到的问题</div>
+                            <textarea
+                              className="agent-chat-feedback-textarea"
+                              value={feedbackDescription}
+                              onChange={(e) => setFeedbackDescription(e.target.value)}
+                              placeholder="例如：查询结果不对、概念匹配错误、SQL 生成有误、数据缺失..."
+                              rows={4}
+                              autoFocus
+                            />
+                          </div>
+                          <div className="agent-chat-feedback-actions">
+                            <button
+                              className="agent-chat-feedback-cancel"
+                              onClick={() => {
+                                setFeedbackState(prev => ({ ...prev, [msgId]: 'idle' }));
+                                setFeedbackDescription('');
+                              }}
+                            >
+                              取消
+                            </button>
+                            <button
+                              className="agent-chat-feedback-submit"
+                              disabled={!feedbackDescription.trim() || feedbackSubmitting}
+                              onClick={() => handleProblemFeedback(msg)}
+                            >
+                              {feedbackSubmitting ? '提交中...' : '提交反馈'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* 推理过程展开 */}
                     {(expandedSection[msg.id] === 'thinking' || msg.isStreaming) && (msg.thinking || msg.reasoning) && (
                       <div className="agent-chat-thinking-content">

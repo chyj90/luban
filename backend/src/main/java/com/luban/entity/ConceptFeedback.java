@@ -26,6 +26,9 @@ public class ConceptFeedback {
     @Column(name = "user_question", nullable = false, columnDefinition = "TEXT")
     private String userQuestion;
 
+    @Column(name = "llm_answer", columnDefinition = "TEXT")
+    private String llmAnswer;
+
     @Column(name = "reasoning", columnDefinition = "TEXT")
     private String reasoning;
 
