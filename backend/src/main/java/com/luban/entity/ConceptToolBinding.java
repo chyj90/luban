@@ -1,5 +1,6 @@
 package com.luban.entity;
 
+import com.luban.constant.BindingType;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -25,8 +26,9 @@ public class ConceptToolBinding {
     @Column(name = "tool_id", nullable = false)
     private Long toolId;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "binding_type", nullable = false, length = 32)
-    private String bindingType;
+    private BindingType bindingType;
 
     @Column(name = "is_default", nullable = false)
     private Boolean isDefault = false;

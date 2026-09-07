@@ -1,6 +1,7 @@
 package com.luban.controller;
 
 import com.luban.annotation.RequirePermission;
+import com.luban.constant.BindingType;
 import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.ConceptToolBinding;
@@ -11,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequiredArgsConstructor
@@ -18,10 +20,15 @@ public class ConceptToolBindingController {
 
     private final ConceptToolBindingService bindingService;
 
+    @GetMapping("/api/v1/binding-types")
+    public ResponseEntity<ApiResponse<List<Map<String, String>>>> listBindingTypes() {
+        return ResponseEntity.ok(ApiResponse.ok(BindingType.toList()));
+    }
+
     @GetMapping("/api/v1/concepts/{conceptId}/tool-bindings")
     @RequirePermission(Permissions.CONNECT_CONCEPTS)
     public ResponseEntity<ApiResponse<List<ConceptToolBinding>>> listByConcept(@PathVariable Long conceptId,
-            @RequestParam(required = false) String bindingType) {
+            @RequestParam(required = false) BindingType bindingType) {
         if (bindingType != null) {
             return ResponseEntity.ok(ApiResponse.ok(bindingService.listByConceptAndType(conceptId, bindingType)));
         }

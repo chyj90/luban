@@ -1,5 +1,6 @@
 package com.luban.dto;
 
+import com.luban.constant.BindingType;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.ConceptToolBinding;
@@ -36,7 +37,7 @@ public class ConceptDetailResponse {
         private Long id;
         private Long toolId;
         private String toolName;
-        private String bindingType;
+        private BindingType bindingType;
         private Boolean isDefault;
     }
 

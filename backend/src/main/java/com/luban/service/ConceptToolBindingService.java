@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.BindingType;
 import com.luban.entity.ConceptToolBinding;
 import com.luban.repository.ConceptToolBindingRepository;
 import lombok.RequiredArgsConstructor;
@@ -8,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @Slf4j
 @Service
@@ -28,7 +28,7 @@ public class ConceptToolBindingService {
     }
 
     @Transactional(readOnly = true)
-    public List<ConceptToolBinding> listByConceptAndType(Long conceptId, String bindingType) {
+    public List<ConceptToolBinding> listByConceptAndType(Long conceptId, BindingType bindingType) {
         return bindingRepository.findByConceptIdAndBindingType(conceptId, bindingType);
     }
 

@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.BindingType;
 import com.luban.constant.OntologyOperationType.BuiltinRelation;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
@@ -254,7 +255,7 @@ public class OntologyService {
 
             Set<Long> consumedConceptIds = new HashSet<>();
             for (ToolDefinition tool : topK) {
-                List<ConceptToolBinding> bindings = conceptToolBindingRepository.findByToolIdAndBindingType(tool.getId(), "CONSUMES");
+                List<ConceptToolBinding> bindings = conceptToolBindingRepository.findByToolIdAndBindingType(tool.getId(), BindingType.CONSUMES);
                 for (ConceptToolBinding ctb : bindings) {
                     consumedConceptIds.add(ctb.getConceptId());
                 }
@@ -327,7 +328,7 @@ public class OntologyService {
 
             for (Long conceptId : expandedConceptIds) {
                 if (result.size() >= maxExpanded) break;
-                List<ConceptToolBinding> producers = conceptToolBindingRepository.findByConceptIdAndBindingType(conceptId, "PRODUCES");
+                List<ConceptToolBinding> producers = conceptToolBindingRepository.findByConceptIdAndBindingType(conceptId, BindingType.PRODUCES);
                 for (ConceptToolBinding ctb : producers) {
                     if (result.size() >= maxExpanded) break;
                     toolDefinitionRepository.findById(ctb.getToolId()).ifPresent(result::add);

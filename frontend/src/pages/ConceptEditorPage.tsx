@@ -58,7 +58,7 @@ import {
   type OntologyChangeLog,
   getIndustryRelations,
 } from '@/api/concept';
-import { listToolDefinitions, listToolGroups } from '@/api/tool';
+import { listToolDefinitions, listToolGroups, fetchBindingTypes } from '@/api/tool';
 import { listDatasources } from '@/api/datasource';
 import type { Datasource } from '@/types/datasource';
 import type {
@@ -366,7 +366,8 @@ export default function ConceptEditorPage() {
   const [showToolPicker, setShowToolPicker] = useState(false);
   const [availableTools, setAvailableTools] = useState<{ id: number; displayName: string; description: string; groupId: number; groupName: string }[]>([]);
   const [selectedToolId, setSelectedToolId] = useState<number | null>(null);
-  const [selectedToolRelation, setSelectedToolRelation] = useState('PRODUCES');
+  const [selectedToolRelation, setSelectedToolRelation] = useState('');
+  const [bindingTypes, setBindingTypes] = useState<{ value: string; label: string; description: string }[]>([]);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string } | null>(null);
   const [treeMode, setTreeMode] = useState(false);
@@ -647,6 +648,12 @@ export default function ConceptEditorPage() {
       const map = new Map<number, string>();
       res.data.forEach((g) => map.set(g.id, g.name));
       setOwnerNameMap(map);
+    }).catch(() => {});
+    fetchBindingTypes().then((res) => {
+      setBindingTypes(res.data);
+      if (res.data.length > 0 && !selectedToolRelation) {
+        setSelectedToolRelation(res.data[0].value);
+      }
     }).catch(() => {});
   }, []);
 
@@ -1683,34 +1690,27 @@ export default function ConceptEditorPage() {
                 绑定工具
                 {selectedTools.length > 0 && <span className="sidebarCardBadge">{selectedTools.length}</span>}
               </div>
-              <div className="sidebarCardSubTitle">生产概念的工具</div>
-              {selectedTools.filter((t) => t.bindingType === 'PRODUCES').length === 0 ? (
-                <div className="emptyHint">暂无</div>
-              ) : (
-                selectedTools.filter((t) => t.bindingType === 'PRODUCES').map((tb) => (
-                  <div key={tb.id} className="sidebarItem">
-                    <div className="sidebarItemMain">
-                      <span className="sidebarItemTag" style={{ background: '#52c41a' }}>生产</span>
-                      <span className="sidebarItemText">{tb.toolName}</span>
-                    </div>
-                    <button className="sidebarItemRemove" onClick={() => handleUnbindTool(tb.id)}>×</button>
+              {bindingTypes.map((bt) => {
+                const items = selectedTools.filter((t) => t.bindingType === bt.value);
+                return (
+                  <div key={bt.value}>
+                    <div className="sidebarCardSubTitle">{bt.description}</div>
+                    {items.length === 0 ? (
+                      <div className="emptyHint">暂无</div>
+                    ) : (
+                      items.map((tb) => (
+                        <div key={tb.id} className="sidebarItem">
+                          <div className="sidebarItemMain">
+                            <span className="sidebarItemTag" style={{ background: '#52c41a' }}>{bt.label}</span>
+                            <span className="sidebarItemText">{tb.toolName}</span>
+                          </div>
+                          <button className="sidebarItemRemove" onClick={() => handleUnbindTool(tb.id)}>×</button>
+                        </div>
+                      ))
+                    )}
                   </div>
-                ))
-              )}
-              <div className="sidebarCardSubTitle">消费概念的工具</div>
-              {selectedTools.filter((t) => t.bindingType === 'CONSUMES').length === 0 ? (
-                <div className="emptyHint">暂无</div>
-              ) : (
-                selectedTools.filter((t) => t.bindingType === 'CONSUMES').map((tb) => (
-                  <div key={tb.id} className="sidebarItem">
-                    <div className="sidebarItemMain">
-                      <span className="sidebarItemTag" style={{ background: '#1677ff' }}>消费</span>
-                      <span className="sidebarItemText">{tb.toolName}</span>
-                    </div>
-                    <button className="sidebarItemRemove" onClick={() => handleUnbindTool(tb.id)}>×</button>
-                  </div>
-                ))
-              )}
+                );
+              })}
               <button className="sidebarAddBtn" onClick={handleOpenToolPicker}>+ 绑定工具</button>
             </div>
 
@@ -2085,10 +2085,7 @@ export default function ConceptEditorPage() {
               <label className="formLabel">绑定关系</label>
               <Select
                 value={selectedToolRelation}
-                options={[
-                  { value: 'PRODUCES', label: '生产该概念' },
-                  { value: 'CONSUMES', label: '消费该概念' },
-                ]}
+                options={bindingTypes.map((bt) => ({ value: bt.value, label: bt.description }))}
                 onChange={setSelectedToolRelation}
               />
             </div>

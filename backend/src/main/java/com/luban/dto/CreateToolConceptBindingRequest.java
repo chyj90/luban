@@ -1,6 +1,6 @@
 package com.luban.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import com.luban.constant.BindingType;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -8,8 +8,8 @@ import lombok.Data;
 public class CreateToolConceptBindingRequest {
     @NotNull
     private Long conceptId;
-    @NotBlank
-    private String bindingType;
+    @NotNull
+    private BindingType bindingType;
     private Boolean isDefault;
     private String config;
 }

@@ -22,6 +22,10 @@ export function fetchToolTypes() {
   return get<ToolTypeInfo[]>('/tools/types');
 }
 
+export function fetchBindingTypes() {
+  return get<ToolTypeInfo[]>('/binding-types');
+}
+
 export function createToolGroup(data: Partial<ToolGroup>) {
   return post<ToolGroup>('/tool-groups', data);
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes, fetchBindingTypes } from '@/api/tool';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { listDrivers, installDriver } from '@/api/driver';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
@@ -53,7 +53,8 @@ export default function ToolListPage() {
   const [conceptBindings, setConceptBindings] = useState<ToolConcept[]>([]);
   const [allConcepts, setAllConcepts] = useState<Concept[]>([]);
   const [selectedConceptId, setSelectedConceptId] = useState<number | null>(null);
-  const [selectedBindRelation, setSelectedBindRelation] = useState('PRODUCES');
+  const [selectedBindRelation, setSelectedBindRelation] = useState('');
+  const [bindingTypes, setBindingTypes] = useState<{ value: string; label: string; description: string }[]>([]);
   const [selectedBindIsDefault, setSelectedBindIsDefault] = useState(false);
   const [activeTab, setActiveTab] = useState<'tools' | 'datasources'>('tools');
   const [dsList, setDsList] = useState<Datasource[]>([]);
@@ -339,6 +340,12 @@ export default function ToolListPage() {
     fetchTools();
     fetchMcpServers();
     fetchToolTypes().then((res) => setToolTypes(res.data)).catch(() => {});
+    fetchBindingTypes().then((res) => {
+      setBindingTypes(res.data);
+      if (res.data.length > 0 && !selectedBindRelation) {
+        setSelectedBindRelation(res.data[0].value);
+      }
+    }).catch(() => {});
   }, [fetchGroupName, fetchTools, fetchMcpServers]);
 
   const fetchDatasources = useCallback(async () => {
@@ -1557,8 +1564,8 @@ export default function ToolListPage() {
                   return (
                     <div key={tb.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 6 }}>
                       <div>
-                        <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 3, marginRight: 8, color: '#fff', background: tb.bindingType === 'PRODUCES' ? '#52c41a' : '#1677ff' }}>
-                          {tb.bindingType === 'PRODUCES' ? '生产' : '消费'}
+                        <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 3, marginRight: 8, color: '#fff', background: '#52c41a' }}>
+                          {bindingTypes.find((bt) => bt.value === tb.bindingType)?.label ?? tb.bindingType}
                         </span>
                         <span style={{ fontSize: 13, color: '#333' }}>{conceptName}</span>
                       </div>
@@ -1572,7 +1579,7 @@ export default function ToolListPage() {
               <label className="tool-form-label">添加绑定</label>
               <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                 <div style={{ flex: 1 }}><Select value={selectedConceptId ? String(selectedConceptId) : ''} options={[{ value: '', label: '选择概念' }, ...allConcepts.map((c) => ({ value: String(c.id), label: c.name }))]} onChange={(v) => setSelectedConceptId(v ? Number(v) : null)} /></div>
-                <div style={{ width: 120 }}><Select value={selectedBindRelation} options={[{ value: 'PRODUCES', label: '生产' }, { value: 'CONSUMES', label: '消费' }]} onChange={setSelectedBindRelation} /></div>
+                <div style={{ width: 120 }}><Select value={selectedBindRelation} options={bindingTypes.map((bt) => ({ value: bt.value, label: bt.label }))} onChange={setSelectedBindRelation} /></div>
                 <button className="tool-list-add-btn" onClick={handleBindConcept} disabled={!selectedConceptId}>绑定</button>
               </div>
             </div>

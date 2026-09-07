@@ -1,5 +1,6 @@
 package com.luban.service;
 
+import com.luban.constant.BindingType;
 import com.luban.entity.ConceptSnapshot;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
@@ -427,7 +428,7 @@ public class ConceptSnapshotService {
                     ConceptToolBinding ctb = new ConceptToolBinding();
                     ctb.setConceptId(newConceptId);
                     ctb.setToolId(toLong(tb.get("toolId")));
-                    ctb.setBindingType((String) tb.get("bindingType"));
+                    ctb.setBindingType(BindingType.fromValue((String) tb.get("bindingType")));
                     ctb.setIsDefault(tb.get("isDefault") != null ? (Boolean) tb.get("isDefault") : false);
                     ctb.setConfig((String) tb.get("config"));
                     restoredToolBindings.add(ctb);
