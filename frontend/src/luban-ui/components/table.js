@@ -9,6 +9,7 @@
   var defaultConfig = {
     pageSize: 10,
     pageSizes: [10, 20, 50],
+    pagination: 'client',
     initialSort: null,
     emptyText: '暂无数据',
     loadingText: '加载中...',
@@ -28,10 +29,11 @@
     var pageSize = config.pageSize || defaultConfig.pageSize;
     var sortKey = config._sortKey || null;
     var sortDir = config._sortDir || 'asc';
+    var isServer = config.pagination === 'server';
 
     var rows = data.slice();
 
-    if (sortKey) {
+    if (sortKey && !isServer) {
       rows.sort(function(a, b) {
         var va = (String(a[sortKey] || '')).toLowerCase();
         var vb = (String(b[sortKey] || '')).toLowerCase();
@@ -50,8 +52,8 @@
       }
     });
 
-    var total = rows.length;
-    var paged = rows.slice((page - 1) * pageSize, page * pageSize);
+    var total = isServer ? (config.totalCount || 0) : rows.length;
+    var paged = isServer ? rows : rows.slice((page - 1) * pageSize, page * pageSize);
 
     _tbody.innerHTML = '';
 
@@ -85,7 +87,7 @@
         if (config.onRowClick) {
           tr.style.cursor = 'pointer';
           tr.addEventListener('click', function() {
-            config.onRowClick(row, (page - 1) * pageSize + rowIdx);
+            config.onRowClick(row, rowIdx);
           });
         }
         columns.forEach(function(col) {
@@ -104,11 +106,15 @@
 
     if (config._page !== page) {
       config._page = page;
-      renderPagination(container, config, total, page, pageSize);
+    }
+    if (config.pagination !== false) {
+      renderPagination(container, config, total, config._page, pageSize);
     }
   }
 
   function renderPagination(container, config, total, page, pageSize) {
+    if (config.pagination === false) return;
+
     var paginationEl = container.parentElement ? container.parentElement.querySelector('.luban-pagination') : null;
     if (!paginationEl) {
       paginationEl = container.nextElementSibling;
@@ -145,7 +151,11 @@
         var p = parseInt(this.getAttribute('data-page'));
         if (!isNaN(p) && p !== config._page) {
           config._page = p;
-          render(container, config);
+          if (config.pagination === 'server' && typeof config.onPageChange === 'function') {
+            config.onPageChange(p);
+          } else {
+            render(container, config);
+          }
         }
       });
     });
@@ -190,10 +200,25 @@
 
     render(container, config);
     return {
-      setData: function(data) {
+      getData: function() {
+        return config.data || [];
+      },
+      getSelectedData: function() {
+        return config._selectedRows || [];
+      },
+      setData: function(data, totalCount) {
         config.data = data;
         config._loading = false;
-        config._page = 1;
+        if (config.pagination !== 'server') {
+          config._page = 1;
+        }
+        if (totalCount !== undefined) {
+          config.totalCount = totalCount;
+        }
+        render(container, config);
+      },
+      setTotalCount: function(n) {
+        config.totalCount = n;
         render(container, config);
       },
       refresh: function() {

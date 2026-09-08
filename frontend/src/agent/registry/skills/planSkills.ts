@@ -11,6 +11,204 @@ function generateItemId(): string {
   return `pi-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+interface AnalysisPage {
+  name: string;
+  action: 'create' | 'update';
+  queries: Array<{ queryName: string; purpose: string; needsNewTable?: boolean; fields?: string; filterParams?: string }>;
+  apis: Array<{ apiName: string; purpose: string }>;
+  noDataNeeded?: boolean;
+  libraries?: string[];
+}
+
+interface AnalysisWorkflow {
+  description: string;
+  hasForm: boolean;
+  formDescription?: string;
+  hasWorkflow: boolean;
+  workflowDescription?: string;
+}
+
+interface AnalysisData {
+  title: string;
+  summary: string;
+  pages: AnalysisPage[];
+  workflows: AnalysisWorkflow[];
+  interactions?: string[];
+  analysisReport?: string;
+}
+
+interface ScoreDeduction {
+  rule: string;
+  points: number;
+  reason: string;
+}
+
+interface AnalysisScore {
+  total: number;
+  dimensions: {
+    moduleDetail: number;
+    interactionComplexity: number;
+    dataCoverage: number;
+    fieldSpecificity: number;
+  };
+  deductions: ScoreDeduction[];
+}
+
+function validateAnalysisBasics(analysis: AnalysisData): ScoreDeduction[] {
+  const deductions: ScoreDeduction[] = [];
+  const allPages = analysis.pages || [];
+
+  const report = analysis.analysisReport || '';
+  const hasFilterFields = /筛选字段[：:]/.test(report) && !/筛选字段[：:]\s*无/.test(report);
+
+  for (const page of allPages) {
+    for (const q of page.queries) {
+      if (q.needsNewTable && !q.fields) {
+        deductions.push({ rule: 'missing_fields', points: -8, reason: `查询 ${q.queryName} needsNewTable=true 但未填写 fields，请填写字段列表或改为 false` });
+      }
+      if (hasFilterFields && !q.filterParams) {
+        deductions.push({ rule: 'missing_filter_params', points: -10, reason: `查询 ${q.queryName} 未提供 filterParams，但分析报告中存在筛选字段。请声明筛选参数，DBA 会据此生成参数化 SQL` });
+      }
+    }
+  }
+
+  return deductions;
+}
+
+interface PlanItem {
+  id: string;
+  category: string;
+  description: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  dependencies: string[];
+}
+
+function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
+  const items: PlanItem[] = [];
+  let idCounter = 1;
+  const nextId = () => String(idCounter++);
+
+  const queryStepIds: string[] = [];
+  const tableQueryMap = new Map<string, { stepId: string; queryNames: string[] }>();
+
+  for (const page of analysis.pages) {
+    if (page.noDataNeeded) continue;
+    for (const q of page.queries) {
+      const key = q.fields || q.queryName;
+      const existing = tableQueryMap.get(key);
+      if (existing) {
+        if (!existing.queryNames.includes(q.queryName)) {
+          existing.queryNames.push(q.queryName);
+        }
+        continue;
+      }
+      const stepId = nextId();
+      const queryNames = [q.queryName];
+      tableQueryMap.set(key, { stepId, queryNames });
+      queryStepIds.push(stepId);
+
+      let desc = '';
+      if (q.needsNewTable && q.fields) {
+        desc += `需要新表（请人工建表），字段：${q.fields}。`;
+      }
+      desc += `创建查询 ${queryNames.join('、')}（用途：${q.purpose}）`;
+      if (q.filterParams) {
+        desc += `，筛选参数：${q.filterParams}`;
+      }
+
+      items.push({
+        id: stepId,
+        category: 'datasource',
+        description: desc,
+        toolName: 'delegate_query',
+        toolInput: {
+          requirement: desc,
+          query_name: queryNames[0],
+          filter_params: q.filterParams || undefined,
+        },
+        dependencies: [],
+      });
+    }
+  }
+
+  for (const page of analysis.pages) {
+    const stepId = nextId();
+    const isCreate = page.action === 'create';
+    const toolName = isCreate ? 'create_code_page' : 'update_code_page';
+    const deps = page.noDataNeeded ? [] : [...queryStepIds];
+
+    const queryNames = page.queries.map(q => q.queryName);
+    const apiNames = page.apis.map(a => a.apiName);
+    let desc = isCreate ? `创建页面「${page.name}」` : `更新页面「${page.name}」`;
+    if (queryNames.length > 0) {
+      desc += `，绑定查询 ${queryNames.join('、')}`;
+    }
+    if (apiNames.length > 0) {
+      desc += `，绑定 API ${apiNames.join('、')}`;
+    }
+    if (page.libraries && page.libraries.length > 0) {
+      desc += `，引入外部库 ${page.libraries.join('、')}`;
+    }
+
+    items.push({
+      id: stepId,
+      category: 'code_page',
+      description: desc,
+      toolName,
+      toolInput: { name: page.name },
+      dependencies: deps,
+    });
+  }
+
+  for (const wf of analysis.workflows) {
+    if (wf.hasForm) {
+      const stepId = nextId();
+      items.push({
+        id: stepId,
+        category: 'datasource',
+        description: wf.formDescription || `设计表单：${wf.description}`,
+        toolName: 'delegate_workflow',
+        toolInput: {
+          task_type: 'design_form',
+          requirement: wf.formDescription || wf.description,
+        },
+        dependencies: [],
+      });
+
+      if (wf.hasWorkflow) {
+        const wfStepId = nextId();
+        items.push({
+          id: wfStepId,
+          category: 'datasource',
+          description: wf.workflowDescription || `设计流程：${wf.description}`,
+          toolName: 'delegate_workflow',
+          toolInput: {
+            task_type: 'design_workflow',
+            requirement: wf.workflowDescription || wf.description,
+          },
+          dependencies: [stepId],
+        });
+      }
+    } else if (wf.hasWorkflow) {
+      const stepId = nextId();
+      items.push({
+        id: stepId,
+        category: 'datasource',
+        description: wf.workflowDescription || `设计流程：${wf.description}`,
+        toolName: 'delegate_workflow',
+        toolInput: {
+          task_type: 'design_workflow',
+          requirement: wf.workflowDescription || wf.description,
+        },
+        dependencies: [],
+      });
+    }
+  }
+
+  return items;
+}
+
 function buildPlanSummary(plan: {
   agentIcon?: string;
   agentName?: string;
@@ -66,7 +264,7 @@ const VALID_PLAN_TOOL_NAMES = new Set([
   'delegate_workflow',
 ]);
 
-function validatePlanItems(items: unknown[]): string | null {
+function validatePlanItems(items: unknown[], dataRequirements?: unknown[]): string | null {
   for (let i = 0; i < items.length; i++) {
     const item = items[i] as Record<string, unknown>;
     const toolName = item?.toolName as string | undefined;
@@ -74,84 +272,283 @@ function validatePlanItems(items: unknown[]): string | null {
       return `步骤 ${i + 1} 的 toolName "${toolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}`;
     }
   }
+
+  if (!dataRequirements || !Array.isArray(dataRequirements) || dataRequirements.length === 0) {
+    const hasPageStep = items.some((item) => {
+      const tn = (item as Record<string, unknown>)?.toolName as string;
+      return tn === 'create_code_page' || tn === 'update_code_page';
+    });
+    if (hasPageStep) {
+      return '计划中包含页面步骤但未提供 dataRequirements。' +
+        '请根据分析报告第 8 章「数据需求」补充 dataRequirements 参数，' +
+        '或确认所有页面均不需要数据加载（传入 noDataNeeded: true）。';
+    }
+    return null;
+  }
+
+  const hasPageStep = items.some((item) => {
+    const tn = (item as Record<string, unknown>)?.toolName as string;
+    return tn === 'create_code_page' || tn === 'update_code_page';
+  });
+
+  const pagesNeedingData = (dataRequirements as Record<string, unknown>[]).filter((r) => !r.noDataNeeded);
+  if (pagesNeedingData.length > 0 && !hasPageStep) {
+    const pageNames = pagesNeedingData.map((r) => r.pageName).join('、');
+    return `dataRequirements 声明了页面（${pageNames}）需要数据，但计划中没有 create_code_page 或 update_code_page 步骤。` +
+      '请添加页面创建/更新步骤。计划必须同时包含数据准备步骤和页面步骤。';
+  }
+
+  const hasDelegateQuery = items.some((item) => {
+    return (item as Record<string, unknown>)?.toolName === 'delegate_query';
+  });
+
+  for (const req of dataRequirements) {
+    const r = req as Record<string, unknown>;
+    const pageName = r.pageName as string;
+    const queries = (r.queries as unknown[]) || [];
+    const apis = (r.apis as unknown[]) || [];
+    const noDataNeeded = r.noDataNeeded as boolean;
+
+    if (noDataNeeded) continue;
+
+    if (queries.length > 0 && !hasDelegateQuery) {
+      const queryNames = queries.map((q) => (q as Record<string, unknown>).queryName).join('、');
+      return `页面「${pageName}」需要查询（${queryNames}），但计划中没有 delegate_query 步骤。` +
+        '请在页面步骤之前添加 delegate_query 步骤来准备数据。';
+    }
+
+    if (queries.length > 0 && hasDelegateQuery) {
+      const delegateQuerySteps = items.filter((item) => {
+        return (item as Record<string, unknown>)?.toolName === 'delegate_query';
+      });
+      for (const query of queries) {
+        const q = query as Record<string, unknown>;
+        const queryName = q.queryName as string;
+        const hasMatchingStep = delegateQuerySteps.some((step) => {
+          const desc = ((step as Record<string, unknown>)?.description as string) || '';
+          const toolInput = ((step as Record<string, unknown>)?.toolInput as Record<string, unknown>) || {};
+          const requirement = (toolInput.requirement as string) || '';
+          return desc.includes(queryName) || requirement.includes(queryName);
+        });
+        if (!hasMatchingStep) {
+          const needsNewTable = q.needsNewTable as boolean;
+          return `页面「${pageName}」需要查询「${queryName}」，但计划中没有对应的 delegate_query 步骤。` +
+            `请添加一个 delegate_query 步骤，requirement 中包含创建查询「${queryName}」${needsNewTable ? '（需新表，请提示用户先在数据源面板建表）' : ''}。`;
+        }
+      }
+    }
+  }
+
   return null;
 }
 
-export const planSkills: Record<string, SkillFactory> = {
-  'plan:create': () => ({
-    id: 'plan:create',
-    category: SkillCategory.PLAN,
-    name: 'create_plan',
-    description: `创建执行计划。分析完成后，将分析结果转化为可执行的步骤列表。
-计划创建后会展示给用户确认，用户确认后由主智能体执行。
+export function createPlanInternal(
+  title: string,
+  summary: string,
+  items: PlanItem[],
+  score?: AnalysisScore,
+  analysisReport?: string,
+): { planId: string; message: string } {
+  const store = useAgentStore.getState();
+  const planId = generatePlanId();
+  const plan = {
+    id: planId,
+    agentId: 'main-agent',
+    agentName: '主智能体',
+    agentIcon: '',
+    steps: items.map((item, index) => ({
+      id: item.id || generateItemId(),
+      description: item.description || '',
+      status: 'pending' as const,
+      order: index,
+      toolName: item.toolName,
+    })),
+    createdAt: Date.now(),
+    status: 'draft' as const,
+    score,
+    analysisReport,
+  };
+  store.addPlan(plan);
+  store.setStatus('idle');
+  upsertPlanMessage(planId);
 
-注意：
-- 需求不明确时不要创建计划，先向用户提问澄清
-- 计划必须覆盖用户提到的所有需求点
-- 计划步骤应按执行顺序排列`,
+  let message = `计划「${title}」已创建，计划 ID: ${planId}，共 ${items.length} 个步骤，等待用户确认。`;
+  const activePlans = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing');
+  if (activePlans.length > 0) {
+    const activeList = activePlans.map((p: unknown) => {
+      const doneCount = p.steps.filter((s: unknown) => s.status === 'done').length;
+      return `  - ${p.id}「${p.agentName}」${doneCount}/${p.steps.length} 已完成`;
+    }).join('\n');
+    message += `\n\n⚠️ 当前存在 ${activePlans.length} 个活跃计划，新计划创建后将覆盖旧计划：\n${activeList}\n\n如本次创建是用户明确要求的新需求，请忽略此提醒。`;
+  }
+  return { planId, message };
+}
+
+export const planSkills: Record<string, SkillFactory> = {
+  'plan:submit_analysis': () => ({
+    id: 'plan:submit_analysis',
+    category: SkillCategory.PLAN,
+    name: 'submit_analysis',
+    description: `提交需求分析结果并自评打分。系统会自动从分析数据推导出执行计划，无需手动构造步骤。
+
+⚠️ 必须在输出分析报告文本的同一个 assistant message 中调用此工具。
+⚠️ interactions 必须从分析报告第 8 章逐条提取。
+⚠️ analysisReport 为必填，将完整分析报告文本传入，执行阶段会注入此报告作为上下文。
+⚠️ score 为必填，按评分标准自评（评分标准见系统提示词「分析评分标准」章节）。`,
     parameters: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: '计划标题' },
-        summary: { type: 'string', description: '计划概要，一句话描述目标' },
-        items: {
+        title: { type: 'string', description: '需求标题' },
+        summary: { type: 'string', description: '需求概要，一句话描述目标' },
+        pages: {
           type: 'array',
-          description: '计划步骤列表',
+          description: '页面列表（来自分析报告第 3 章 + 第 7 章）',
           items: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: '步骤唯一ID' },
-              category: { type: 'string', enum: ['code_page', 'page', 'datasource', 'query', 'style', 'observation'], description: '步骤类别' },
-              description: { type: 'string', description: '步骤描述' },
-              toolName: { type: 'string', description: '要调用的工具名称' },
-              toolInput: { type: 'object', description: '工具参数（可选）' },
-              dependencies: { type: 'array', items: { type: 'string' }, description: '依赖的步骤ID列表' },
+              name: { type: 'string', description: '页面名称' },
+              action: { type: 'string', enum: ['create', 'update'], description: 'create=新建页面，update=修改已有页面' },
+              queries: {
+                type: 'array',
+                description: '该页面需要的查询列表（包括读查询和写查询）。⚠️ 如果页面有新增/编辑/删除等写操作，必须声明对应的写查询（INSERT/UPDATE/DELETE），否则代码只能写 TODO 假成功，数据不会持久化。例如：客户管理页面需要 getCustomerList(读)、insertCustomer(新增)、updateCustomer(编辑)、deleteCustomer(删除) 四个查询。监控大屏等纯展示页面只需读查询即可。',
+                items: {
+                  type: 'object',
+                  properties: {
+                    queryName: { type: 'string', description: '查询名称（英文驼峰，如 GetAlertsWide / InsertCustomer / UpdateCustomer / DeleteCustomer）' },
+                    purpose: { type: 'string', description: '用途描述（如：查询客户列表 / 新增客户 / 编辑客户 / 删除客户）' },
+                    needsNewTable: { type: 'boolean', description: '是否需要新表（Agent 禁止 DDL，建表需人工操作）' },
+                    fields: { type: 'string', description: '宽表字段（needsNewTable=true 时必填，逗号分隔，如 id,name,status）' },
+                    filterParams: { type: 'string', description: '筛选参数描述（来自第5章筛选字段），格式：参数名(类型,匹配方式)，逗号分隔，如 keyword(文本,模糊搜索name), level(选项,精确匹配)。仅读查询需要，写查询不需要' },
+                  },
+                  required: ['queryName', 'purpose'],
+                },
+              },
+              apis: {
+                type: 'array',
+                description: '该页面需要的平台 API 列表',
+                items: {
+                  type: 'object',
+                  properties: {
+                    apiName: { type: 'string', description: '平台 API 名称' },
+                    purpose: { type: 'string', description: '用途' },
+                  },
+                  required: ['apiName'],
+                },
+              },
+              noDataNeeded: { type: 'boolean', description: '是否不需要数据（纯展示/样式调整）' },
+              libraries: { type: 'array', items: { type: 'string' }, description: '需要引入的外部库 CDN URL（ECharts 已内置无需添加，禁止使用 Leaflet）' },
             },
-            required: ['id', 'category', 'description'],
+            required: ['name', 'action'],
           },
         },
+        workflows: {
+          type: 'array',
+          description: '流程列表（来自分析报告第 2 章流程模块）',
+          items: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: '流程描述' },
+              hasForm: { type: 'boolean', description: '是否需要设计表单' },
+              formDescription: { type: 'string', description: '表单设计描述（hasForm=true 时填写）' },
+              hasWorkflow: { type: 'boolean', description: '是否需要设计审批流程' },
+              workflowDescription: { type: 'string', description: '流程设计描述（hasWorkflow=true 时填写）' },
+            },
+            required: ['description', 'hasForm', 'hasWorkflow'],
+          },
+        },
+        interactions: {
+          type: 'array',
+          description: '交互联动列表（来自分析报告第 8 章），每条为触发→响应描述',
+          items: { type: 'string' },
+        },
+        analysisReport: {
+          type: 'string',
+          description: '完整分析报告文本（必填），执行阶段会注入此报告作为上下文，确保每步执行能获取完整分析内容',
+        },
+        score: {
+          type: 'object',
+          description: '自评打分（必填），按评分标准逐维度评分',
+          properties: {
+            moduleDetail: { type: 'number', description: '模块展开深度（0-25）' },
+            interactionComplexity: { type: 'number', description: '交互复杂度（0-25）' },
+            dataCoverage: { type: 'number', description: '数据需求覆盖度（0-25）' },
+            fieldSpecificity: { type: 'number', description: '字段具体性（0-25）' },
+            deductions: {
+              type: 'array',
+              description: '扣分项列表',
+              items: {
+                type: 'object',
+                properties: {
+                  reason: { type: 'string', description: '扣分原因' },
+                  points: { type: 'number', description: '扣分值（负数）' },
+                },
+                required: ['reason', 'points'],
+              },
+            },
+          },
+          required: ['moduleDetail', 'interactionComplexity', 'dataCoverage', 'fieldSpecificity'],
+        },
       },
-      required: ['title', 'summary', 'items'],
+      required: ['title', 'summary', 'pages', 'workflows', 'interactions', 'analysisReport', 'score'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { title, summary, items } = args as unknown;
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return { success: false, message: '计划步骤列表 items 为空，请提供至少一个步骤' };
+      const analysis = args as unknown as AnalysisData;
+
+      if ((!analysis.pages || analysis.pages.length === 0) && (!analysis.workflows || analysis.workflows.length === 0)) {
+        return { success: false, message: 'pages 和 workflows 不能同时为空，请至少提供一个页面或流程' };
       }
-      const invalidMsg = validatePlanItems(items);
-      if (invalidMsg) {
-        return { success: false, message: invalidMsg };
+
+      const basicErrors = validateAnalysisBasics(analysis);
+      if (basicErrors.length > 0) {
+        const errorLines = basicErrors.map(d => `  - ${d.reason}`).join('\n');
+        return { success: false, message: `分析数据存在基础错误，请修正后重新提交：\n${errorLines}` };
       }
-      const store = useAgentStore.getState();
-      const activePlans = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing');
-      const planId = generatePlanId();
-      const plan = {
-        id: planId,
-        agentId: 'main-agent',
-        agentName: '主智能体',
-        agentIcon: '',
-        steps: items.map((item: unknown, index: number) => ({
-          id: item?.id || generateItemId(),
-          description: item?.description || '',
-          status: 'pending' as const,
-          order: index,
-          toolName: item?.toolName,
-        })),
-        createdAt: Date.now(),
-        status: 'draft' as const,
+
+      const llmScore = analysis.score as { moduleDetail: number; interactionComplexity: number; dataCoverage: number; fieldSpecificity: number; deductions?: Array<{ reason: string; points: number }> } | undefined;
+      if (!llmScore || llmScore.moduleDetail === undefined || llmScore.interactionComplexity === undefined || llmScore.dataCoverage === undefined || llmScore.fieldSpecificity === undefined) {
+        return { success: false, message: 'score 为必填，请按评分标准（模块展开深度、交互复杂度、数据覆盖度、字段具体性，各 0-25 分）自评打分后重新提交' };
+      }
+
+      if (!analysis.analysisReport || analysis.analysisReport.trim().length < 50) {
+        return { success: false, message: 'analysisReport 为必填，请将完整分析报告文本传入，执行阶段需要此报告作为上下文' };
+      }
+
+      const score: AnalysisScore = {
+        total: llmScore.moduleDetail + llmScore.interactionComplexity + llmScore.dataCoverage + llmScore.fieldSpecificity,
+        dimensions: {
+          moduleDetail: llmScore.moduleDetail,
+          interactionComplexity: llmScore.interactionComplexity,
+          dataCoverage: llmScore.dataCoverage,
+          fieldSpecificity: llmScore.fieldSpecificity,
+        },
+        deductions: llmScore.deductions || [],
       };
-      store.addPlan(plan);
-      store.setStatus('idle');
-      upsertPlanMessage(planId);
-      let message = `计划「${title}」已创建，计划 ID: ${planId}，共 ${items.length} 个步骤，等待用户确认。`;
-      if (activePlans.length > 0) {
-        const activeList = activePlans.map((p: unknown) => {
-          const doneCount = p.steps.filter((s: unknown) => s.status === 'done').length;
-          return `  - ${p.id}「${p.agentName}」${doneCount}/${p.steps.length} 已完成`;
-        }).join('\n');
-        message += `\n\n⚠️ 当前存在 ${activePlans.length} 个活跃计划，新计划创建后将覆盖旧计划：\n${activeList}\n\n如本次创建是用户明确要求的新需求，请忽略此提醒。如为误操作，请调用 abandon_plan 放弃旧计划后再创建。`;
+
+      const items = derivePlanFromAnalysis(analysis);
+
+      if (items.length === 0) {
+        return { success: false, message: '从分析数据推导出的计划步骤为空，请检查 pages 和 workflows 数据' };
       }
-      return { success: true, message, data: { planId, title, summary, items }, _pause: true };
+
+      const { planId, message } = createPlanInternal(analysis.title, analysis.summary, items, score, analysis.analysisReport);
+
+      const stepSummary = items.map((item, i) => `  ${i + 1}. [${item.toolName}] ${item.description}`).join('\n');
+
+      let scoreMsg = `\n\n分析评分：${score.total}/100`;
+      if (score.deductions.length > 0) {
+        const deductionLines = score.deductions.map(d => `  - ${d.reason}（${d.points}分）`).join('\n');
+        scoreMsg += `\n扣分项：\n${deductionLines}`;
+      }
+      if (score.total < 70) {
+        scoreMsg += '\n\n⚠️ 评分低于 70 分阈值，建议补充以上内容后重新分析，或回复"继续"跳过评分直接执行。';
+      }
+
+      return {
+        success: true,
+        message: `${message}\n\n系统自动推导的执行步骤：\n${stepSummary}${scoreMsg}`,
+        data: { planId, title: analysis.title, summary: analysis.summary, items, score },
+        _pause: true,
+      };
     },
   }),
 
@@ -231,14 +628,25 @@ export const planSkills: Record<string, SkillFactory> = {
       if (!plan) {
         const activeIds = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing').map((p: unknown) => p.id);
         const hint = activeIds.length > 0 ? `，当前活跃计划 ID: ${activeIds.join(', ')}` : '，当前无活跃计划';
-        return { success: false, message: `未找到计划 "${plan_id}"${hint}。请使用 create_plan 返回的正确 planId 重试 update_plan_item，不要重新创建计划。` };
+        return { success: false, message: `未找到计划 "${plan_id}"${hint}。请使用 submit_analysis 返回的正确 planId 重试 update_plan_item，不要重新创建计划。` };
       }
       const step = plan.steps.find((s: unknown) => String(s.id) === String(item_id));
       if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s: unknown) => s.id).join(', ')}` };
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
       store.updateStep(plan_id, String(item_id), { status: statusMap[status] as unknown, result: result || undefined });
+
+      let autoNextMsg = '';
+      if (status === 'completed') {
+        const currentIdx = plan.steps.findIndex((s: unknown) => String((s as any).id) === String(item_id));
+        const nextStep = plan.steps[currentIdx + 1];
+        if (nextStep && (nextStep as any).status === 'pending') {
+          store.updateStep(plan_id, String((nextStep as any).id), { status: 'running' });
+          autoNextMsg = `\n步骤 ${(nextStep as any).id} 已自动标记为 in_progress，无需手动调用 update_plan_item。`;
+        }
+      }
+
       upsertPlanMessage(plan_id);
-      return { success: true, message: `步骤 ${item_id} 状态已更新为 ${status}` };
+      return { success: true, message: `步骤 ${item_id} 状态已更新为 ${status}${autoNextMsg}` };
     },
   }),
 

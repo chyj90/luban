@@ -57,6 +57,7 @@ export interface ToolContext {
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
+  onQueryRun?: (info: { queryId: number; queryName: string; params: Record<string, unknown>; result: { columns: string[]; rows: unknown[][]; totalCount: number; executionTime: number } }) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
   onToolsChange?: (apiId?: number) => void;
@@ -75,6 +76,7 @@ export interface DelegateQueryArgs {
   requirement: string;
   target_page: string;
   query_name: string;
+  filter_params?: string;
 }
 
 export interface DelegateQueryResult {
@@ -91,6 +93,17 @@ export interface ToolCallResult {
   result: ToolExecuteResult;
 }
 
+export interface PlanScore {
+  total: number;
+  dimensions: {
+    moduleDetail: number;
+    interactionComplexity: number;
+    dataCoverage: number;
+    fieldSpecificity: number;
+  };
+  deductions: Array<{ rule: string; points: number; reason: string }>;
+}
+
 export interface Plan {
   id: string;
   agentId: string;
@@ -101,6 +114,8 @@ export interface Plan {
   status: 'draft' | 'pending' | 'confirmed' | 'executing' | 'completed' | 'rejected' | 'stopped';
   parentPlanId?: string;
   parentStepId?: string;
+  score?: PlanScore;
+  analysisReport?: string;
 }
 
 export interface Step {

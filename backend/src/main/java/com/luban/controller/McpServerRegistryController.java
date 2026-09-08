@@ -1,5 +1,6 @@
 package com.luban.controller;
 
+import com.luban.constant.ToolType;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.McpServerRegistry;
 import com.luban.entity.ToolDefinition;
@@ -171,7 +172,7 @@ public class McpServerRegistryController {
                                 tool = new ToolDefinition();
                                 tool.setName(toolName);
                                 tool.setDisplayName(toolName);
-                                tool.setToolType("MCP_PASSTHROUGH");
+                                tool.setToolType(ToolType.MCP_PASSTHROUGH);
                                 tool.setDescription(description);
                                 tool.setConfig("{\"mcpServerId\":" + id + ",\"remoteToolName\":\"" + toolName + "\"}");
                                 tool.setGroupId(groupId);

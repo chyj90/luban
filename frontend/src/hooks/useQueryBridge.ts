@@ -422,14 +422,27 @@ export function useQueryBridge(
             onLibLoaded();
           } else {
             _loadedLibs[url] = true;
-            var script = document.createElement('script');
-            script.src = url;
-            script.onload = onLibLoaded;
-            script.onerror = function() {
-              console.error('[鲁班] 库加载失败: ' + url);
-              onLibLoaded();
-            };
-            document.head.appendChild(script);
+            var _u = url.toLowerCase(); var isCss = _u.endsWith('.css') || _u.indexOf('.css?') !== -1;
+            if (isCss) {
+              var link = document.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = url;
+              link.onload = onLibLoaded;
+              link.onerror = function() {
+                console.error('[鲁班] CSS 库加载失败: ' + url);
+                onLibLoaded();
+              };
+              document.head.appendChild(link);
+            } else {
+              var script = document.createElement('script');
+              script.src = url;
+              script.onload = onLibLoaded;
+              script.onerror = function() {
+                console.error('[鲁班] 库加载失败: ' + url);
+                onLibLoaded();
+              };
+              document.head.appendChild(script);
+            }
           }
         });
       }
@@ -468,9 +481,10 @@ export function useQueryBridge(
 </script>`;
   }, [userInfo, allPages]);
 
-  const buildBridgeContent = useCallback((queryNames: string[]) => {
+  const buildBridgeContent = useCallback((queryNames: string[], apiNames?: string[]) => {
     const userJson = userInfo ? JSON.stringify(userInfo) : 'null';
     const allPagesJson = JSON.stringify(allPages || []);
+    const apiNamesJson = JSON.stringify(apiNames || []);
 
     return `window.__LUBAN_USER__ = ${userJson};
 window.__LUBAN__ = {
@@ -549,6 +563,20 @@ ${JSON.stringify(queryNames)}.forEach(function(name) {
     writable: true,
     configurable: true
   });
+});
+window.__QUERIES__ = ${JSON.stringify(queryNames)};
+window.DataQuery = {};
+${JSON.stringify(queryNames)}.forEach(function(name) {
+  var isWrite = name.match(/^(insert|update|delete|create|remove|add|save)/i);
+  window.DataQuery[name] = function(params) {
+    return window[name].run(params || {}).then(function(result) {
+      var affected = result.totalCount || (result.rows ? result.rows.length : 0) || 0;
+      if (isWrite) {
+        return { affectedRows: affected, success: true, rows: result.rows || [], columns: result.columns || [] };
+      }
+      return { rows: result.rows || [], columns: result.columns || [], totalCount: result.totalCount || 0 };
+    });
+  };
 });`;
   }, [userInfo, allPages]);
 

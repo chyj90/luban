@@ -1,6 +1,7 @@
 package com.luban.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.constant.ToolType;
 import com.luban.dto.CreateToolRequest;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ToolDefinitionRepository;
@@ -24,7 +25,7 @@ public class ToolService {
     }
 
     public List<ToolDefinition> listByType(String toolType) {
-        return toolDefinitionRepository.findByToolTypeAndScope(toolType, "PLATFORM");
+        return toolDefinitionRepository.findByToolTypeAndScope(ToolType.fromValue(toolType), "PLATFORM");
     }
 
     public List<ToolDefinition> listAll() {
@@ -48,7 +49,7 @@ public class ToolService {
         tool.setName(request.getName());
         tool.setDisplayName(request.getDisplayName());
         tool.setDescription(request.getDescription());
-        tool.setToolType(request.getToolType());
+        tool.setToolType(ToolType.fromValue(request.getToolType()));
         tool.setGroupId(request.getGroupId());
         if (request.getScope() != null) {
             tool.setScope(request.getScope());

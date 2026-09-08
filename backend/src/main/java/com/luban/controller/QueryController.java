@@ -83,6 +83,12 @@ public class QueryController {
     @PostMapping("/execute")
     public ResponseEntity<ApiResponse<Object>> execute(
             @RequestBody ExecuteSqlRequest request) {
+        if (!Boolean.TRUE.equals(request.getAllowDdl())) {
+            String upperSql = request.getSql() != null ? request.getSql().trim().toUpperCase() : "";
+            if (upperSql.matches("(?s)^\\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\\b.*")) {
+                return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过 Agent 执行，请前往数据源管理面板手动操作"));
+            }
+        }
         if (Boolean.TRUE.equals(request.getMulti())) {
             return ResponseEntity.ok(ApiResponse.ok(
                     queryService.executeSqlBatch(request.getDatasourceId(), request.getSql())));

@@ -8,6 +8,21 @@ Luban Embedding Service
 """
 
 import os
+import shutil
+from pathlib import Path
+
+_env_dir = Path(__file__).parent
+_env_file = _env_dir / ".env"
+_env_example = _env_dir / ".env.example"
+if not _env_file.exists() and _env_example.exists():
+    shutil.copy2(_env_example, _env_file)
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _, _v = _line.partition("=")
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 import numpy as np
 from flask import Flask, request, jsonify
 
@@ -337,7 +352,10 @@ import subprocess
 import tempfile
 import traceback
 import json
+import shutil
 from datetime import datetime
+
+from sandbox_manager import sandbox_pool, SANDBOX_ENABLED
 
 PARSE_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(PARSE_LOG_DIR, exist_ok=True)
@@ -400,42 +418,72 @@ def parse_file():
 
         _parse_log("executing: python3 " + script_path)
         t0 = datetime.now()
-        proc = subprocess.run(
-            ["python3", script_path],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        elapsed = (datetime.now() - t0).total_seconds()
-        _parse_log(f"execution_time: {elapsed:.2f}s")
-        _parse_log(f"returncode: {proc.returncode}")
-        _parse_log(f"stdout_length: {len(proc.stdout)} chars")
-        _parse_log(f"stderr_length: {len(proc.stderr)} chars")
 
-        os.unlink(script_path)
-        _parse_log(f"script_cleaned: {script_path}")
+        if SANDBOX_ENABLED:
+            container = sandbox_pool.acquire(timeout=10)
+            try:
+                host_script = os.path.join(container.mount_dir, "parse.py")
+                shutil.copy2(script_path, host_script)
+                exec_result = container.execute(host_script, timeout=60)
+            finally:
+                sandbox_pool.release(container)
+            os.unlink(script_path)
+            _parse_log(f"script_cleaned: {script_path}")
 
-        if proc.returncode != 0:
-            _parse_log(f"ERROR: Python execution failed")
-            _parse_log(f"stderr (last 2000 chars):\n{proc.stderr[-2000:]}")
-            if proc.stdout:
-                _parse_log(f"stdout (last 1000 chars):\n{proc.stdout[-1000:]}")
-            return jsonify({
-                "error": "Python execution failed",
-                "stderr": proc.stderr[-2000:],
-            }), 500
+            elapsed = (datetime.now() - t0).total_seconds()
+            _parse_log(f"execution_time: {elapsed:.2f}s (sandbox)")
 
-        stdout_trimmed = proc.stdout.strip()
+            success = exec_result.get("success", False)
+            stdout_text = exec_result.get("stdout", "")
+            stderr_text = exec_result.get("stderr", "")
+
+            if not success:
+                _parse_log(f"ERROR: Python execution failed (sandbox)")
+                _parse_log(f"stderr (last 2000 chars):\n{stderr_text[-2000:]}")
+                return jsonify({
+                    "error": "Python execution failed",
+                    "stderr": stderr_text[-2000:],
+                }), 500
+
+            stdout_trimmed = stdout_text.strip()
+        else:
+            proc = subprocess.run(
+                ["python3", script_path],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            elapsed = (datetime.now() - t0).total_seconds()
+            _parse_log(f"execution_time: {elapsed:.2f}s")
+            _parse_log(f"returncode: {proc.returncode}")
+            _parse_log(f"stdout_length: {len(proc.stdout)} chars")
+            _parse_log(f"stderr_length: {len(proc.stderr)} chars")
+
+            os.unlink(script_path)
+            _parse_log(f"script_cleaned: {script_path}")
+
+            if proc.returncode != 0:
+                _parse_log(f"ERROR: Python execution failed")
+                _parse_log(f"stderr (last 2000 chars):\n{proc.stderr[-2000:]}")
+                if proc.stdout:
+                    _parse_log(f"stdout (last 1000 chars):\n{proc.stdout[-1000:]}")
+                return jsonify({
+                    "error": "Python execution failed",
+                    "stderr": proc.stderr[-2000:],
+                }), 500
+
+            stdout_trimmed = proc.stdout.strip()
+
         _parse_log(f"stdout_trimmed (first 500 chars): {stdout_trimmed[:500]}")
 
         try:
             result = json.loads(stdout_trimmed)
         except json.JSONDecodeError as e:
             _parse_log(f"ERROR: JSON decode failed: {e}")
-            _parse_log(f"stdout (first 2000 chars):\n{proc.stdout[:2000]}")
+            _parse_log(f"stdout (first 2000 chars):\n{stdout_trimmed[:2000]}")
             return jsonify({
                 "error": f"Failed to parse JSON output: {e}",
-                "stdout": proc.stdout[:1000],
+                "stdout": stdout_trimmed[:1000],
             }), 500
 
         if not isinstance(result, list):
@@ -473,6 +521,7 @@ def execute_code():
 
     code = data["code"]
     input_data = data.get("input_data", {})
+    timeout = min(data.get("timeout", 30), 120)
 
     script = (
         "import sys, json, traceback, os\n"
@@ -488,37 +537,137 @@ def execute_code():
     )
 
     try:
-        env = os.environ.copy()
-        env["INPUT_DATA"] = json.dumps(input_data)
+        env = {"INPUT_DATA": json.dumps(input_data)}
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script)
             script_path = f.name
 
-        proc = subprocess.run(
-            ["python3", script_path],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-        os.unlink(script_path)
-
-        return jsonify({
-            "success": proc.returncode == 0,
-            "stdout": proc.stdout[-5000:] if proc.stdout else "",
-            "stderr": proc.stderr[-2000:] if proc.stderr else "",
-            "exit_code": proc.returncode,
-        })
+        if SANDBOX_ENABLED:
+            container = sandbox_pool.acquire(timeout=10)
+            try:
+                host_script = os.path.join(container.mount_dir, "execute.py")
+                shutil.copy2(script_path, host_script)
+                result = container.execute(host_script, env=env, timeout=timeout)
+            finally:
+                sandbox_pool.release(container)
+            os.unlink(script_path)
+            return jsonify(result)
+        else:
+            full_env = os.environ.copy()
+            full_env.update(env)
+            proc = subprocess.run(
+                ["python3", script_path],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=full_env,
+            )
+            os.unlink(script_path)
+            return jsonify({
+                "success": proc.returncode == 0,
+                "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                "stderr": proc.stderr[-2000:] if proc.stderr else "",
+                "exit_code": proc.returncode,
+            })
 
     except subprocess.TimeoutExpired:
-        return jsonify({"error": "Code execution timed out (30s)", "success": False}), 500
+        return jsonify({"error": f"Code execution timed out ({timeout}s)", "success": False}), 500
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "success": False}), 503
     except Exception as e:
         return jsonify({"error": f"Execution error: {e}", "success": False}), 500
 
 
+@app.route("/v1/execute-script", methods=["POST"])
+def execute_script():
+    """Execute an algorithm script file in the sandbox.
+    Request: { "script_path": "/path/to/script.py", "input_data": {...}, "timeout": 30 }
+    Response: { "stdout": "...", "stderr": "...", "success": true }
+    """
+    data = request.get_json()
+    if not data or "script_path" not in data:
+        return jsonify({"error": "Missing 'script_path' field"}), 400
+
+    script_path = data["script_path"]
+    input_data = data.get("input_data", {})
+    timeout = min(data.get("timeout", 30), 120)
+
+    if not os.path.exists(script_path):
+        return jsonify({"error": f"Script not found: {script_path}", "success": False}), 404
+
+    try:
+        input_json = json.dumps(input_data)
+        env = {"INPUT_DATA": input_json}
+
+        if SANDBOX_ENABLED:
+            container = sandbox_pool.acquire(timeout=10)
+            try:
+                host_script = os.path.join(container.mount_dir, "algorithm.py")
+                shutil.copy2(script_path, host_script)
+                result = container.execute(host_script, env=env, stdin_data=input_json, timeout=timeout)
+            finally:
+                sandbox_pool.release(container)
+            return jsonify(result)
+        else:
+            full_env = os.environ.copy()
+            full_env.update(env)
+            proc = subprocess.run(
+                ["python3", script_path],
+                capture_output=True,
+                text=True,
+                input=input_json,
+                timeout=timeout,
+                env=full_env,
+            )
+            return jsonify({
+                "success": proc.returncode == 0,
+                "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                "stderr": proc.stderr[-2000:] if proc.stderr else "",
+                "exit_code": proc.returncode,
+            })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": f"Script execution timed out ({timeout}s)", "success": False}), 500
+    except RuntimeError as e:
+        return jsonify({"error": str(e), "success": False}), 503
+    except Exception as e:
+        return jsonify({"error": f"Execution error: {e}", "success": False}), 500
+
+
+@app.route("/v1/check-syntax", methods=["POST"])
+def check_syntax():
+    """Check Python syntax of a script file using py_compile.
+    Request: { "script_path": "/path/to/script.py" }
+    Response: { "syntax_valid": true } or { "syntax_valid": false, "error": "..." }
+    """
+    data = request.get_json()
+    if not data or "script_path" not in data:
+        return jsonify({"error": "Missing 'script_path' field"}), 400
+
+    script_path = data["script_path"]
+    if not os.path.exists(script_path):
+        return jsonify({"syntax_valid": False, "error": f"Script not found: {script_path}"})
+
+    try:
+        proc = subprocess.run(
+            ["python3", "-c", f"import py_compile; py_compile.compile('{script_path}', doraise=True)"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode == 0:
+            return jsonify({"syntax_valid": True})
+        else:
+            return jsonify({"syntax_valid": False, "error": proc.stderr[-500:] if proc.stderr else "Unknown syntax error"})
+    except Exception as e:
+        return jsonify({"syntax_valid": False, "error": str(e)})
+
+
 if __name__ == "__main__":
     load_model()
+    if SANDBOX_ENABLED:
+        sandbox_pool.start()
     port = int(os.environ.get("EMBEDDING_PORT", 8765))
-    print(f"[Luban Embedding] Starting server on port {port}")
+    print(f"[Luban Embedding] Starting server on port {port} (sandbox={'ON' if SANDBOX_ENABLED else 'OFF'})")
     app.run(host="0.0.0.0", port=port, debug=False)

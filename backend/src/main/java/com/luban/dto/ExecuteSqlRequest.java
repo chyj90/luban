@@ -7,4 +7,5 @@ public class ExecuteSqlRequest {
     private Long datasourceId;
     private String sql;
     private Boolean multi;
+    private Boolean allowDdl;
 }

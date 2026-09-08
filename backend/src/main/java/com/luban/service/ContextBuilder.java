@@ -1,6 +1,8 @@
 package com.luban.service;
 
+import com.luban.constant.BindingType;
 import com.luban.constant.OntologyOperationType.BuiltinRelation;
+import com.luban.constant.ToolType;
 import com.luban.entity.*;
 import com.luban.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +27,7 @@ public class ContextBuilder {
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptToolBindingRepository conceptToolBindingRepository;
+    private final ConceptRelationRepository conceptRelationRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final DatasourceService datasourceService;
     private final RoleConceptPermissionService roleConceptPermissionService;
@@ -810,6 +813,52 @@ public class ContextBuilder {
                 if (tool.getDescription() != null) sb.append("- **描述**: ").append(tool.getDescription()).append("\n");
                 if (tool.getInputSchema() != null) sb.append("- **输入参数**: ").append(tool.getInputSchema()).append("\n");
                 sb.append("\n");
+            }
+        }
+
+        if (conceptTrace != null && !conceptTrace.isEmpty()) {
+            List<Long> conceptIds = conceptTrace.stream()
+                    .filter(c -> c.get("conceptId") instanceof Number)
+                    .map(c -> ((Number) c.get("conceptId")).longValue())
+                    .collect(Collectors.toList());
+
+            List<ConceptRelation> preCheckRelations = conceptRelationRepository
+                    .findBySourceConceptIdInAndRelationTypeIn(conceptIds, List.of("DERIVED_FROM"));
+            List<String> preChecks = preCheckRelations.stream()
+                    .filter(rel -> rel.getExpression() != null && rel.getExpression().startsWith("PRE_CHECK["))
+                    .map(ConceptRelation::getExpression)
+                    .distinct()
+                    .collect(Collectors.toList());
+            if (!preChecks.isEmpty()) {
+                sb.append("## 前置检验指令\n");
+                sb.append("以下前置检验由本体 DERIVED_FROM 关系自动推导。在调用算法前，必须先通过 nl2sql 执行所有前置检验，全部通过后才能调用算法。\n\n");
+                for (String pc : preChecks) {
+                    sb.append("- ").append(pc).append("\n");
+                }
+                sb.append("\n");
+            }
+
+            List<ConceptToolBinding> algoBindings = conceptToolBindingRepository.findByConceptIdIn(conceptIds).stream()
+                    .filter(b -> b.getBindingType() == BindingType.INVOKES)
+                    .collect(Collectors.toList());
+            if (!algoBindings.isEmpty()) {
+                List<Long> algoToolIds = algoBindings.stream().map(ConceptToolBinding::getToolId).distinct().collect(Collectors.toList());
+                List<ToolDefinition> algorithms = toolDefinitionRepository.findAllById(algoToolIds).stream()
+                        .filter(t -> t.getToolType() == ToolType.ALGORITHM)
+                        .collect(Collectors.toList());
+                if (!algorithms.isEmpty()) {
+                    sb.append("## 可用算法\n");
+                    sb.append("以下算法已绑定到相关概念。前置检验全部通过后，可使用 algorithm action 调用。\n\n");
+                    for (ToolDefinition algo : algorithms) {
+                        sb.append("### ").append(algo.getDisplayName() != null ? algo.getDisplayName() : algo.getName()).append("\n");
+                        sb.append("- **名称**: `").append(algo.getName()).append("`\n");
+                        if (algo.getDescription() != null) sb.append("- **描述**: ").append(algo.getDescription()).append("\n");
+                        if (algo.getInputSchema() != null) sb.append("- **输入参数**: ").append(algo.getInputSchema()).append("\n");
+                        if (algo.getOutputSchema() != null) sb.append("- **输出参数**: ").append(algo.getOutputSchema()).append("\n");
+                        sb.append("\n");
+                    }
+                    sb.append("调用算法：\n```json\n{\"type\": \"algorithm\", \"reasoning\": \"前置检验已通过，调用算法...\", \"algorithm_name\": \"算法名称\", \"input_data\": {...}}\n```\n\n");
+                }
             }
         }
 

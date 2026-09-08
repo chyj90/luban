@@ -1,5 +1,6 @@
 package com.luban.controller;
 
+import com.luban.constant.ToolType;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.Application;
 import com.luban.entity.ToolDefinition;
@@ -115,7 +116,7 @@ public class ApplicationToolController {
         tool.setName(uniqueName);
         tool.setDisplayName(displayName);
         tool.setDescription(description);
-        tool.setToolType("HTTP");
+        tool.setToolType(ToolType.HTTP);
         tool.setGroupId(applicationId);
         tool.setScope("APPLICATION");
         tool.setConfig(toJson(config));
@@ -455,7 +456,7 @@ public class ApplicationToolController {
         map.put("name", tool.getName());
         map.put("displayName", tool.getDisplayName());
         map.put("description", tool.getDescription());
-        map.put("toolType", tool.getToolType());
+        map.put("toolType", tool.getToolType().getValue());
         map.put("groupId", tool.getGroupId());
         map.put("scope", tool.getScope());
         map.put("config", tool.getConfig());

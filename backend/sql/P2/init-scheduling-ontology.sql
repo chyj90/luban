@@ -167,3 +167,40 @@ ORDER BY cr.id;
 
 -- 预期结果：
 --   排产前置检验关系: 10 条 (P1~P10)
+
+-- ============================================================
+-- 4. Phase 2 算法概念绑定模板
+--    以下 SQL 需在 Phase 2 算法注册后执行
+--    @algo_demand_id      : 时序需求预测算法 tool_definition.id
+--    @algo_anomaly_id     : 指标异常检测算法 tool_definition.id
+--    @algo_safety_stock_id: 安全库存优化算法 tool_definition.id
+--    @algo_root_cause_id  : 质量因果推断算法 tool_definition.id
+-- ============================================================
+
+-- S2 需求预测：概念绑定
+-- INSERT INTO concept_tool_binding (concept_id, tool_id, binding_type, created_at, updated_at) VALUES
+-- (@c_sales,         @algo_demand_id, 'INVOKES',  NOW(), NOW()),
+-- (@c_material,      @algo_demand_id, 'INPUT_OF', NOW(), NOW()),
+-- (@c_bom,           @algo_demand_id, 'INPUT_OF', NOW(), NOW()),
+-- (@c_avail_stock,   @algo_demand_id, 'INPUT_OF', NOW(), NOW());
+
+-- S3 异常检测：概念绑定
+-- SET @c_yield_rate = (SELECT id FROM concept WHERE name = '良品率' AND group_id = @g_production);
+-- SET @c_oee_val    = (SELECT id FROM concept WHERE name = 'OEE'     AND group_id = @g_production);
+-- INSERT INTO concept_tool_binding (concept_id, tool_id, binding_type, created_at, updated_at) VALUES
+-- (@c_yield_rate,    @algo_anomaly_id, 'INVOKES',  NOW(), NOW()),
+-- (@c_oee_val,       @algo_anomaly_id, 'INVOKES',  NOW(), NOW()),
+-- (@c_work_center,   @algo_anomaly_id, 'INPUT_OF', NOW(), NOW());
+
+-- S4 库存优化：概念绑定
+-- SET @c_safety_stock_val = (SELECT id FROM concept WHERE name = '安全库存' AND group_id = @g_procurement);
+-- INSERT INTO concept_tool_binding (concept_id, tool_id, binding_type, created_at, updated_at) VALUES
+-- (@c_avail_stock,       @algo_safety_stock_id, 'INVOKES',  NOW(), NOW()),
+-- (@c_safety_stock_val,  @algo_safety_stock_id, 'OUTPUT_OF', NOW(), NOW()),
+-- (@c_material,          @algo_safety_stock_id, 'INPUT_OF', NOW(), NOW());
+
+-- S5 质量根因：概念绑定
+-- INSERT INTO concept_tool_binding (concept_id, tool_id, binding_type, created_at, updated_at) VALUES
+-- (@c_yield_rate,    @algo_root_cause_id, 'INVOKES',  NOW(), NOW()),
+-- (@c_material,      @algo_root_cause_id, 'INPUT_OF', NOW(), NOW()),
+-- (@c_equipment,     @algo_root_cause_id, 'INPUT_OF', NOW(), NOW());

@@ -187,12 +187,35 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     },
     async execute(args) {
       try {
-        const res = await runQuery(args.queryId as number, { params: (args.params as Record<string, unknown>) || {} });
-        ctx.onQuerySelect?.({ id: args.queryId as number, name: '' });
+        const params = (args.params as Record<string, unknown>) || {};
+        const res = await runQuery(args.queryId as number, { params });
+        const queryId = args.queryId as number;
         const columns = (res.data?.columns as string[]) || [];
+        const rows = (res.data?.rows as unknown[][]) || [];
         const totalCount = res.data?.totalCount ?? 0;
-        const colInfo = columns.length > 0 ? `，列名：${columns.join('、')}` : '';
-        return { success: true, message: `查询执行成功，返回 ${totalCount} 条数据${colInfo}`, data: res.data };
+        const executionTime = res.data?.executionTime ?? 0;
+
+        ctx.onQuerySelect?.({ id: queryId, name: '' });
+        ctx.onQueryRun?.({
+          queryId,
+          queryName: '',
+          params,
+          result: { columns, rows, totalCount, executionTime },
+        });
+
+        const colInfo = columns.length > 0 ? `\n列名：${columns.join('、')}` : '';
+        let sampleInfo = '';
+        if (rows.length > 0 && columns.length > 0) {
+          const sampleRows = rows.slice(0, 3).map((row) => {
+            const obj: Record<string, unknown> = {};
+            columns.forEach((col, i) => { obj[col] = (row as unknown[])[i]; });
+            return obj;
+          });
+          sampleInfo = `\n前 ${sampleRows.length} 行：${JSON.stringify(sampleRows)}`;
+        }
+        const isWrite = totalCount > 0 && columns.length === 0;
+        const typeInfo = isWrite ? `，影响 ${totalCount} 行` : `，返回 ${totalCount} 条数据`;
+        return { success: true, message: `查询执行成功${typeInfo}${colInfo}${sampleInfo}`, data: res.data };
       } catch (e) {
         return { success: false, message: `执行查询失败: ${(e as Error).message}` };
       }
@@ -226,9 +249,10 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     id: 'query:execute',
     category: SkillCategory.QUERY,
     name: 'execute_sql',
-    description: `直接执行任意 SQL 语句（SELECT/INSERT/UPDATE/DELETE/DDL），不经过模板解析。
-用于建表（CREATE TABLE/ALTER TABLE）、插入数据（INSERT）、更新数据（UPDATE）等操作。
-返回查询结果（SELECT）或影响行数（DML/DDL）。
+    description: `直接执行任意 SQL 语句（仅限 SELECT/INSERT/UPDATE/DELETE），不经过模板解析。
+用于插入数据（INSERT）、更新数据（UPDATE）、删除数据（DELETE）等操作。
+⚠️ 禁止执行 DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME），建表请在数据源管理面板手动操作。
+返回查询结果（SELECT）或影响行数（DML）。
 支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
 批量模式返回每条语句的执行结果数组。`,
     parameters: {
@@ -242,7 +266,11 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     },
     async execute(args) {
       try {
-        const res = await executeSql(args.datasourceId as number, args.sql as string, args.multi as boolean);
+        const sql = (args.sql as string || '').trim();
+        if (/^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(sql)) {
+          return { success: false, message: 'DDL 操作不允许通过 Agent 执行，请前往数据源管理面板手动操作' };
+        }
+        const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean);
         if (args.multi) {
           const results = res.data as any[];
           const summary = results.map((r: any, i: number) => `语句${i + 1}: ${r.totalCount ?? 0} 条结果`).join('；');

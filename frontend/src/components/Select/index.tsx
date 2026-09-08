@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import PinyinMatch from 'pinyin-match';
 import styles from './index.module.css';
 
 interface SelectOption {
@@ -17,6 +18,7 @@ interface SelectProps {
   onOpen?: () => void;
   className?: string;
   disabled?: boolean;
+  searchable?: boolean;
   multiple?: false;
   multiValue?: never;
   onMultiChange?: never;
@@ -30,6 +32,7 @@ interface MultiSelectProps {
   onOpen?: () => void;
   className?: string;
   disabled?: boolean;
+  searchable?: boolean;
   multiple: true;
   multiValue: string[];
   onMultiChange: (value: string[]) => void;
@@ -50,17 +53,32 @@ function findOption(options: SelectOption[], value: string): SelectOption | unde
 const MAX_DROPDOWN = 300;
 const GAP = 4;
 
+function matchSearch(label: string, query: string): boolean {
+  if (!query) return true;
+  const q = query.toLowerCase();
+  const l = label.toLowerCase();
+  if (l.includes(q)) return true;
+  try {
+    return !!PinyinMatch.match(label, q);
+  } catch {
+    return false;
+  }
+}
+
 export default function Select(props: Props) {
   const { value, options, onChange, placeholder, onOpen, className, disabled } = props;
+  const searchable = props.searchable === true;
   const multiple = props.multiple === true;
   const multiValue: string[] = multiple ? props.multiValue : [];
   const onMultiChange: ((v: string[]) => void) | undefined = multiple ? props.onMultiChange : undefined;
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [pos, setPos] = useState({ left: 0, top: 0, width: 0 });
   const [dropStyle, setDropStyle] = useState<React.CSSProperties>({});
   const [expandedValues, setExpandedValues] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -107,7 +125,11 @@ export default function Select(props: Props) {
     if (disabled) return;
     if (!open) {
       if (onOpen) onOpen();
+      setSearchQuery('');
       setOpen(true);
+      if (searchable) {
+        setTimeout(() => searchRef.current?.focus(), 0);
+      }
     } else {
       setOpen(false);
     }
@@ -175,6 +197,10 @@ export default function Select(props: Props) {
     );
   };
 
+  const filteredOptions = searchable && searchQuery
+    ? options.filter((opt) => matchSearch(opt.label, searchQuery))
+    : options;
+
   const dropdownNode = (
     <div
       className={styles.dropdown}
@@ -187,8 +213,25 @@ export default function Select(props: Props) {
         ...dropStyle,
       }}
     >
+      {searchable && (
+        <div className={styles.searchBox}>
+          <svg className={styles.searchIcon} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            ref={searchRef}
+            className={styles.searchInput}
+            placeholder="搜索..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
       <div className={styles.list}>
-        {options.map((option) => renderOption(option, 0))}
+        {filteredOptions.length === 0 ? (
+          <div className={styles.noResult}>无匹配项</div>
+        ) : (
+          filteredOptions.map((option) => renderOption(option, 0))
+        )}
       </div>
     </div>
   );

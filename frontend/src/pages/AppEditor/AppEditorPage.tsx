@@ -19,7 +19,7 @@ import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
 import { listPages, listQueries, listApplicationTools, createCodePage } from '@/api';
 import type { Page } from '@/types/page';
-import type { Query } from '@/types/query';
+import type { Query, RunQueryResponse } from '@/types/query';
 import { SHOWCASE_PAGE } from '@/luban-ui/showcase';
 import './AppEditorPage.css';
 
@@ -58,15 +58,18 @@ export function AppEditorPage() {
   const [queries, setQueries] = useState<Query[]>([]);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [dataReady, setDataReady] = useState(false);
+  const [queryRunResult, setQueryRunResult] = useState<RunQueryResponse | null | undefined>(undefined);
 
-  const loadPages = useCallback(() => {
+  const loadPages = useCallback((navigateToPageId?: number) => {
     if (appId) {
       setDataReady(false);
       listPages(Number(appId)).then((res) => {
         const pageList = res.data.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         setPages(pageList);
         if (pageList.length > 0) {
-          const defaultPage = pageList.find((p) => p.isDefault) || pageList[0];
+          const targetPageId = (navigateToPageId && pageList.find((p) => p.id === navigateToPageId))
+            ? navigateToPageId
+            : (pageList.find((p) => p.isDefault) || pageList[0]).id;
           Promise.all([
             listQueries(Number(appId)),
             listApplicationTools(Number(appId)),
@@ -75,12 +78,12 @@ export function AppEditorPage() {
               .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
             setQueries(queriesRes.data);
             setAppTools(tools);
-            fetchPage(defaultPage.id);
+            fetchPage(targetPageId);
             setDataReady(true);
           }).catch(() => {
             setQueries([]);
             setAppTools([]);
-            fetchPage(defaultPage.id);
+            fetchPage(targetPageId);
             setDataReady(true);
           });
         } else {
@@ -130,6 +133,11 @@ export function AppEditorPage() {
     setSidebarTab('queries');
   }, [appId]);
 
+  const handleQueryRun = useCallback((info: { queryId: number; queryName: string; params: Record<string, unknown>; result: { columns: string[]; rows: unknown[][]; totalCount: number; executionTime: number } }) => {
+    handleQuerySelect({ id: info.queryId, name: info.queryName });
+    setQueryRunResult(info.result);
+  }, [handleQuerySelect]);
+
   const refreshQueries = useCallback(() => {
     listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
   }, [appId]);
@@ -156,6 +164,7 @@ export function AppEditorPage() {
   const handlePageChange = (pageId: number) => {
     setEditingFile(null);
     setSelectedQuery(null);
+    setQueryRunResult(undefined);
     setSidebarTab('pages');
     listQueries(Number(appId)).then((res) => {
       setQueries(res.data);
@@ -228,7 +237,7 @@ export function AppEditorPage() {
           queries={queries}
           onQueriesChange={refreshQueries}
           onPageChange={handlePageChange}
-          onPagesChange={loadPages}
+          onPagesChange={() => loadPages(currentPage?.id)}
           onQuerySelect={setSelectedQuery}
           onWorkflowNavigate={handleWorkflowNavigate}
           onTabChange={handleSidebarTabChange}
@@ -287,6 +296,7 @@ export function AppEditorPage() {
               query={selectedQuery}
               applicationId={Number(appId)}
               onQueryUpdate={setSelectedQuery}
+              externalResult={queryRunResult}
             />
           ) : sidebarTab === 'queries' ? (
             <div className="app-editor-query-empty">
@@ -404,9 +414,10 @@ export function AppEditorPage() {
               appId={appId || ''}
               currentPageId={currentPage.id}
               currentPageName={currentPage.name}
-              onPagesChange={loadPages}
+              onPagesChange={() => loadPages(currentPage?.id)}
               onPageChange={handlePageChange}
               onQuerySelect={handleQuerySelect}
+              onQueryRun={handleQueryRun}
               onQueriesChange={handleQueriesChange}
               onDatasourceChange={handleDatasourceChange}
               onToolsChange={handleToolsChange}

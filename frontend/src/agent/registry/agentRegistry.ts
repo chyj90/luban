@@ -63,7 +63,7 @@ export const AGENTS: AgentDefinition[] = [
       'code:create', 'code:get', 'code:update',
       'observation:list_pages', 'observation:list_queries', 'observation:record',
       'query:get',
-      'plan:create', 'plan:update', 'plan:update_item', 'plan:confirm',
+      'plan:submit_analysis', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
       'delegate:query', 'delegate:workflow',
     ],

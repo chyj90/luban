@@ -69,6 +69,7 @@ interface AgentPanelProps {
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
+  onQueryRun?: (info: { queryId: number; queryName: string; params: Record<string, unknown>; result: { columns: string[]; rows: unknown[][]; totalCount: number; executionTime: number } }) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
   onToolsChange?: (apiId?: number) => void;
@@ -232,7 +233,7 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   return lines.join('\n');
 }
 
-export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate }: AgentPanelProps) {
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [activeTab, setActiveTab] = useState<TabView>('chat');
@@ -242,6 +243,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [tokenUsage, setTokenUsage] = useState<{ inputTokens: number; outputTokens: number; totalTokens: number } | null>(null);
   const [showDebugMenu, setShowDebugMenu] = useState(false);
+  const [isSsePending, setIsSsePending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isUserAtBottomRef = useRef(true);
@@ -310,6 +312,12 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     chatRouterRef.current = null;
     lastApiMessagesRef.current = [];
   }, [appId]);
+
+  useEffect(() => {
+    if (isSsePending && messages.some((m) => m.isStreaming)) {
+      setIsSsePending(false);
+    }
+  }, [messages, isSsePending]);
 
   // 打开面板时滚动到底部
   useEffect(() => {
@@ -437,13 +445,16 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onPagesChange,
     onPageChange,
     onQuerySelect,
+    onQueryRun,
     onQueriesChange,
     onDatasourceChange,
     onToolsChange,
     onWorkflowNavigate,
-  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
+  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
 
   const runAgent = async (userMessage: string) => {
+    setIsSsePending(true);
+
     const sessionOptions: RouterSessionOptions = {
       model: 'default',
       currentPageId,
@@ -453,6 +464,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       onPagesChange,
       onPageChange,
       onQuerySelect,
+      onQueryRun,
       onQueriesChange,
       onDatasourceChange,
       onToolsChange,
@@ -479,6 +491,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       }
     } catch (e) {
       setError((e as Error).message);
+      setIsSsePending(false);
     }
   };
 
@@ -561,6 +574,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
 
   const handleCancel = () => {
     console.log('[AgentPanel] handleCancel 被调用');
+    setIsSsePending(false);
     const draftPlan = draftPlans[0];
     const executingPlan = focusedPlans[0];
     if (draftPlan) {
@@ -648,7 +662,19 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           <span className={`ap-plan-card-status ${plan.status}`}>
             {statusLabel}
           </span>
+          {plan.score && (
+            <span className={`ap-plan-score ${plan.score.total >= 70 ? 'pass' : 'low'}`}>
+              {plan.score.total}/100
+            </span>
+          )}
         </div>
+        {plan.score && plan.score.deductions.length > 0 && (
+          <div className="ap-plan-score-details">
+            {plan.score.deductions.map((d, i) => (
+              <div key={i} className="ap-plan-deduction">- {d.reason}（{d.points}分）</div>
+            ))}
+          </div>
+        )}
         <div className="ap-plan-steps">
           {plan.steps.map((step) => {
             const hasSubPlan = !!step.subPlanId;
@@ -702,7 +728,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           <span className="ap-title">AI Agent</span>
         </div>
         <div className="ap-header-right">
-          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
+          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); setIsSsePending(false); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>
@@ -893,7 +919,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
 
               
 
-              {isStreaming && !messages.some((m) => m.isStreaming) && (
+              {(isSsePending || isStreaming) && !messages.some((m) => m.isStreaming) && (
                 <div className="ap-thinking">
                   <svg className="ap-thinking-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="10"/>

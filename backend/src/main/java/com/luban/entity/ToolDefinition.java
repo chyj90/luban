@@ -1,5 +1,6 @@
 package com.luban.entity;
 
+import com.luban.constant.ToolType;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -27,7 +28,8 @@ public class ToolDefinition {
     private String description;
 
     @Column(name = "tool_type", nullable = false, length = 20)
-    private String toolType;
+    @Enumerated(EnumType.STRING)
+    private ToolType toolType;
 
     @Column(name = "input_schema", columnDefinition = "JSON")
     private String inputSchema;

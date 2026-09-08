@@ -1,20 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes, fetchBindingTypes } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes, fetchBindingTypes, uploadAlgorithmScript, getAlgorithmScript, updateAlgorithmScript, checkAlgorithmHealth, getAlgorithmExecutionLogs } from '@/api/tool';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { listDrivers, installDriver } from '@/api/driver';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import Select from '@/components/Select';
+import MonacoEditor from '@monaco-editor/react';
 import type { ToolDefinition, ToolTypeInfo, ToolSearchResult, SwaggerEndpoint, McpServer } from '@/types/tool';
 import type { Datasource, DatasourceType, DatasourceStructure, DriverInfo, InstallProgress, ExtraField } from '@/types/datasource';
 import type { ToolConcept, Concept } from '@/types/concept';
 import './ToolListPage.css';
 
+const ALGO_SCRIPT_TEMPLATE = 'import json\nimport sys\n\n\ndef main(input_data):\n    work_center = input_data.get("work_center", "")\n    daily_capacity = input_data.get("daily_capacity", 0)\n    order_quantity = input_data.get("order_quantity", 0)\n\n    feasible = order_quantity <= daily_capacity\n    utilization = order_quantity / daily_capacity if daily_capacity > 0 else 0\n\n    return {\n        "feasible": feasible,\n        "utilization_after": round(utilization, 4),\n        "bottlenecks": [] if feasible else ["capacity_exceeded"],\n        "summary": f"工作中心 {work_center}: 排产{\'可行\' if feasible else \'不可行\'}，利用率 {utilization:.1%}"\n    }\n\n\nif __name__ == "__main__":\n    input_json = json.loads(sys.stdin.read())\n    result = main(input_json)\n    print(json.dumps(result, ensure_ascii=False))\n';
+
 const TYPE_ICONS: Record<string, JSX.Element> = {
   HTTP: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
   MCP_PASSTHROUGH: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
+  ALGORITHM: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>,
   default: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>,
 };
 
@@ -30,7 +34,14 @@ export default function ToolListPage() {
   const [searchResults, setSearchResults] = useState<ToolSearchResult[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ToolDefinition | null>(null);
-  const [form, setForm] = useState<{ name: string; displayName: string; toolType: string; description: string; inputSchema: string; config: string }>({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', config: '{}' });
+  const [form, setForm] = useState<{ name: string; displayName: string; toolType: string; description: string; inputSchema: string; outputSchema: string; config: string }>({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', outputSchema: '', config: '{}' });
+  const [algoScriptName, setAlgoScriptName] = useState('');
+  const [algoScriptUploading, setAlgoScriptUploading] = useState(false);
+  const [algoScriptContent, setAlgoScriptContent] = useState('');
+  const [algoStep, setAlgoStep] = useState<0 | 1>(0);
+  const [algoSaving, setAlgoSaving] = useState(false);
+  const [algoScriptLoading, setAlgoScriptLoading] = useState(false);
+  const [algoSyntaxError, setAlgoSyntaxError] = useState<string | null>(null);
   const [httpUrl, setHttpUrl] = useState('');
   const [httpMethod, setHttpMethod] = useState('GET');
   const [httpTimeout, setHttpTimeout] = useState(10);
@@ -43,6 +54,7 @@ export default function ToolListPage() {
   const [mcpToolName, setMcpToolName] = useState('');
   const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [toolTesting, setToolTesting] = useState<number | null>(null);
   const [showSwagger, setShowSwagger] = useState(false);
   const [swaggerUrl, setSwaggerUrl] = useState('');
   const [swaggerEndpoints, setSwaggerEndpoints] = useState<SwaggerEndpoint[]>([]);
@@ -161,6 +173,11 @@ export default function ToolListPage() {
     }
     if (type === 'MCP_PASSTHROUGH') {
       return JSON.stringify({ mcpServerId: Number(mcpServerId), originalToolName: mcpToolName });
+    }
+    if (type === 'ALGORITHM') {
+      let cfg: Record<string, unknown> = {};
+      try { cfg = JSON.parse(form.config); } catch {}
+      return JSON.stringify({ pythonVersion: cfg.pythonVersion || '3.11', timeout: cfg.timeout || 30, maxInputSizeMB: cfg.maxInputSizeMB || 10, scriptPath: cfg.scriptPath || '' });
     }
     return '{}';
   };
@@ -505,12 +522,18 @@ export default function ToolListPage() {
     const config = buildConfig(form.toolType);
     const autoInputSchema = form.toolType === 'HTTP' ? buildInputSchema() : form.inputSchema;
     try {
-      const payload = { ...form, groupId, config, inputSchema: autoInputSchema, toolType: form.toolType };
+      const payload = { ...form, groupId, config, inputSchema: autoInputSchema, outputSchema: form.outputSchema, toolType: form.toolType };
       if (editing) {
         await updateToolDefinition(editing.id, payload);
+        if (form.toolType === 'ALGORITHM' && algoScriptContent && editing.id) {
+          await updateAlgorithmScript(editing.id, algoScriptContent);
+        }
         toast('更新成功', 'success');
       } else {
-        await createToolDefinition(payload);
+        const res = await createToolDefinition(payload);
+        if (form.toolType === 'ALGORITHM' && algoScriptContent && res.data.id) {
+          await updateAlgorithmScript(res.data.id, algoScriptContent);
+        }
         toast('创建成功', 'success');
       }
       setShowForm(false);
@@ -518,6 +541,60 @@ export default function ToolListPage() {
       fetchTools();
     } catch {
       toast('操作失败', 'error');
+    }
+  };
+
+  const handleAlgoStepOne = async () => {
+    if (!form.name) { toast('请输入工具名称', 'error'); return; }
+    if (!groupId) { toast('缺少所属系统，请从系统管理页面进入', 'error'); return; }
+    const config = buildConfig('ALGORITHM');
+    const payload = { ...form, groupId, config, inputSchema: form.inputSchema, outputSchema: form.outputSchema, toolType: 'ALGORITHM' };
+    try {
+      if (editing) {
+        await updateToolDefinition(editing.id, payload);
+      } else {
+        const res = await createToolDefinition(payload);
+        setEditing(res.data);
+      }
+    } catch (err: any) {
+      toast('保存失败: ' + (err.message || err), 'error');
+      return;
+    }
+    const contentToUse = algoScriptContent.trim() ? algoScriptContent : ALGO_SCRIPT_TEMPLATE;
+    setAlgoScriptContent(contentToUse);
+    setAlgoStep(1);
+  };
+
+  const handleAlgoSaveScript = async () => {
+    if (!editing?.id) return;
+    if (!algoScriptContent.trim()) { toast('脚本内容不能为空', 'error'); return; }
+    setAlgoSyntaxError(null);
+    setAlgoSaving(true);
+    try {
+      const scriptRes = await updateAlgorithmScript(editing.id, algoScriptContent);
+      const savedPath = scriptRes.data?.scriptPath || (form.name + '.py');
+      setAlgoScriptName(savedPath);
+      setForm((prev) => {
+        let cfg: Record<string, unknown> = {};
+        try { cfg = JSON.parse(prev.config); } catch {}
+        cfg.scriptPath = savedPath;
+        return { ...prev, config: JSON.stringify(cfg) };
+      });
+      try {
+        const health = await checkAlgorithmHealth(editing.id);
+        if (!health.data?.syntaxValid) {
+          setAlgoSyntaxError(health.data?.syntaxError || '语法检查未通过');
+          toast('脚本已保存，但语法检查未通过', 'warning');
+          return;
+        }
+      } catch {
+        // health check 失败不阻塞保存
+      }
+      toast('脚本保存成功，语法检查通过', 'success');
+    } catch (err: any) {
+      toast('脚本保存失败: ' + (err.message || err), 'error');
+    } finally {
+      setAlgoSaving(false);
     }
   };
 
@@ -538,8 +615,22 @@ export default function ToolListPage() {
     }
   };
 
+  const deepParseJson = (obj: unknown): unknown => {
+    if (typeof obj === 'string') {
+      try { return deepParseJson(JSON.parse(obj)); } catch { return obj; }
+    }
+    if (Array.isArray(obj)) return obj.map(deepParseJson);
+    if (obj && typeof obj === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) out[k] = deepParseJson(v);
+      return out;
+    }
+    return obj;
+  };
+
   const handleTest = async (tool: ToolDefinition) => {
     setTestResult(null);
+    setToolTesting(tool.id);
     try {
       const args: Record<string, unknown> = {};
       if (tool.inputSchema && tool.inputSchema !== '{}') {
@@ -553,15 +644,22 @@ export default function ToolListPage() {
         }
       }
       const res = await testTool(tool.id, args);
-      setTestResult(JSON.stringify(res.data, null, 2));
-    } catch {
-      setTestResult('测试调用失败');
+      const parsed = deepParseJson(res.data);
+      setTestResult(JSON.stringify(parsed, null, 2));
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || '未知错误';
+      setTestResult(`调用失败: ${msg}`);
+    } finally {
+      setToolTesting(null);
     }
   };
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', config: '{}' });
+    setForm({ name: '', displayName: '', toolType: 'HTTP', description: '', inputSchema: '{}', outputSchema: '', config: '{}' });
+    setAlgoScriptName('');
+    setAlgoScriptContent('');
+    setAlgoStep(0);
     resetConfigFields();
     fetchDatasources();
     setShowForm(true);
@@ -569,14 +667,45 @@ export default function ToolListPage() {
 
   const openEdit = (tool: ToolDefinition) => {
     setEditing(tool);
+    let prettyInput = tool.inputSchema || '{}';
+    try { prettyInput = JSON.stringify(JSON.parse(prettyInput), null, 2); } catch {}
+    let prettyOutput = tool.outputSchema || '';
+    try { if (prettyOutput) prettyOutput = JSON.stringify(JSON.parse(prettyOutput), null, 2); } catch {}
     setForm({
       name: tool.name,
       displayName: tool.displayName,
       toolType: tool.toolType,
       description: tool.description || '',
-      inputSchema: tool.inputSchema || '{}',
+      inputSchema: prettyInput,
+      outputSchema: prettyOutput,
       config: tool.config || '{}',
     });
+    setAlgoScriptName('');
+    setAlgoScriptContent('');
+    setAlgoStep(0);
+    setAlgoScriptLoading(false);
+    setAlgoSyntaxError(null);
+    if (tool.toolType === 'ALGORITHM' && tool.id) {
+      const cfg = JSON.parse(tool.config || '{}');
+      setAlgoScriptName(cfg.scriptPath || '');
+      setAlgoScriptLoading(true);
+      getAlgorithmScript(tool.id).then((res) => {
+        setAlgoScriptContent(res.data.content || '');
+        setAlgoScriptName(res.data.scriptPath || '');
+        if (res.data.scriptPath) {
+          setForm((prev) => {
+            let cfg: Record<string, unknown> = {};
+            try { cfg = JSON.parse(prev.config); } catch {}
+            cfg.scriptPath = res.data.scriptPath;
+            return { ...prev, config: JSON.stringify(cfg) };
+          });
+        }
+      }).catch((err) => {
+        console.warn('Failed to load script:', err);
+      }).finally(() => {
+        setAlgoScriptLoading(false);
+      });
+    }
     parseConfig(tool);
     fetchDatasources();
     setShowForm(true);
@@ -796,10 +925,22 @@ export default function ToolListPage() {
                     </td>
                     <td>
                       <div className="tool-list-row-actions">
-                        <button className="tool-list-row-btn" onClick={() => handleTest(tool)}>测试</button>
-                        <button className="tool-list-row-btn" onClick={() => openEdit(tool)}>编辑</button>
-                        <button className="tool-list-row-btn" onClick={() => openConceptBind(tool)}>概念</button>
-                        <button className="tool-list-row-btn danger" onClick={() => handleDelete(tool)}>删除</button>
+                        <button className="tool-list-icon-btn" title={toolTesting === tool.id ? '测试中...' : '调用测试'} onClick={() => handleTest(tool)} disabled={toolTesting === tool.id}>
+                          {toolTesting === tool.id ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9l3 3 8-8"/><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                          )}
+                        </button>
+                        <button className="tool-list-icon-btn" title="编辑" onClick={() => openEdit(tool)}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button className="tool-list-icon-btn" title="概念绑定" onClick={() => openConceptBind(tool)}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        </button>
+                        <button className="tool-list-icon-btn danger" title="删除" onClick={() => handleDelete(tool)}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -813,25 +954,36 @@ export default function ToolListPage() {
       {testResult !== null && (
         <div className="tool-list-test-result">
           <div className="tool-list-test-result-header">
-            <h3>测试结果</h3>
-            <button onClick={() => setTestResult(null)}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
+            <div className="tool-list-test-result-title">
+              {testResult.startsWith('调用失败') ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              )}
+              <h3>调用测试结果</h3>
+            </div>
+            <button className="tool-list-test-result-close" onClick={() => setTestResult(null)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
-          <pre className="tool-list-test-result-content">{testResult}</pre>
+          <pre className={`tool-list-test-result-content ${testResult.startsWith('调用失败') ? 'error' : 'success'}`}>{testResult}</pre>
         </div>
       )}
 
       {showForm && (
         <div className="tool-form-overlay" onClick={() => setShowForm(false)}>
           <div className="tool-form" onClick={(e) => e.stopPropagation()}>
-            <h3 className="tool-form-title">{editing ? '编辑工具' : '新建工具'}</h3>
-            <button className="tool-form-close" onClick={() => setShowForm(false)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
+            <div className="tool-form-header">
+              <h3 className="tool-form-title">
+                {form.toolType === 'ALGORITHM' && algoStep === 1 ? '编辑算法脚本' : (editing ? '编辑工具' : '新建工具')}
+              </h3>
+              <button className="tool-form-close" onClick={() => setShowForm(false)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="tool-form-body">
+            {!(form.toolType === 'ALGORITHM' && algoStep === 1) && (
+            <>
             <div className="tool-form-field">
               <label className="tool-form-label">工具名称（英文标识）</label>
               <input className="tool-form-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：get_device_status" />
@@ -1137,8 +1289,116 @@ export default function ToolListPage() {
                 </div>
               </div>
             )}
+            {form.toolType === 'ALGORITHM' && algoStep === 0 && (
+              <div className="tool-form-config-section">
+                <h4 className="tool-form-config-title">算法脚本配置</h4>
+                <div className="tool-form-field">
+                  <label className="tool-form-label">Python 版本</label>
+                  <Select value={form.config ? JSON.parse(form.config).pythonVersion || '3.11' : '3.11'} options={[{ value: '3.9', label: 'Python 3.9' }, { value: '3.10', label: 'Python 3.10' }, { value: '3.11', label: 'Python 3.11' }, { value: '3.12', label: 'Python 3.12' }]} onChange={(v) => {
+                    const cfg = form.config ? JSON.parse(form.config) : {};
+                    setForm({ ...form, config: JSON.stringify({ ...cfg, pythonVersion: v }) });
+                  }} />
+                </div>
+                <div className="tool-form-field">
+                  <label className="tool-form-label">超时时间（秒）</label>
+                  <input className="tool-form-input" type="number" min={5} max={300} value={form.config ? JSON.parse(form.config).timeout || 30 : 30} onChange={(e) => {
+                    const cfg = form.config ? JSON.parse(form.config) : {};
+                    setForm({ ...form, config: JSON.stringify({ ...cfg, timeout: Number(e.target.value) }) });
+                  }} />
+                </div>
+                <div className="tool-form-field">
+                  <label className="tool-form-label">最大输入大小（MB）</label>
+                  <input className="tool-form-input" type="number" min={1} max={50} value={form.config ? JSON.parse(form.config).maxInputSizeMB || 10 : 10} onChange={(e) => {
+                    const cfg = form.config ? JSON.parse(form.config) : {};
+                    setForm({ ...form, config: JSON.stringify({ ...cfg, maxInputSizeMB: Number(e.target.value) }) });
+                  }} />
+                </div>
+              </div>
+            )}
             </div>
-            {form.toolType !== 'MCP_PASSTHROUGH' && (
+            </>
+            )}
+            {form.toolType === 'ALGORITHM' && algoStep === 1 && (
+              <div className="tool-form-config-section">
+                <div className="algo-script-editor-header">
+                  <h4 className="tool-form-config-title" style={{ margin: 0 }}>Python 脚本</h4>
+                  <div className="algo-script-editor-actions">
+                    <label className="algo-script-upload-btn" title="从文件导入">
+                      <input type="file" accept=".py" style={{ display: 'none' }} onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setAlgoScriptUploading(true);
+                        try {
+                          const text = await f.text();
+                          setAlgoScriptContent(text);
+                          setAlgoScriptName(f.name);
+                        } catch {
+                          toast('文件读取失败', 'error');
+                        } finally {
+                          setAlgoScriptUploading(false);
+                        }
+                      }} />
+                      {algoScriptUploading ? (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+                      ) : (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      )}
+                    </label>
+                    <button type="button" className="algo-script-icon-btn" title="格式化代码" onClick={() => {
+                      try {
+                        const lines = algoScriptContent.split('\n');
+                        const formatted = lines.map((l) => l.rstrip ? l.rstrip() : l.replace(/\s+$/, '')).join('\n');
+                        setAlgoScriptContent(formatted);
+                        toast('已整理行尾空白', 'success');
+                      } catch { toast('格式化失败', 'error'); }
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
+                    </button>
+                    {algoScriptName && <span className="algo-script-filename-badge">{algoScriptName}</span>}
+                  </div>
+                </div>
+                <div className="algo-script-monaco-wrap">
+                  <MonacoEditor
+                    height="400px"
+                    language="python"
+                    value={algoScriptContent || ALGO_SCRIPT_TEMPLATE}
+                    onChange={(v) => { setAlgoScriptContent(v || ''); if (algoSyntaxError) setAlgoSyntaxError(null); }}
+                    theme="vs-dark"
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 12.5,
+                      lineNumbers: 'on',
+                      scrollBeyondLastLine: false,
+                      wordWrap: 'on',
+                      tabSize: 4,
+                      insertSpaces: true,
+                      automaticLayout: true,
+                      renderWhitespace: 'selection',
+                      bracketPairColorization: { enabled: true },
+                      guides: { indentation: true, bracketPairs: true },
+                      suggest: { showKeywords: true, showSnippets: true },
+                      quickSuggestions: true,
+                      parameterHints: { enabled: true },
+                      folding: true,
+                      foldingHighlight: true,
+                      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
+                      padding: { top: 10, bottom: 10 },
+                    }}
+                  />
+                </div>
+                {algoSyntaxError && (
+                  <div className="algo-syntax-error">
+                    <div className="algo-syntax-error-header">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      <span>语法错误</span>
+                    </div>
+                    <div className="algo-syntax-error-body">{algoSyntaxError}</div>
+                  </div>
+                )}
+                <span className="tool-form-hint">脚本须定义 <code>def main(input_data)</code> 入口函数，在 Docker 沙箱中执行</span>
+              </div>
+            )}
+            {!(form.toolType === 'ALGORITHM' && algoStep === 1) && form.toolType !== 'MCP_PASSTHROUGH' && (
             <div className="tool-form-schema-section">
               <h4 className="tool-form-config-card-title">生成 Schema</h4>
               {form.toolType === 'HTTP' ? (
@@ -1154,16 +1414,108 @@ export default function ToolListPage() {
                   <p className="tool-form-schema-hint">请先完成上方参数和 HTTP 配置，然后点击步骤 {httpMethod === 'GET' ? '3' : '4'} 查看生成的 Schema</p>
                 )
               ) : (
-                <div className="tool-form-field">
-                  <label className="tool-form-label">输入 Schema (JSON)</label>
-                  <textarea className="tool-form-textarea code" value={form.inputSchema} onChange={(e) => setForm({ ...form, inputSchema: e.target.value })} rows={5} />
-                </div>
+                <>
+                  <div className="tool-form-field">
+                    <div className="tool-form-schema-field-header">
+                      <span className="tool-form-schema-field-label">输入 Schema (JSON)</span>
+                      <div className="tool-form-schema-actions">
+                        <button type="button" className="tool-form-schema-icon-btn" title="格式化 JSON" onClick={() => {
+                          try { const obj = JSON.parse(form.inputSchema); setForm({ ...form, inputSchema: JSON.stringify(obj, null, 2) }); toast('格式化成功', 'success'); }
+                          catch { toast('JSON 格式错误', 'error'); }
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="tool-form-schema-monaco-wrap">
+                      <MonacoEditor
+                        height="160px"
+                        language="json"
+                        value={form.inputSchema}
+                        onChange={(v) => setForm({ ...form, inputSchema: v || '' })}
+                        theme="vs"
+                        options={{
+                          minimap: { enabled: false },
+                          fontSize: 12.5,
+                          lineNumbers: 'on',
+                          scrollBeyondLastLine: false,
+                          wordWrap: 'on',
+                          tabSize: 2,
+                          automaticLayout: true,
+                          bracketPairColorization: { enabled: true },
+                          guides: { indentation: true, bracketPairs: true },
+                          folding: true,
+                          scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
+                          padding: { top: 6, bottom: 6 },
+                        }}
+                      />
+                    </div>
+                    {form.inputSchema && form.inputSchema.trim() && (() => { try { JSON.parse(form.inputSchema); return <div className="tool-form-schema-valid"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> JSON 有效</div>; } catch { return <div className="tool-form-schema-error"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> JSON 格式错误</div>; } })()}
+                  </div>
+                  {form.toolType === 'ALGORITHM' && (
+                    <div className="tool-form-field">
+                      <div className="tool-form-schema-field-header">
+                        <span className="tool-form-schema-field-label">输出 Schema (JSON)</span>
+                        <div className="tool-form-schema-actions">
+                          <button type="button" className="tool-form-schema-icon-btn" title="格式化 JSON" onClick={() => {
+                            try { const obj = JSON.parse(form.outputSchema); setForm({ ...form, outputSchema: JSON.stringify(obj, null, 2) }); toast('格式化成功', 'success'); }
+                            catch { toast('JSON 格式错误', 'error'); }
+                          }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="tool-form-schema-monaco-wrap">
+                        <MonacoEditor
+                          height="160px"
+                          language="json"
+                          value={form.outputSchema}
+                          onChange={(v) => setForm({ ...form, outputSchema: v || '' })}
+                          theme="vs"
+                          options={{
+                            minimap: { enabled: false },
+                            fontSize: 12.5,
+                            lineNumbers: 'on',
+                            scrollBeyondLastLine: false,
+                            wordWrap: 'on',
+                            tabSize: 2,
+                            automaticLayout: true,
+                            bracketPairColorization: { enabled: true },
+                            guides: { indentation: true, bracketPairs: true },
+                            folding: true,
+                            scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
+                            padding: { top: 6, bottom: 6 },
+                          }}
+                        />
+                      </div>
+                      {form.outputSchema && form.outputSchema.trim() && (() => { try { JSON.parse(form.outputSchema); return <div className="tool-form-schema-valid"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> JSON 有效</div>; } catch { return <div className="tool-form-schema-error"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> JSON 格式错误</div>; } })()}
+                    </div>
+                  )}
+                </>
               )}
             </div>
             )}
-            <div className="tool-form-actions">
-              <button className="tool-form-cancel" onClick={() => setShowForm(false)}>取消</button>
-              <button className="tool-form-submit" onClick={handleSubmit}>{editing ? '保存' : '创建'}</button>
+            </div>
+            <div className="tool-form-footer">
+              {form.toolType === 'ALGORITHM' ? (
+                algoStep === 0 ? (
+                  <>
+                    <button className="tool-form-cancel" onClick={() => setShowForm(false)}>取消</button>
+                    <button className="tool-form-submit" onClick={handleAlgoStepOne} disabled={algoScriptLoading}>{algoScriptLoading ? '加载脚本中...' : '下一步：编辑脚本'}</button>
+                  </>
+                ) : (
+                  <>
+                    <button className="tool-form-cancel" onClick={() => setAlgoStep(0)}>上一步</button>
+                    <button className="tool-form-submit" onClick={handleAlgoSaveScript} disabled={algoSaving}>{algoSaving ? '保存中...' : '保存脚本'}</button>
+                    <button className="tool-form-submit" onClick={() => { setShowForm(false); setEditing(null); fetchTools(); }}>完成</button>
+                  </>
+                )
+              ) : (
+                <>
+                  <button className="tool-form-cancel" onClick={() => setShowForm(false)}>取消</button>
+                  <button className="tool-form-submit" onClick={handleSubmit}>{editing ? '保存' : '创建'}</button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1310,12 +1662,22 @@ export default function ToolListPage() {
                       <td className="tool-list-date-cell">{new Date(ds.createdAt).toLocaleDateString('zh-CN')}</td>
                       <td>
                         <div className="tool-list-row-actions">
-                          <button className="tool-list-row-btn" onClick={() => handleDsTest(ds.id)} disabled={dsTesting === ds.id}>
-                            {dsTesting === ds.id ? '测试中...' : '测试'}
+                          <button className="tool-list-icon-btn" title="测试连接" onClick={() => handleDsTest(ds.id)} disabled={dsTesting === ds.id}>
+                            {dsTesting === ds.id ? (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/><polyline points="21 3 21 9 15 9"/></svg>
+                            ) : (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9l3 3 8-8"/><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                            )}
                           </button>
-                          <button className="tool-list-row-btn" onClick={() => handleDsGetStructure(ds.id)}>结构</button>
-                          <button className="tool-list-row-btn" onClick={() => openDsEdit(ds)}>编辑</button>
-                          <button className="tool-list-row-btn danger" onClick={() => handleDsDelete(ds)}>删除</button>
+                          <button className="tool-list-icon-btn" title="查看结构" onClick={() => handleDsGetStructure(ds.id)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                          </button>
+                          <button className="tool-list-icon-btn" title="编辑" onClick={() => openDsEdit(ds)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button className="tool-list-icon-btn danger" title="删除" onClick={() => handleDsDelete(ds)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1553,38 +1915,47 @@ export default function ToolListPage() {
       {showConceptBind && bindingTool && (
         <div className="tool-form-overlay" onClick={() => setShowConceptBind(false)}>
           <div className="tool-form" onClick={(e) => e.stopPropagation()}>
-            <h3 className="tool-form-title">概念绑定 - {bindingTool.displayName}</h3>
-            <div className="tool-form-field">
-              <label className="tool-form-label">已绑定的概念</label>
-              {conceptBindings.length === 0 ? (
-                <div style={{ color: '#999', fontSize: 13, padding: '8px 0' }}>暂无绑定</div>
-              ) : (
-                conceptBindings.map((tb) => {
-                  const conceptName = allConcepts.find((c) => c.id === tb.conceptId)?.name || `ID:${tb.conceptId}`;
-                  return (
-                    <div key={tb.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 6 }}>
-                      <div>
-                        <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 3, marginRight: 8, color: '#fff', background: '#52c41a' }}>
-                          {bindingTypes.find((bt) => bt.value === tb.bindingType)?.label ?? tb.bindingType}
-                        </span>
-                        <span style={{ fontSize: 13, color: '#333' }}>{conceptName}</span>
-                      </div>
-                      <button className="tool-list-row-btn danger" onClick={() => handleUnbindConcept(tb.id)}>解绑</button>
-                    </div>
-                  );
-                })
-              )}
+            <div className="tool-form-header">
+              <h3 className="tool-form-title">概念绑定 · {bindingTool.displayName}</h3>
+              <button className="tool-form-close" onClick={() => setShowConceptBind(false)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
             </div>
-            <div className="tool-form-field" style={{ marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
-              <label className="tool-form-label">添加绑定</label>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <div style={{ flex: 1 }}><Select value={selectedConceptId ? String(selectedConceptId) : ''} options={[{ value: '', label: '选择概念' }, ...allConcepts.map((c) => ({ value: String(c.id), label: c.name }))]} onChange={(v) => setSelectedConceptId(v ? Number(v) : null)} /></div>
-                <div style={{ width: 120 }}><Select value={selectedBindRelation} options={bindingTypes.map((bt) => ({ value: bt.value, label: bt.label }))} onChange={setSelectedBindRelation} /></div>
-                <button className="tool-list-add-btn" onClick={handleBindConcept} disabled={!selectedConceptId}>绑定</button>
+            <div className="tool-form-body">
+              <div className="tool-form-field">
+                <label className="tool-form-label">已绑定概念</label>
+                {conceptBindings.length === 0 ? (
+                  <div className="concept-bind-empty">暂无绑定</div>
+                ) : (
+                  <div className="concept-bind-list">
+                    {conceptBindings.map((tb) => {
+                      const conceptName = allConcepts.find((c) => c.id === tb.conceptId)?.name || `ID:${tb.conceptId}`;
+                      return (
+                        <div key={tb.id} className="concept-bind-item">
+                          <div className="concept-bind-item-left">
+                            <span className={`concept-bind-badge ${tb.bindingType}`}>{bindingTypes.find((bt) => bt.value === tb.bindingType)?.label ?? tb.bindingType}</span>
+                            <span className="concept-bind-name">{conceptName}</span>
+                          </div>
+                          <button className="tool-list-icon-btn danger" title="解绑" onClick={() => handleUnbindConcept(tb.id)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              <div className="tool-form-field">
+                <label className="tool-form-label">添加绑定</label>
+                <div className="concept-bind-add-row">
+                  <div className="concept-bind-add-select"><Select searchable value={selectedConceptId ? String(selectedConceptId) : ''} options={[{ value: '', label: '选择概念...' }, ...allConcepts.map((c) => ({ value: String(c.id), label: c.name }))]} onChange={(v) => setSelectedConceptId(v ? Number(v) : null)} /></div>
+                  <div className="concept-bind-add-relation"><Select value={selectedBindRelation} options={bindingTypes.map((bt) => ({ value: bt.value, label: bt.label }))} onChange={setSelectedBindRelation} /></div>
+                  <button className="concept-bind-add-btn" onClick={handleBindConcept} disabled={!selectedConceptId}>绑定</button>
+                </div>
               </div>
             </div>
-            <div className="tool-swagger-endpoints-actions">
-              <button className="tool-swagger-cancel" onClick={() => setShowConceptBind(false)}>关闭</button>
+            <div className="tool-form-footer">
+              <button className="tool-form-cancel" onClick={() => setShowConceptBind(false)}>关闭</button>
             </div>
           </div>
         </div>

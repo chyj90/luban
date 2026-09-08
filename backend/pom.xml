@@ -151,6 +151,11 @@
             <artifactId>maven-resolver-provider</artifactId>
             <version>3.9.9</version>
         </dependency>
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.1</version>
+        </dependency>
     </dependencies>
 
     <build>

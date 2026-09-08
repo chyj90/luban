@@ -29,7 +29,13 @@ import java.util.stream.Collectors;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -40,6 +46,17 @@ import ognl.OgnlContext;
 import ognl.MemberAccess;
 
 import java.lang.reflect.Member;
+
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.statement.update.Update;
+import net.sf.jsqlparser.statement.delete.Delete;
+import net.sf.jsqlparser.expression.operators.relational.EqualsTo;
+import net.sf.jsqlparser.expression.NullValue;
+import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.operators.conditional.AndExpression;
+import net.sf.jsqlparser.expression.operators.conditional.OrExpression;
+import net.sf.jsqlparser.expression.Parenthesis;
 
 import com.luban.util.CryptoUtil;
 import com.luban.util.AgentLogger;
@@ -126,6 +143,22 @@ public class QueryService {
                 || upperSql.startsWith("DROP") || upperSql.startsWith("TRUNCATE")
                 || upperSql.startsWith("RENAME");
         if (isDdl) return;
+
+        // 校验 UPDATE <set> 中的 <if> 条件必须同时检查 != null 和 != ''
+        if (body.contains("<set>") || body.contains("<set ")) {
+            Pattern ifPattern = Pattern.compile("<if\\s+test=\"([^\"]*)\"", Pattern.CASE_INSENSITIVE);
+            Matcher ifMatcher = ifPattern.matcher(body);
+            while (ifMatcher.find()) {
+                String condition = ifMatcher.group(1);
+                if (condition.contains("!= null") && !condition.contains("!= ''")) {
+                    throw new IllegalArgumentException(
+                        "UPDATE <set> 的 <if test=\"" + condition + "\"> 只检查了 != null，缺少 != '' 检查。"
+                        + "前端可能传空字符串，只检查 != null 会导致原值被覆盖为空。"
+                        + "请改为：test=\"" + condition + " and " + condition.replace("!= null", "").trim() + " != ''\""
+                    );
+                }
+            }
+        }
 
         Map<String, Object> config = datasourceService.fromJsonMap(ds.getConfig());
         String url = datasourceService.buildJdbcUrl(ds.getType(), config);
@@ -366,17 +399,64 @@ public class QueryService {
                     }
 
                     long executionTime = System.currentTimeMillis() - startTime;
-                    return new RunQueryResponse(columns, rows, rows.size(), executionTime);
+                    return new RunQueryResponse(columns, rows, rows.size(), executionTime, trimmedSql);
                 }
             } else {
                 int affectedRows = stmt.executeUpdate(trimmedSql);
                 long executionTime = System.currentTimeMillis() - startTime;
-                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime);
+                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime, trimmedSql);
             }
         }
     }
 
+    private void validateResolvedSql(String sql) {
+        if (sql == null || sql.trim().isEmpty()) {
+            throw new IllegalArgumentException("解析后的 SQL 为空，请检查查询模板和参数");
+        }
+        // 清理模板解析后残留的连续空行，避免 jsqlparser 解析失败
+        sql = sql.replaceAll("\\n{2,}", "\n").trim();
+        try {
+            net.sf.jsqlparser.statement.Statement stmt = CCJSqlParserUtil.parse(sql);
+            if (stmt instanceof Update update) {
+                if (update.getUpdateSets() == null || update.getUpdateSets().isEmpty()) {
+                    throw new IllegalArgumentException("UPDATE 语句缺少 SET 子句（所有更新字段条件不满足），请检查参数是否为空");
+                }
+                if (update.getWhere() == null) {
+                    throw new IllegalArgumentException("UPDATE 语句缺少 WHERE 条件，禁止全表更新");
+                }
+                checkEqualsNull(update.getWhere(), "UPDATE WHERE");
+            } else if (stmt instanceof Delete delete) {
+                if (delete.getWhere() == null) {
+                    throw new IllegalArgumentException("DELETE 语句缺少 WHERE 条件，禁止全表删除");
+                }
+                checkEqualsNull(delete.getWhere(), "DELETE WHERE");
+            }
+        } catch (JSQLParserException e) {
+            AgentLogger.bug("bug-sql-parse.log", "SQL 解析失败: " + sql + " | " + e.getMessage());
+            throw new IllegalArgumentException("SQL 语法解析失败，请检查生成的 SQL: " + e.getMessage());
+        }
+    }
+
+    private void checkEqualsNull(Expression expr, String context) {
+        if (expr instanceof EqualsTo eq) {
+            if (eq.getRightExpression() instanceof NullValue || eq.getLeftExpression() instanceof NullValue) {
+                throw new IllegalArgumentException(
+                    context + " 中包含 = NULL，这永远为 false。如需判断 NULL 请使用 IS NULL，如需确保参数非空请在查询模板中用 <if> 标签保护");
+            }
+        }
+        if (expr instanceof AndExpression and) {
+            checkEqualsNull(and.getLeftExpression(), context);
+            checkEqualsNull(and.getRightExpression(), context);
+        } else if (expr instanceof OrExpression or) {
+            checkEqualsNull(or.getLeftExpression(), context);
+            checkEqualsNull(or.getRightExpression(), context);
+        } else if (expr instanceof Parenthesis paren) {
+            checkEqualsNull(paren.getExpression(), context);
+        }
+    }
+
     private RunQueryResponse runJdbcQuery(String type, Map<String, Object> config, String sql) {
+        validateResolvedSql(sql);
         String url = datasourceService.buildJdbcUrl(type, config);
         long startTime = System.currentTimeMillis();
 
@@ -415,12 +495,12 @@ public class QueryService {
                     }
 
                     long executionTime = System.currentTimeMillis() - startTime;
-                    return new RunQueryResponse(columns, rows, rows.size(), executionTime);
+                    return new RunQueryResponse(columns, rows, rows.size(), executionTime, trimmedSql);
                 }
             } else {
                 int affectedRows = stmt.executeUpdate(trimmedSql);
                 long executionTime = System.currentTimeMillis() - startTime;
-                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime);
+                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime, trimmedSql);
             }
         } catch (Exception e) {
             throw new RuntimeException("SQL 查询执行失败: " + e.getMessage());
@@ -502,7 +582,7 @@ public class QueryService {
                     List<String> columns = new ArrayList<>(responseMap.keySet());
                     List<List<Object>> rows = new ArrayList<>();
                     rows.add(new ArrayList<>(responseMap.values()));
-                    return new RunQueryResponse(columns, rows, 1, executionTime);
+                    return new RunQueryResponse(columns, rows, 1, executionTime, endpoint);
                 } catch (Exception e) {
                     try {
                         List<Map<String, Object>> list = objectMapper.readValue(response.body(),
@@ -511,12 +591,12 @@ public class QueryService {
                         List<List<Object>> rows = list.stream()
                                 .map(m -> columns.stream().map(m::get).toList())
                                 .collect(Collectors.toList());
-                        return new RunQueryResponse(columns, new ArrayList<>(rows), rows.size(), executionTime);
+                        return new RunQueryResponse(columns, new ArrayList<>(rows), rows.size(), executionTime, endpoint);
                     } catch (Exception e2) {
                         return new RunQueryResponse(
                                 List.of("status", "body"),
                                 List.of(List.of(response.statusCode(), response.body())),
-                                1, executionTime);
+                                1, executionTime, endpoint);
                     }
                 }
             }
@@ -642,7 +722,7 @@ public class QueryService {
             ctx.setRoot(wrapper);
             Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, wrapper);
             boolean boolResult = result instanceof Boolean ? (Boolean) result : false;
-            AgentLogger.bug("bug-if-tag.log",
+            AgentLogger.debug("bug-if-tag.log",
                 String.format("OGNL条件求值: [%s] → %s | params=%s",
                     condition, boolResult, params));
             return boolResult;
@@ -753,7 +833,7 @@ public class QueryService {
             ctx.setRoot(wrapper);
             Object result = Ognl.getValue(Ognl.parseExpression(expr), ctx, wrapper);
             String formatted = result != null ? formatSqlValue(result) : "NULL";
-            AgentLogger.bug("bug-if-tag.log",
+            AgentLogger.debug("bug-if-tag.log",
                 String.format("OGNL表达式求值: [%s] → %s", expr, formatted));
             return formatted;
         } catch (Exception e) {

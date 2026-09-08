@@ -5,6 +5,18 @@ import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMent
 import type { AgentDefinition } from '../registry/agentRegistry';
 import { getAgentMemory } from '../registry/agentMemory';
 
+export type QueryRunInfo = {
+  queryId: number;
+  queryName: string;
+  params: Record<string, unknown>;
+  result: {
+    columns: string[];
+    rows: unknown[][];
+    totalCount: number;
+    executionTime: number;
+  };
+};
+
 export type RouterSessionOptions = Pick<
   AgentFactoryOptions,
   'model' | 'currentPageId' | 'currentPageName' | 'allPages' | 'applicationId'
@@ -12,6 +24,7 @@ export type RouterSessionOptions = Pick<
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
+  onQueryRun?: (info: QueryRunInfo) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
   onToolsChange?: (apiId?: number) => void;
@@ -32,6 +45,7 @@ export type RouterCallbacks = {
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
+  onQueryRun?: (info: QueryRunInfo) => void;
   onQueriesChange?: () => void;
   onDatasourceChange?: () => void;
   onToolsChange?: (apiId?: number) => void;
@@ -194,6 +208,7 @@ export class ChatRouter {
       onPagesChange: this.callbacks.onPagesChange || this.sessionOptions.onPagesChange,
       onPageChange: this.callbacks.onPageChange || this.sessionOptions.onPageChange,
       onQuerySelect: this.callbacks.onQuerySelect || this.sessionOptions.onQuerySelect,
+      onQueryRun: this.callbacks.onQueryRun || this.sessionOptions.onQueryRun,
       onQueriesChange: this.callbacks.onQueriesChange || this.sessionOptions.onQueriesChange,
       onDatasourceChange: this.callbacks.onDatasourceChange || this.sessionOptions.onDatasourceChange,
       onToolsChange: this.callbacks.onToolsChange || this.sessionOptions.onToolsChange,

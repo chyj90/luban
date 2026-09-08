@@ -2,9 +2,52 @@ import { SkillCategory, type SkillFactory, resolveSkills } from '../skillRegistr
 import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { getAgentMemory, setAgentMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
+import { listQueries } from '@/api';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
 
 const activeDelegations = new Set<string>();
+
+async function validateFilterParamsCoverage(
+  filterParams: string | undefined,
+  queryName: string | undefined,
+  applicationId: number
+): Promise<string[]> {
+  const warnings: string[] = [];
+  if (!filterParams || !queryName) return warnings;
+
+  const declaredParams = filterParams
+    .split(',')
+    .map(p => p.trim().split('(')[0].trim())
+    .filter(p => p.length > 0);
+
+  if (declaredParams.length === 0) return warnings;
+
+  try {
+    const res = await listQueries(applicationId);
+    const query = res.data.find((q: any) => q.name === queryName);
+    if (!query) {
+      warnings.push(`未找到查询 ${queryName}，无法校验筛选参数覆盖`);
+      return warnings;
+    }
+
+    const sql: string = query.body || query.sqlBody || '';
+    if (!sql) {
+      warnings.push(`查询 ${queryName} 无 SQL 内容，无法校验筛选参数覆盖`);
+      return warnings;
+    }
+
+    for (const param of declaredParams) {
+      const paramPattern = `this.params.${param}`;
+      if (!sql.includes(paramPattern)) {
+        warnings.push(`筛选参数 "${param}" 未在 SQL 中出现（缺少 this.params.${param}），DBA 可能遗漏了此筛选条件`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[validateFilterParamsCoverage] 校验失败:`, e);
+  }
+
+  return warnings;
+}
 
 export const delegateSkills: Record<string, SkillFactory> = {
   'delegate:query': (ctx, chatRouter) => {
@@ -34,6 +77,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
           requirement: { type: 'string', description: '自然语言描述的需求，如"列出所有数据源"、"为订单页创建查询，需要 id、订单号、金额、状态字段"、"删除查询 xxx"' },
           target_page: { type: 'string', description: '目标页面名称（可选）' },
           query_name: { type: 'string', description: '查询名称（可选，创建/修改时建议提供）' },
+          filter_params: { type: 'string', description: '声明的筛选参数（可选），格式：paramName(类型,匹配方式)，逗号分隔。DBA 完成后会校验 SQL 是否覆盖所有参数' },
         },
         required: ['requirement'],
       },
@@ -105,6 +149,18 @@ export const delegateSkills: Record<string, SkillFactory> = {
             details: dbaResponse || '任务完成',
             data: { messages },
           };
+
+          // 校验筛选参数覆盖：检查 DBA 生成的 SQL 是否包含所有声明的筛选参数
+          const filterWarnings = await validateFilterParamsCoverage(
+            typedArgs.filter_params,
+            typedArgs.query_name,
+            ctx.applicationId
+          );
+          if (filterWarnings.length > 0) {
+            const warningMsg = filterWarnings.join('\n');
+            console.warn(`[delegate_query] 筛选参数校验警告:\n${warningMsg}`);
+            result.details += `\n\n⚠️ 筛选参数校验:\n${warningMsg}`;
+          }
 
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',

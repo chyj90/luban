@@ -12,6 +12,7 @@ interface QueryEditorProps {
   query: Query;
   applicationId: number;
   onQueryUpdate: (query: Query) => void;
+  externalResult?: RunQueryResponse | null;
 }
 
 function validateDynamicTags(body: string): editor.IMarkerData[] {
@@ -106,7 +107,7 @@ function validateDynamicTags(body: string): editor.IMarkerData[] {
   return markers;
 }
 
-export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditorProps) {
+export function QueryEditor({ query, applicationId, onQueryUpdate, externalResult }: QueryEditorProps) {
   const [result, setResult] = useState<RunQueryResponse | null>(null);
   const [running, setRunning] = useState(false);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
@@ -116,6 +117,12 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
   const providerRef = useRef<IDisposable | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
+
+  useEffect(() => {
+    if (externalResult !== undefined) {
+      setResult(externalResult);
+    }
+  }, [externalResult]);
 
   useEffect(() => {
     if (applicationId) {
@@ -399,6 +406,11 @@ export function QueryEditor({ query, applicationId, onQueryUpdate }: QueryEditor
             <span className="qe-result-meta">
               {result.totalCount} 条记录 · {result.executionTime}ms
             </span>
+            {result.resolvedSql && (
+              <span className="qe-result-sql" title={result.resolvedSql} style={{ marginLeft: 'auto', fontSize: '11px', color: '#888', maxWidth: '60%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {result.resolvedSql}
+              </span>
+            )}
           </div>
           <div className="qe-result-table-wrap">
             <table className="qe-result-table">

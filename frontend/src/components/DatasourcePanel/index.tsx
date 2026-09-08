@@ -1,11 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Select from '@/components/Select';
+import Editor from '@monaco-editor/react';
+import type { languages, IDisposable, editor } from 'monaco-editor';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { listDrivers, installDriver } from '@/api/driver';
 import { listApplicationDatasources } from '@/api/tool';
+import { executeSql } from '@/api/query';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import type { Datasource, DatasourceStructure, DriverInfo, InstallProgress, ExtraField } from '@/types/datasource';
+import type { RunQueryResponse } from '@/types/query';
 import './DatasourcePanel.css';
 
 interface DatasourcePanelProps {
@@ -58,17 +62,33 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [structure, setStructure] = useState<DatasourceStructure | null>(null);
-  const [selectedDsId, setSelectedDsId] = useState<number | null>(null);
+  const [sqlStructureLoading, setSqlStructureLoading] = useState(false);
   const [testing, setTesting] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [install, setInstall] = useState<InstallState | null>(null);
+  const [sqlConsoleDsId, setSqlConsoleDsId] = useState<number | null>(null);
+  const [sqlInput, setSqlInput] = useState('');
+  const [sqlResult, setSqlResult] = useState<RunQueryResponse | null>(null);
+  const [sqlExecuting, setSqlExecuting] = useState(false);
+  const [sqlError, setSqlError] = useState('');
+  const [expandedSqlTables, setExpandedSqlTables] = useState<Set<string>>(new Set());
+  const sqlTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const sqlEditorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const sqlMonacoRef = useRef<typeof import('monaco-editor') | null>(null);
+  const sqlProviderRef = useRef<IDisposable | null>(null);
+  const sqlStructureRef = useRef<DatasourceStructure | null>(null);
+  const sqlConsoleDsIdRef = useRef<number | null>(null);
   const toast = useToastStore((s) => s.show);
 
   useEffect(() => {
     listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
-    listApplicationDatasources(applicationId).then((res) => setKeyDatasources((res.data as Array<{ id: number; name: string; type?: string }>) || [])).catch(() => setKeyDatasources([]));
+    listApplicationDatasources(applicationId).then((res) => setKeyDatasources((res.data as Array<{ id: number; name: string; type?: string; config?: Record<string, unknown> }>) || [])).catch(() => setKeyDatasources([]));
     listDrivers().then((res) => setDrivers(res.data)).catch(() => {});
   }, [applicationId]);
+
+  useEffect(() => {
+    sqlStructureRef.current = structure;
+  }, [structure]);
 
   const buildConfig = () => {
     if (isJdbcType(form.type)) {
@@ -217,20 +237,211 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     setTesting(null);
   };
 
-  const handleViewStructure = async (id: number) => {
-    if (selectedDsId === id) { setSelectedDsId(null); setStructure(null); return; }
-    setSelectedDsId(id);
-    const res = await getDatasourceStructure(id);
-    setStructure(res.data);
-  };
-
   const handleDelete = async (id: number) => {
     const ok = await confirm({ title: '确认删除', message: '确定删除此数据源？', confirmText: '删除', variant: 'danger' });
     if (!ok) return;
     await deleteDatasource(id);
     setDatasources(datasources.filter((d) => d.id !== id));
-    if (selectedDsId === id) { setSelectedDsId(null); setStructure(null); }
+    if (sqlConsoleDsId === id) { setSqlConsoleDsId(null); sqlConsoleDsIdRef.current = null; setSqlInput(''); setSqlResult(null); setSqlError(''); setStructure(null); setExpandedSqlTables(new Set()); }
     toast('数据源已删除', 'success');
+  };
+
+  const handleToggleSqlConsole = async (dsId: number) => {
+    if (sqlConsoleDsId === dsId) {
+      if (sqlProviderRef.current) { sqlProviderRef.current.dispose(); sqlProviderRef.current = null; }
+      setSqlConsoleDsId(null);
+      sqlConsoleDsIdRef.current = null;
+      setSqlInput('');
+      setSqlResult(null);
+      setSqlError('');
+      setExpandedSqlTables(new Set());
+      setStructure(null);
+      setSqlStructureLoading(false);
+    } else {
+      if (sqlConsoleDsId && sqlProviderRef.current) { sqlProviderRef.current.dispose(); sqlProviderRef.current = null; }
+      setSqlConsoleDsId(dsId);
+      sqlConsoleDsIdRef.current = dsId;
+      setSqlInput('');
+      setSqlResult(null);
+      setSqlError('');
+      setExpandedSqlTables(new Set());
+      setSqlStructureLoading(true);
+      try {
+        const res = await getDatasourceStructure(dsId);
+        setStructure(res.data);
+      } catch {
+        setStructure(null);
+      } finally {
+        setSqlStructureLoading(false);
+      }
+    }
+  };
+
+  const insertAtCursor = (text: string) => {
+    const editor = sqlEditorRef.current;
+    if (editor) {
+      editor.executeEdits('insert', [{
+        range: editor.getSelection()!,
+        text,
+      }]);
+      editor.focus();
+      return;
+    }
+    const el = sqlTextareaRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const before = sqlInput.slice(0, start);
+    const after = sqlInput.slice(end);
+    const newValue = before + text + after;
+    setSqlInput(newValue);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const toggleSqlTable = (tableName: string) => {
+    setExpandedSqlTables((prev) => {
+      const next = new Set(prev);
+      if (next.has(tableName)) {
+        next.delete(tableName);
+      } else {
+        next.add(tableName);
+      }
+      return next;
+    });
+  };
+
+  const handleSqlBeforeMount = (monaco: typeof import('monaco-editor')) => {
+    sqlMonacoRef.current = monaco;
+
+    const sqlKeywords = [
+      'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER',
+      'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'OUTER JOIN', 'ON',
+      'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'AS',
+      'AND', 'OR', 'NOT', 'IN', 'EXISTS', 'BETWEEN', 'LIKE', 'IS NULL', 'IS NOT NULL',
+      'COUNT', 'SUM', 'AVG', 'MAX', 'MIN', 'DISTINCT', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
+      'SET', 'VALUES', 'INTO', 'DEFAULT', 'PRIMARY KEY', 'FOREIGN KEY', 'REFERENCES',
+      'ASC', 'DESC', 'NULLS FIRST', 'NULLS LAST', 'TRUNCATE', 'INDEX', 'VIEW',
+    ];
+
+    sqlProviderRef.current = monaco.languages.registerCompletionItemProvider('sql', {
+      provideCompletionItems: (model, position) => {
+        const word = model.getWordUntilPosition(position);
+        const range: languages.CompletionItem['range'] = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+
+        const suggestions: languages.CompletionItem[] = [];
+        const seen = new Set<string>();
+
+        const addSuggestion = (item: languages.CompletionItem) => {
+          const key = `${item.kind}:${item.label}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            suggestions.push(item);
+          }
+        };
+
+        sqlKeywords.forEach((kw) => {
+          addSuggestion({
+            label: kw,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: kw,
+            range,
+          });
+        });
+
+        const structure = sqlStructureRef.current;
+        if (!structure) return { suggestions };
+
+        const textBefore = model.getValueInRange({
+          startLineNumber: position.lineNumber,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+
+        const columnMatch = textBefore.match(/\.([a-zA-Z_]*)$/);
+        if (columnMatch) {
+          const tablePrefix = textBefore.match(/([a-zA-Z_]+)\.([a-zA-Z_]*)$/);
+          if (tablePrefix) {
+            const tableName = tablePrefix[1].toLowerCase();
+            const table = structure.tables.find((t) => t.name.toLowerCase() === tableName);
+            if (table) {
+              table.columns.forEach((col) => {
+                addSuggestion({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  detail: col.type,
+                  insertText: col.name,
+                  range,
+                });
+              });
+            }
+          }
+          return { suggestions };
+        }
+
+        const fromMatch = textBefore.match(/from\s+([a-zA-Z_]*)$/i);
+        const joinMatch = textBefore.match(/join\s+([a-zA-Z_]*)$/i);
+        const isFromOrJoin = fromMatch || joinMatch;
+
+        if (isFromOrJoin || !textBefore.includes('.')) {
+          structure.tables.forEach((table) => {
+            addSuggestion({
+              label: table.name,
+              kind: monaco.languages.CompletionItemKind.Class,
+              detail: `${table.columns.length} columns`,
+              insertText: table.name,
+              range,
+            });
+          });
+        }
+
+        return { suggestions };
+      },
+    });
+  };
+
+  const handleSqlEditorMount = (editor: editor.IStandaloneCodeEditor) => {
+    sqlEditorRef.current = editor;
+    editor.addAction({
+      id: 'execute-sql',
+      label: 'Execute SQL',
+      keybindings: [2048 | 3], // Ctrl+Enter
+      run: () => {
+        const dsId = sqlConsoleDsIdRef.current;
+        if (dsId) handleExecuteSql(dsId);
+      },
+    });
+  };
+
+  const handleExecuteSql = async (dsId: number) => {
+    if (!sqlInput.trim()) { toast('请输入 SQL', 'error'); return; }
+    setSqlExecuting(true);
+    setSqlError('');
+    setSqlResult(null);
+    try {
+      const res = await executeSql(dsId, sqlInput, false, true);
+      setSqlResult(res.data);
+      const upperSql = sqlInput.trim().toUpperCase();
+      if (/^(DROP|CREATE|ALTER|TRUNCATE)\b/.test(upperSql)) {
+        try {
+          const structRes = await getDatasourceStructure(dsId);
+          setStructure(structRes.data);
+        } catch { /* structure fetch failed, keep old */ }
+      }
+    } catch (e: unknown) {
+      setSqlError((e as Error).message || 'SQL 执行失败');
+    } finally {
+      setSqlExecuting(false);
+    }
   };
 
   const getDriverInfo = (type: string) => {
@@ -590,8 +801,8 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                   {testing === ds.id ? '测试中...' : '测试'}
                 </button>
                 {isJdbcType(ds.type) && (
-                  <button className="ds-action-btn" onClick={() => handleViewStructure(ds.id)}>
-                    {selectedDsId === ds.id ? '收起' : '结构'}
+                  <button className="ds-action-btn" onClick={() => handleToggleSqlConsole(ds.id)}>
+                    {sqlConsoleDsId === ds.id ? '收起 SQL' : 'SQL'}
                   </button>
                 )}
                 <button className="ds-action-btn ds-action-danger" onClick={() => handleDelete(ds.id)}>
@@ -606,21 +817,154 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 </button>
               </div>
 
-              {selectedDsId === ds.id && structure && (
-                <div className="ds-structure">
-                  <div className="ds-structure-title">数据库表结构</div>
-                  {structure.tables.map((table) => (
-                    <div key={table.name} className="ds-table">
-                      <div className="ds-table-name">{table.name}</div>
-                      {table.columns.map((col) => (
-                        <div key={col.name} className="ds-column">
-                          <span className="ds-col-name">{col.name}</span>
-                          <span className="ds-col-type">{col.type}</span>
-                          {col.primaryKey && <span className="ds-col-pk">PK</span>}
+              {sqlConsoleDsId === ds.id && (
+                <div className="ds-sql-console">
+                  <div className="ds-sql-console-header">
+                    <span className="ds-sql-console-title">SQL 控制台</span>
+                    <span className="ds-sql-console-hint">Ctrl+Enter 执行</span>
+                  </div>
+
+                  <div className="ds-sql-body">
+                    {structure && structure.tables.length > 0 && (
+                      <div className="ds-sql-structure">
+                        <div className="ds-sql-structure-label">表</div>
+                        {structure.tables.map((table) => (
+                          <div key={table.name} className="ds-sql-table-chip-wrap">
+                            <div
+                              className={`ds-sql-table-chip ${expandedSqlTables.has(table.name) ? 'expanded' : ''}`}
+                              onClick={() => toggleSqlTable(table.name)}
+                            >
+                              <span className="ds-sql-table-chip-arrow">
+                                {expandedSqlTables.has(table.name) ? '▾' : '▸'}
+                              </span>
+                              <span
+                                className="ds-sql-table-chip-name"
+                                onClick={(e) => { e.stopPropagation(); insertAtCursor(table.name); }}
+                                title="点击插入表名"
+                              >
+                                {table.name}
+                              </span>
+                            </div>
+                            {expandedSqlTables.has(table.name) && (
+                              <div className="ds-sql-table-cols">
+                                {table.columns.map((col) => (
+                                  <span
+                                    key={col.name}
+                                    className="ds-sql-col-chip"
+                                    onClick={() => insertAtCursor(col.name)}
+                                    title={`${col.type}${col.primaryKey ? ' · 主键' : ''}`}
+                                  >
+                                    {col.name}
+                                    {col.primaryKey && <span className="ds-sql-col-chip-pk">PK</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="ds-sql-editor">
+                      {sqlStructureLoading ? (
+                        <div className="ds-sql-loading">
+                          <div className="ds-sql-spinner" />
+                          <span>加载表结构...</span>
                         </div>
-                      ))}
+                      ) : (
+                        <Editor
+                          height="100%"
+                          language="sql"
+                          value={sqlInput}
+                          onChange={(val) => setSqlInput(val || '')}
+                          beforeMount={handleSqlBeforeMount}
+                          onMount={handleSqlEditorMount}
+                          options={{
+                            minimap: { enabled: false },
+                            lineNumbers: 'off',
+                            folding: false,
+                            glyphMargin: false,
+                            lineDecorationsWidth: 0,
+                            lineNumbersMinChars: 0,
+                            scrollBeyondLastLine: false,
+                            wordWrap: 'on',
+                            fontSize: 12,
+                            fontFamily: "'SF Mono', 'Fira Code', Menlo, Monaco, monospace",
+                            padding: { top: 6, bottom: 6 },
+                            overviewRulerLanes: 0,
+                            hideCursorInOverviewRuler: true,
+                            overviewRulerBorder: false,
+                            renderLineHighlight: 'none',
+                            contextmenu: false,
+                            quickSuggestions: true,
+                            suggestOnTriggerCharacters: true,
+                            tabSize: 2,
+                          }}
+                        />
+                      )}
+                      <div className="ds-sql-actions">
+                        <button
+                          className="ds-sql-action-btn"
+                          onClick={() => { setSqlInput(''); setSqlResult(null); setSqlError(''); }}
+                        >
+                          清空
+                        </button>
+                        <button
+                          className="ds-sql-action-btn ds-sql-action-run"
+                          onClick={() => handleExecuteSql(ds.id)}
+                          disabled={sqlExecuting || !sqlInput.trim()}
+                        >
+                          {sqlExecuting ? '执行中...' : '执行'}
+                        </button>
+                      </div>
                     </div>
-                  ))}
+                  </div>
+
+                  {sqlError && (
+                    <div className="ds-sql-error">{sqlError}</div>
+                  )}
+
+                  {sqlResult && (
+                    <div className="ds-sql-result">
+                      <div className="ds-sql-result-header">
+                        <span className="ds-sql-result-title">查询结果</span>
+                        <span className="ds-sql-result-meta">
+                          {sqlResult.columns.length} 列 · {sqlResult.totalCount} 行
+                          {sqlResult.executionTime != null && ` · ${sqlResult.executionTime}ms`}
+                        </span>
+                      </div>
+                      <div className="ds-sql-result-table-wrap">
+                        <table className="ds-sql-result-table">
+                          <thead>
+                            <tr>
+                              <th className="ds-sql-row-num">#</th>
+                              {sqlResult.columns.map((col) => (
+                                <th key={col}>{col}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sqlResult.rows.length === 0 ? (
+                              <tr>
+                                <td colSpan={sqlResult.columns.length + 1} className="ds-sql-empty-row">
+                                  查询结果为空
+                                </td>
+                              </tr>
+                            ) : (
+                              sqlResult.rows.map((row, ri) => (
+                                <tr key={ri}>
+                                  <td className="ds-sql-row-num">{ri + 1}</td>
+                                  {sqlResult.columns.map((col, ci) => (
+                                    <td key={ci}>{row[ci] != null ? String(row[ci]) : <span className="ds-sql-null">NULL</span>}</td>
+                                  ))}
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

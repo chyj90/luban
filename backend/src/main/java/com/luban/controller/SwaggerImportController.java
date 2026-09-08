@@ -2,6 +2,7 @@ package com.luban.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.luban.constant.ToolType;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ToolDefinitionRepository;
 import lombok.RequiredArgsConstructor;
@@ -118,7 +119,7 @@ public class SwaggerImportController {
                 ToolDefinition tool = new ToolDefinition();
                 tool.setName(toolName);
                 tool.setDisplayName(toolName);
-                tool.setToolType("HTTP");
+                tool.setToolType(ToolType.HTTP);
                 tool.setDescription(description != null ? description : "");
                 tool.setInputSchema(inputSchema != null ? inputSchema : "{}");
                 tool.setConfig(config != null ? config : "{}");

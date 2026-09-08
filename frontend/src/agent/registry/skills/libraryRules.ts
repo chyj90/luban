@@ -14,4 +14,12 @@ export const LIBRARY_RULES: Record<string, string> = {
     '3. 销毁后立即 set null，不能只 destroy 不设 null',
     '4. 然后再 new Chart(ctx, { ... })，否则会报 "Canvas is already in use" 错误',
   ].join('\n'),
+  'leaflet': [
+    '❌ Leaflet 已被禁用，禁止在任何页面中使用！',
+    '原因：Leaflet 依赖国外 CDN，国内网络无法访问，会导致页面加载失败。',
+    '替代方案：',
+    '1. 地图可视化 → 使用 ECharts 的 map 系列（已内置，无需加载 CDN）',
+    '   示例：LubanUI.chart(\'mapChart\', { series: [{ type: \'map\', map: \'china\', ... }] })',
+    '2. 禁止在任何 HTML/JS/CSS 中引用 leaflet、L.map、tileLayer 等 Leaflet API',
+  ].join('\n'),
 };

@@ -11,4 +11,5 @@ public class RunQueryResponse {
     private List<List<Object>> rows;
     private long totalCount;
     private long executionTime;
+    private String resolvedSql;
 }

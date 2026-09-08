@@ -15,6 +15,7 @@ import com.luban.entity.ToolGroup;
 import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
 import com.luban.repository.AgentConfigRepository;
+import com.luban.repository.AlgorithmExecutionLogRepository;
 import com.luban.repository.ChatMessageRepository;
 import com.luban.repository.ChatRootCauseRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
@@ -45,6 +46,7 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -69,6 +71,8 @@ public class AgentService {
     private final ChatRootCauseRepository chatRootCauseRepository;
     private final CodeExecutorService codeExecutorService;
     private final OntologyChangeService ontologyChangeService;
+    private final AlgorithmExecutionLogRepository algorithmExecutionLogRepository;
+    private final com.luban.service.algorithm.JsonSchemaValidator jsonSchemaValidator;
     private final ContextBuilder contextBuilder;
     private final SqlExecutionService sqlExecutionService;
     private final IndustryService industryService;
@@ -82,7 +86,8 @@ public class AgentService {
     private final ConcurrentHashMap<String, CompiledGraph<AgentState>> compiledGraphs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Deque<Long>> rateLimitBuckets = new ConcurrentHashMap<>();
     private final AtomicInteger totalCallCount = new AtomicInteger(0);
-    
+    private final Semaphore agentConcurrencySemaphore = new Semaphore(AGENT_CONCURRENT_LIMIT, true);
+
     private final java.util.concurrent.ScheduledExecutorService idleExecutor =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
                 Thread t = new Thread(r, "llm-idle-watchdog");
@@ -99,6 +104,8 @@ public class AgentService {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_IDLE_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(300);
+    private static final long AGENT_TOTAL_TIMEOUT_MS = 120_000;
+    private static final int AGENT_CONCURRENT_LIMIT = 5;
 
     private static final int MAX_CONCEPT_EXPAND = 20;
     private static final int MAX_CONCEPT_IDS = 10;
@@ -133,6 +140,8 @@ public class AgentService {
                         ChatRootCauseRepository chatRootCauseRepository,
                         CodeExecutorService codeExecutorService,
                         OntologyChangeService ontologyChangeService,
+                        AlgorithmExecutionLogRepository algorithmExecutionLogRepository,
+                        com.luban.service.algorithm.JsonSchemaValidator jsonSchemaValidator,
                         ContextBuilder contextBuilder,
                         SqlExecutionService sqlExecutionService,
                         IndustryService industryService) {
@@ -153,6 +162,8 @@ public class AgentService {
         this.chatRootCauseRepository = chatRootCauseRepository;
         this.codeExecutorService = codeExecutorService;
         this.ontologyChangeService = ontologyChangeService;
+        this.algorithmExecutionLogRepository = algorithmExecutionLogRepository;
+        this.jsonSchemaValidator = jsonSchemaValidator;
         this.contextBuilder = contextBuilder;
         this.sqlExecutionService = sqlExecutionService;
         this.industryService = industryService;
@@ -195,6 +206,19 @@ public class AgentService {
 
         AgentConfig config = agentConfigRepository.findByIsDefaultTrue()
                 .orElseThrow(() -> new RuntimeException("未配置默认 Agent"));
+
+        boolean acquired = false;
+        try {
+            acquired = agentConcurrencySemaphore.tryAcquire(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        if (!acquired) {
+            Map<String, Object> busy = new LinkedHashMap<>();
+            busy.put("answer", "系统繁忙，当前并发请求过多，请稍后再试。");
+            busy.put("error", true);
+            return busy;
+        }
 
         try {
             CompiledGraph<AgentState> graph = compileReActGraph(config);
@@ -320,6 +344,8 @@ public class AgentService {
             errorResult.put("answer", "处理请求时出错: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
             errorResult.put("error", true);
             return errorResult;
+        } finally {
+            agentConcurrencySemaphore.release();
         }
     }
 
@@ -580,6 +606,7 @@ public class AgentService {
         graph.addNode("tool_executor", buildToolExecutorNode());
         graph.addNode("nl2sql_executor", buildNl2sqlExecutorNode());
         graph.addNode("code_executor", buildCodeExecutorNode());
+        graph.addNode("algorithm_executor", buildAlgorithmExecutorNode());
         graph.addNode("ontology_advisor", buildOntologyAdvisorNode());
         graph.addNode("final_answer", buildFinalAnswerNode());
 
@@ -593,6 +620,7 @@ public class AgentService {
                 "tool_call", "tool_executor",
                 "nl2sql", "nl2sql_executor",
                 "code_mode", "code_executor",
+                "algorithm", "algorithm_executor",
                 "ontology_action", "ontology_advisor",
                 "final_answer", "final_answer",
                 "continue", "agent"
@@ -601,6 +629,7 @@ public class AgentService {
         graph.addEdge("tool_executor", "agent");
         graph.addEdge("nl2sql_executor", "agent");
         graph.addEdge("code_executor", "agent");
+        graph.addEdge("algorithm_executor", "agent");
         graph.addEdge("ontology_advisor", "agent");
         graph.addEdge("final_answer", "__END__");
 
@@ -688,6 +717,18 @@ public class AgentService {
             if (iteration >= MAX_ITERATIONS) {
                 data.put("next_action", "final_answer");
                 data.put("final_answer", "已达到最大迭代次数，请重试。");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            long agentStartTime = data.containsKey("_agent_start_time")
+                    ? ((Number) data.get("_agent_start_time")).longValue()
+                    : System.currentTimeMillis();
+            data.putIfAbsent("_agent_start_time", agentStartTime);
+            if (System.currentTimeMillis() - agentStartTime > AGENT_TOTAL_TIMEOUT_MS) {
+                log.warn("Agent total timeout exceeded: {}ms > {}ms, forcing final_answer",
+                        System.currentTimeMillis() - agentStartTime, AGENT_TOTAL_TIMEOUT_MS);
+                data.put("next_action", "final_answer");
+                data.put("final_answer", "分析超时（超过 120 秒），请简化问题或联系管理员。");
                 return CompletableFuture.completedFuture(data);
             }
 
@@ -995,6 +1036,8 @@ public class AgentService {
             routeNl2sql(data, messages, parsed);
         } else if ("code_mode".equals(type)) {
             routeCodeMode(data, messages, parsed);
+        } else if ("algorithm".equals(type)) {
+            routeAlgorithm(data, messages, parsed);
         } else if ("ontology_action".equals(type)) {
             routeOntologyAction(data, messages, parsed);
         } else if ("request_context".equals(type)) {
@@ -1522,6 +1565,58 @@ public class AgentService {
         addAssistantToolCallMsg(messages, toolCallId, "code_executor", Map.of("code", code));
     }
 
+    private void routeAlgorithm(Map<String, Object> data, List<Map<String, Object>> messages,
+            Map<String, Object> parsed) {
+        String algorithmName = (String) parsed.get("algorithm_name");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> inputData = (Map<String, Object>) parsed.getOrDefault("input_data", Map.of());
+
+        ToolDefinition algorithm = null;
+        if (algorithmName != null) {
+            algorithm = toolDefinitionRepository.findByName(algorithmName).orElse(null);
+            if (algorithm == null) {
+                algorithm = toolDefinitionRepository.findByNameAndScope(algorithmName, "PLATFORM").orElse(null);
+            }
+            if (algorithm == null) {
+                List<ToolDefinition> fuzzy = toolDefinitionRepository.findByNameIlike(algorithmName);
+                algorithm = fuzzy.stream().filter(t -> t.getToolType() == ToolType.ALGORITHM).findFirst().orElse(null);
+            }
+        }
+        if (algorithm == null) {
+            messages.add(Map.of("role", "system", "content",
+                    "未找到算法 '" + algorithmName + "'，请使用 code_mode 自行生成代码，或确认算法名称。"));
+            data.put("next_action", "continue");
+            return;
+        }
+        if (algorithm.getToolType() != ToolType.ALGORITHM) {
+            messages.add(Map.of("role", "system", "content",
+                    "工具 '" + algorithmName + "' 不是算法类型，无法通过 algorithm action 调用。"));
+            data.put("next_action", "continue");
+            return;
+        }
+
+        @SuppressWarnings("unchecked")
+        Set<String> executedAlgos = (Set<String>) data.getOrDefault("_executed_algorithms", new LinkedHashSet<>());
+        if (executedAlgos.contains(algorithm.getName())) {
+            messages.add(Map.of("role", "system", "content",
+                    "算法 '" + algorithm.getName() + "' 本次对话已执行过，请直接给出 final_answer。"));
+            data.put("next_action", "continue");
+            return;
+        }
+
+        String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        appendReasoning(data, (String) parsed.getOrDefault("reasoning", ""));
+        data.put("next_action", "algorithm");
+        data.put("pending_algorithm", Map.of(
+                "algorithm_id", algorithm.getId(),
+                "algorithm_name", algorithm.getName(),
+                "input_data", inputData,
+                "tool_call_id", toolCallId
+        ));
+        addAssistantToolCallMsg(messages, toolCallId, "algorithm_executor",
+                Map.of("algorithm_name", algorithm.getName(), "input_data", inputData));
+    }
+
     private void routeOntologyAction(Map<String, Object> data, List<Map<String, Object>> messages,
             Map<String, Object> parsed) {
         String sessionId = (String) data.get("session_id");
@@ -2014,6 +2109,182 @@ public class AgentService {
             data.remove("pending_code");
             return CompletableFuture.completedFuture(data);
         };
+    }
+
+    private AsyncNodeAction<AgentState> buildAlgorithmExecutorNode() {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> algoCall = (Map<String, Object>) data.get("pending_algorithm");
+            Long algorithmId = ((Number) algoCall.get("algorithm_id")).longValue();
+            String algorithmName = (String) algoCall.get("algorithm_name");
+            String algoToolCallId = (String) algoCall.get("tool_call_id");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> inputData = (Map<String, Object>) algoCall.getOrDefault("input_data", Map.of());
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
+            String sessionId = (String) data.get("session_id");
+            String toolCallIdSafe = algoToolCallId != null ? algoToolCallId : "";
+
+            ToolDefinition algorithm = toolDefinitionRepository.findById(algorithmId).orElse(null);
+            if (algorithm == null) {
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        buildAlgorithmFallback("SCRIPT_NOT_FOUND", "算法 '" + algorithmName + "' 未找到")));
+                data.put("next_action", "continue");
+                data.remove("pending_algorithm");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            com.luban.service.algorithm.AlgorithmConfig algoConfig = com.luban.service.algorithm.AlgorithmConfig.parse(algorithm.getConfig());
+            if (algoConfig.getScriptPath() == null || algoConfig.getScriptPath().isBlank()) {
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        buildAlgorithmFallback("SCRIPT_NOT_FOUND", "算法 '" + algorithmName + "' 未上传脚本，请先上传算法脚本")));
+                data.put("next_action", "continue");
+                data.remove("pending_algorithm");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            String inputJson = toJsonString(inputData);
+            int maxInputSizeBytes = algoConfig.getMaxInputSizeMB() * 1024 * 1024;
+            if (inputJson.length() > maxInputSizeBytes) {
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        buildAlgorithmFallback("VALIDATION_ERROR",
+                                "input_data 序列化后 " + inputJson.length() + " 字节，超过限制 " + maxInputSizeBytes + " 字节（" + algoConfig.getMaxInputSizeMB() + "MB）")));
+                data.put("next_action", "continue");
+                data.remove("pending_algorithm");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            if (algorithm.getInputSchema() != null && !algorithm.getInputSchema().isBlank()) {
+                try {
+                    Set<com.networknt.schema.ValidationMessage> violations = jsonSchemaValidator.validate(algorithm.getInputSchema(), inputJson);
+                    if (!violations.isEmpty()) {
+                        String violationMsg = violations.stream().map(com.networknt.schema.ValidationMessage::getMessage).collect(Collectors.joining("; "));
+                        messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                                buildAlgorithmFallback("VALIDATION_ERROR", "input_data 不符合 input_schema: " + violationMsg)));
+                        data.put("next_action", "continue");
+                        data.remove("pending_algorithm");
+                        return CompletableFuture.completedFuture(data);
+                    }
+                } catch (Exception e) {
+                    log.warn("Input schema validation skipped: {}", e.getMessage());
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            Set<String> executedAlgos = (Set<String>) data.getOrDefault("_executed_algorithms", new LinkedHashSet<>());
+            if (executedAlgos.contains(algorithmName)) {
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        "算法 '" + algorithmName + "' 本次对话已执行过，请直接给出 final_answer。"));
+                data.put("next_action", "continue");
+                data.remove("pending_algorithm");
+                return CompletableFuture.completedFuture(data);
+            }
+
+            log.info("Algorithm executor: executing algorithm id={}, name={}, scriptPath={}", algorithmId, algorithmName, algoConfig.getScriptPath());
+            long startMs = System.currentTimeMillis();
+            Map<String, Object> result;
+            try {
+                result = codeExecutorService.executeScript(algoConfig.getScriptPath(), inputData, algoConfig.getTimeout());
+            } catch (Exception e) {
+                long elapsedMs = System.currentTimeMillis() - startMs;
+                saveExecutionLog(algorithmId, sessionId, algoToolCallId, (String) data.getOrDefault("user_query", ""), false, inputJson, null, e.getMessage(), elapsedMs);
+                String errorType = e instanceof java.util.concurrent.TimeoutException ? "TIMEOUT" : "EXECUTION_ERROR";
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        buildAlgorithmFallback(errorType, "算法执行异常: " + e.getMessage())));
+                data.put("next_action", "continue");
+                data.remove("pending_algorithm");
+                return CompletableFuture.completedFuture(data);
+            }
+            long elapsedMs = System.currentTimeMillis() - startMs;
+
+            Boolean success = (Boolean) result.getOrDefault("success", false);
+            String stdout = (String) result.getOrDefault("stdout", "");
+            String stderr = (String) result.getOrDefault("stderr", "");
+
+            if (success && stdout != null && !stdout.isBlank()) {
+                try {
+                    objectMapper.readTree(stdout);
+                } catch (Exception e) {
+                    success = false;
+                    stderr = "算法输出不是合法 JSON: " + stdout.substring(0, Math.min(stdout.length(), 200));
+                    log.warn("Algorithm output is not valid JSON: {}", stderr);
+                }
+            }
+
+            if (success && algorithm.getOutputSchema() != null && !algorithm.getOutputSchema().isBlank() && stdout != null) {
+                try {
+                    Set<com.networknt.schema.ValidationMessage> violations = jsonSchemaValidator.validate(algorithm.getOutputSchema(), stdout);
+                    if (!violations.isEmpty()) {
+                        String violationMsg = violations.stream().map(com.networknt.schema.ValidationMessage::getMessage).collect(Collectors.joining("; "));
+                        success = false;
+                        stderr = "算法输出不符合 output_schema: " + violationMsg;
+                    }
+                } catch (Exception e) {
+                    log.warn("Output schema validation skipped: {}", e.getMessage());
+                }
+            }
+
+            saveExecutionLog(algorithmId, sessionId, algoToolCallId, (String) data.getOrDefault("user_query", ""), success, inputJson, success ? stdout : null, success ? null : stderr, elapsedMs);
+
+            if (success) {
+                executedAlgos.add(algorithmName);
+                data.put("_executed_algorithms", executedAlgos);
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        "算法执行成功（耗时 " + elapsedMs + "ms）:\n" + stdout));
+            } else {
+                String errorType = classifyAlgorithmError(stderr);
+                log.warn("Algorithm execution failed ({}): {}", errorType, stderr);
+                messages.add(Map.of("role", "tool", "tool_call_id", toolCallIdSafe, "content",
+                        buildAlgorithmFallback(errorType, "算法执行失败: " + stderr)));
+            }
+
+            data.put("next_action", "continue");
+            data.remove("pending_algorithm");
+            return CompletableFuture.completedFuture(data);
+        };
+    }
+
+    private String classifyAlgorithmError(String stderr) {
+        if (stderr == null) return "EXECUTION_ERROR";
+        String lower = stderr.toLowerCase();
+        if (lower.contains("timeout") || lower.contains("timed out")) return "TIMEOUT";
+        if (lower.contains("oom") || lower.contains("outofmemory") || lower.contains("memoryerror")) return "OOM";
+        if (lower.contains("syntaxerror") || lower.contains("syntax error") || lower.contains("indentationerror")) return "SYNTAX_ERROR";
+        if (lower.contains("not valid json") || lower.contains("不符合 output_schema") || lower.contains("不符合 input_schema")) return "VALIDATION_ERROR";
+        return "EXECUTION_ERROR";
+    }
+
+    private String buildAlgorithmFallback(String errorType, String detail) {
+        return switch (errorType) {
+            case "SCRIPT_NOT_FOUND" -> detail + "。\n降级建议：使用 code_mode 自行生成代码，或确认算法名称后重试。";
+            case "SYNTAX_ERROR" -> detail + "。\n降级建议：算法脚本存在语法错误，请联系算法管理员修复。或使用 code_mode 临时生成代码。";
+            case "TIMEOUT" -> detail + "。\n降级建议：算法执行超时，可能是输入数据过大或算法复杂度过高。可尝试减小输入数据规模，或使用 code_mode 生成简化版代码。";
+            case "OOM" -> detail + "。\n降级建议：算法内存溢出，可能是输入数据过大。可尝试减小输入数据规模，或使用 code_mode 生成简化版代码。";
+            case "VALIDATION_ERROR" -> detail + "。\n降级建议：请检查输入/输出参数是否符合算法 Schema 定义，修正后重试。或使用 code_mode 自行生成代码。";
+            default -> detail + "。\n降级建议：使用 code_mode 自行生成代码，或直接给出 final_answer。";
+        };
+    }
+
+    private void saveExecutionLog(Long algorithmId, String sessionId, String toolCallId, String userQuery,
+                                  boolean success, String inputData, String outputData, String errorMessage, long elapsedMs) {
+        try {
+            com.luban.entity.AlgorithmExecutionLog execLog = new com.luban.entity.AlgorithmExecutionLog();
+            execLog.setAlgorithmId(algorithmId);
+            execLog.setSessionId(sessionId);
+            execLog.setToolCallId(toolCallId);
+            execLog.setUserQuery(userQuery != null ? userQuery.substring(0, Math.min(userQuery.length(), 2000)) : null);
+            execLog.setSuccess(success);
+            execLog.setInputData(inputData);
+            execLog.setOutputData(outputData);
+            execLog.setErrorMessage(errorMessage);
+            execLog.setElapsedMs(elapsedMs);
+            algorithmExecutionLogRepository.save(execLog);
+        } catch (Exception e) {
+            log.warn("Failed to save algorithm execution log: {}", e.getMessage());
+        }
     }
 
     private String toJsonString(Object obj) {
@@ -2823,22 +3094,34 @@ public class AgentService {
         sb.append("但查询数据时，由于数据库中的实际数据时间可能与当前时间不同，请先确认数据时间范围。\n\n");
 
         if (isAdmin) {
-            sb.append("你有六种方式回答用户问题：\n");
+            sb.append("你有八种方式回答用户问题：\n");
             sb.append("1. 调用 API 工具获取数据\n");
             sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 和 ontology_action 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
             sb.append("3. 生成 SQL 查询数据库（仅限 SELECT，**仅当 get_enum_values 确认所有右值列有数据时才执行**，禁止臆造右值）\n");
-            sb.append("4. 执行 Python 代码分析数据（code_mode）\n");
-            sb.append("5. 获取数据源表结构（get_table_schema，本体管理前置步骤，在生成本体变更前必须执行）\n");
-            sb.append("6. 生成本体管理建议（ontology_action，仅超管可用，必须在 get_table_schema 和 get_enum_values 之后）\n");
-            sb.append("7. 直接回答（final_answer）\n\n");
+            sb.append("4. 调用企业算法（algorithm，**前置检验全部通过后才可调用**，单次对话同一算法最多执行 1 次）\n");
+            sb.append("5. 执行 Python 代码分析数据（code_mode）\n");
+            sb.append("6. 获取数据源表结构（get_table_schema，本体管理前置步骤，在生成本体变更前必须执行）\n");
+            sb.append("7. 生成本体管理建议（ontology_action，仅超管可用，必须在 get_table_schema 和 get_enum_values 之后）\n");
+            sb.append("8. 直接回答（final_answer）\n\n");
         } else {
-            sb.append("你有五种方式回答用户问题：\n");
+            sb.append("你有六种方式回答用户问题：\n");
             sb.append("1. 调用 API 工具获取数据\n");
             sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
             sb.append("3. 生成 SQL 查询数据库（仅限 SELECT，**仅当 get_enum_values 确认所有右值列有数据时才执行**，禁止臆造右值）\n");
-            sb.append("4. 执行 Python 代码分析数据（code_mode）\n");
-            sb.append("5. 直接回答（final_answer）\n\n");
+            sb.append("4. 调用企业算法（algorithm，**前置检验全部通过后才可调用**，单次对话同一算法最多执行 1 次）\n");
+            sb.append("5. 执行 Python 代码分析数据（code_mode）\n");
+            sb.append("6. 直接回答（final_answer）\n\n");
         }
+
+        sb.append("## algorithm action 格式\n");
+        sb.append("调用企业算法时，输出以下 JSON：\n");
+        sb.append("```json\n");
+        sb.append("{\"type\": \"algorithm\", \"reasoning\": \"前置检验已通过，调用算法...\", \"algorithm_name\": \"算法名称\", \"input_data\": {...}}\n");
+        sb.append("```\n");
+        sb.append("- `algorithm_name`：必须与可用算法列表中的名称精确匹配\n");
+        sb.append("- `input_data`：必须符合算法的 input_schema 定义\n");
+        sb.append("- 前置检验未通过时，禁止调用算法，应直接 final_answer 说明原因\n");
+        sb.append("- 算法执行失败时，系统会提供降级建议，可按建议使用 code_mode 或 final_answer\n\n");
 
         sb.append("请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n");
         sb.append("所有回复必须严格按照 JSON 格式，不要添加额外文本。\n");
@@ -2980,10 +3263,18 @@ public class AgentService {
             return "{\"error\": \"Tool not found: " + toolName + "\"}";
         }
         try {
-            ToolType toolType = ToolType.fromValue(tool.getToolType());
+            ToolType toolType = tool.getToolType();
             return switch (toolType) {
                 case HTTP -> httpExecutor.execute(tool, arguments, "agent");
                 case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
+                case ALGORITHM -> {
+                    com.luban.service.algorithm.AlgorithmConfig algoConfig = com.luban.service.algorithm.AlgorithmConfig.parse(tool.getConfig());
+                    if (algoConfig.getScriptPath() == null || algoConfig.getScriptPath().isBlank()) {
+                        yield "{\"error\": \"算法未上传脚本\"}";
+                    }
+                    Map<String, Object> result = codeExecutorService.executeScript(algoConfig.getScriptPath(), arguments, algoConfig.getTimeout());
+                    yield result.toString();
+                }
             };
         } catch (Exception e) {
             log.error("Tool execution failed: {}", toolName, e);

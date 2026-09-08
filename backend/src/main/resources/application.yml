@@ -34,6 +34,8 @@ luban:
     rate-limit:
       max-requests: 30
       window-minutes: 1
+  algorithms:
+    storage-path: algorithms
   drivers:
     storage-path: drivers
     auto-load-on-startup: true

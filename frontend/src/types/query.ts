@@ -31,6 +31,7 @@ export interface RunQueryResponse {
   rows: unknown[][];
   totalCount: number;
   executionTime: number;
+  resolvedSql?: string;
 }
 
 export interface JsFunction {

@@ -7,6 +7,7 @@ import { getApplication } from '@/api/application';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
+import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE } from '@/luban-ui';
 import './AppEntry/AppUserPage.css';
 
 export function WorkAppPageViewer() {
@@ -87,11 +88,15 @@ export function WorkAppPageViewer() {
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style id="__page_style__"></style>
+  <style id="__luban_ui__">${LUBAN_UI_CSS}</style>
   ${buildShellScript(queryNames)}
 </head>
 <body>
   <div id="__app_root__"></div>
+  <script id="__luban_ui_js__">${LUBAN_UI_JS}</script>
+  <script id="__echarts__">${ECHARTS_SOURCE}</script>
   <script>
     let __page_ready__ = false;
     window.addEventListener('message', function(e) {
@@ -103,9 +108,17 @@ export function WorkAppPageViewer() {
         if (e.data.libraries) {
           e.data.libraries.forEach(function(lib) {
             if (lib) {
-              var script = document.createElement('script');
-              script.src = lib;
-              document.head.appendChild(script);
+              var _l = lib.toLowerCase(); var isCss = _l.endsWith('.css') || _l.indexOf('.css?') !== -1;
+              if (isCss) {
+                var link = document.createElement('link');
+                link.rel = 'stylesheet';
+                link.href = lib;
+                document.head.appendChild(link);
+              } else {
+                var script = document.createElement('script');
+                script.src = lib;
+                document.head.appendChild(script);
+              }
             }
           });
         }

@@ -258,3 +258,25 @@ export function runRuntimeTool(pageId: number, toolId: number, params: Record<st
     body: unknown;
   }>(`/runtime/${pageId}/tool/${toolId}/run`, { params });
 }
+
+export function uploadAlgorithmScript(id: number, file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return post<{ scriptPath: string; size: number }>(`/tools/${id}/script`, formData);
+}
+
+export function getAlgorithmScript(id: number) {
+  return get<{ scriptPath: string; content: string; size: number }>(`/tools/${id}/script`);
+}
+
+export function updateAlgorithmScript(id: number, content: string) {
+  return put<{ scriptPath: string; size: number }>(`/tools/${id}/script`, { content });
+}
+
+export function checkAlgorithmHealth(id: number) {
+  return get<{ algorithmId: number; algorithmName: string; scriptPath: string; scriptExists: boolean; sandboxHealthy: boolean; syntaxValid: boolean; syntaxError: string }>(`/tools/${id}/script/health`);
+}
+
+export function getAlgorithmExecutionLogs(id: number, limit = 20) {
+  return get<unknown[]>(`/tools/${id}/execution-logs?limit=${limit}`);
+}

@@ -92,7 +92,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   const isMainAgent = options.agentType !== 'data-assistant';
   const systemPrompt = overrideSystemPrompt || buildInteliSystemPrompt(
-    Number(applicationId), currentPageId, currentPageName, allPages,
+    Number(applicationId), currentPageId, currentPageName, allPages, 'analysis',
   );
   const planContext = isMainAgent ? formatUnfinishedPlansForPrompt() : '';
   const skillPrompts = isMainAgent ? getPlanPromptFragment() : '';
@@ -168,13 +168,31 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           if (planId) {
             store.confirmPlan(planId);
             stateMachine.transition(AgentState.EXECUTING, planId);
+            const executionSystemPrompt = buildInteliSystemPrompt(
+              Number(applicationId), currentPageId, currentPageName, allPages, 'execution',
+            );
+            const planContextExec = formatUnfinishedPlansForPrompt();
+            const skillPromptExec = getPlanPromptFragment();
+            const confirmedPlan = store.plans.find((p) => p.id === planId);
+            const analysisReportSection = confirmedPlan?.analysisReport
+              ? `\n\n## 需求分析报告（执行上下文）\n\n以下是完整的需求分析报告，执行每个步骤时请参考此报告中的模块、布局、交互联动等细节：\n\n${confirmedPlan.analysisReport}`
+              : '';
+            const fullExecutionPrompt = [
+              executionSystemPrompt,
+              skillPromptExec,
+              planContextExec,
+            ].filter(Boolean).join('\n\n') + analysisReportSection;
+            const systemMsg = conversationMessages.find((m) => m.role === 'system');
+            if (systemMsg) {
+              systemMsg.content = fullExecutionPrompt;
+            }
             conversationMessages.push({
               id: crypto.randomUUID(),
               role: 'system',
-              content: '计划已确认。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
+              content: '计划已确认，已切换到执行阶段。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
               timestamp: Date.now(),
             });
-            console.log(`[AgentFactory:${name}] 自动确认计划 ${planId}，切换到 EXECUTING`);
+            console.log(`[AgentFactory:${name}] 自动确认计划 ${planId}，切换到 EXECUTING，替换 system prompt 为执行阶段`);
           }
         } else {
           stateMachine.transition(AgentState.IDLE, null);

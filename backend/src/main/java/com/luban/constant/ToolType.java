@@ -8,7 +8,8 @@ import java.util.Map;
 public enum ToolType {
 
     HTTP("HTTP", "HTTP 接口", "调用外部 REST API"),
-    MCP_PASSTHROUGH("MCP_PASSTHROUGH", "MCP 透传", "透传 MCP Server 工具");
+    MCP_PASSTHROUGH("MCP_PASSTHROUGH", "MCP 透传", "透传 MCP Server 工具"),
+    ALGORITHM("ALGORITHM", "算法脚本", "企业算法 Python 脚本");
 
     private final String value;
     private final String label;

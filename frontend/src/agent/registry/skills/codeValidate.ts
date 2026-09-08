@@ -26,6 +26,31 @@ export interface ValidateResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
+  fixable: string[];
+}
+
+const BLOCKING_ERROR_PATTERNS = [
+  /^\[HTML\]/,
+  /^\[CSS\] 第/,
+  /^\[JS\] 第.*第.*列/,
+  /async function.*is not defined/,
+];
+
+function isBlockingError(msg: string): boolean {
+  return BLOCKING_ERROR_PATTERNS.some(p => p.test(msg));
+}
+
+function getFixPriority(msg: string): number {
+  if (/\.run\(\)/.test(msg) || /result\.data/.test(msg) || /result\.success/.test(msg) || /result\.message/.test(msg)) return 1;
+  if (/DOMContentLoaded|readyState/.test(msg)) return 2;
+  if (/字段名/.test(msg)) return 3;
+  if (/假成功|TODO/.test(msg)) return 4;
+  if (/DataQuery\.__/.test(msg)) return 1;
+  return 5;
+}
+
+export function prioritizeFixable(items: string[]): string[] {
+  return [...items].sort((a, b) => getFixPriority(a) - getFixPriority(b));
 }
 
 export interface ValidateFieldNamesOptions {
@@ -35,6 +60,7 @@ export interface ValidateFieldNamesOptions {
   applicationId: number;
   queryResults?: QueryRunResult[];
   apiResults?: ApiRunResult[];
+  libraries?: string[];
 }
 
 export async function validateCode(
@@ -45,20 +71,31 @@ export async function validateCode(
 ): Promise<ValidateResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const fixable: string[] = [];
 
   try { if (html) validateHtml(html, errors, warnings); } catch (e: any) { errors.push(`[HTML] 校验器异常: ${e?.message || e}`); }
   try { if (css) validateCss(css, errors, warnings); } catch (e: any) { errors.push(`[CSS] 校验器异常: ${e?.message || e}`); }
-  try { if (js) validateJs(js, errors, warnings); } catch (e: any) { errors.push(`[JS] 校验器异常: ${e?.message || e}`); }
+  try { if (js) validateJs(js, errors, warnings, fixable); } catch (e: any) { errors.push(`[JS] 校验器异常: ${e?.message || e}`); }
   try { if (js) validateDomInit(js, errors); } catch (e: any) { errors.push(`[DOM初始化] 校验异常: ${e?.message || e}`); }
   try { if (js) validateCrossPageParams(js, errors, warnings); } catch (e: any) { errors.push(`[跨页面参数校验] 异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateMockData(js, validateOptions, errors); } catch (e: any) { errors.push(`[Mock数据] 校验异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
-  try { if (html || js) validateLubanUIUsage(html, js, errors, warnings); } catch (e: any) { errors.push(`[LubanUI] 校验异常: ${e?.message || e}`); }
+  try { if (html || js) validateLubanUIUsage(html, js, errors, warnings, fixable); } catch (e: any) { errors.push(`[LubanUI] 校验异常: ${e?.message || e}`); }
   try { if (js) validateTableEmptyState(js, warnings); } catch (e: any) { errors.push(`[表格空态] 校验异常: ${e?.message || e}`); }
   try { if (css) validateCssComponentOverride(css, errors); } catch (e: any) { errors.push(`[CSS组件覆盖] 校验异常: ${e?.message || e}`); }
   try { if (html && js) validateFormContainer(html, js, errors); } catch (e: any) { errors.push(`[表单容器] 校验异常: ${e?.message || e}`); }
+  try { if (js) validateFetchCalls(js, errors, warnings); } catch (e: any) { errors.push(`[网络请求] 校验异常: ${e?.message || e}`); }
+  try { if (validateOptions?.libraries) validateLibraries(validateOptions.libraries, warnings); } catch (e: any) { errors.push(`[libraries] 校验异常: ${e?.message || e}`); }
 
-  return { valid: errors.length === 0, errors, warnings };
+  const blockingErrors = errors.filter(isBlockingError);
+  const nonBlockingErrors = errors.filter(e => !isBlockingError(e));
+
+  return {
+    valid: blockingErrors.length === 0,
+    errors: blockingErrors,
+    warnings,
+    fixable: prioritizeFixable([...fixable, ...nonBlockingErrors]),
+  };
 }
 
 function validateHtml(code: string, errors: string[], warnings: string[]) {
@@ -133,6 +170,11 @@ function validateHtml(code: string, errors: string[], warnings: string[]) {
   parseErrors.forEach((el) => {
     errors.push(`[HTML] ${el.textContent?.replace(/\n\s*/g, ' ').trim()}`);
   });
+
+  // 检查 Leaflet 库引用
+  if (/leaflet/i.test(code)) {
+    errors.push(`[HTML] ${LIBRARY_RULES['leaflet']}`);
+  }
 }
 
 function validateCss(code: string, errors: string[], warnings: string[]) {
@@ -155,7 +197,7 @@ function validateCss(code: string, errors: string[], warnings: string[]) {
   }
 }
 
-function validateJs(code: string, errors: string[], warnings: string[]) {
+function validateJs(code: string, errors: string[], warnings: string[], fixable: string[]) {
   try {
     acornParse(code, { ecmaVersion: 2022, sourceType: 'script' });
   } catch (e: any) {
@@ -173,47 +215,7 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
     }
   }
 
-  // 检查查询结果访问模式：查询返回 {columns, rows, totalCount}，数据在 rows 数组中
-  // 错误：c[0].field、c[i].field、c.length
-  // 正确：c.rows[0].field、c.rows[i].field、c.rows.length
-  const thenVars = new Set<string>();
-  const thenFnPattern = /\.then\s*\(\s*function\s*\(\s*(\w+)\s*\)/g;
-  const thenArrowPattern = /\.then\s*\(\s*\(?\s*(\w+)\s*\)?\s*=>/g;
-  let m: RegExpExecArray | null;
-  while ((m = thenFnPattern.exec(code)) !== null) { thenVars.add(m[1]); }
-  while ((m = thenArrowPattern.exec(code)) !== null) { thenVars.add(m[1]); }
-
-  for (const varName of thenVars) {
-    const correctAccess = new RegExp('\\b' + varName + '\\.rows\\[');
-    if (correctAccess.test(code)) continue; // 正确用法，跳过
-
-    const directAccess = new RegExp('\\b' + varName + '\\[\\d+\\]');
-    const varAccess = new RegExp('\\b' + varName + '\\[[a-zA-Z_\\$]\\w*\\]');
-    const lenAccess = new RegExp('\\b' + varName + '\\.length\\b');
-
-    const hasDirectAccess = directAccess.test(code);
-    const hasVarAccess = varAccess.test(code);
-    const hasLenAccess = lenAccess.test(code);
-
-    if (hasDirectAccess || hasVarAccess || hasLenAccess) {
-      const searchPatterns = [directAccess, varAccess, lenAccess];
-      let firstIdx = Infinity;
-      for (const p of searchPatterns) {
-        p.lastIndex = 0;
-        const r = p.exec(code);
-        if (r && r.index < firstIdx) firstIdx = r.index;
-      }
-      const lineNum = code.substring(0, firstIdx).split('\n').length;
-      errors.push(
-        `[JS] 第 ${lineNum} 行：查询结果 \`${varName}\` 是对象 {columns, rows, totalCount}，` +
-        `数据在 \`${varName}.rows\` 数组里。` +
-        `请将 \`${varName}[0]\` 改为 \`${varName}.rows[0]\`，` +
-        `\`${varName}.length\` 改为 \`${varName}.rows.length\`。`
-      );
-    }
-  }
-
-  // 检查常见问题：使用数组索引访问查询结果
+  // 检查常见问题：使用数组索引访问查询结果（result[i] 已由规则10 AST 覆盖，这里只检查 row[i]）
   const rowIndexMatch = /row\[\d+\]/g;
   let idxMatch: RegExpExecArray | null;
   while ((idxMatch = rowIndexMatch.exec(code)) !== null) {
@@ -253,6 +255,13 @@ function validateJs(code: string, errors: string[], warnings: string[]) {
         `[JS] 第 ${lineNum} 行：${LIBRARY_RULES['chart.js']}`
       );
     }
+  }
+
+  // 检查 Leaflet 禁用
+  if (/leaflet|L\.map|L\.tileLayer|L\.marker|L\.circle|L\.polygon|L\.geoJSON/i.test(code)) {
+    errors.push(
+      `[JS] ${LIBRARY_RULES['leaflet']}`
+    );
   }
 
   // 检查 addEventListener 缺少 { once: true }，SPA 中会导致多次初始化
@@ -1015,9 +1024,10 @@ function validateLubanUIUsage(
   js: string | undefined,
   errors: string[],
   warnings: string[],
+  fixable: string[],
 ) {
   if (html) validateLubanUIHtml(html, warnings);
-  if (js) validateLubanUIJs(js, errors, warnings);
+  if (js) validateLubanUIJs(js, errors, warnings, fixable, html);
 }
 
 /**
@@ -1331,7 +1341,7 @@ function validateLubanUIHtml(html: string, warnings: string[]) {
 /**
  * 检查 JS 中 LubanUI API 调用是否正确 → 错误
  */
-function validateLubanUIJs(js: string, errors: string[], _warnings: string[]) {
+function validateLubanUIJs(js: string, errors: string[], warnings: string[], fixable: string[], html?: string) {
   // 1. LubanUI.table() — 第一个参数必须是字符串（元素 ID）
   const tableCalls = js.matchAll(/LubanUI\.table\s*\(\s*(['"])?(\w+)\1?\s*,/g);
   for (const m of tableCalls) {
@@ -1492,16 +1502,409 @@ function validateLubanUIJs(js: string, errors: string[], _warnings: string[]) {
     }
   }
 
-  // 10. 禁止 result.data.xxx — QueryName.run() 直接返回 { columns, rows, totalCount }
-  const dataAccessPattern = /(\w+)\.data\.(rows|columns|totalCount)\b/g;
-  for (const m of js.matchAll(dataAccessPattern)) {
+  // 9b. 查询调用必须使用 DataQuery（AST 校验）
+  // 合法查询调用：DataQuery.xxx(params) 或 window.DataQuery.xxx(params)
+  // 禁止：xxx.run()、__xxx.run()、QueryApi.xxx.run()、回调方式
+  try {
+    const ast9b = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as acorn.Node;
+
+    function isLubanCallApi(node: any): boolean {
+      return node?.type === 'CallExpression' &&
+        node.callee?.type === 'MemberExpression' &&
+        node.callee.property?.name === 'callApi' &&
+        node.callee.object?.type === 'MemberExpression' &&
+        node.callee.object.property?.name === '__LUBAN__' &&
+        node.callee.object.object?.type === 'Identifier' &&
+        node.callee.object.object.name === 'window';
+    }
+
+    function isDataQueryCall(node: any): boolean {
+      if (node?.type !== 'CallExpression') return false;
+      const callee = node.callee;
+      if (callee?.type !== 'MemberExpression') return false;
+      const obj = callee.object;
+      if (obj.type === 'Identifier' && obj.name === 'DataQuery') return true;
+      if (obj.type === 'MemberExpression' &&
+          obj.object?.type === 'Identifier' &&
+          obj.object.name === 'window' &&
+          obj.property?.type === 'Identifier' &&
+          obj.property.name === 'DataQuery') return true;
+      return false;
+    }
+
+    function getDataQueryName(node: any): string | null {
+      if (node?.type !== 'CallExpression') return null;
+      const callee = node.callee;
+      if (callee?.type !== 'MemberExpression') return null;
+      const obj = callee.object;
+      const prop = callee.property;
+      if (!prop || prop.type !== 'Identifier') return null;
+      if (obj.type === 'Identifier' && obj.name === 'DataQuery') return prop.name;
+      if (obj.type === 'MemberExpression' &&
+          obj.object?.type === 'Identifier' &&
+          obj.object.name === 'window' &&
+          obj.property?.type === 'Identifier' &&
+          obj.property.name === 'DataQuery') return prop.name;
+      return null;
+    }
+
+    function isFetchCall(node: any): boolean {
+      return node?.type === 'CallExpression' &&
+        node.callee?.type === 'Identifier' &&
+        node.callee.name === 'fetch';
+    }
+
+    function isInvalidNetworkCall(node: any): { type: string; suggestion: string } | null {
+      if (node?.type !== 'CallExpression') return null;
+      const callee = node.callee;
+
+      if (callee?.type === 'Identifier') {
+        if (callee.name === 'axios') return { type: 'axios', suggestion: '平台未内置 axios，请改用 DataQuery.xxx() 或 window.__LUBAN__.callApi()' };
+      }
+
+      if (callee?.type === 'MemberExpression' && callee.object?.type === 'Identifier') {
+        const lib = callee.object.name;
+        const method = callee.property?.name || '';
+        if (lib === 'axios') return { type: 'axios', suggestion: '平台未内置 axios，请改用 DataQuery.xxx() 或 window.__LUBAN__.callApi()' };
+        if (lib === '$' && ['get', 'post', 'ajax', 'getJSON'].includes(method)) return { type: 'jQuery', suggestion: '平台未内置 jQuery AJAX，请改用 DataQuery.xxx() 或 window.__LUBAN__.callApi()' };
+        if (lib === 'http' || lib === 'https') return { type: 'Node.js http', suggestion: '浏览器环境不支持 Node.js http 模块，请改用 DataQuery.xxx() 或 window.__LUBAN__.callApi()' };
+      }
+
+      return null;
+    }
+
+    function walk9b(node: any): void {
+      if (!node || typeof node !== 'object') return;
+
+      if (node.type === 'CallExpression') {
+        if (isLubanCallApi(node) || isDataQueryCall(node) || isFetchCall(node)) {
+          // DataQuery 调用还需检查查询名是否以 __ 开头
+          const dqName = getDataQueryName(node);
+          if (dqName && dqName.startsWith('__')) {
+            const lineNum = node.loc?.start?.line || 0;
+            const cleanName = dqName.replace(/^_+/, '');
+            errors.push(
+              `[LubanUI] 第 ${lineNum} 行：DataQuery.${dqName} 不存在（查询名没有 __ 前缀）。正确：DataQuery.${cleanName}(params)`
+            );
+          }
+        } else {
+          // 检测 .run() 直接调用 → 必须改用 DataQuery
+          const callee = node.callee;
+          if (callee?.type === 'MemberExpression' && callee.property?.name === 'run') {
+            const lineNum = node.loc?.start?.line || 0;
+            const obj = callee.object;
+            let queryNameHint = '';
+            if (obj.type === 'Identifier') queryNameHint = obj.name;
+            else if (obj.type === 'MemberExpression' && obj.property?.type === 'Identifier') queryNameHint = obj.property.name;
+            errors.push(
+              `[LubanUI] 第 ${lineNum} 行：禁止直接调用 .run()，请改用 DataQuery.${queryNameHint || 'queryName'}(params)。DataQuery 是平台自动生成的查询包装，保证查询名正确、返回 {rows, columns, totalCount}`
+            );
+          } else {
+            const invalidNet = isInvalidNetworkCall(node);
+            if (invalidNet) {
+              const lineNum = node.loc?.start?.line || 0;
+              errors.push(
+                `[LubanUI] 第 ${lineNum} 行：检测到 ${invalidNet.type} 调用，平台不支持。${invalidNet.suggestion}`
+              );
+            }
+          }
+        }
+      }
+
+      if (node.type === 'NewExpression' &&
+          node.callee?.type === 'Identifier' &&
+          node.callee.name === 'XMLHttpRequest') {
+        const lineNum = node.loc?.start?.line || 0;
+        errors.push(
+          `[LubanUI] 第 ${lineNum} 行：检测到 XMLHttpRequest，平台不支持。请改用 DataQuery.xxx() 或 window.__LUBAN__.callApi()`
+        );
+      }
+
+      for (const key of Object.keys(node)) {
+        const child = (node as any)[key];
+        if (Array.isArray(child)) {
+          for (const item of child) {
+            if (item && typeof item === 'object') walk9b(item);
+          }
+        } else if (child && typeof child === 'object' && child.type) {
+          walk9b(child);
+        }
+      }
+    }
+
+    walk9b(ast9b);
+  } catch {
+    // AST 解析失败时静默跳过
+  }
+
+  // 10. 校验 DataQuery 返回值访问方式（AST 分析）
+  // DataQuery.xxx(params) 返回 Promise<{rows, columns, totalCount}>
+  // 禁止：result.data / result.data.rows / result.list 等
+  try {
+    const dqResultVars = new Set<string>();
+    const dqResultAliasVars = new Map<string, string>();
+    const VALID_DQ_PROPS = new Set(['rows', 'columns', 'totalCount', 'then']);
+
+    const ast10 = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as acorn.Node;
+
+    function isDataQueryCall10(node: any): boolean {
+      if (node?.type !== 'CallExpression') return false;
+      const callee = node.callee;
+      if (callee?.type !== 'MemberExpression') return false;
+      const obj = callee.object;
+      if (obj.type === 'Identifier' && obj.name === 'DataQuery') return true;
+      if (obj.type === 'MemberExpression' &&
+          obj.object?.type === 'Identifier' &&
+          obj.object.name === 'window' &&
+          obj.property?.type === 'Identifier' &&
+          obj.property.name === 'DataQuery') return true;
+      return false;
+    }
+
+    function getCallbackParamName(callback: any): string | null {
+      if (!callback) return null;
+      if (callback.type === 'FunctionExpression' && callback.params?.[0]?.type === 'Identifier') {
+        return callback.params[0].name;
+      }
+      if (callback.type === 'ArrowFunctionExpression' && callback.params?.[0]?.type === 'Identifier') {
+        return callback.params[0].name;
+      }
+      return null;
+    }
+
+    function walk10(node: any): void {
+      if (!node || typeof node !== 'object') return;
+
+      // DataQuery.xxx(params).then(function(result) { ... }) — 提取 result 变量名
+      if (node.type === 'CallExpression' &&
+          node.callee?.type === 'MemberExpression' &&
+          node.callee.property?.name === 'then' &&
+          isDataQueryCall10(node.callee.object)) {
+        const paramName = getCallbackParamName(node.arguments[0]);
+        if (paramName) dqResultVars.add(paramName);
+      }
+
+      // var/let/const result = await DataQuery.xxx(params) — 提取 result 变量名
+      if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.init) {
+        if (node.init.type === 'AwaitExpression' && isDataQueryCall10(node.init.argument)) {
+          dqResultVars.add(node.id.name);
+        }
+        // var/let/const alias = result.data — 记录中间变量映射
+        if (node.init.type === 'MemberExpression' &&
+            node.init.property?.type === 'Identifier' &&
+            node.init.object?.type === 'Identifier' &&
+            dqResultVars.has(node.init.object.name)) {
+          dqResultAliasVars.set(node.id.name, node.init.object.name);
+        }
+      }
+
+      // result = await DataQuery.xxx(params)
+      if (node.type === 'AssignmentExpression' &&
+          node.left?.type === 'Identifier' &&
+          node.right?.type === 'AwaitExpression' &&
+          isDataQueryCall10(node.right.argument)) {
+        dqResultVars.add(node.left.name);
+      }
+
+      // 校验：result.xxx 或 alias.xxx — xxx 必须在白名单内
+      if (node.type === 'MemberExpression' &&
+          node.property?.type === 'Identifier' &&
+          node.computed === false) {
+        const prop = node.property.name;
+        if (node.object?.type === 'Identifier') {
+          const varName = node.object.name;
+          if (dqResultVars.has(varName) && !VALID_DQ_PROPS.has(prop)) {
+            const lineNum = node.loc?.start?.line || 0;
+            errors.push(
+              `[LubanUI] 第 ${lineNum} 行：${varName}.${prop} 访问错误。DataQuery 返回 { rows, columns, totalCount }，没有 .${prop} 属性。正确：${varName}.rows / ${varName}.columns / ${varName}.totalCount`
+            );
+          }
+          if (dqResultAliasVars.has(varName)) {
+            const source = dqResultAliasVars.get(varName)!;
+            const lineNum = node.loc?.start?.line || 0;
+            errors.push(
+              `[LubanUI] 第 ${lineNum} 行：${varName}.${prop} 来源是 ${source}.data，DataQuery 返回 { rows, columns, totalCount }，没有 .data 包装。正确：${source}.rows / ${source}.columns / ${source}.totalCount`
+            );
+          }
+        }
+      }
+
+      // 校验：result[i] — 直接索引访问查询结果对象
+      if (node.type === 'MemberExpression' &&
+          node.computed === true &&
+          node.object?.type === 'Identifier' &&
+          dqResultVars.has(node.object.name)) {
+        const lineNum = node.loc?.start?.line || 0;
+        const varName = node.object.name;
+        errors.push(
+          `[LubanUI] 第 ${lineNum} 行：${varName}[i] 访问错误。${varName} 是 { rows, columns, totalCount } 对象，不是数组。数据在 ${varName}.rows 数组里，正确：${varName}.rows[0] / ${varName}.rows[i]`
+        );
+      }
+
+      for (const key of Object.keys(node)) {
+        const child = (node as any)[key];
+        if (Array.isArray(child)) {
+          for (const item of child) {
+            if (item && typeof item === 'object') walk10(item);
+          }
+        } else if (child && typeof child === 'object' && child.type) {
+          walk10(child);
+        }
+      }
+    }
+
+    walk10(ast10);
+  } catch {
+    // AST 解析失败时静默跳过，不阻断其他校验
+  }
+
+  // 12. 校验 DataQuery 返回值空值保护
+  // 禁止：result.rows.length / result.rows.forEach(...) 等直接访问，必须是 result.rows || [] 或 if (result.rows) 保护
+  try {
+    const nullUnsafePatterns = [
+      { pattern: /(\w+)\.rows\.length\b/g, name: '.rows.length' },
+      { pattern: /(\w+)\.rows\.forEach\b/g, name: '.rows.forEach' },
+      { pattern: /(\w+)\.rows\.map\b/g, name: '.rows.map' },
+      { pattern: /(\w+)\.rows\.filter\b/g, name: '.rows.filter' },
+      { pattern: /(\w+)\.rows\.reduce\b/g, name: '.rows.reduce' },
+      { pattern: /(\w+)\.rows\.find\b/g, name: '.rows.find' },
+      { pattern: /(\w+)\.rows\.some\b/g, name: '.rows.some' },
+    ];
+
+    let nullMatch: RegExpExecArray | null;
+    for (const { pattern, name } of nullUnsafePatterns) {
+      pattern.lastIndex = 0;
+      while ((nullMatch = pattern.exec(js)) !== null) {
+        const varName = nullMatch[1];
+        const lineNum = js.substring(0, nullMatch.index).split('\n').length;
+
+        // 检查前面是否有空值保护：varName.rows || [] 或 if (varName.rows) 或 (varName.rows || [])
+        const beforeMatch = js.substring(Math.max(0, nullMatch.index - 200), nullMatch.index);
+        const hasGuard = new RegExp(
+          `\\b${varName}\\.rows\\s*\\|\\|\\s*\\[\\]|if\\s*\\(\\s*${varName}\\.rows\\s*\\)|\\b${varName}\\.rows\\s*\\?`
+        ).test(beforeMatch);
+
+        if (!hasGuard) {
+          warnings.push(
+            `[JS 空值保护] 第 ${lineNum} 行：\`${varName}.rows${name}\` 未做空值保护。` +
+            `如果查询失败或返回空，${varName}.rows 可能是 undefined，直接访问会报错。` +
+            `正确：\`var data = ${varName}.rows || [];\` 或 \`if (${varName}.rows) { ... }\``
+          );
+          break; // 每个 pattern 只报一次
+        }
+      }
+    }
+  } catch {
+    // 空值保护校验失败时静默跳过
+  }
+
+  // 11. 检测 toast 假成功：保存/删除函数中只有 toast.success 没有 DataQuery/callApi 调用
+  // → fixable：页面能渲染，但操作不会持久化，需 update_code_page 修复
+  const crudFuncPattern = /function\s+(save|submit|confirmDelete|doDelete|handleSave|handleDelete|handleSubmit)\s*\(/g;
+  for (const m of js.matchAll(crudFuncPattern)) {
+    const funcName = m[1];
+    const funcStart = m.index! + m[0].length;
+    const funcBody = js.substring(funcStart);
+    const braceEnd = findMatchingBrace(funcBody);
+    const body = braceEnd > 0 ? funcBody.substring(0, braceEnd) : funcBody.substring(0, 500);
+    const hasToastSuccess = /LubanUI\.toast\.success\s*\(/.test(body);
+    const hasDataQuery = /DataQuery\.\w+\s*\(/.test(body);
+    const hasCallApi = /callApi\s*\(/.test(body);
+    const hasFetch = /\bfetch\s*\(/.test(body);
+    if (hasToastSuccess && !hasDataQuery && !hasCallApi && !hasFetch) {
+      const lineNum = js.substring(0, m.index!).split('\n').length;
+      fixable.push(
+        `[可修] 第 ${lineNum} 行：函数 ${funcName}() 中 LubanUI.toast.success() 没有对应的 DataQuery/callApi/fetch 调用，这是"假成功"——数据没有持久化。正确做法：DataQuery.insertXxx(params).then(function() { LubanUI.toast.success('保存成功'); searchData(); })`
+      );
+    }
+  }
+
+  // 11b. 检测 TODO 假成功：函数体中有 TODO 注释 + toast.success 但无 DataQuery
+  // → fixable：页面能渲染，需 update_code_page 修复
+  const todoPattern = /\/\/\s*TODO[:\s]/g;
+  for (const m of js.matchAll(todoPattern)) {
+    const todoLineNum = js.substring(0, m.index!).split('\n').length;
+    const afterTodo = js.substring(m.index!);
+    const next200 = afterTodo.substring(0, 200);
+    const hasToastSuccess = /LubanUI\.toast\.success\s*\(/.test(next200);
+    const hasDataQuery = /DataQuery\.\w+\s*\(/.test(next200);
+    if (hasToastSuccess && !hasDataQuery) {
+      fixable.push(
+        `[可修] 第 ${todoLineNum} 行：检测到 TODO + toast.success 但无 DataQuery 调用，这是"假成功"。写操作必须调用 DataQuery 写查询（如 DataQuery.insertCustomer(params)），不能只写 TODO`
+      );
+    }
+  }
+
+  // 13. 检测 async function 声明（onclick 无法访问，会 ReferenceError）
+  // → errors：页面运行时崩溃
+  const asyncFuncPattern = /async\s+function\s+(\w+)\s*\(/g;
+  for (const m of js.matchAll(asyncFuncPattern)) {
+    const funcName = m[1];
     const lineNum = js.substring(0, m.index!).split('\n').length;
-    const varName = m[1];
-    const prop = m[2];
     errors.push(
-      `[LubanUI] 第 ${lineNum} 行：${varName}.data.${prop} 写法错误。QueryName.run() 返回的就是 { columns, rows, totalCount }，没有 .data 包装，请改为 ${varName}.${prop}`
+      `[LubanUI] 第 ${lineNum} 行：async function ${funcName}() 声明无法被 onclick 访问（运行时报 ReferenceError: ${funcName} is not defined）。请改为 function ${funcName}() + 内部用 .then() 代替 await，或改为 var ${funcName} = async function() {}`
     );
   }
+
+  // 14. 检测 JSON.stringify(row) 在 render 函数中的使用（会触发 toJSON 属性访问导致字段名校验报错）
+  // → fixable：页面能渲染但控制台有字段名错误
+  const jsonStrPattern = /JSON\.stringify\s*\(\s*(row|item|record|r)\s*\)/g;
+  for (const m of js.matchAll(jsonStrPattern)) {
+    const lineNum = js.substring(0, m.index!).split('\n').length;
+    fixable.push(
+      `[可修] 第 ${lineNum} 行：JSON.stringify(${m[1]}) 在 render 中使用会触发 toJSON 属性访问，导致字段名校验报错。请改为只传 id，在编辑时通过 table.getData() 查找行数据，或用 var rowData = {}; Object.keys(${m[1]}).forEach(function(k) { rowData[k] = ${m[1]}[k]; }); JSON.stringify(rowData)`
+    );
+  }
+
+  // 11. 后端分页校验 — pagination: 'server' 必须配套 onPageChange 和 totalCount
+  const serverPaginationMatch = js.match(/pagination\s*:\s*['"]server['"]/);
+  if (serverPaginationMatch) {
+    const hasOnPageChange = /onPageChange\s*:/.test(js);
+    const hasTotalCount = /totalCount\s*:/.test(js);
+    const hasSetDataTotal = /\.setData\s*\([^,)]+\s*,\s*[^)]+\)/.test(js);
+    const hasSetTotalCount = /\.setTotalCount\s*\(/.test(js);
+
+    if (!hasOnPageChange) {
+      errors.push(
+        '[LubanUI] 使用 pagination: \'server\' 时，必须提供 onPageChange 回调函数，用于在翻页时重新加载数据'
+      );
+    }
+    if (!hasTotalCount && !hasSetTotalCount) {
+      errors.push(
+        '[LubanUI] 使用 pagination: \'server\' 时，必须提供 totalCount 或在 setData 时传入第二个参数'
+      );
+    }
+
+    if (hasOnPageChange && !hasSetDataTotal && !hasSetTotalCount) {
+      warnings.push(
+        '[建议] 后端分页模式（pagination: \'server\'）中，setData 调用应传入 totalCount 作为第二个参数：table.setData(result.rows, totalCount)'
+      );
+    }
+
+    const hasLimit = /LIMIT\s+\{\{[^}]+\}\}/i.test(js);
+    const hasOffset = /OFFSET\s+\{\{[^}]+\}\}/i.test(js);
+    if (!hasLimit || !hasOffset) {
+      warnings.push(
+        '[建议] 后端分页模式（pagination: \'server\'）中，查询 SQL 应使用 COUNT(*) OVER() 窗口函数配合 LIMIT/OFFSET'
+      );
+    }
+  }
+
+}
+
+function findMatchingBrace(code: string): number {
+  let depth = 0;
+  let started = false;
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === '{') {
+      if (!started) started = true;
+      depth++;
+    } else if (code[i] === '}') {
+      depth--;
+      if (started && depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 function validateTableEmptyState(js: string, warnings: string[]) {
@@ -1617,5 +2020,64 @@ function validateFormContainer(html: string, js: string, errors: string[]) {
       '请将 `<div class="luban-form">` 改为 `<form class="luban-form">`，' +
       '或使用 `LubanUI.getFormData(\'formId\')` 获取表单数据。'
     );
+  }
+}
+
+function validateFetchCalls(js: string, errors: string[], warnings: string[]) {
+  // fetch URL 内部路径检测（axios/XMLHttpRequest 已由 AST 规则 9b 覆盖）
+  const fetchPattern = /\bfetch\s*\(\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = fetchPattern.exec(js)) !== null) {
+    const lineNum = js.substring(0, m.index).split('\n').length;
+
+    const afterFetch = js.substring(m.index + m[0].length);
+    const urlMatch = afterFetch.match(/^\s*['"`]([^'"`]+)['"`]/);
+    if (!urlMatch) {
+      warnings.push(
+        `[JS 网络请求] 第 ${lineNum} 行：检测到 fetch() 调用。` +
+        '平台页面获取数据应使用 QueryName.run() 或 window.__LUBAN__.callApi()，' +
+        'fetch() 仅允许调用第三方公开数据源。请确认此 fetch 是否必要。'
+      );
+      continue;
+    }
+
+    const url = urlMatch[1];
+    const isPlatformApi = url.startsWith('/api/') || url.startsWith('/v1/') || url.startsWith('/api/v1/');
+    if (isPlatformApi) {
+      errors.push(
+        `[JS 网络请求] 第 ${lineNum} 行：禁止 fetch() 调用平台内部 API "${url}"。` +
+        '平台内部数据请使用 QueryName.run()（SQL 查询）或 window.__LUBAN__.callApi(apiName, params)（平台维护的 API）。' +
+        '直接 fetch 平台内部 API 会被 CORS 拦截且路径可能不存在。'
+      );
+    } else {
+      warnings.push(
+        `[JS 网络请求] 第 ${lineNum} 行：检测到 fetch("${url}")。` +
+        '如为第三方公开数据源，请确保无 CORS 限制。' +
+        '如为平台内部数据，请改用 QueryName.run() 或 window.__LUBAN__.callApi()。'
+      );
+    }
+  }
+}
+
+function validateLibraries(libraries: string[], warnings: string[]) {
+  for (const url of libraries) {
+    if (typeof url !== 'string') continue;
+    if (url.toLowerCase().includes('leaflet')) {
+      warnings.push(
+        `[libraries] "${url}" — ${LIBRARY_RULES['leaflet']}`
+      );
+    }
+    if (url.endsWith('.css')) {
+      warnings.push(
+        `[libraries] "${url}" 是 CSS 文件。系统会自动以 <link rel="stylesheet"> 加载，` +
+        '也可以改写在 css 参数中用 @import url("...") 引入。'
+      );
+    }
+    if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('//')) {
+      warnings.push(
+        `[libraries] "${url}" 不是有效的 CDN URL（需以 http:// 或 https:// 开头）。` +
+        '运行时将无法加载此库。'
+      );
+    }
   }
 }
