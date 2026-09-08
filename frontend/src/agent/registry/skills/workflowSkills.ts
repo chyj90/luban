@@ -230,6 +230,19 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try {
+        const formId = args.formId as number | undefined;
+        const fields = args.fields as unknown[] | undefined;
+        if (formId && (!fields || fields.length === 0)) {
+          const existing = await formApi.get(formId);
+          const fieldList = existing.fields
+            ? (typeof existing.fields === 'string' ? JSON.parse(existing.fields) : existing.fields)
+            : [];
+          return {
+            success: true,
+            message: `表单「${existing.name}」(ID: ${formId}) 已有字段：${fieldList.map((f: { key: string; label: string; type: string; required?: boolean }) => `${f.label}(${f.key}, ${f.type}${f.required ? ', 必填' : ''})`).join('；')}`,
+            data: existing,
+          };
+        }
         const result = await formApi.create({
           name: args.name as string,
           applicationId: (args.applicationId as number) || ctx.applicationId,
@@ -311,6 +324,99 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
+  'workflow:get_definition': () => ({
+    id: 'workflow:get_definition',
+    category: SkillCategory.WORKFLOW,
+    name: 'get_definition',
+    description: '查看流程定义的完整节点和连线结构。修改已有流程前必须先调用本工具获取现有结构，再基于它调用 update_workflow。',
+    parameters: {
+      type: 'object',
+      properties: { processId: { type: 'number', description: '流程 ID' } },
+      required: ['processId'],
+    },
+    async execute(args) {
+      try {
+        const def = await workflowApi.getDefinition(args.processId as number);
+        const parse = (v: unknown) => {
+          if (typeof v !== 'string') return v;
+          try { return JSON.parse(v); } catch { return v; }
+        };
+        const nodes = parse(def.nodes) as Array<Record<string, unknown>> | unknown;
+        const edges = parse(def.edges) as Array<Record<string, unknown>> | unknown;
+
+        const parts: string[] = [`流程「${def.name}」(ID: ${def.id}) 当前结构：`];
+        if (Array.isArray(nodes)) {
+          parts.push('节点：');
+          for (const n of nodes) {
+            const data = n.data as Record<string, unknown> | undefined;
+            const config = data?.config as Record<string, unknown> | undefined;
+            const label = (data?.label as string) || (config?.nodeName as string) || (n.id as string);
+            let extra = '';
+            if (config && typeof config === 'object') {
+              const configParts = Object.entries(config)
+                .filter(([k]) => k !== 'nodeName')
+                .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`);
+              if (configParts.length > 0) extra = `（${configParts.join(', ')}）`;
+            }
+            parts.push(`  - ${n.id} [${n.nodeType}] ${label}${extra}`);
+          }
+        }
+        if (Array.isArray(edges)) {
+          parts.push('连线：');
+          for (const e of edges) {
+            const cond = (e.data as Record<string, unknown> | undefined)?.condition;
+            parts.push(`  - ${e.source} → ${e.target}${cond ? ` [条件: ${cond}]` : ''}`);
+          }
+        }
+        parts.push('修改此流程时，请基于以上结构调用 update_workflow(processId, nodes, edges)，传入修改后的完整节点和连线。');
+        return {
+          success: true,
+          message: parts.join('\n'),
+          data: { ...def, nodes, edges },
+        };
+      } catch (e: unknown) {
+        const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          || (e as Error).message
+          || '未知错误';
+        return { success: false, message: `获取流程定义失败：${errMsg}` };
+      }
+    },
+  }),
+
+  'workflow:update_definition': (ctx) => ({
+    id: 'workflow:update_definition',
+    category: SkillCategory.WORKFLOW,
+    name: 'update_workflow',
+    description: '更新已有流程定义的节点和连线。用于修改流程路由逻辑、替换审批节点等。',
+    parameters: {
+      type: 'object',
+      properties: {
+        processId: { type: 'number', description: '要更新的流程 ID' },
+        name: { type: 'string', description: '流程名称' },
+        nodes: { type: 'array', description: '新的节点列表' },
+        edges: { type: 'array', description: '新的连线列表' },
+      },
+      required: ['processId'],
+    },
+    async execute(args) {
+      try {
+        const processId = args.processId as number;
+        const updateData: Record<string, unknown> = {};
+        if (args.name) updateData.name = args.name as string;
+        if (args.nodes) updateData.nodes = args.nodes;
+        if (args.edges) updateData.edges = args.edges;
+        const result = await workflowApi.updateDefinition(processId, updateData);
+        if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', processId: result.id });
+        return { success: true, data: result, message: `流程「${result.name || processId}」(ID: ${processId}) 已更新` };
+      } catch (e: unknown) {
+        const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          || (e as Error).message
+          || '未知错误';
+        return { success: false, message: `更新流程失败：${errMsg}。如果修改已有流程失败，可以尝试用 design_workflow 创建新流程。` };
+      }
+    },
+  }),
+
   'workflow:bind': (ctx) => ({
     id: 'workflow:bind',
     category: SkillCategory.WORKFLOW,
@@ -348,7 +454,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await orgApi.getMembers({ keyword: args.keyword as string });
         return { success: true, message: `找到 ${result.length} 个成员`, data: result };
-      } catch {
+      } catch (e: unknown) {
         return { success: false, message: `搜索成员失败: ${(e as Error).message}` };
       }
     },
@@ -368,7 +474,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await orgApi.getRoles((args.appId as number) || ctx.applicationId);
         return { success: true, message: `找到 ${result.length} 个角色`, data: result };
-      } catch {
+      } catch (e: unknown) {
         return { success: false, message: `搜索角色失败: ${(e as Error).message}` };
       }
     },
@@ -388,7 +494,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await orgApi.getDepartments();
         return { success: true, message: `找到 ${result.length} 个部门`, data: result };
-      } catch {
+      } catch (e: unknown) {
         return { success: false, message: `搜索部门失败: ${(e as Error).message}` };
       }
     },
@@ -407,7 +513,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await instanceApi.list({ status: args.status as string | undefined });
         return { success: true, message: `共 ${result.length} 个流程实例`, data: result };
-      } catch {
+      } catch (e: unknown) {
         return { success: false, message: `获取流程实例失败: ${(e as Error).message}` };
       }
     },
@@ -425,7 +531,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try { await taskApi.approve(args.taskId as number, (args.comment as string) || ''); return { success: true, message: '审批通过' }; }
-      catch { return { success: false, message: `审批失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `审批失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -441,7 +547,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try { await taskApi.reject(args.taskId as number, (args.comment as string) || ''); return { success: true, message: '已拒绝' }; }
-      catch { return { success: false, message: `拒绝失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `拒绝失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -457,7 +563,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try { await instanceApi.freeze(args.processId as number); return { success: true, message: '流程已冻结' }; }
-      catch { return { success: false, message: `冻结失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `冻结失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -473,7 +579,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try { await instanceApi.unfreeze(args.processId as number); return { success: true, message: '流程已解冻' }; }
-      catch { return { success: false, message: `解冻失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `解冻失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -489,7 +595,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try { await instanceApi.cancel(args.instanceId as number); return { success: true, message: '流程已取消' }; }
-      catch { return { success: false, message: `取消失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `取消失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -523,7 +629,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
         }
         return { success: true, message: parts.join('\n'), data: result };
       }
-      catch { return { success: false, message: `检查失败: ${(e as Error).message}` }; }
+      catch (e: unknown) { return { success: false, message: `检查失败: ${(e as Error).message}` }; }
     },
   }),
 
@@ -541,7 +647,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await workflowApi.copyDefinition(args.processId as number);
         return { success: true, message: '流程复制成功', data: result };
-      } catch { return { success: false, message: `复制失败: ${(e as Error).message}` }; }
+      } catch (e: unknown) { return { success: false, message: `复制失败: ${(e as Error).message}` }; }
     },
   }),
 

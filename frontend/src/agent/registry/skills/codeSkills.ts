@@ -387,14 +387,21 @@ ${getLubanUIDesignSpec()}`,
         const queryNames = extractQueryNamesFromJS(js);
         const apiNames = extractApiNamesFromJS(js);
 
+        const effectiveQueryIds: number[] = (args.queryIds as number[] | undefined)?.length
+          ? (args.queryIds as number[])
+          : (currentCode?.queryIds || []);
+        const effectiveToolIds: number[] = (args.toolIds as number[] | undefined)?.length
+          ? (args.toolIds as number[])
+          : (currentCode?.toolIds || []);
+
         const [queryResults, apiResults] = await Promise.all([
           queryNames.length > 0 ? runPageQueries(queryNames, ctx.applicationId) : Promise.resolve([]),
           apiNames.length > 0 ? runPageApis(apiNames, ctx.applicationId) : Promise.resolve([]),
         ]);
 
         const validation = await validateCode(html, css, js, {
-          queryIds: (args.queryIds as number[]) || [],
-          toolIds: (args.toolIds as number[]) || [],
+          queryIds: effectiveQueryIds,
+          toolIds: effectiveToolIds,
           applicationId: ctx.applicationId,
           queryResults,
           apiResults,
@@ -402,10 +409,9 @@ ${getLubanUIDesignSpec()}`,
         if (!validation.valid) {
           let queryNameHint = '';
           try {
-            const qIds = (args.queryIds as number[]) || [];
-            if (qIds.length > 0) {
+            if (effectiveQueryIds.length > 0) {
               const allQueries = await listQueries(ctx.applicationId);
-              const boundQueries = (allQueries.data || []).filter((q: any) => qIds.includes(q.id));
+              const boundQueries = (allQueries.data || []).filter((q: any) => effectiveQueryIds.includes(q.id));
               if (boundQueries.length > 0) {
                 queryNameHint = `\n\n⚠️ 本页面绑定的查询及正确调用方式：\n${boundQueries.map((q: any) => {
                   const isWrite = /^(insert|update|delete|create|remove|add|save)/i.test(q.name);
@@ -421,14 +427,14 @@ ${getLubanUIDesignSpec()}`,
           console.warn('[code:update]', validation.warnings.join('\n'));
         }
 
-        if (queryNames.length > 0 && (!args.queryIds || (args.queryIds as number[]).length === 0)) {
+        if (queryNames.length > 0 && effectiveQueryIds.length === 0) {
           return {
             success: false,
             message: `JS 代码中使用了查询（${queryNames.join('、')}），但 queryIds 为空。` +
               '请填入对应的查询 ID。如果查询已存在，请从已有查询列表中获取 ID。',
           };
         }
-        if (apiNames.length > 0 && (!args.toolIds || (args.toolIds as number[]).length === 0)) {
+        if (apiNames.length > 0 && effectiveToolIds.length === 0) {
           return {
             success: false,
             message: `JS 代码中使用了平台 API（${apiNames.join('、')}），但 toolIds 为空。` +
@@ -443,15 +449,11 @@ ${getLubanUIDesignSpec()}`,
         if (args.libraries !== undefined) {
           updateData.libraries = args.libraries;
         }
-        if (args.queryIds !== undefined) {
-          updateData.queryIds = args.queryIds;
-        } else if (currentCode.queryIds && currentCode.queryIds.length > 0) {
-          updateData.queryIds = currentCode.queryIds;
+        if (effectiveQueryIds.length > 0) {
+          updateData.queryIds = effectiveQueryIds;
         }
-        if (args.toolIds !== undefined) {
-          updateData.toolIds = args.toolIds;
-        } else if (currentCode.toolIds && currentCode.toolIds.length > 0) {
-          updateData.toolIds = currentCode.toolIds;
+        if (effectiveToolIds.length > 0) {
+          updateData.toolIds = effectiveToolIds;
         }
         const res = await updateCodePage(pageId, updateData);
         ctx.onPageChange?.(pageId);

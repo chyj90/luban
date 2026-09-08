@@ -369,6 +369,21 @@ LubanUI.select('#mySelect').setOptions([
 ]);
 \`\`\`
 
+### ⚠️ Select 组件强制规则
+
+**LubanUI 增强的 select 组件内部维护独立状态，所有操作必须使用 LubanUI.select() API，禁止使用原生 DOM API。**
+
+| 操作 | ❌ 禁止（原生 DOM） | ✅ 必须（LubanUI API） |
+|------|---------------------|------------------------|
+| 初始化 | 无 | \`LubanUI.initSelects()\` |
+| 取值 | \`document.getElementById('sel').value\` | \`LubanUI.select('#sel').getValue()\` |
+| 设值 | \`document.getElementById('sel').value = 'x'\` | \`LubanUI.select('#sel').setValue('x')\` |
+| 清空 | \`elm.value = ''\` | \`LubanUI.select('#sel').setValue('')\` |
+| 动态选项 | \`document.createElement('option')\` + \`appendChild\` | \`LubanUI.select('#sel').setOptions([...])\` |
+| 表单重置 | \`form.reset()\` 不会重置 LubanUI select | 额外调用 \`LubanUI.select('#sel').setValue('')\` |
+
+**特别注意**：\`form.reset()\` 只重置原生表单元素，不重置 LubanUI 增强的 select。在 resetSearch/openAdd 等重置函数中，必须对每个 luban-select 额外调用 \`LubanUI.select('#xxx').setValue('')\`。
+
 ### 弹窗 Modal
 \`\`\`html
 <div class="luban-modal-overlay" id="myModal" style="display:none">

@@ -1890,6 +1890,40 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
     }
   }
 
+  // 12. luban-select 组件必须使用 LubanUI.select() API 操作，禁止原生 DOM 操作
+  if (html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+    const selectElements = doc.querySelectorAll('select.luban-select');
+    if (selectElements.length > 0) {
+      if (!/LubanUI\.initSelects\s*\(\s*\)/.test(js)) {
+        errors.push(
+          `[LubanUI] 页面使用了 ${selectElements.length} 个 luban-select 组件，但未调用 LubanUI.initSelects()。` +
+          '请在 DOM 加载完成后调用 LubanUI.initSelects() 初始化所有下拉框。'
+        );
+      }
+
+      const hasNativeOption = /document\.createElement\s*\(\s*['"]option['"]\s*\)/.test(js);
+      if (hasNativeOption) {
+        errors.push(
+          '[LubanUI] 检测到 document.createElement(\'option\') 操作 select 选项。' +
+          'LubanUI 增强的 select 组件不支持原生 DOM 操作，请使用 LubanUI.select().setOptions([...]) 动态设置选项。'
+        );
+      }
+
+      for (const el of selectElements) {
+        const id = el.getAttribute('id');
+        if (!id) continue;
+        if (new RegExp(`getElementById\\s*\\(\\s*['"]${id}['"]\\s*\\)\\.value`).test(js)) {
+          errors.push(
+            `[LubanUI] 对 luban-select 组件使用原生 .value 取值/设值（id="${id}"）。` +
+            'LubanUI 增强的 select 组件内部状态独立于原生 select，请使用 LubanUI.select("#id").getValue() / .setValue()。'
+          );
+        }
+      }
+    }
+  }
+
 }
 
 function findMatchingBrace(code: string): number {
@@ -1974,7 +2008,7 @@ function validateCssComponentOverride(css: string, errors: string[]) {
 }
 
 function validateFormContainer(html: string, js: string, errors: string[]) {
-  const divFormPattern = /<div[^>]*class="[^"]*luban-form[^"]*"[^>]*>/g;
+  const divFormPattern = /<div[^>]*class="[^"]*luban-form\b[^"]*"[^>]*>/g;
   const divFormMatches: { line: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = divFormPattern.exec(html)) !== null) {
