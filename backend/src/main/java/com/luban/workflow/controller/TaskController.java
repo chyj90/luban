@@ -27,8 +27,8 @@ public class TaskController {
     }
 
     @GetMapping("/{id}")
-    public WorkflowTask get(@PathVariable Long id) {
-        return processService.getTask(id);
+    public WorkflowTask get(@PathVariable Long id, @AuthenticationPrincipal User user) {
+        return processService.getTask(id, user.getId());
     }
 
     @GetMapping("/by-instance/{instanceId}")

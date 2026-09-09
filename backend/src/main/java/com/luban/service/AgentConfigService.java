@@ -7,9 +7,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.ArrayList;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
 import java.security.MessageDigest;
@@ -92,43 +92,31 @@ public class AgentConfigService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> testConnection(String modelEndpoint, String secretKey) {
+    public Map<String, Object> testConnection(String modelEndpoint, String secretKey, String modelName) {
         try {
-            String base = modelEndpoint.replaceAll("/+$", "");
-            if (base.endsWith("/chat/completions")) {
-                base = base.substring(0, base.length() - "/chat/completions".length());
-            }
-            if (!base.matches(".*/v\\d+$")) {
-                base += "/v1";
-            }
-            String url = base + "/models";
+            String chatUrl = normalizeChatUrl(modelEndpoint);
+            Map<String, Object> chatBody = new LinkedHashMap<>();
+            chatBody.put("model", modelName);
+            chatBody.put("messages", List.of(Map.of("role", "user", "content", "hi")));
+            chatBody.put("max_tokens", 5);
 
             HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+            HttpRequest chatRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(chatUrl))
+                    .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + secretKey)
-                    .header("Accept", "application/json")
-                    .GET()
+                    .POST(HttpRequest.BodyPublishers.ofString(new ObjectMapper().writeValueAsString(chatBody)))
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) {
-                return Map.of("success", false, "error", "HTTP " + response.statusCode() + ": " + response.body());
+            HttpResponse<String> chatResponse = client.send(chatRequest, HttpResponse.BodyHandlers.ofString());
+            int code = chatResponse.statusCode();
+            if (code == 200) {
+                return Map.of("success", true);
             }
-
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> body = mapper.readValue(response.body(), Map.class);
-            List<Map<String, Object>> data = (List<Map<String, Object>>) body.get("data");
-            List<Map<String, Object>> models = new ArrayList<>();
-            if (data != null) {
-                for (Map<String, Object> model : data) {
-                    models.add(Map.of(
-                            "id", model.getOrDefault("id", ""),
-                            "name", model.getOrDefault("id", "")
-                    ));
-                }
+            if (code == 401 || code == 403) {
+                return Map.of("success", false, "error", "API Key 无效（HTTP " + code + "）");
             }
-            return Map.of("success", true, "models", models);
+            return Map.of("success", false, "error", "HTTP " + code + ": " + chatResponse.body());
         } catch (Exception e) {
             return Map.of("success", false, "error", e.getMessage());
         }

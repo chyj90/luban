@@ -1,6 +1,7 @@
 package com.luban.exception;
 
 import com.luban.dto.ApiResponse;
+import com.luban.security.appaccess.AppAccessService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -18,6 +19,13 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(AppAccessService.AppAccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAppAccessDenied(AppAccessService.AppAccessDeniedException ex) {
+        log.warn("应用访问被拒绝: status={} message={}", ex.getStatus(), ex.getMessage());
+        return ResponseEntity.status(ex.getStatus())
+                .body(ApiResponse.error(ex.getMessage()));
+    }
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ApiResponse<Void>> handleResponseStatus(ResponseStatusException ex) {

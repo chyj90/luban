@@ -6,17 +6,11 @@ import { useToastStore } from '@/stores/toastStore';
 import type { AgentConfig } from '@/types/tool';
 import './AgentConfigPage.css';
 
-interface ModelOption {
-  id: string;
-  name: string;
-}
-
 export default function AgentConfigPage() {
   const [configs, setConfigs] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
   const [form, setForm] = useState({ modelEndpoint: '', secretKey: '', modelName: '' });
-  const [models, setModels] = useState<ModelOption[]>([]);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'idle' | 'success' | 'fail'>('idle');
   const [testError, setTestError] = useState('');
@@ -41,14 +35,12 @@ export default function AgentConfigPage() {
   const openEdit = (config: AgentConfig) => {
     setEditing(config);
     setForm({ modelEndpoint: config.modelEndpoint, secretKey: '', modelName: config.modelName });
-    setModels([]);
     setTestResult('idle');
     setTestError('');
   };
 
   const closeEdit = () => {
     setEditing(null);
-    setModels([]);
     setTestResult('idle');
     setTestError('');
   };
@@ -62,25 +54,30 @@ export default function AgentConfigPage() {
       toast('请先填写 API Key', 'error');
       return;
     }
+    if (!form.modelName) {
+      toast('请先填写模型名称', 'error');
+      return;
+    }
     setTesting(true);
     setTestResult('idle');
     setTestError('');
     try {
-      const res = await testAgentConfig({ modelEndpoint: form.modelEndpoint, secretKey: form.secretKey });
+      const res = await testAgentConfig({
+        modelEndpoint: form.modelEndpoint,
+        secretKey: form.secretKey,
+        modelName: form.modelName,
+      });
       if (res.data.success) {
         setTestResult('success');
-        setModels(res.data.models || []);
         toast('连接成功', 'success');
       } else {
         setTestResult('fail');
         setTestError(res.data.error || '连接失败');
-        setModels([]);
         toast('连接失败: ' + (res.data.error || '未知错误'), 'error');
       }
     } catch {
       setTestResult('fail');
       setTestError('网络请求失败');
-      setModels([]);
       toast('测试请求失败', 'error');
     } finally {
       setTesting(false);
@@ -93,7 +90,7 @@ export default function AgentConfigPage() {
       return;
     }
     if (!form.modelName) {
-      toast('请选择模型', 'error');
+      toast('请填写模型名称', 'error');
       return;
     }
     setSaving(true);
@@ -178,6 +175,15 @@ export default function AgentConfigPage() {
               />
             </div>
 
+            <div className="agent-config-form-field">
+              <label>模型名称</label>
+              <input
+                value={form.modelName}
+                onChange={(e) => setForm({ ...form, modelName: e.target.value })}
+                placeholder="例如 doubao-seed-2.0-lite"
+              />
+            </div>
+
             <div className="agent-config-form-test">
               <button
                 className="agent-config-form-test-btn"
@@ -192,27 +198,6 @@ export default function AgentConfigPage() {
               {testResult === 'fail' && (
                 <span className="agent-config-form-test-err" title={testError}>连接失败: {testError}</span>
               )}
-            </div>
-
-            <div className="agent-config-form-field">
-              <label>模型名称</label>
-              <select
-                value={form.modelName}
-                onChange={(e) => setForm({ ...form, modelName: e.target.value })}
-                disabled={models.length === 0}
-                className="agent-config-form-select"
-              >
-                {models.length === 0 ? (
-                  <option value={form.modelName}>{form.modelName || '请先测试连接获取模型列表'}</option>
-                ) : (
-                  <>
-                    <option value="">请选择模型</option>
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}</option>
-                    ))}
-                  </>
-                )}
-              </select>
             </div>
 
             <div className="agent-config-form-actions">

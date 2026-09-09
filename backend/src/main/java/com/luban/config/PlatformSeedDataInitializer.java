@@ -39,6 +39,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         initSuperAdminPermissions();
         initRootUser();
         initPlatformWorkflows();
+        initDatasourceApprovalWorkflow();
         initDefaultAgentConfig();
         initBuiltinRelations();
     }
@@ -178,6 +179,37 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
 
             log.info("平台工作流初始化完成");
         }
+    }
+
+    /**
+     * 数据源权限审批平台流程：requestDatasourcePermission 按名称精确查找该流程，
+     * 缺失时 API Key 的数据源权限申请链路不可用（REST 禁止创建平台级流程，只能种子补齐）。
+     */
+    private void initDatasourceApprovalWorkflow() {
+        boolean exists = workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM).stream()
+                .anyMatch(w -> "数据源权限审批".equals(w.getName()) && "PUBLISHED".equals(w.getStatus()));
+        if (exists) return;
+
+        WorkflowDefinition dsPermWf = new WorkflowDefinition();
+        dsPermWf.setName("数据源权限审批");
+        dsPermWf.setDescription("API Key 申请数据源访问权限，需直属领导审批 → 部门负责人审批");
+        dsPermWf.setScope(WorkflowScope.PLATFORM);
+        dsPermWf.setVersion(1);
+        dsPermWf.setStatus("PUBLISHED");
+        dsPermWf.setCreatedBy(0L);
+        dsPermWf.setNodes("[" +
+                "{\"nodeId\":\"start\",\"nodeType\":\"start\",\"label\":\"开始\"}," +
+                "{\"nodeId\":\"leader_approve\",\"nodeType\":\"approve\",\"label\":\"直属领导审批\",\"config\":{\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\"}}," +
+                "{\"nodeId\":\"dept_head_approve\",\"nodeType\":\"approve\",\"label\":\"部门负责人审批\",\"config\":{\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\"}}," +
+                "{\"nodeId\":\"end\",\"nodeType\":\"end\",\"label\":\"结束\"}" +
+                "]");
+        dsPermWf.setEdges("[" +
+                "{\"source\":\"start\",\"target\":\"leader_approve\"}," +
+                "{\"source\":\"leader_approve\",\"target\":\"dept_head_approve\"}," +
+                "{\"source\":\"dept_head_approve\",\"target\":\"end\"}" +
+                "]");
+        workflowDefinitionRepository.save(dsPermWf);
+        log.info("数据源权限审批平台流程初始化完成");
     }
 
     private void initDefaultAgentConfig() {

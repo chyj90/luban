@@ -1,5 +1,7 @@
 package com.luban.controller;
 
+import com.luban.annotation.RequirePermission;
+import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.dto.PageResult;
 import com.luban.dto.UserVO;
@@ -78,6 +80,7 @@ public class UserController {
     }
 
     @GetMapping
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<ApiResponse<PageResult<UserVO>>> list(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int pageSize,
@@ -117,6 +120,7 @@ public class UserController {
     }
 
     @GetMapping("/export-template")
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<byte[]> downloadTemplate() throws IOException {
         try (Workbook workbook = new XSSFWorkbook()) {
             Sheet sheet = workbook.createSheet("用户导入模板");
@@ -163,6 +167,7 @@ public class UserController {
     }
 
     @PostMapping("/import")
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<ApiResponse<ImportResult>> importUsers(@RequestParam("file") MultipartFile file) {
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(ApiResponse.error("请上传文件"));
@@ -236,6 +241,7 @@ public class UserController {
     }
 
     @PutMapping("/{userId}/role")
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<ApiResponse<Void>> updateRole(
             @PathVariable Long userId,
             @RequestBody List<Long> roleIds) {
@@ -248,6 +254,7 @@ public class UserController {
     }
 
     @PutMapping("/{userId}/department")
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<ApiResponse<Void>> updateDepartment(
             @PathVariable Long userId,
             @RequestParam Long deptId) {
@@ -264,6 +271,7 @@ public class UserController {
     }
 
     @PutMapping("/{userId}/leader")
+    @RequirePermission(Permissions.PEOPLE_USERS)
     public ResponseEntity<ApiResponse<Void>> updateLeader(
             @PathVariable Long userId,
             @RequestParam(required = false) Long leaderId) {

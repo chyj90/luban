@@ -23,6 +23,7 @@ dist/
 .env
 .env.local
 .env.*.local
+*.rsa_key.pem
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -68,3 +69,6 @@ backend/drivers/
 __pycache__/
 *.pyc
 *.pyo
+
+# ====== 本地安全密钥（不入仓库） ======
+backend/config/*.pem

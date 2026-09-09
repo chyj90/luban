@@ -1,11 +1,9 @@
 package com.luban.controller;
 
 import com.luban.dto.*;
-import com.luban.entity.Application;
-import com.luban.entity.Page;
 import com.luban.entity.User;
-import com.luban.repository.ApplicationRepository;
-import com.luban.repository.PageRepository;
+import com.luban.security.appaccess.AppAccess;
+import com.luban.security.appaccess.AppAction;
 import com.luban.service.PageService;
 import com.luban.workflow.entity.Role;
 import com.luban.workflow.entity.RoleUser;
@@ -18,7 +16,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -27,24 +24,19 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/pages")
+@AppAccess(action = AppAction.DEVELOP) // 类级兜底：能解析出 applicationId 的写操作默认需要开发权
 public class PageController {
 
     private final PageService pageService;
-    private final PageRepository pageRepository;
-    private final ApplicationRepository applicationRepository;
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final RolePermissionRepository rolePermissionRepository;
 
     public PageController(PageService pageService,
-                          PageRepository pageRepository,
-                          ApplicationRepository applicationRepository,
                           RoleRepository roleRepository,
                           RoleUserRepository roleUserRepository,
                           RolePermissionRepository rolePermissionRepository) {
         this.pageService = pageService;
-        this.pageRepository = pageRepository;
-        this.applicationRepository = applicationRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
         this.rolePermissionRepository = rolePermissionRepository;
@@ -59,8 +51,7 @@ public class PageController {
         // 获取用户在该应用的角色权限，标记 accessible
         List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
         List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
-        List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
-        List<Long> userRoleIds = userRoles.stream()
+        List<Long> userRoleIds = roleUserRepository.findByUserId(user.getId()).stream()
                 .map(RoleUser::getRoleId)
                 .filter(appRoleIds::contains)
                 .toList();
@@ -84,61 +75,38 @@ public class PageController {
         return ResponseEntity.ok(ApiResponse.ok(pages));
     }
 
-    private void checkPageOwnership(Long pageId, User user) {
-        Page page = pageRepository.findById(pageId)
-                .orElseThrow(() -> new IllegalArgumentException("页面不存在"));
-        Application app = applicationRepository.findById(page.getApplicationId())
-                .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
-        if (!app.getCreatedBy().equals(user.getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作此页面");
-        }
-    }
-
-    private void checkAppOwnership(Long applicationId, User user) {
-        Application app = applicationRepository.findById(applicationId)
-                .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
-        if (!app.getCreatedBy().equals(user.getId())) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "无权操作此应用");
-        }
-    }
-
     @PostMapping("/code")
+    @AppAccess(action = AppAction.DEVELOP, from = AppAccess.Source.BODY, key = "applicationId")
     public ResponseEntity<ApiResponse<Map<String, Object>>> createCodePage(
-            @Valid @RequestBody CreateCodePageRequest request,
-            @AuthenticationPrincipal User user) {
-        checkAppOwnership(request.getApplicationId(), user);
+            @Valid @RequestBody CreateCodePageRequest request) {
         Map<String, Object> page = pageService.createCodePage(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(page));
     }
 
     @GetMapping("/{id}/code")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> getCodePage(@PathVariable Long id,
-                                                                         @AuthenticationPrincipal User user) {
-        checkPageOwnership(id, user);
+    @AppAccess(action = AppAction.DEVELOP, resource = "page", key = "id")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getCodePage(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(pageService.getCodePage(id)));
     }
 
     @PutMapping("/{id}/code")
+    @AppAccess(action = AppAction.DEVELOP, resource = "page", key = "id")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateCodePage(
-            @PathVariable Long id, @RequestBody UpdateCodePageRequest request,
-            @AuthenticationPrincipal User user) {
-        checkPageOwnership(id, user);
+            @PathVariable Long id, @RequestBody UpdateCodePageRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(pageService.updateCodePage(id, request)));
     }
 
     @PutMapping("/{id}")
+    @AppAccess(action = AppAction.DEVELOP, resource = "page", key = "id")
     public ResponseEntity<ApiResponse<Map<String, Object>>> rename(
-            @PathVariable Long id, @RequestBody Map<String, String> body,
-            @AuthenticationPrincipal User user) {
-        checkPageOwnership(id, user);
+            @PathVariable Long id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
         return ResponseEntity.ok(ApiResponse.ok(pageService.renamePage(id, name)));
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id,
-                                                     @AuthenticationPrincipal User user) {
-        checkPageOwnership(id, user);
+    @AppAccess(action = AppAction.DEVELOP, resource = "page", key = "id")
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         pageService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }

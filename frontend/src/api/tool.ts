@@ -135,8 +135,8 @@ export function updateAgentConfig(id: number, data: Partial<AgentConfig>) {
   return put<AgentConfig>(`/agent-configs/${id}`, data);
 }
 
-export function testAgentConfig(data: { modelEndpoint: string; secretKey: string }) {
-  return post<{ success: boolean; models?: { id: string; name: string }[]; error?: string }>(
+export function testAgentConfig(data: { modelEndpoint: string; secretKey: string; modelName: string }) {
+  return post<{ success: boolean; error?: string }>(
     '/agent-configs/test',
     data,
   );

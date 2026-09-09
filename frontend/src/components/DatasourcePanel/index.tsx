@@ -3,6 +3,7 @@ import Select from '@/components/Select';
 import Editor from '@monaco-editor/react';
 import type { languages, IDisposable, editor } from 'monaco-editor';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
+import { encryptConfigSecrets } from '@/utils/security';
 import { listDrivers, installDriver } from '@/api/driver';
 import { listApplicationDatasources } from '@/api/tool';
 import { executeSql } from '@/api/query';
@@ -141,6 +142,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     }
 
     const config = buildConfig();
+    await encryptConfigSecrets(config); // 传输层信封加密敏感字段（密码等）
     const payload = {
       ownerId: applicationId, slug: 'APPLICATION' as const,
       name: form.name, type: form.type, config,

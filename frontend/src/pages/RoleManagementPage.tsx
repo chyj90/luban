@@ -62,7 +62,7 @@ export default function RoleManagementPage() {
   const currentUserId = user?.id;
   const [searchParams] = useSearchParams();
   const urlAppId = searchParams.get('appId');
-  const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
+  const [collapsedApps, setCollapsedApps] = useState<Set<string>>(new Set());
 
   const appRoles = roles.filter((r) => r.scope !== 'PLATFORM');
   const appGroups = useMemo(() => {
@@ -82,7 +82,7 @@ export default function RoleManagementPage() {
   }, [appRoles]);
 
   const toggleAppGroup = (appId: string) => {
-    setExpandedApps((prev) => {
+    setCollapsedApps((prev) => {
       const next = new Set(prev);
       if (next.has(appId)) next.delete(appId);
       else next.add(appId);
@@ -496,7 +496,7 @@ export default function RoleManagementPage() {
             </div>
           )}
           {appRoles.length > 0 && appGroups.map((group) => {
-            const isExpanded = expandedApps.has(group.appId) || expandedApps.size === 0;
+            const isExpanded = !collapsedApps.has(group.appId);
             return (
               <div key={group.appId} className="role-page__section">
                 <div

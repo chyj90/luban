@@ -53,6 +53,6 @@ public class AgentConfigController {
     @PostMapping("/test")
     public ResponseEntity<ApiResponse<Map<String, Object>>> test(@RequestBody AgentConfigTestRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(agentConfigService.testConnection(
-                request.getModelEndpoint(), request.getSecretKey())));
+                request.getModelEndpoint(), request.getSecretKey(), request.getModelName())));
     }
 }

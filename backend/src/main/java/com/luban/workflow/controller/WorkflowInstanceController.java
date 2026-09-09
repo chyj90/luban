@@ -1,6 +1,8 @@
 package com.luban.workflow.controller;
 
 import com.luban.entity.User;
+import com.luban.security.appaccess.AppAccess;
+import com.luban.security.appaccess.AppAction;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.service.ProcessService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +20,7 @@ public class WorkflowInstanceController {
     private final ProcessService processService;
 
     @PostMapping
+    @AppAccess(action = AppAction.RUN, resource = "process", key = "definitionId")
     public WorkflowInstance start(@RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         Long definitionId = Long.valueOf(params.get("definitionId").toString());
         String formData = params.getOrDefault("formData", "{}").toString();
@@ -59,6 +62,7 @@ public class WorkflowInstanceController {
     }
 
     @PostMapping("/{id}/reject-to")
+    @AppAccess(action = AppAction.MANAGE, resource = "instance", key = "id")
     public ResponseEntity<Void> rejectTo(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String targetNodeId = params.get("targetNodeId").toString();
         String comment = params.getOrDefault("comment", "").toString();
@@ -67,6 +71,7 @@ public class WorkflowInstanceController {
     }
 
     @PostMapping("/{id}/force-jump")
+    @AppAccess(action = AppAction.MANAGE, resource = "instance", key = "id")
     public ResponseEntity<Void> forceJump(@PathVariable Long id, @RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
         String targetNodeId = params.get("targetNodeId").toString();
         String comment = params.getOrDefault("comment", "").toString();
@@ -81,6 +86,7 @@ public class WorkflowInstanceController {
     }
 
     @GetMapping("/{id}/sub-processes")
+    @AppAccess(action = AppAction.VIEW, resource = "instance", key = "id")
     public List<WorkflowInstance> getSubProcesses(@PathVariable Long id) {
         return processService.getSubProcessInstances(id);
     }

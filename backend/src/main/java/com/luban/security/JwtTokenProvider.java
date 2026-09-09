@@ -14,13 +14,28 @@ import java.util.Date;
 @Component
 public class JwtTokenProvider {
 
+    private static final String KNOWN_DEFAULT_SECRET = "luban-jwt-secret-key-change-in-production-256-bit";
+
     private final SecretKey key;
     private final long expiration;
+    private final boolean ephemeral;
 
     public JwtTokenProvider(
-            @Value("${app.jwt.secret}") String secret,
-            @Value("${app.jwt.expiration}") long expiration) {
-        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+            @Value("${app.security.jwt.secret:}") String secret,
+            @Value("${app.security.jwt.expiration}") long expiration) {
+        // 密钥缺失或仍是历史默认值时使用随机临时密钥：拒绝弱默认上线，重启即失效所有旧 token
+        String effective = secret == null ? "" : secret.trim();
+        boolean weak = effective.isEmpty() || effective.equals(KNOWN_DEFAULT_SECRET) || effective.length() < 32;
+        this.ephemeral = weak;
+        if (weak) {
+            byte[] random = new byte[48];
+            new java.security.SecureRandom().nextBytes(random);
+            this.key = Keys.hmacShaKeyFor(random);
+            org.slf4j.LoggerFactory.getLogger(JwtTokenProvider.class)
+                    .warn("未配置 LUBAN_JWT_SECRET（缺失/过短/为历史默认值），已使用随机临时密钥，重启后所有登录态失效");
+        } else {
+            this.key = Keys.hmacShaKeyFor(effective.getBytes(StandardCharsets.UTF_8));
+        }
         this.expiration = expiration;
     }
 

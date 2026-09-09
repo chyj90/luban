@@ -64,6 +64,7 @@ public class ProcessEngine {
         public String target;
         public String label;
         public String condition;
+        public Map<String, Object> data;
     }
 
     // ============================================================
@@ -1193,25 +1194,8 @@ public class ProcessEngine {
      * 评估边上的条件表达式
      */
     private boolean evaluateCondition(String condition, Map<String, Object> formData) {
-        if (condition == null || condition.trim().isEmpty()) {
-            return true; // 无条件，始终通过
-        }
-
-        try {
-            ScriptEngine engine = new ScriptEngineManager().getEngineByName("JavaScript");
-            if (engine == null) return true;
-
-            // 将表单数据注入脚本上下文
-            for (Map.Entry<String, Object> entry : formData.entrySet()) {
-                engine.put(entry.getKey(), entry.getValue());
-            }
-
-            Object result = engine.eval(condition);
-            return Boolean.TRUE.equals(result);
-        } catch (Exception e) {
-            // 条件解析失败，默认通过
-            return true;
-        }
+        // JDK 15+ 已无内置 JS 引擎；改由确定性求值器实现（见 ConditionEvaluator）
+        return ConditionEvaluator.evaluate(condition, formData);
     }
 
     /**
@@ -1329,7 +1313,14 @@ public class ProcessEngine {
     private List<EdgeDef> parseEdges(String edgesJson) {
         try {
             if (edgesJson == null || edgesJson.isEmpty()) return Collections.emptyList();
-            return objectMapper.readValue(edgesJson, new TypeReference<List<EdgeDef>>() {});
+            List<EdgeDef> edges = objectMapper.readValue(edgesJson, new TypeReference<List<EdgeDef>>() {});
+            // 兼容前端约定：condition 写在 data.condition（顶层 condition 优先）
+            for (EdgeDef e : edges) {
+                if (e.condition == null && e.data != null && e.data.get("condition") != null) {
+                    e.condition = String.valueOf(e.data.get("condition"));
+                }
+            }
+            return edges;
         } catch (Exception e) {
             return Collections.emptyList();
         }

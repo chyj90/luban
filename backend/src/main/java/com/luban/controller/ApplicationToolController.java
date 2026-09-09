@@ -4,6 +4,8 @@ import com.luban.constant.ToolType;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.Application;
 import com.luban.entity.ToolDefinition;
+import com.luban.security.appaccess.AppAccess;
+import com.luban.security.appaccess.AppAction;
 import com.luban.entity.User;
 import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.ApiKeyTool;
@@ -40,6 +42,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/application-tools")
+@AppAccess(action = AppAction.RUN, from = AppAccess.Source.PATH, key = "applicationId")
 public class ApplicationToolController {
 
     private static final Logger log = LoggerFactory.getLogger(ApplicationToolController.class);
@@ -360,17 +363,12 @@ public class ApplicationToolController {
     }
 
     @PostMapping("/{applicationId}/members")
+    @AppAccess(action = AppAction.MANAGE, from = AppAccess.Source.PATH, key = "applicationId")
     @Transactional
     public ResponseEntity<ApiResponse<Map<String, Object>>> addMember(
             @PathVariable Long applicationId,
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
-        // 白名单校验
-        if (!isAppMember(applicationId, user.getId())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("无权管理此应用成员"));
-        }
-
         Long targetUserId = body.get("userId") instanceof Number
                 ? ((Number) body.get("userId")).longValue() : null;
         Long roleId = body.get("roleId") instanceof Number
@@ -402,17 +400,12 @@ public class ApplicationToolController {
     }
 
     @DeleteMapping("/{applicationId}/members/{userId}")
+    @AppAccess(action = AppAction.MANAGE, from = AppAccess.Source.PATH, key = "applicationId")
     @Transactional
     public ResponseEntity<ApiResponse<Void>> removeMember(
             @PathVariable Long applicationId,
             @PathVariable Long userId,
             @AuthenticationPrincipal User user) {
-        // 白名单校验
-        if (!isAppMember(applicationId, user.getId())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("无权管理此应用成员"));
-        }
-
         List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
         for (Role role : appRoles) {
             roleUserRepository.findByRoleIdAndUserId(role.getId(), userId)
@@ -420,13 +413,6 @@ public class ApplicationToolController {
         }
 
         return ResponseEntity.ok(ApiResponse.ok(null));
-    }
-
-    private boolean isAppMember(Long applicationId, Long userId) {
-        List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
-        List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
-        List<RoleUser> userRoles = roleUserRepository.findByUserId(userId);
-        return userRoles.stream().anyMatch(ru -> appRoleIds.contains(ru.getRoleId()));
     }
 
     private String replaceVars(String template, Map<String, Object> params) {

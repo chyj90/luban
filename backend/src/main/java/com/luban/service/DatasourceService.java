@@ -9,6 +9,7 @@ import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.security.RsaKeyProvider;
 import com.luban.util.CryptoUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -37,17 +38,20 @@ public class DatasourceService {
     private final ObjectMapper objectMapper;
     private final JdbcDriverService jdbcDriverService;
     private final CryptoUtil cryptoUtil;
+    private final RsaKeyProvider rsaKeyProvider;
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              ApplicationRepository applicationRepository,
                              ObjectMapper objectMapper,
                              JdbcDriverService jdbcDriverService,
-                             CryptoUtil cryptoUtil) {
+                             CryptoUtil cryptoUtil,
+                             RsaKeyProvider rsaKeyProvider) {
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
         this.objectMapper = objectMapper;
         this.jdbcDriverService = jdbcDriverService;
         this.cryptoUtil = cryptoUtil;
+        this.rsaKeyProvider = rsaKeyProvider;
     }
 
     private void verifyApplicationOwnership(Long applicationId) {
@@ -85,11 +89,13 @@ public class DatasourceService {
             verifyApplicationOwnership(request.getOwnerId());
         }
         Map<String, Object> config = new HashMap<>(request.getConfig() != null ? request.getConfig() : Map.of());
+        decryptRsaSecrets(config);
         encryptPasswordInConfig(config);
 
         Datasource ds = new Datasource();
         ds.setOwnerId(request.getOwnerId());
         ds.setSlug(request.getSlug());
+        ds.setScope(request.getSlug());
         ds.setName(request.getName());
         ds.setType(request.getType());
         ds.setConfig(toJson(config));
@@ -253,6 +259,7 @@ public class DatasourceService {
         } catch (Exception e) {
             log.warn("queryDistinctValues failed: datasourceId={}, table={}, column={}, error={}",
                     datasourceId, tableName, columnName, e.getMessage());
+            throw new RuntimeException("查询枚举值失败: " + e.getMessage(), e);
         }
         return values;
     }
@@ -273,6 +280,7 @@ public class DatasourceService {
         ds.setType(request.getType());
         if (request.getConfig() != null) {
             Map<String, Object> newConfig = new HashMap<>(request.getConfig());
+            decryptRsaSecrets(newConfig);
             String newPassword = String.valueOf(newConfig.getOrDefault("password", ""));
             if (newPassword.isBlank() || "••••••••".equals(newPassword)) {
                 Map<String, Object> oldConfig = fromJsonMap(ds.getConfig());
@@ -324,6 +332,17 @@ public class DatasourceService {
 
     public String buildJdbcUrl(String type, Map<String, Object> config) {
         return jdbcDriverService.buildJdbcUrl(type, config);
+    }
+
+    /** 传输层信封解密：rsa: 前缀字段用私钥解密回明文（随后由 encryptPasswordInConfig 做 AES 落库） */
+    private void decryptRsaSecrets(Map<String, Object> config) {
+        if (config == null) return;
+        config.replaceAll((k, v) -> {
+            if (v instanceof String str && str.startsWith(RsaKeyProvider.PREFIX)) {
+                return rsaKeyProvider.decrypt(str.substring(RsaKeyProvider.PREFIX.length()));
+            }
+            return v;
+        });
     }
 
     private void encryptPasswordInConfig(Map<String, Object> config) {

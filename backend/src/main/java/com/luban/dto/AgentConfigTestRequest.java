@@ -9,4 +9,6 @@ public class AgentConfigTestRequest {
     private String modelEndpoint;
     @NotBlank
     private String secretKey;
+    @NotBlank
+    private String modelName;
 }

@@ -494,8 +494,15 @@ public class ProcessService {
         return processEngine.reassignTask(taskId, newAssigneeId, comment, userId, userName);
     }
 
-    public WorkflowTask getTask(Long taskId) {
-        return processEngine.getTask(taskId);
+    public WorkflowTask getTask(Long taskId, Long userId) {
+        WorkflowTask task = processEngine.getTask(taskId);
+        if (userId != null) {
+            if (userId.equals(task.getAssigneeId())) return task;
+            WorkflowInstance instance = workflowInstanceRepository.findById(task.getInstanceId())
+                    .orElse(null);
+            if (instance != null && userId.equals(instance.getInitiatorId())) return task;
+        }
+        throw new RuntimeException("无权查看该任务");
     }
 
     public WorkflowTask getMyTaskForInstance(Long instanceId, Long userId) {

@@ -5,6 +5,7 @@ import com.luban.dto.RunQueryRequest;
 import com.luban.dto.RunQueryResponse;
 import com.luban.entity.Application;
 import com.luban.entity.CodePage;
+import com.luban.entity.Datasource;
 import com.luban.entity.Page;
 import com.luban.entity.Query;
 import com.luban.entity.ToolDefinition;
@@ -58,12 +59,15 @@ public class RuntimeController {
     private final ApplicationRepository applicationRepository;
     private final CodePageRepository codePageRepository;
     private final QueryRepository queryRepository;
+    private final com.luban.repository.DatasourceRepository datasourceRepository;
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final RolePermissionRepository rolePermissionRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final ApplicationApiKeyRepository applicationApiKeyRepository;
     private final ApiKeyToolRepository apiKeyToolRepository;
+    private final com.luban.security.appaccess.AppAccessService appAccessService;
+    private final com.luban.service.ApiKeyService apiKeyService;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -77,24 +81,30 @@ public class RuntimeController {
                              ApplicationRepository applicationRepository,
                              CodePageRepository codePageRepository,
                              QueryRepository queryRepository,
+                             com.luban.repository.DatasourceRepository datasourceRepository,
                              RoleRepository roleRepository,
                              RoleUserRepository roleUserRepository,
                              RolePermissionRepository rolePermissionRepository,
                              ToolDefinitionRepository toolDefinitionRepository,
                              ApplicationApiKeyRepository applicationApiKeyRepository,
-                             ApiKeyToolRepository apiKeyToolRepository) {
+                             ApiKeyToolRepository apiKeyToolRepository,
+                             com.luban.security.appaccess.AppAccessService appAccessService,
+                             com.luban.service.ApiKeyService apiKeyService) {
         this.pageService = pageService;
         this.queryService = queryService;
         this.pageRepository = pageRepository;
         this.applicationRepository = applicationRepository;
         this.codePageRepository = codePageRepository;
         this.queryRepository = queryRepository;
+        this.datasourceRepository = datasourceRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
         this.rolePermissionRepository = rolePermissionRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.applicationApiKeyRepository = applicationApiKeyRepository;
         this.apiKeyToolRepository = apiKeyToolRepository;
+        this.appAccessService = appAccessService;
+        this.apiKeyService = apiKeyService;
     }
 
     @GetMapping("/{pageId}/code")
@@ -134,6 +144,25 @@ public class RuntimeController {
             @RequestBody(required = false) RunQueryRequest request,
             @AuthenticationPrincipal User user) {
         checkPageAccess(pageId, user);
+        // 页面访问权只覆盖本页面绑定的查询：queryId 必须属于页面所在应用，防止跨应用查询执行
+        Query query = queryRepository.findById(queryId)
+                .orElseThrow(() -> new RuntimeException("查询不存在"));
+        Page page = pageRepository.findById(pageId)
+                .orElseThrow(() -> new RuntimeException("页面不存在"));
+        if (!query.getApplicationId().equals(page.getApplicationId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error("无权在当前页面执行此查询"));
+        }
+
+        // PLATFORM 数据源是跨应用共享资源：应用必须有绑定 Key 且获 APPROVED 授权才能在页面使用
+        Datasource ds = datasourceRepository.findById(query.getDatasourceId())
+                .orElseThrow(() -> new RuntimeException("数据源不存在"));
+        if ("PLATFORM".equals(ds.getEffectiveScope())
+                && !apiKeyService.hasApplicationDatasourcePermission(page.getApplicationId(), ds.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error("应用未获此数据源访问授权，请先申请并完成审批"));
+        }
+
         if (request == null) request = new RunQueryRequest();
         return ResponseEntity.ok(ApiResponse.ok(queryService.run(queryId, request)));
     }
@@ -200,29 +229,7 @@ public class RuntimeController {
         Page page = pageRepository.findById(pageId)
                 .orElseThrow(() -> new RuntimeException("页面不存在"));
 
-        Application app = applicationRepository.findById(page.getApplicationId())
-                .orElseThrow(() -> new RuntimeException("应用不存在"));
-
-        if (app.getCreatedBy() != null && app.getCreatedBy().equals(user.getId())) {
-            return;
-        }
-
-        List<Role> appRoles = roleRepository.findByApplicationId(page.getApplicationId());
-        List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
-        List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
-        List<Long> userRoleIds = userRoles.stream()
-                .map(RoleUser::getRoleId)
-                .filter(appRoleIds::contains)
-                .toList();
-
-        Set<String> pagePermissions = rolePermissionRepository.findByRoleIdIn(userRoleIds).stream()
-                .map(RolePermission::getPermission)
-                .filter(p -> p.startsWith("app:page:"))
-                .collect(Collectors.toSet());
-
-        if (!pagePermissions.contains("app:page:" + pageId)) {
-            throw new RuntimeException("无权访问此页面");
-        }
+        appAccessService.assertPageAccess(user.getId(), page.getApplicationId(), pageId);
     }
 
     private Long getPageApplicationId(Long pageId) {

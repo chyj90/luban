@@ -272,28 +272,28 @@ public class QueryService {
             throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
         }
 
-        // KEY 数据源权限校验
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs != null) {
-            HttpServletRequest request = attrs.getRequest();
-            String apiKeyHeader = request.getHeader("X-API-Key");
-            if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
-                String keyPrefix = apiKeyHeader.length() > 8 ? apiKeyHeader.substring(0, 8) : apiKeyHeader;
-                Optional<ApiKey> keyOpt = apiKeyRepository.findByKeyPrefix(keyPrefix);
-                if (keyOpt.isPresent()) {
-                    List<ApiKeyDatasource> permissions = apiKeyDatasourceRepository
-                            .findByApiKeyIdAndStatus(keyOpt.get().getId(), "APPROVED");
-                    boolean hasPermission = permissions.stream()
-                            .anyMatch(p -> p.getDatasourceId().equals(datasourceId));
-                    if (!hasPermission) {
-                        throw new IllegalArgumentException("该 KEY 无权访问此数据源");
-                    }
-                }
-            }
-        }
+        assertApiKeyDatasourcePermission(datasourceId);
 
         Map<String, Object> config = fromJsonMap(ds.getConfig());
         return runJdbcQuery(ds.getType(), config, sql);
+    }
+
+    /**
+     * X-API-Key 数据源审批校验：请求携带了有效 Key（ApiKeyAuthFilter 已验签并挂 api_key_id）
+     * 时，该 Key 必须对本数据源持有 APPROVED 权限；未携带 Key 的普通用户流程不受影响。
+     */
+    private void assertApiKeyDatasourcePermission(Long datasourceId) {
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs == null) return;
+        Object keyIdAttr = attrs.getRequest().getAttribute("api_key_id");
+        if (!(keyIdAttr instanceof Long apiKeyId)) return;
+
+        boolean hasPermission = apiKeyDatasourceRepository
+                .findByApiKeyIdAndStatus(apiKeyId, "APPROVED").stream()
+                .anyMatch(p -> p.getDatasourceId().equals(datasourceId));
+        if (!hasPermission) {
+            throw new IllegalArgumentException("该 API KEY 未获此数据源访问授权");
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -312,24 +312,7 @@ public class QueryService {
             throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
         }
 
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs != null) {
-            HttpServletRequest request = attrs.getRequest();
-            String apiKeyHeader = request.getHeader("X-API-Key");
-            if (apiKeyHeader != null && !apiKeyHeader.isBlank()) {
-                String keyPrefix = apiKeyHeader.length() > 8 ? apiKeyHeader.substring(0, 8) : apiKeyHeader;
-                Optional<ApiKey> keyOpt = apiKeyRepository.findByKeyPrefix(keyPrefix);
-                if (keyOpt.isPresent()) {
-                    List<ApiKeyDatasource> permissions = apiKeyDatasourceRepository
-                            .findByApiKeyIdAndStatus(keyOpt.get().getId(), "APPROVED");
-                    boolean hasPermission = permissions.stream()
-                            .anyMatch(p -> p.getDatasourceId().equals(datasourceId));
-                    if (!hasPermission) {
-                        throw new IllegalArgumentException("该 KEY 无权访问此数据源");
-                    }
-                }
-            }
-        }
+        assertApiKeyDatasourcePermission(datasourceId);
 
         String[] statements = sql.split(";\\s*");
         List<Map<String, Object>> results = new ArrayList<>();

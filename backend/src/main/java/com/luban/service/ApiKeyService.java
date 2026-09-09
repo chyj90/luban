@@ -168,11 +168,38 @@ public class ApiKeyService {
     }
 
     @Transactional
-    public void revokeKey(Long apiKeyId) {
+    public void revokeKey(Long apiKeyId, Long ownerId) {
         ApiKey apiKey = apiKeyRepository.findById(apiKeyId)
                 .orElseThrow(() -> new RuntimeException("API Key 不存在"));
+        if (!apiKey.getOwnerId().equals(ownerId)) {
+            throw new RuntimeException("无权操作该 Key");
+        }
         apiKey.setStatus("REVOKED");
         apiKeyRepository.save(apiKey);
+        // 级联停用应用绑定，使运行态消费（runTool 等）立即失效；restore 时重新激活
+        applicationApiKeyRepository.findByApiKeyId(apiKeyId)
+                .forEach(b -> {
+                    b.setStatus("INACTIVE");
+                    applicationApiKeyRepository.save(b);
+                });
+    }
+
+    /** 轮换 Key：生成新密钥值，绑定关系与已审批权限保持不变；新密钥仅本次返回 */
+    @Transactional
+    public Map<String, String> rotateKey(Long apiKeyId, Long ownerId) {
+        ApiKey apiKey = apiKeyRepository.findById(apiKeyId)
+                .orElseThrow(() -> new RuntimeException("API Key 不存在"));
+        if (!apiKey.getOwnerId().equals(ownerId)) {
+            throw new RuntimeException("无权操作该 Key");
+        }
+        String rawKey = generateRawKey();
+        apiKey.setKeyHash(sha256(rawKey));
+        apiKey.setKeyPrefix(rawKey.substring(0, 12));
+        apiKeyRepository.save(apiKey);
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("apiKeyId", rawKey);
+        result.put("keyPreview", rawKey.substring(0, 12) + "..." + rawKey.substring(rawKey.length() - 4));
+        return result;
     }
 
     @Transactional
@@ -187,6 +214,11 @@ public class ApiKeyService {
         }
         apiKey.setStatus("ACTIVE");
         apiKeyRepository.save(apiKey);
+        applicationApiKeyRepository.findByApiKeyId(apiKeyId)
+                .forEach(b -> {
+                    b.setStatus("ACTIVE");
+                    applicationApiKeyRepository.save(b);
+                });
     }
 
     @Transactional
@@ -200,6 +232,8 @@ public class ApiKeyService {
             throw new RuntimeException("只能删除已吊销的 Key");
         }
         apiKeyToolRepository.deleteByApiKeyId(apiKeyId);
+        apiKeyDatasourceRepository.deleteByApiKeyId(apiKeyId);
+        applicationApiKeyRepository.deleteByApiKeyId(apiKeyId);
         apiKeyRepository.delete(apiKey);
     }
 
@@ -219,7 +253,7 @@ public class ApiKeyService {
     // ==================== Datasource Permission ====================
 
     public List<Datasource> listAvailableDatasources(Long groupId) {
-        return datasourceRepository.findBySlugAndOwnerId("PLATFORM", groupId);
+        return datasourceRepository.findByScopeAndOwnerId("PLATFORM", groupId);
     }
 
     public List<ApiKeyDatasource> listKeyDatasources(Long apiKeyId) {
@@ -287,6 +321,13 @@ public class ApiKeyService {
         return apiKeyDatasourceRepository.findByApiKeyIdAndDatasourceId(apiKeyId, datasourceId)
                 .map(kd -> "APPROVED".equals(kd.getStatus()))
                 .orElse(false);
+    }
+
+    /** 应用运行态门禁：应用绑定的 ACTIVE Key 中，是否存在对本数据源 APPROVED 的授权 */
+    public boolean hasApplicationDatasourcePermission(Long applicationId, Long datasourceId) {
+        return applicationApiKeyRepository
+                .findByApplicationIdAndStatus(applicationId, "ACTIVE").stream()
+                .anyMatch(b -> hasDatasourcePermission(b.getApiKeyId(), datasourceId));
     }
 
     // ==================== Application Binding ====================

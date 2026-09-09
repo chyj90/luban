@@ -8,6 +8,7 @@ import jakarta.transaction.Transactional;
 
 public interface DatasourceRepository extends JpaRepository<Datasource, Long> {
     List<Datasource> findBySlugAndOwnerId(String slug, Long ownerId);
+    List<Datasource> findByScopeAndOwnerId(String scope, Long ownerId);
     List<Datasource> findBySlug(String slug);
 
     @Transactional

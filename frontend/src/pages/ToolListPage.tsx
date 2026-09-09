@@ -6,6 +6,7 @@ import { listDrivers, installDriver } from '@/api/driver';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
+import { encryptConfigSecrets } from '@/utils/security';
 import Select from '@/components/Select';
 import MonacoEditor from '@monaco-editor/react';
 import type { ToolDefinition, ToolTypeInfo, ToolSearchResult, SwaggerEndpoint, McpServer } from '@/types/tool';
@@ -400,7 +401,9 @@ export default function ToolListPage() {
       return;
     }
     try {
-      const payload = { name: dsForm.name, type: dsForm.type, config: buildDsConfig(), ownerId: groupId, slug: 'PLATFORM' as const };
+      const config = buildDsConfig();
+      await encryptConfigSecrets(config);
+      const payload = { name: dsForm.name, type: dsForm.type, config, ownerId: groupId, slug: 'PLATFORM' as const };
       if (dsEditingId) {
         await updateDatasource(dsEditingId, payload);
         toast('更新成功', 'success');

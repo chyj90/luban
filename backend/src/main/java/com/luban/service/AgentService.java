@@ -104,7 +104,7 @@ public class AgentService {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_IDLE_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(300);
-    private static final long AGENT_TOTAL_TIMEOUT_MS = 120_000;
+    private static final long AGENT_TOTAL_TIMEOUT_MS = 180_000;
     private static final int AGENT_CONCURRENT_LIMIT = 5;
 
     private static final int MAX_CONCEPT_EXPAND = 20;
@@ -728,7 +728,7 @@ public class AgentService {
                 log.warn("Agent total timeout exceeded: {}ms > {}ms, forcing final_answer",
                         System.currentTimeMillis() - agentStartTime, AGENT_TOTAL_TIMEOUT_MS);
                 data.put("next_action", "final_answer");
-                data.put("final_answer", "分析超时（超过 120 秒），请简化问题或联系管理员。");
+                data.put("final_answer", "分析超时（超过 " + (AGENT_TOTAL_TIMEOUT_MS / 1000) + " 秒），请简化问题或联系管理员。");
                 return CompletableFuture.completedFuture(data);
             }
 
@@ -742,7 +742,8 @@ public class AgentService {
             List<String> pendingActions = (List<String>) data.get("pending_actions");
 
             Map<String, Object> parsed = null;
-            if (pendingActions != null && !pendingActions.isEmpty()) {
+            boolean forceLlmCall = Boolean.TRUE.equals(data.remove("_force_llm_call"));
+            if (!forceLlmCall && pendingActions != null && !pendingActions.isEmpty()) {
                 while (parsed == null && !pendingActions.isEmpty()) {
                     Map<String, Object> candidate = consumePendingAction(data, pendingActions, iteration);
                     if (candidate.get("type") == null) {
@@ -756,6 +757,11 @@ public class AgentService {
                         parsed = candidate;
                     }
                 }
+            }
+            if (forceLlmCall) {
+                data.remove("pending_actions");
+                log.info("Agent iteration {}: _force_llm_call, skipping {} pending actions to re-query LLM",
+                        iteration, pendingActions != null ? pendingActions.size() : 0);
             }
             if (parsed == null) {
                 int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
@@ -1865,7 +1871,10 @@ public class AgentService {
             } catch (Exception e) {
                 log.warn("get_enum_values failed for {}.{}: {}", table, column, e.getMessage());
                 result.append("| `").append(table).append("` | `").append(column)
-                        .append("` | 查询失败 |\n");
+                        .append("` | **数据库连接失败**: ").append(e.getMessage()).append(" |\n");
+                if (!emptyColumns.contains(table + "." + column)) {
+                    emptyColumns.add(table + "." + column);
+                }
             }
         }
 
@@ -1875,6 +1884,14 @@ public class AgentService {
         result.append("\n请继续使用 ontology_action 生成本体变更，JOIN 条件中的字符串值必须来自上述返回的实际值。");
         messages.add(Map.of("role", "user", "content", result.toString()));
         data.put("next_action", "continue");
+
+        @SuppressWarnings("unchecked")
+        List<String> pending = (List<String>) data.get("pending_actions");
+        if (pending != null && !pending.isEmpty()) {
+            data.put("_force_llm_call", true);
+            agentDebug.info("[ENUM] enum results ready, forcing LLM call to incorporate actual data ({} pending actions will be discarded)", pending.size());
+        }
+
         agentDebug.info("[ENUM] routeGetEnumValues completed, fetched={}, whitelistSize={}", fetched, whitelist.size());
     }
 
@@ -2747,12 +2764,17 @@ public class AgentService {
                             columnName, value, value, key, whitelist.get(key), conceptName));
                 }
             } else {
-                Set<String> actualValues = datasourceService.queryDistinctValues(dsId, joinTable, columnName);
-                if (!actualValues.isEmpty()) {
-                    errors.add(String.format(
-                            "- ADD_JOIN_MAPPING：JOIN 条件中使用了列 `%s` 的字符串值 '%s'，但该列未在 get_enum_values 白名单中声明。"
-                            + "请先使用 get_enum_values 声明需要查询的枚举列，当前 `%s` 的实际值：%s（概念：%s）",
-                            columnName, value, key, actualValues, conceptName));
+                try {
+                    Set<String> actualValues = datasourceService.queryDistinctValues(dsId, joinTable, columnName);
+                    if (!actualValues.isEmpty()) {
+                        errors.add(String.format(
+                                "- ADD_JOIN_MAPPING：JOIN 条件中使用了列 `%s` 的字符串值 '%s'，但该列未在 get_enum_values 白名单中声明。"
+                                + "请先使用 get_enum_values 声明需要查询的枚举列，当前 `%s` 的实际值：%s（概念：%s）",
+                                columnName, value, key, actualValues, conceptName));
+                    }
+                } catch (Exception e) {
+                    log.warn("JOIN_MAPPING validation: queryDistinctValues failed for {}.{}: {}",
+                            joinTable, columnName, e.getMessage());
                 }
             }
         }
@@ -3112,6 +3134,10 @@ public class AgentService {
             sb.append("5. 执行 Python 代码分析数据（code_mode）\n");
             sb.append("6. 直接回答（final_answer）\n\n");
         }
+
+        sb.append("## 关键规则：空枚举值短路\n");
+        sb.append("**get_enum_values 返回的所有列都为空时，必须立即 final_answer 告知用户数据缺失，禁止继续执行 nl2sql、algorithm 或任何其他 action。**\n");
+        sb.append("不要在枚举值全空后仍然尝试 nl2sql 查询，这只会浪费时间。\n\n");
 
         sb.append("## algorithm action 格式\n");
         sb.append("调用企业算法时，输出以下 JSON：\n");

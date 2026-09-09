@@ -1,5 +1,7 @@
 package com.luban.controller;
 
+import com.luban.annotation.RequirePermission;
+import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyDatasource;
@@ -97,19 +99,31 @@ public class ApiKeyController {
     }
 
     @PostMapping("/tool-permission/{id}/approve")
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ApiKeyTool>> approveToolPermission(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.approveToolPermission(id)));
     }
 
     @PostMapping("/tool-permission/{id}/reject")
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ApiKeyTool>> rejectToolPermission(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.rejectToolPermission(id)));
     }
 
     @DeleteMapping("/{keyId}")
-    public ResponseEntity<ApiResponse<Map<String, String>>> revokeKey(@PathVariable Long keyId) {
-        apiKeyService.revokeKey(keyId);
+    public ResponseEntity<ApiResponse<Map<String, String>>> revokeKey(
+            @PathVariable Long keyId,
+            @AuthenticationPrincipal User user) {
+        apiKeyService.revokeKey(keyId, user.getId());
         return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "ok")));
+    }
+
+    @PostMapping("/{keyId}/rotate")
+    public ResponseEntity<ApiResponse<Map<String, String>>> rotateKey(
+            @PathVariable Long keyId,
+            @AuthenticationPrincipal User user) {
+        Map<String, String> result = apiKeyService.rotateKey(keyId, user.getId());
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     @DeleteMapping("/{keyId}/permanent")
@@ -165,11 +179,13 @@ public class ApiKeyController {
     }
 
     @PostMapping("/datasource-permission/{id}/approve")
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ApiKeyDatasource>> approveDatasourcePermission(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.approveDatasourcePermission(id)));
     }
 
     @PostMapping("/datasource-permission/{id}/reject")
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ApiKeyDatasource>> rejectDatasourcePermission(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.rejectDatasourcePermission(id)));
     }
