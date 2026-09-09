@@ -32,4 +32,14 @@ export function registerAllSkills(): void {
   });
 
   console.log(`[SkillRegistry] 已注册 ${Object.keys(allSkills).length} 个技能`);
+
+  // dev 启动时异步执行提示词-工具一致性自检（动态 import 避免模块加载期循环依赖）
+  const isDev = typeof import.meta.env !== 'undefined' && import.meta.env.DEV;
+  if (isDev) {
+    queueMicrotask(() => {
+      import('../agentSelfCheck')
+        .then((m) => m.runDevSelfCheck())
+        .catch((e) => console.warn('[SkillRegistry] 自检加载失败:', e));
+    });
+  }
 }

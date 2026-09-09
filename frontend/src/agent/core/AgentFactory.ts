@@ -4,6 +4,7 @@ import { AGENT_CONFIG } from '../config';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { formatUnfinishedPlansForPrompt } from './planContext';
 import { runAgentLoop } from './agentLoop';
+import { onUserMessage as onConfirmGateUserMessage } from './confirmationGuard';
 import { getPlanPromptFragment } from '../registry/skills/promptFragments';
 import type { ChatRouter } from './chatRouter';
 import { createAgentStateMachine, AgentState, isUserConfirming, type AgentStateMachine } from './agentStateMachine';
@@ -115,6 +116,9 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       const runStart = Date.now();
 
       console.log(`[AgentFactory:${name}] run() 开始 | userMessage: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '...' : ''}"`);
+
+      // 危险操作确认门（R3）：用户消息可能是对待确认操作的确认/取消
+      onConfirmGateUserMessage(userMessage);
 
       const userMsg: Message = {
         id: crypto.randomUUID(),
@@ -366,7 +370,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
                 console.log(`[AgentFactory:${name}] 拦截退出：计划 "${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成步骤、${runningSteps.length} 个执行中步骤`);
                 return {
                   shouldContinue: true,
-                  message: `[系统强制指令] 你的任务尚未完成！以下计划步骤还未执行完毕：\n\n${allIncomplete}\n\n请立即继续执行这些未完成的步骤。每完成一个步骤，必须调用 update_plan_item 标记状态。所有步骤完成后，调用 validate_plan 验证。禁止在任务未完成时结束对话。`,
+                  message: `[系统提醒] 以下计划步骤还未执行完毕：\n\n${allIncomplete}\n\n请继续执行这些未完成的步骤，每完成一步调用 update_plan_item 标记（completed 需通过系统核验，result 中应包含真实资源 ID，如"表单ID: 21"）。若某步骤确实无法完成（工具持续失败、缺少前置条件），请如实说明原因并将该步骤标记为 error 后继续其余步骤——禁止将未实际完成的步骤标记为 completed。`,
                 };
               }
             }

@@ -91,6 +91,11 @@ ${ctx.requirement}
 - 查询参数必须包含 pageSize（数字）和 offset（数字）
 - 当主智能体声明需求包含"后端分页"或查询参数中有 pageSize/offset 时，使用此模式
 
+### 列表+聚合统计一条查询（窗口函数方案）
+- 页面需要"列表 + 统计卡片"且统计随筛选变化时，可用 ${'`'}JSON_OBJECT('total', COUNT(*) OVER(), ...) AS stats${'`'} 让统计基于 WHERE 过滤后的结果集计算
+- ⚠️ 该方案**每一行都会重复携带同一份统计 JSON**，仅在结果集较小（如 ≤200 行）时使用；大结果集或需要后端分页时，把统计拆成独立查询（如 GetCustomerStats），不要和列表混在一起
+- 在查询 description 中注明"统计取自任一行的 stats 字段（JSON 字符串），前端取第一行解析"，方便页面代码正确消费
+
 ### 列长度与类型错误处理
 - 遇到 \`Data truncated for column\` 错误时，直接 ALTER TABLE 扩容列长度或改为更宽松的类型：
   - 字符串列扩容：ALTER TABLE xxx MODIFY COLUMN yyy VARCHAR(500)

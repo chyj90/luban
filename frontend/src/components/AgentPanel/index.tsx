@@ -184,7 +184,10 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   lines.push('');
 
   for (const msg of messages) {
-    const time = new Date(msg.timestamp).toLocaleString();
+    // 时间线以首次入列时间为准（plan 等聚合消息的 timestamp 会被后续更新刷新，
+    // 否则导出的消息顺序与 header 时间不一致，读起来像时序错乱）
+    const createdAt = msg.createdAt || msg.timestamp;
+    const time = new Date(createdAt).toLocaleString();
     const roleLabel = msg.role === 'user' ? '👤 用户'
       : msg.agentName ? `🤖 ${msg.agentName}`
       : msg.role === 'assistant' ? '🤖 智能体'
@@ -195,6 +198,10 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
 
     lines.push(`### ${roleLabel}  [${time}]`);
     lines.push('');
+    if (msg.timestamp - createdAt > 60_000) {
+      lines.push(`_（持续更新的聚合消息，最后更新于 ${new Date(msg.timestamp).toLocaleString()}）_`);
+      lines.push('');
+    }
     if (msg.reasoningContent) {
       lines.push('<details>');
       lines.push('<summary>💭 思考过程</summary>');

@@ -127,6 +127,7 @@ export const apiSkills: Record<string, SkillFactory> = {
       },
       required: ['apiId'],
     },
+    isDangerous: true,
     requiresConfirmation: true,
     async execute(args) {
       try {

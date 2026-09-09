@@ -1,6 +1,7 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { useAgentStore } from '@/stores/agentStore';
 import { getUnfinishedPlans } from '../../core/planContext';
+import { verifyStepCompletion } from './stepVerifier';
 import type { ToolExecuteResult } from '@/types/agent';
 
 function generatePlanId(): string {
@@ -75,7 +76,7 @@ function validateAnalysisBasics(analysis: AnalysisData): ScoreDeduction[] {
   return deductions;
 }
 
-interface PlanItem {
+export interface PlanItem {
   id: string;
   category: string;
   description: string;
@@ -84,59 +85,60 @@ interface PlanItem {
   dependencies: string[];
 }
 
-function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
+/** 由分析数据自动推导计划步骤（导出供 agentSelfCheck 回归校验） */
+export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
   const items: PlanItem[] = [];
   let idCounter = 1;
   const nextId = () => String(idCounter++);
 
-  const queryStepIds: string[] = [];
-  const tableQueryMap = new Map<string, { stepId: string; queryNames: string[] }>();
+  // 同一页面的多个查询合并为一次 delegate_query 委派：DBA 在同一轮对话中连续创建，
+  // 只需一次重名探查与表结构加载（chat.log 实测 4 次独立委派串行耗时近 2 分钟）。
+  // 注意：查询与页面在分析格式中是一一声明绑定的，页面步骤只依赖自己页面的查询批次；
+  // 极少数跨页面复用同名查询的场景由 DBA 的重名检查兜底。
+  const pageQueryStep = new Map<string, string>();
 
   for (const page of analysis.pages) {
-    if (page.noDataNeeded) continue;
+    if (page.noDataNeeded || page.queries.length === 0) continue;
+    const stepId = nextId();
+    pageQueryStep.set(page.name, stepId);
+
+    const parts: string[] = [];
+    const queryNames: string[] = [];
+    let primaryFilterParams: string | undefined;
     for (const q of page.queries) {
-      const key = q.fields || q.queryName;
-      const existing = tableQueryMap.get(key);
-      if (existing) {
-        if (!existing.queryNames.includes(q.queryName)) {
-          existing.queryNames.push(q.queryName);
-        }
-        continue;
-      }
-      const stepId = nextId();
-      const queryNames = [q.queryName];
-      tableQueryMap.set(key, { stepId, queryNames });
-      queryStepIds.push(stepId);
-
-      let desc = '';
+      queryNames.push(q.queryName);
+      let part = `创建查询 ${q.queryName}（用途：${q.purpose}）`;
       if (q.needsNewTable && q.fields) {
-        desc += `需要新表（请人工建表），字段：${q.fields}。`;
+        part += `，需要新表（请人工建表），字段：${q.fields}`;
       }
-      desc += `创建查询 ${queryNames.join('、')}（用途：${q.purpose}）`;
       if (q.filterParams) {
-        desc += `，筛选参数：${q.filterParams}`;
+        part += `，筛选参数：${q.filterParams}`;
+        if (!primaryFilterParams) primaryFilterParams = q.filterParams;
       }
-
-      items.push({
-        id: stepId,
-        category: 'datasource',
-        description: desc,
-        toolName: 'delegate_query',
-        toolInput: {
-          requirement: desc,
-          query_name: queryNames[0],
-          filter_params: q.filterParams || undefined,
-        },
-        dependencies: [],
-      });
+      parts.push(part);
     }
+    const desc = parts.join('；');
+
+    items.push({
+      id: stepId,
+      category: 'datasource',
+      description: desc,
+      toolName: 'delegate_query',
+      toolInput: {
+        requirement: `为页面「${page.name}」创建以下查询，请在本轮对话中连续完成全部查询（仅在最开始做一次重名探查和表结构确认）：${desc}`,
+        query_name: queryNames[0],
+        filter_params: primaryFilterParams,
+      },
+      dependencies: [],
+    });
   }
 
   for (const page of analysis.pages) {
     const stepId = nextId();
     const isCreate = page.action === 'create';
     const toolName = isCreate ? 'create_code_page' : 'update_code_page';
-    const deps = page.noDataNeeded ? [] : [...queryStepIds];
+    const ownQueryStep = pageQueryStep.get(page.name);
+    const deps = page.noDataNeeded ? [] : ownQueryStep ? [ownQueryStep] : [];
 
     const queryNames = page.queries.map(q => q.queryName);
     const apiNames = page.apis.map(a => a.apiName);
@@ -606,7 +608,7 @@ export const planSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'plan:update_item': () => ({
+  'plan:update_item': (ctx) => ({
     id: 'plan:update_item',
     category: SkillCategory.PLAN,
     name: 'update_plan_item',
@@ -632,6 +634,25 @@ export const planSkills: Record<string, SkillFactory> = {
       }
       const step = plan.steps.find((s: unknown) => String(s.id) === String(item_id));
       if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s: unknown) => s.id).join(', ')}` };
+
+      // R2 步骤完成核验：标记 completed 前验证副作用真实存在，杜绝"工具失败但谎报完成"
+      if (status === 'completed' && (step as { toolName?: string }).toolName) {
+        const verify = await verifyStepCompletion(
+          (step as { toolName?: string }).toolName!,
+          Number(ctx.applicationId),
+          (step as { description?: string }).description || '',
+          result || '',
+        );
+        if (!verify.verified) {
+          store.updateStep(plan_id, String(item_id), { status: 'error', result: result || undefined });
+          upsertPlanMessage(plan_id);
+          return {
+            success: false,
+            message: `⚠️ 步骤完成核验未通过，已将该步骤标记为 error：\n${verify.reason}\n\n请修复实际执行结果后重试；若实际已完成但核验失败，请在 result 中补充真实资源 ID（如"表单ID: 21"、"流程ID: 17"）后重新标记 completed。`,
+          };
+        }
+      }
+
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
       store.updateStep(plan_id, String(item_id), { status: statusMap[status] as unknown, result: result || undefined });
 
@@ -696,9 +717,16 @@ export const planSkills: Record<string, SkillFactory> = {
       if (pendingSteps.length === 0 && runningSteps.length === 0) {
         store.updatePlan(plan_id, { status: 'completed' });
         upsertPlanMessage(plan_id);
+        // R2：输出各步骤 result 摘要，供主智能体汇报时对照真实资源，禁止编造
+        const resultSummary = plan.steps
+          .map((s: unknown) => {
+            const st = s as { status?: string; result?: string; description?: string };
+            return st.result ? `- ${st.result}` : `- [无 result 摘要] ${st.description || ''}`;
+          })
+          .join('\n');
         return {
           success: true,
-          message: `计划验证通过！共 ${plan.steps.length} 个步骤，全部已完成。\n\n请立即向用户汇报最终执行结果，列出每个步骤的完成情况，并告知用户任务已全部完成。禁止在此消息后直接结束对话，必须先生成汇报文本。`,
+          message: `计划验证通过！共 ${plan.steps.length} 个步骤，全部已完成。\n\n各步骤实际执行结果（汇报时以此为准，禁止编造或夸大）：\n${resultSummary}\n\n请立即向用户汇报最终执行结果，列出每个步骤的完成情况，并告知用户任务已全部完成。禁止在此消息后直接结束对话，必须先生成汇报文本。`,
           data: { totalSteps: plan.steps.length, doneSteps: doneSteps.length, pendingSteps: 0 },
         };
       }

@@ -108,7 +108,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
   addMessage: (message) =>
     set((state) => {
-      const newMessages = [...state.messages, message];
+      // createdAt 记录首次入列时间；聚合消息（plan）后续只刷新 timestamp
+      const enriched = message.createdAt ? message : { ...message, createdAt: Date.now() };
+      const newMessages = [...state.messages, enriched];
       if (state.appId !== null) {
         saveToStorage(state.appId, {
           messages: newMessages,

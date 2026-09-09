@@ -1,6 +1,6 @@
 import { SkillCategory, type SkillFactory, resolveSkills } from '../skillRegistry';
 import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
-import { getAgentMemory, setAgentMemory } from '../agentMemory';
+import { loadDelegationMemory, saveDelegationMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
 import { listQueries } from '@/api';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
@@ -63,6 +63,211 @@ const FULL_WORKFLOW_PROMPT = `## 工作流程
 2. 用 update_workflow(processId, nodes, edges) 传入修改后的完整节点和连线，不要创建新流程
 3. update_workflow 失败时才用 design_workflow 创建新流程，并说明新旧流程 ID 的对应关系
 4. ⚠️ 条件表达式的字段 key 必须用 design_form 传入 formId 且不传 fields 查询真实字段，禁止猜测`;
+
+/** 委派产出资源的结构化描述（需求 R7） */
+export interface DelegateOutcome {
+  type: 'form' | 'workflow' | 'binding' | 'query';
+  id: number;
+  name?: string;
+  /** type=form 时携带字段 key 列表，供后续步骤的条件表达式引用 */
+  fields?: Array<{ key: string; label?: string; type?: string; required?: boolean }>;
+  /** type=binding 时为绑定的另一方 ID */
+  boundFormId?: number;
+  boundProcessId?: number;
+}
+
+interface ToolMessageLike {
+  role?: string;
+  content?: string;
+  toolCalls?: Array<{ name?: string; arguments?: Record<string, unknown> }>;
+}
+
+/**
+ * 从子智能体消息中聚合结构化产出（R7）：解析 tool 消息的 JSON 结果，
+ * 按 toolCallId 关联 assistant 消息里的工具名与入参，不依赖模型汇报格式。
+ */
+export function extractWorkflowOutcomes(messages: Array<ToolMessageLike | unknown>): DelegateOutcome[] {
+  const outcomes: DelegateOutcome[] = [];
+  const argsByCallId = new Map<string, { name: string; args: Record<string, unknown> }>();
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'assistant' || !Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls as Array<Record<string, unknown>>) {
+      if (typeof tc.id === 'string' && typeof tc.name === 'string') {
+        argsByCallId.set(tc.id, { name: tc.name, args: (tc.arguments as Record<string, unknown>) || {} });
+      }
+    }
+  }
+
+  const parseFields = (v: unknown): DelegateOutcome['fields'] => {
+    if (typeof v === 'string') {
+      try { v = JSON.parse(v); } catch { return undefined; }
+    }
+    if (!Array.isArray(v)) return undefined;
+    return v
+      .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
+      .map((f) => ({ key: String(f.key || ''), label: f.label ? String(f.label) : undefined, type: f.type ? String(f.type) : undefined, required: !!f.required }))
+      .filter((f) => f.key);
+  };
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'tool' || typeof m.content !== 'string' || !m.toolCallId) continue;
+    let parsed: { success?: boolean; message?: string; data?: unknown };
+    try { parsed = JSON.parse(String(m.content)) as typeof parsed; } catch { continue; }
+    if (parsed.success !== true) continue;
+
+    const call = argsByCallId.get(String(m.toolCallId));
+    if (!call) continue;
+    const data = (parsed.data ?? {}) as Record<string, unknown>;
+
+    if (call.name === 'design_form') {
+      const id = Number(data.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'form', id, name: (data.name as string) || (call.args.name as string), fields: parseFields(call.args.fields) });
+      }
+    } else if (call.name === 'design_workflow' || call.name === 'update_workflow' || call.name === 'copy_workflow') {
+      const id = Number(data.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'workflow', id, name: (data.name as string) || (call.args.name as string) });
+      }
+    } else if (call.name === 'bind_workflow') {
+      const formId = Number(call.args.formId);
+      const processId = Number(call.args.processId);
+      if (Number.isFinite(formId) && Number.isFinite(processId)) {
+        outcomes.push({ type: 'binding', id: processId, boundFormId: formId, boundProcessId: processId });
+      }
+    }
+  }
+
+  // 同一资源多次出现时保留最后一次（update_workflow 场景），表单字段做合并
+  const merged: DelegateOutcome[] = [];
+  for (const o of outcomes) {
+    const idx = merged.findIndex((x) => x.type === o.type && x.id === o.id);
+    if (idx >= 0) {
+      if (o.fields?.length) merged[idx].fields = o.fields;
+      if (o.name) merged[idx].name = o.name;
+    } else {
+      merged.push(o);
+    }
+  }
+  return merged;
+}
+
+/** delegate_query 的结构化产出：从 tool 消息中提取 create_query / update_query / delete_query 的结果（R7） */
+export function extractQueryOutcomes(messages: Array<ToolMessageLike | unknown>): DelegateOutcome[] {
+  const outcomes: DelegateOutcome[] = [];
+  const argsByCallId = new Map<string, { name: string; args: Record<string, unknown> }>();
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'assistant' || !Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls as Array<Record<string, unknown>>) {
+      if (typeof tc.id === 'string' && typeof tc.name === 'string') {
+        argsByCallId.set(tc.id, { name: tc.name, args: (tc.arguments as Record<string, unknown>) || {} });
+      }
+    }
+  }
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'tool' || typeof m.content !== 'string' || !m.toolCallId) continue;
+    let parsed: { success?: boolean; message?: string; data?: unknown };
+    try { parsed = JSON.parse(String(m.content)) as typeof parsed; } catch { continue; }
+    if (parsed.success !== true) continue;
+    const call = argsByCallId.get(String(m.toolCallId));
+    if (!call) continue;
+    const data = (parsed.data ?? {}) as Record<string, unknown>;
+
+    if (call.name === 'create_query' || call.name === 'update_query') {
+      const id = Number(data.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'query', id, name: (data.name as string) || (call.args.name as string) });
+      }
+    } else if (call.name === 'delete_query') {
+      const id = Number(call.args.queryId);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'query', id: -id, name: `deleted:${id}` });
+      }
+    }
+  }
+  return outcomes;
+}
+
+/** 委派给 data-assistant 的技能 ID 列表（须与 agentRegistry 中 data-assistant.allowedSkills 保持一致，agentSelfCheck 会校验两者漂移） */
+export const DBA_DELEGATE_SKILL_IDS = [
+  'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
+  'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
+  'api:list', 'api:connect', 'api:test', 'api:delete',
+];
+
+export type WorkflowDelegateMode = 'design_form' | 'design_workflow' | 'full';
+
+/**
+ * 构建委派给 workflow-assistant 的系统提示词。
+ * execute 与 agentSelfCheck 共用此 builder，保证校验的文本与实际运行完全一致。
+ */
+export function buildWorkflowDelegateSystemPrompt(
+  mode: WorkflowDelegateMode,
+  opts: { applicationId: number; existingFormsInfo?: string; context?: string },
+): string {
+  const modePrompt = mode === 'design_form'
+    ? DESIGN_FORM_WORKFLOW
+    : mode === 'design_workflow'
+      ? DESIGN_WORKFLOW_ONLY_PROMPT
+      : FULL_WORKFLOW_PROMPT;
+
+  return `你是流程设计专家，负责设计和管理业务流程。你必须调用工具来实际创建表单和流程，禁止只输出文本方案而不调用工具。
+
+当前应用 ID: ${opts.applicationId}
+${opts.existingFormsInfo || ''}
+${opts.context ? `上下文信息：${opts.context}` : ''}
+${WORKFLOW_ENGINE_SEMANTICS}
+
+${modePrompt}
+
+## 表单字段类型（design_form 的 fields 中 type 必须使用以下值）
+text（单行文本）、number（数字）、date（日期）、datetime（日期时间）、textarea（多行文本）、select（下拉选择）、multi_select（多选下拉）、radio（单选）、checkbox（复选框）、switch（开关）、file（文件上传）、excel（Excel导入）、member（人员选择）、department（部门选择）、detail_table（明细表/子表格）、computed（计算字段）
+
+每个字段格式：{ "key": "字段标识", "label": "字段显示名", "type": "字段类型", "required": true/false }
+select/radio 类型需额外提供 options: [{ "label": "选项名", "value": "选项值" }]
+detail_table 类型需额外提供 columns 数组，每个子字段同上格式
+
+## 流程节点类型（nodeType 用于后端校验，type 用于前端渲染，两者不同，**都必须传入**）
+- start: nodeType: "start", type: "startNode"
+- approval: nodeType: "approval", type: "approvalNode"，需设置 approverType（member/role/leader/department_head/form_field/script）
+- condition: nodeType: "condition", type: "conditionNode"
+- end: nodeType: "end", type: "endNode"
+
+## 审批人类型
+- member: 指定人员，需 memberIds 数组（数字ID，来自 search_members 结果）
+- role: 指定角色，需 roleIds 数组（数字ID，来自 search_roles 结果）
+- leader: 发起人的直属上级，需 leaderOf: "initiator"
+- department_head: 发起人所在部门负责人，需 departmentSource: "initiator"
+- form_field: 从表单字段获取审批人，需 formFieldKey: "字段key"
+- script: 动态脚本，需 script: "代码"
+
+## 每个节点必须包含 nodeId、id、type、nodeType、position: { x, y }、data
+- start: nodeId: "start", id: "start", type: "startNode", nodeType: "start", position: { x: 300, y: 50 }
+- 各审批节点 y 依次递增 120（如 170, 290, 410），nodeId 和 id 设为 "approval_1"、"approval_2" 等，type: "approvalNode", nodeType: "approval"
+- condition: type: "conditionNode", nodeType: "condition"
+- end: nodeId: "end", id: "end", type: "endNode", nodeType: "end", position: { x: 300, y: 最后一个节点 y + 120 }
+
+## 每个节点必须包含 data
+- start: data: { label: "发起人提交申请", nodeType: "start", config: { nodeName: "发起人提交申请" } }
+- approval: data: { label: "直属上级审批", nodeType: "approval", config: { nodeName: "直属上级审批", approverType: "leader", leaderOf: "initiator" } }
+- condition: data: { label: "判断预算", nodeType: "condition", config: { nodeName: "预算判断" } }
+- end: data: { label: "结束", nodeType: "end", config: { nodeName: "结束" } }
+
+## 连线（edges）
+每条连线格式：{ id: "边ID", source: "源节点ID", target: "目标节点ID", type: "smoothstep", markerEnd: { type: "arrowclosed" } }
+**条件分支连线必须包含 data 字段**：{ ..., data: { condition: "amount < 5000", label: "小于5000" } }
+
+## 重要规则
+- ⚠️ **禁止自行推断流程结构**：必须严格按照用户需求中描述的流程节点和路由逻辑来设计，不要用"常见的请假流程"之类的模板自行替换。用户说"≤3天→直属上级审批，>3天→直属上级→部门经理"，就必须设计条件分支，而不是串行审批。用户需求中没有描述流程结构时，不要自行创建流程，如实汇报缺少的信息
+- 禁止只输出设计方案而不调用工具，必须实际创建
+- 每个流程必须包含 start 和 end 节点
+- 审批节点必须设置审批人
+- 已有可复用表单时不要重复创建，直接使用已有表单 ID
+- ⚠️ **如实汇报**：完成后汇报实际结果（表单 ID/流程 ID/节点结构）；任何工具调用失败时，必须如实说明失败原因和已尝试的方案，禁止谎报完成`;
+}
 
 async function validateFilterParamsCoverage(
   filterParams: string | undefined,
@@ -163,19 +368,14 @@ export const delegateSkills: Record<string, SkillFactory> = {
             requirement: typedArgs.requirement,
           });
 
-          const dbaTools = resolveSkills([
-            'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
-            'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
-            'api:list', 'api:connect', 'api:test', 'api:delete',
-          ], ctx, chatRouter);
+          const dbaTools = resolveSkills(DBA_DELEGATE_SKILL_IDS, ctx, chatRouter);
 
           const userMessage = typedArgs.requirement;
 
           console.log(`[delegate_query] 委派 data-assistant | 消息长度: ${userMessage.length}`);
           const routeStart = Date.now();
-          const memoryBefore = getAgentMemory(ctx.applicationId, 'data-assistant');
-          const memoryFiltered = memoryBefore.filter((m: { role: string }) => m.role !== 'system');
-          console.log(`[delegate_query] getAgentMemory 返回 ${memoryBefore.length} 条消息，过滤 system 后 ${memoryFiltered.length} 条 | appId=${ctx.applicationId}`);
+          const memoryFiltered = loadDelegationMemory(ctx.applicationId, 'data-assistant');
+          console.log(`[delegate_query] loadDelegationMemory 返回 ${memoryFiltered.length} 条 | appId=${ctx.applicationId}`);
           const executor = await chatRouter!.routeTo('data-assistant', userMessage, `dba-${Date.now()}`, {
             systemPrompt: dbaPrompt,
             tools: dbaTools,
@@ -189,8 +389,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
           });
           const messagesAfter = executor.getMessages();
           console.log(`[delegate_query] executor.getMessages 返回 ${messagesAfter.length} 条消息 | roles: [${messagesAfter.map((m: unknown) => m.role).join(', ')}]`);
-          setAgentMemory(ctx.applicationId, 'data-assistant', messagesAfter);
-          console.log(`[delegate_query] setAgentMemory 已保存 ${messagesAfter.length} 条消息`);
+          saveDelegationMemory(ctx.applicationId, 'data-assistant', messagesAfter);
           console.log(`[delegate_query] data-assistant 完成 | ${Date.now() - routeStart}ms`);
 
           const messages = executor.getMessages();
@@ -225,7 +424,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
           } as unknown);
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
-          return { success: true, message: result.message, data: result };
+          return { success: true, message: result.message, data: { ...result, outcomes: extractQueryOutcomes(messages) } };
         } catch (e: unknown) {
           console.error(`[delegate_query] 失败:`, e);
           ctx.dispatch?.({
@@ -271,7 +470,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
       async execute(args) {
         const { requirement, context } = args as unknown;
         const taskType = (args as { task_type?: string }).task_type;
-        const mode: 'design_form' | 'design_workflow' | 'full'
+        const mode: WorkflowDelegateMode
           = taskType === 'design_form' || taskType === 'design_workflow' ? taskType : 'full';
 
         if (activeDelegations.has('workflow')) {
@@ -299,70 +498,21 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             // 查询失败不阻塞流程
           }
 
-          const systemPrompt = `你是流程设计专家，负责设计和管理业务流程。你必须调用工具来实际创建表单和流程，禁止只输出文本方案而不调用工具。
+          const systemPrompt = buildWorkflowDelegateSystemPrompt(mode, {
+            applicationId: ctx.applicationId,
+            existingFormsInfo,
+            context,
+          });
 
-当前应用 ID: ${ctx.applicationId}
-${existingFormsInfo}
-${context ? `上下文信息：${context}` : ''}
-${WORKFLOW_ENGINE_SEMANTICS}
-
-${mode === 'design_form' ? DESIGN_FORM_WORKFLOW : mode === 'design_workflow' ? DESIGN_WORKFLOW_ONLY_PROMPT : FULL_WORKFLOW_PROMPT}
-
-## 表单字段类型（design_form 的 fields 中 type 必须使用以下值）
-text（单行文本）、number（数字）、date（日期）、datetime（日期时间）、textarea（多行文本）、select（下拉选择）、multi_select（多选下拉）、radio（单选）、checkbox（复选框）、switch（开关）、file（文件上传）、excel（Excel导入）、member（人员选择）、department（部门选择）、detail_table（明细表/子表格）、computed（计算字段）
-
-每个字段格式：{ "key": "字段标识", "label": "字段显示名", "type": "字段类型", "required": true/false }
-select/radio 类型需额外提供 options: [{ "label": "选项名", "value": "选项值" }]
-detail_table 类型需额外提供 columns 数组，每个子字段同上格式
-
-## 流程节点类型（nodeType 用于后端校验，type 用于前端渲染，两者不同，**都必须传入**）
-- start: nodeType: "start", type: "startNode"
-- approval: nodeType: "approval", type: "approvalNode"，需设置 approverType（member/role/leader/department_head/form_field/script）
-- condition: nodeType: "condition", type: "conditionNode"
-- end: nodeType: "end", type: "endNode"
-
-## 审批人类型
-- member: 指定人员，需 memberIds 数组（数字ID，来自 search_members 结果）
-- role: 指定角色，需 roleIds 数组（数字ID，来自 search_roles 结果）
-- leader: 发起人的直属上级，需 leaderOf: "initiator"
-- department_head: 发起人所在部门负责人，需 departmentSource: "initiator"
-- form_field: 从表单字段获取审批人，需 formFieldKey: "字段key"
-- script: 动态脚本，需 script: "代码"
-
-## 每个节点必须包含 nodeId、id、type、nodeType、position: { x, y }、data
-- start: nodeId: "start", id: "start", type: "startNode", nodeType: "start", position: { x: 300, y: 50 }
-- 各审批节点 y 依次递增 120（如 170, 290, 410），nodeId 和 id 设为 "approval_1"、"approval_2" 等，type: "approvalNode", nodeType: "approval"
-- condition: type: "conditionNode", nodeType: "condition"
-- end: nodeId: "end", id: "end", type: "endNode", nodeType: "end", position: { x: 300, y: 最后一个节点 y + 120 }
-
-## 每个节点必须包含 data
-- start: data: { label: "发起人提交申请", nodeType: "start", config: { nodeName: "发起人提交申请" } }
-- approval: data: { label: "直属上级审批", nodeType: "approval", config: { nodeName: "直属上级审批", approverType: "leader", leaderOf: "initiator" } }
-- condition: data: { label: "判断预算", nodeType: "condition", config: { nodeName: "预算判断" } }
-- end: data: { label: "结束", nodeType: "end", config: { nodeName: "结束" } }
-
-## 连线（edges）
-每条连线格式：{ id: "边ID", source: "源节点ID", target: "目标节点ID", type: "smoothstep", markerEnd: { type: "arrowclosed" } }
-**条件分支连线必须包含 data 字段**：{ ..., data: { condition: "amount < 5000", label: "小于5000" } }
-
-## 重要规则
-- ⚠️ **禁止自行推断流程结构**：必须严格按照用户需求中描述的流程节点和路由逻辑来设计，不要用"常见的请假流程"之类的模板自行替换。用户说"≤3天→直属上级审批，>3天→直属上级→部门经理"，就必须设计条件分支，而不是串行审批。用户需求中没有描述流程结构时，不要自行创建流程，如实汇报缺少的信息
-- 禁止只输出设计方案而不调用工具，必须实际创建
-- 每个流程必须包含 start 和 end 节点
-- 审批节点必须设置审批人
-- 已有可复用表单时不要重复创建，直接使用已有表单 ID
-- ⚠️ **如实汇报**：完成后汇报实际结果（表单 ID/流程 ID/节点结构）；任何工具调用失败时，必须如实说明失败原因和已尝试的方案，禁止谎报完成`;
-
-          const memoryBefore = getAgentMemory(ctx.applicationId, 'workflow-assistant');
           const executor = await chatRouter!.routeTo('workflow-assistant', `请设计流程：${requirement}`, `wf-${Date.now()}`, {
             systemPrompt,
             isDelegated: true,
-            initialMessages: memoryBefore.filter((m: { role: string }) => m.role !== 'system'),
+            initialMessages: loadDelegationMemory(ctx.applicationId, 'workflow-assistant'),
             agentContext: { requirement, context, taskType: mode },
           });
 
           const messages = executor.getMessages();
-          setAgentMemory(ctx.applicationId, 'workflow-assistant', messages);
+          saveDelegationMemory(ctx.applicationId, 'workflow-assistant', messages);
           const response = messages
             .filter((m: unknown) => m.role === 'assistant')
             .map((m: unknown) => m.content)
@@ -395,17 +545,25 @@ detail_table 类型需额外提供 columns 数组，每个子字段同上格式
             return {
               success: false,
               message: `流程设计智能体执行过程中有工具调用失败，任务可能未完成，请将以下失败信息如实转达用户，禁止标记为已完成：\n${failedToolMessages.map((f) => `- ${f}`).join('\n')}\n\n子智能体最后回复：${response || '（无）'}`,
-              data: { response, failures: failedToolMessages },
+              data: { response, outcomes: extractWorkflowOutcomes(messages), failures: failedToolMessages },
             };
           }
 
+          const outcomes = extractWorkflowOutcomes(messages);
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
             payload: { success: true, details: response },
           } as unknown);
 
-          console.log(`[delegate_workflow] 完成 | 总耗时: ${Date.now() - execStart}ms`);
-          return { success: true, message: '流程设计任务完成', data: { response } };
+          console.log(`[delegate_workflow] 完成 | 总耗时: ${Date.now() - execStart}ms | outcomes: ${JSON.stringify(outcomes)}`);
+          const outcomeSummary = outcomes
+            .map((o) => `${o.type} ${o.name || ''}(ID: ${o.id})${o.fields ? ` 字段[${o.fields.map((f) => f.key).join(',')}]` : ''}`)
+            .join('；');
+          return {
+            success: true,
+            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}`,
+            data: { response, outcomes },
+          };
         } catch (e: unknown) {
           console.error(`[delegate_workflow] 失败:`, e);
           ctx.dispatch?.({

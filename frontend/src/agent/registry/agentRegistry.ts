@@ -60,7 +60,7 @@ export const AGENTS: AgentDefinition[] = [
       buildInteliSystemPrompt(ctx.applicationId, ctx.pageId, ctx.pageName, ctx.allPages),
     allowedSkills: [
       'page:delete', 'page:rename',
-      'code:create', 'code:get', 'code:update',
+      'code:create', 'code:get', 'code:update', 'code:scaffold',
       'observation:list_pages', 'observation:list_queries', 'observation:record',
       'query:get',
       'plan:submit_analysis', 'plan:update', 'plan:update_item', 'plan:confirm',
@@ -83,7 +83,7 @@ export const AGENTS: AgentDefinition[] = [
       }),
     allowedSkills: [
       'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
-      'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:references',
+      'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
       'api:list', 'api:connect', 'api:test', 'api:delete',
     ],
   },

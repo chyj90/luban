@@ -1,5 +1,7 @@
 import type { Message, Plan, ToolDefinition } from '@/types/agent';
 import { buildToolDefinitions, parseToolArguments, callLLMAPIStream, type LLMMessage } from './llmClient';
+import { consumeApproval } from './confirmationGuard';
+import { compactForApi } from './contextWindow';
 import type { AgentStateMachine } from './agentStateMachine';
 
 export interface ShouldCompleteResult {
@@ -74,7 +76,8 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
     console.log(`[AgentLoop] 轮 第 ${iteration + 1}/${maxIterations} 轮 | 状态: ${stateMachine?.state || '无'}`);
 
     onStatusChange('executing');
-    const apiMessages = buildAPIMessages(conversationMessages);
+    // R4：发送前压缩到上下文预算内（conversationMessages 本身保留全量，UI/记忆不受影响）
+    const apiMessages = compactForApi(buildAPIMessages(conversationMessages));
     onApiMessages?.(apiMessages);
     console.log(`[AgentLoop] API messages 数量: ${apiMessages.length} | roles: [${apiMessages.map((m) => m.role).join(', ')}]`);
 
@@ -158,14 +161,36 @@ export async function runAgentLoop(options: AgentLoopOptions): Promise<AgentLoop
           onToolCall(toolName, toolInput, assistantMsg.id, toolCall.id);
 
           let toolResult: ToolExecuteResult;
-          try {
-            const toolStart = Date.now();
-            toolResult = await tool.execute(toolInput, {} as unknown);
-            const toolElapsed = Date.now() - toolStart;
-            console.log(`[AgentLoop] ${toolName} ${toolElapsed}ms | ${toolResult.success ? 'OK' : 'ERR'} ${toolResult.message.slice(0, 200)}${toolResult._pause ? ' | pause' : ''}`);
-          } catch (err: unknown) {
-            console.error(`[AgentLoop] ${toolName} ERR 异常: ${err.message}`);
-            toolResult = { success: false, message: err.message };
+          if (tool.requiresConfirmation) {
+            // 危险操作确认门（R3）：未获用户确认时不执行，登记待确认并暂停本轮
+            const gate = consumeApproval(toolName, toolInput);
+            if (gate !== 'approved') {
+              const mismatchHint = gate === 'mismatch' ? '（用户此前确认的是其他操作或参数已变化，需重新确认）' : '';
+              toolResult = {
+                success: false,
+                _pause: true,
+                message: `⚠️ 危险操作待确认：「${toolName}」${mismatchHint}。本次未执行。请向用户说明该操作的影响，等待用户回复"确认"后重新调用相同工具；用户回复"取消"则放弃该操作。`,
+              };
+              console.log(`[AgentLoop] ${toolName} 被确认门拦截（${gate}），等待用户确认`);
+            } else {
+              try {
+                const toolStart = Date.now();
+                toolResult = await tool.execute(toolInput, {} as unknown);
+                console.log(`[AgentLoop] ${toolName} ${Date.now() - toolStart}ms | 已确认后执行 | ${toolResult.success ? 'OK' : 'ERR'} ${toolResult.message.slice(0, 200)}`);
+              } catch (err: unknown) {
+                toolResult = { success: false, message: (err as Error).message };
+              }
+            }
+          } else {
+            try {
+              const toolStart = Date.now();
+              toolResult = await tool.execute(toolInput, {} as unknown);
+              const toolElapsed = Date.now() - toolStart;
+              console.log(`[AgentLoop] ${toolName} ${toolElapsed}ms | ${toolResult.success ? 'OK' : 'ERR'} ${toolResult.message.slice(0, 200)}${toolResult._pause ? ' | pause' : ''}`);
+            } catch (err: unknown) {
+              console.error(`[AgentLoop] ${toolName} ERR 异常: ${err.message}`);
+              toolResult = { success: false, message: err.message };
+            }
           }
 
           onToolResult(toolName, toolResult, assistantMsg.id, toolCall.id);

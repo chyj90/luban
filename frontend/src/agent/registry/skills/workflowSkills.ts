@@ -587,12 +587,14 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:cancel',
     category: SkillCategory.WORKFLOW,
     name: 'cancel_workflow',
-    description: '取消流程实例。',
+    description: '取消流程实例。⚠️ 会终止运行中的流程实例，需用户确认后执行。',
     parameters: {
       type: 'object',
       properties: { instanceId: { type: 'number', description: '实例 ID' } },
       required: ['instanceId'],
     },
+    isDangerous: true,
+    requiresConfirmation: true,
     async execute(args) {
       try { await instanceApi.cancel(args.instanceId as number); return { success: true, message: '流程已取消' }; }
       catch (e: unknown) { return { success: false, message: `取消失败: ${(e as Error).message}` }; }

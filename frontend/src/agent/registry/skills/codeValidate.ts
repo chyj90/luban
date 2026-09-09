@@ -2008,7 +2008,9 @@ function validateCssComponentOverride(css: string, errors: string[]) {
 }
 
 function validateFormContainer(html: string, js: string, errors: string[]) {
-  const divFormPattern = /<div[^>]*class="[^"]*luban-form\b[^"]*"[^>]*>/g;
+  // 注意：必须用 (?<![-\w])luban-form(?![-\w]) 双侧断言排除 luban-form-item /
+  // luban-form-label-row / my-luban-form 等派生类名（\b 拦不住连字符，曾造成大面积误报）
+  const divFormPattern = /<div[^>]*class="[^"]*(?<![-\w])luban-form(?![-\w])[^"]*"[^>]*>/g;
   const divFormMatches: { line: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = divFormPattern.exec(html)) !== null) {

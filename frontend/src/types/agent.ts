@@ -12,6 +12,8 @@ export interface Message {
   content: string;
   reasoningContent?: string;
   timestamp: number;
+  /** 首次入列时间：聚合消息（如 plan）会被 updateMessage 刷新 timestamp，导出时间线以 createdAt 为准 */
+  createdAt?: number;
   toolCalls?: ToolCall[];
   toolCallId?: string;
   isStreaming?: boolean;
