@@ -7,6 +7,7 @@ import com.luban.service.ApplicationService;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.repository.ApplicationRepository;
+import com.luban.exception.BusinessException;
 import com.luban.util.AgentLogger;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,12 +54,12 @@ public class ProcessService {
 
     private void checkAppOwner(WorkflowDefinition definition, Long userId) {
         if (definition.getApplicationId() == null) {
-            throw new RuntimeException("平台级流程不允许通过 REST 接口操作");
+            throw new BusinessException("平台级流程不允许通过 REST 接口操作");
         }
         applicationRepository.findById(definition.getApplicationId())
                 .ifPresent(app -> {
                     if (!app.getCreatedBy().equals(userId)) {
-                        throw new RuntimeException("无权操作此流程，仅应用创建者可操作");
+                        throw new BusinessException("无权操作此流程，仅应用创建者可操作");
                     }
                 });
     }
@@ -89,7 +90,7 @@ public class ProcessService {
         WorkflowDefinition draft = getDefinition(id);
         checkAppOwner(draft, userId);
         if (!"DRAFT".equals(draft.getStatus())) {
-            throw new RuntimeException("只有草稿版本的流程定义可以发布");
+            throw new BusinessException("只有草稿版本的流程定义可以发布");
         }
         validateNodeConfig(draft.getNodes());
 
@@ -200,7 +201,7 @@ public class ProcessService {
         WorkflowDefinition definition = getDefinition(id);
         checkAppOwner(definition, userId);
         if (!"PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("只能下线已发布的流程");
+            throw new BusinessException("只能下线已发布的流程");
         }
 
         WorkflowDefinition draft = getDraftForPublished(definition);
@@ -227,7 +228,7 @@ public class ProcessService {
         WorkflowDefinition definition = getDefinition(id);
         checkAppOwner(definition, userId);
         if ("PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("已发布的流程不能删除，请先下线");
+            throw new BusinessException("已发布的流程不能删除，请先下线");
         }
 
         if (definition.getPublishedVersionId() != null) {
@@ -301,7 +302,7 @@ public class ProcessService {
         if (instance.getInitiatorId().equals(userId)) return;
         List<WorkflowTask> tasks = workflowTaskRepository.findByAssigneeIdAndInstanceId(userId, instance.getId());
         if (!tasks.isEmpty()) return;
-        throw new RuntimeException("无权查看该流程实例");
+        throw new BusinessException("无权查看该流程实例");
     }
 
     private void populateHistoryOperatorNames(List<WorkflowHistory> histories) {
@@ -392,11 +393,11 @@ public class ProcessService {
         WorkflowDefinition definition = getDefinition(definitionId);
 
         if (!"PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("流程定义未发布，无法发起流程");
+            throw new BusinessException("流程定义未发布，无法发起流程");
         }
 
         if (!applicationService.canSubmitWorkflow(userId, definitionId)) {
-            throw new RuntimeException("无权限发起此流程");
+            throw new BusinessException("无权限发起此流程");
         }
 
         Long effectiveDefinitionId = definitionId;
@@ -451,7 +452,7 @@ public class ProcessService {
 
     private void checkInitiator(WorkflowInstance instance, Long userId) {
         if (!instance.getInitiatorId().equals(userId)) {
-            throw new RuntimeException("仅流程发起人可执行此操作");
+            throw new BusinessException("仅流程发起人可执行此操作");
         }
     }
 
@@ -502,7 +503,7 @@ public class ProcessService {
                     .orElse(null);
             if (instance != null && userId.equals(instance.getInitiatorId())) return task;
         }
-        throw new RuntimeException("无权查看该任务");
+        throw new BusinessException("无权查看该任务");
     }
 
     public WorkflowTask getMyTaskForInstance(Long instanceId, Long userId) {
@@ -609,7 +610,7 @@ public class ProcessService {
             }
 
             if (!errors.isEmpty()) {
-                throw new RuntimeException("流程配置校验失败:\n" + String.join("\n", errors));
+                throw new BusinessException("流程配置校验失败:\n" + String.join("\n", errors));
             }
         } catch (RuntimeException e) {
             throw e;

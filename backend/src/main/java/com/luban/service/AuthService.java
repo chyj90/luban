@@ -1,6 +1,7 @@
 package com.luban.service;
 
 import com.luban.dto.AuthResponse;
+import com.luban.dto.ChangePasswordRequest;
 import com.luban.dto.LoginRequest;
 import com.luban.dto.RegisterRequest;
 import com.luban.entity.User;
@@ -8,6 +9,7 @@ import com.luban.entity.UserSession;
 import com.luban.repository.UserRepository;
 import com.luban.repository.UserSessionRepository;
 import com.luban.security.JwtTokenProvider;
+import com.luban.security.RsaKeyProvider;
 import com.luban.workflow.entity.RoleUser;
 import com.luban.workflow.repository.RoleRepository;
 import com.luban.workflow.repository.RoleUserRepository;
@@ -27,19 +29,30 @@ public class AuthService {
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final RsaKeyProvider rsaKeyProvider;
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
                        RoleUserRepository roleUserRepository,
                        RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
-                       JwtTokenProvider jwtTokenProvider) {
+                       JwtTokenProvider jwtTokenProvider,
+                       RsaKeyProvider rsaKeyProvider) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
         this.roleUserRepository = roleUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
+        this.rsaKeyProvider = rsaKeyProvider;
+    }
+
+    /** 解密 rsa: 前缀密文，非密文原样返回 */
+    private String decryptPassword(String raw) {
+        if (raw != null && raw.startsWith(RsaKeyProvider.PREFIX)) {
+            return rsaKeyProvider.decrypt(raw.substring(RsaKeyProvider.PREFIX.length()));
+        }
+        return raw;
     }
 
     @Transactional
@@ -48,12 +61,17 @@ public class AuthService {
             throw new IllegalArgumentException("该邮箱已被注册");
         }
 
+        String plainPassword = decryptPassword(request.getPassword());
+        if (plainPassword == null || plainPassword.length() < 6) {
+            throw new IllegalArgumentException("密码至少 6 位");
+        }
+
         User user = new User();
         user.setEmail(request.getEmail());
         user.setAccount(request.getAccount());
         user.setName(request.getAccount());
         user.setProvider("manual");
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setPassword(passwordEncoder.encode(plainPassword));
         userRepository.save(user);
 
         String token = jwtTokenProvider.generateToken(user);
@@ -67,7 +85,7 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new IllegalArgumentException("邮箱或密码错误"));
 
-        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+        if (!passwordEncoder.matches(decryptPassword(request.getPassword()), user.getPassword())) {
             throw new IllegalArgumentException("邮箱或密码错误");
         }
 
@@ -75,6 +93,27 @@ public class AuthService {
         saveSession(user.getId(), token);
         boolean superAdmin = isSuperAdmin(user.getId());
         return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin));
+    }
+
+    @Transactional
+    public void changePassword(User currentUser, ChangePasswordRequest request) {
+        String oldPwd = decryptPassword(request.getOldPassword());
+        String newPwd = decryptPassword(request.getNewPassword());
+
+        if (newPwd == null || newPwd.length() < 6) {
+            throw new IllegalArgumentException("新密码至少 6 位");
+        }
+
+        if (!passwordEncoder.matches(oldPwd, currentUser.getPassword())) {
+            throw new IllegalArgumentException("原密码错误");
+        }
+
+        if (oldPwd.equals(newPwd)) {
+            throw new IllegalArgumentException("新密码不能与原密码相同");
+        }
+
+        currentUser.setPassword(passwordEncoder.encode(newPwd));
+        userRepository.save(currentUser);
     }
 
     private boolean isSuperAdmin(Long userId) {

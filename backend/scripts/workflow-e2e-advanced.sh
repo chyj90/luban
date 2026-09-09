@@ -18,7 +18,7 @@ PASS=0; FAIL=0
 TS=$(date +%s)
 
 login() { curl -s -X POST "$BASE/api/v1/auth/login" -H "Content-Type: application/json" \
-  -d "{\"email\":\"$1\",\"password\":\"123456\"}" | jq -r '.data.token'; }
+  -d "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r '.data.token'; }
 call() { local m="$1" p="$2" t="$3" b="${4:-}";
   if [ -n "$b" ]; then curl -s -X "$m" "$BASE$p" -H "Authorization: Bearer $t" -H "Content-Type: application/json" -d "$b";
   else curl -s -X "$m" "$BASE$p" -H "Authorization: Bearer $t"; fi; }
@@ -28,9 +28,9 @@ expect_code() { # name expected actual
   if [ "$2" = "$3" ]; then ok "$1 (HTTP $3)"; else bad "$1 expect=$2 got=$3"; fi
 }
 
-T_ROOT=$(login 495737685@qq.com)
-T_LI=$(login li@luban.local)
-T_ZHOU=$(login zhou@luban.local)
+T_ROOT=$(login 495737685@qq.com "12345678")
+T_LI=$(login li@luban.local "123456")
+T_ZHOU=$(login zhou@luban.local "123456")
 [ -n "$T_ROOT" ] && [ -n "$T_LI" ] && [ -n "$T_ZHOU" ] || { echo "❌ 登录失败"; exit 1; }
 ok "登录成功（root/李四/周九）"
 

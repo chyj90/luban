@@ -5,6 +5,7 @@ import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.Application;
 import com.luban.entity.User;
+import com.luban.exception.BusinessException;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.UserRepository;
 import com.luban.workflow.entity.*;
@@ -91,7 +92,7 @@ public class RoleController {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
         if (!isSuperAdmin(user) && !user.getId().equals(role.getCreatedBy())) {
-            throw new RuntimeException("无权查看此角色");
+            throw new BusinessException("无权查看此角色");
         }
         return ApiResponse.ok(role);
     }
@@ -100,10 +101,10 @@ public class RoleController {
     public ApiResponse<Role> create(@RequestBody Role role, @AuthenticationPrincipal User user) {
         String slug = role.getSlug();
         if (slug == null || slug.isBlank()) {
-            throw new RuntimeException("角色标识不能为空");
+            throw new BusinessException("角色标识不能为空");
         }
         if (RESERVED_SLUGS.contains(slug)) {
-            throw new RuntimeException("角色标识 " + slug + " 为系统保留，不可使用");
+            throw new BusinessException("角色标识 " + slug + " 为系统保留，不可使用");
         }
 
         if (!isSuperAdmin(user)) {
@@ -112,14 +113,14 @@ public class RoleController {
 
         if ("PLATFORM".equals(role.getScope())) {
             if (roleRepository.findBySlug(slug).isPresent()) {
-                throw new RuntimeException("平台角色标识 " + slug + " 已存在");
+                throw new BusinessException("平台角色标识 " + slug + " 已存在");
             }
         } else {
             if (role.getApplicationId() == null) {
-                throw new RuntimeException("应用角色必须指定应用");
+                throw new BusinessException("应用角色必须指定应用");
             }
             if (roleRepository.findBySlugAndApplicationId(slug, role.getApplicationId()).isPresent()) {
-                throw new RuntimeException("该应用下角色标识 " + slug + " 已存在");
+                throw new BusinessException("该应用下角色标识 " + slug + " 已存在");
             }
         }
 
@@ -144,7 +145,7 @@ public class RoleController {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("角色不存在: " + id));
         if (SUPER_ADMIN_SLUG.equals(role.getSlug())) {
-            throw new RuntimeException("系统内置角色不可删除");
+            throw new BusinessException("系统内置角色不可删除");
         }
         checkOwnership(role, user);
         rolePermissionRepository.deleteByRoleId(id);
@@ -249,11 +250,11 @@ public class RoleController {
     private void checkOwnership(Role role, User user) {
         if ("PLATFORM".equals(role.getScope())) {
             if (!isSuperAdmin(user)) {
-                throw new RuntimeException("无权操作此角色");
+                throw new BusinessException("无权操作此角色");
             }
         } else {
             if (!user.getId().equals(role.getCreatedBy())) {
-                throw new RuntimeException("无权操作此角色");
+                throw new BusinessException("无权操作此角色");
             }
         }
     }

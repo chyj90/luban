@@ -97,7 +97,7 @@ public final class StandardAppResolvers {
                     .map(Datasource::getOwnerId)
                     .orElse(null);
         }
-        @Override public String platformPermission() {
+        @Override public String platformPermission(AppAction action) {
             return com.luban.constant.Permissions.CONNECT_SYSTEMS;
         }
         @Override public boolean resourceExists(Long id) {

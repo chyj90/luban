@@ -16,3 +16,7 @@ export async function logout() {
 export async function getMe() {
   return post<User>('/users/me');
 }
+
+export async function changePassword(data: { oldPassword: string; newPassword: string }) {
+  return post<void>('/auth/change-password', data);
+}

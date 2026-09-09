@@ -2,6 +2,7 @@ package com.luban.workflow.service;
 
 import com.luban.workflow.entity.FormDefinition;
 import com.luban.workflow.repository.FormDefinitionRepository;
+import com.luban.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,7 +53,7 @@ public class FormService {
     public void delete(Long id) {
         FormDefinition form = getById(id);
         if ("PUBLISHED".equals(form.getStatus())) {
-            throw new RuntimeException("已发布的表单不能删除，请先下线");
+            throw new BusinessException("已发布的表单不能删除，请先下线");
         }
         formDefinitionRepository.deleteById(id);
     }

@@ -12,6 +12,7 @@ import com.luban.repository.UserDeptRepository;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.workflow.entity.FormWorkflowBinding;
+import com.luban.exception.BusinessException;
 import com.luban.util.AgentLogger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -78,7 +79,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("流程定义不存在: " + workflowDefinitionId));
 
         if (!"PUBLISHED".equals(definition.getStatus())) {
-            throw new RuntimeException("流程定义未发布，无法发起");
+            throw new BusinessException("流程定义未发布，无法发起");
         }
 
         WorkflowInstance instance = new WorkflowInstance();
@@ -130,7 +131,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
 
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
-            throw new RuntimeException("任务已被处理");
+            throw new BusinessException("任务已被处理");
         }
 
         checkTaskAssignee(task, operatorId, TaskOperation.APPROVE);
@@ -253,7 +254,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
 
         if (!"RUNNING".equals(instance.getStatus())) {
-            throw new RuntimeException("只有运行中的流程可以驳回");
+            throw new BusinessException("只有运行中的流程可以驳回");
         }
 
         WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
@@ -305,7 +306,7 @@ public class ProcessEngine {
         }
 
         if (previousNodeId == null) {
-            throw new RuntimeException("无可退回的上一节点");
+            throw new BusinessException("无可退回的上一节点");
         }
 
         task.setStatus("COMPLETED");
@@ -337,7 +338,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
 
         if (!"REJECTED".equals(instance.getStatus())) {
-            throw new RuntimeException("只有驳回状态的流程可以重新提交");
+            throw new BusinessException("只有驳回状态的流程可以重新提交");
         }
 
         WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
@@ -383,7 +384,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
 
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
-            throw new RuntimeException("只能转办待处理的任务");
+            throw new BusinessException("只能转办待处理的任务");
         }
 
         checkTaskAssignee(task, operatorId, TaskOperation.TRANSFER);
@@ -426,7 +427,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
 
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
-            throw new RuntimeException("只能对待处理任务进行加签");
+            throw new BusinessException("只能对待处理任务进行加签");
         }
 
         checkTaskAssignee(task, operatorId, TaskOperation.ADD_SIGN);
@@ -488,7 +489,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
 
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
-            throw new RuntimeException("只能委派待处理的任务");
+            throw new BusinessException("只能委派待处理的任务");
         }
 
         checkTaskAssignee(task, operatorId, TaskOperation.DELEGATE);
@@ -532,7 +533,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
 
         if (!"RUNNING".equals(instance.getStatus())) {
-            throw new RuntimeException("只有运行中的流程可以强制跳转");
+            throw new BusinessException("只有运行中的流程可以强制跳转");
         }
 
         WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
@@ -567,7 +568,7 @@ public class ProcessEngine {
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
 
         if (!"RUNNING".equals(instance.getStatus())) {
-            throw new RuntimeException("只有运行中的流程可以撤回");
+            throw new BusinessException("只有运行中的流程可以撤回");
         }
 
         instance.setStatus("CANCELLED");
@@ -667,7 +668,7 @@ public class ProcessEngine {
         WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
         if (!"RUNNING".equals(instance.getStatus())) {
-            throw new RuntimeException("只有运行中的流程可以冻结");
+            throw new BusinessException("只有运行中的流程可以冻结");
         }
         instance.setStatus("FROZEN");
         instance.setCompletedAt(LocalDateTime.now());
@@ -681,7 +682,7 @@ public class ProcessEngine {
         WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
         if (!"FROZEN".equals(instance.getStatus())) {
-            throw new RuntimeException("只有冻结状态的流程可以解冻");
+            throw new BusinessException("只有冻结状态的流程可以解冻");
         }
         instance.setStatus("RUNNING");
         instance.setCompletedAt(null);
@@ -698,7 +699,7 @@ public class ProcessEngine {
         WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
         if ("COMPLETED".equals(instance.getStatus()) || "CANCELLED".equals(instance.getStatus())) {
-            throw new RuntimeException("已结束的流程不可强制终止");
+            throw new BusinessException("已结束的流程不可强制终止");
         }
         instance.setStatus("CANCELLED");
         instance.setCompletedAt(LocalDateTime.now());
@@ -712,7 +713,7 @@ public class ProcessEngine {
         WorkflowInstance instance = workflowInstanceRepository.findById(instanceId)
                 .orElseThrow(() -> new RuntimeException("流程实例不存在: " + instanceId));
         if (!"COMPLETED".equals(instance.getStatus())) {
-            throw new RuntimeException("只能强制撤回已完成的流程");
+            throw new BusinessException("只能强制撤回已完成的流程");
         }
         instance.setStatus("CANCELLED");
         instance.setCompletedAt(LocalDateTime.now());
@@ -730,7 +731,7 @@ public class ProcessEngine {
         WorkflowTask task = workflowTaskRepository.findById(taskId)
                 .orElseThrow(() -> new RuntimeException("任务不存在: " + taskId));
         if (!"PENDING".equals(task.getStatus()) && !"PROCESSING".equals(task.getStatus())) {
-            throw new RuntimeException("只能修改待处理任务的处理人");
+            throw new BusinessException("只能修改待处理任务的处理人");
         }
 
         checkTaskAssignee(task, operatorId, TaskOperation.REASSIGN);
@@ -826,6 +827,7 @@ public class ProcessEngine {
 
         WorkflowDefinition copy = new WorkflowDefinition();
         copy.setApplicationId(source.getApplicationId());
+        copy.setScope(source.getScope());
         copy.setName(source.getName() + " (副本)");
         copy.setDescription(source.getDescription());
         copy.setNodes(source.getNodes());
@@ -908,7 +910,13 @@ public class ProcessEngine {
                         .filter(e -> e.source.equals(targetNodeId))
                         .collect(Collectors.toList());
                 for (EdgeDef pe : parallelEdges) {
-                    createTaskForNode(instance, targetNode, pe.target, formData);
+                    NodeDef actualTarget = nodes.stream()
+                            .filter(n -> n.nodeId.equals(pe.target))
+                            .findFirst()
+                            .orElse(null);
+                    if (actualTarget != null) {
+                        createTaskForNode(instance, actualTarget, pe.target, formData);
+                    }
                 }
             } else {
                 createTaskForNode(instance, targetNode, targetNodeId, formData);
@@ -995,7 +1003,7 @@ public class ProcessEngine {
                                   Map<String, Object> config, Map<String, Object> formData) {
         Object subDefIdObj = config.get("subProcessDefinitionId");
         if (subDefIdObj == null) {
-            throw new RuntimeException("子流程节点缺少 subProcessDefinitionId 配置");
+            throw new BusinessException("子流程节点缺少 subProcessDefinitionId 配置");
         }
         Long subDefinitionId = Long.valueOf(subDefIdObj.toString());
 
@@ -1353,14 +1361,14 @@ public class ProcessEngine {
             if (task.getAssigneeId() != null && task.getAssigneeId().equals(operatorId)) {
                 return;
             }
-            throw new RuntimeException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
+            throw new BusinessException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
         }
 
         if (allAssignees.contains(operatorId)) {
             return;
         }
 
-        throw new RuntimeException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
+        throw new BusinessException("您不是该任务的审批人，无权进行" + operation.getLabel() + "操作");
     }
 
     private List<Long> parseIdList(String json) {

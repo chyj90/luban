@@ -94,9 +94,23 @@
 }
 
 .global-header-user {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.global-header-user-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.global-header-user-trigger:hover {
+  background: #f2f3f5;
 }
 
 .global-header-user-name {
@@ -115,6 +129,47 @@
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
+}
+
+.global-header-user-arrow {
+  color: #86909c;
+  transition: transform 0.2s;
+}
+
+.global-header-user-arrow.open {
+  transform: rotate(180deg);
+}
+
+.global-header-user-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  min-width: 140px;
+  background: #fff;
+  border: 1px solid #e8ecf1;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.global-header-user-menu-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.global-header-user-menu-item:hover {
+  background: #f2f3f5;
+  color: #1677ff;
 }
 
 .global-header-logout {

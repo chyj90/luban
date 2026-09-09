@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { login, getMyPermissions } from '@/api';
 import { useAuthStore } from '@/stores/authStore';
 import { usePermissionStore } from '@/stores/permissionStore';
+import { encryptSecret } from '@/utils/security';
 import './LoginPage.css';
 
 export function LoginPage() {
@@ -19,7 +20,8 @@ export function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      const res = await login({ email, password });
+      const encryptedPwd = await encryptSecret(password);
+      const res = await login({ email, password: encryptedPwd });
       setAuth(res.data.token, res.data.user);
       try {
         const permRes = await getMyPermissions();

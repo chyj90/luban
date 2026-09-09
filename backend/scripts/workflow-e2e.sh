@@ -7,7 +7,7 @@
 #         第二条 → 张三 reject → REJECTED
 #
 # 用法：./workflow-e2e.sh [BASE_URL]
-# 前置：后端运行中；root/周九/张三 三个账号密码 123456。
+# 前置：后端运行中；root 密码 12345678，周九/张三 密码 123456。
 # 产物命名带时间戳，可重复执行。
 # =============================================================================
 set -u
@@ -23,7 +23,7 @@ assert_ok() { # name body
 }
 
 login() { curl -s -X POST "$BASE/api/v1/auth/login" -H "Content-Type: application/json" \
-  -d "{\"email\":\"$1\",\"password\":\"123456\"}" | jq -r '.data.token'; }
+  -d "{\"email\":\"$1\",\"password\":\"$2\"}" | jq -r '.data.token'; }
 
 call() { # method path token body -> body(去掉状态行)
   local method="$1" path="$2" token="$3" body="${4:-}"
@@ -35,9 +35,9 @@ call() { # method path token body -> body(去掉状态行)
 }
 
 TS=$(date +%s)
-TOKEN_ROOT=$(login 495737685@qq.com)
-TOKEN_ZHOU=$(login zhou@luban.local)
-TOKEN_ZHANG=$(login zhang@luban.local)
+TOKEN_ROOT=$(login 495737685@qq.com "12345678")
+TOKEN_ZHOU=$(login zhou@luban.local "123456")
+TOKEN_ZHANG=$(login zhang@luban.local "123456")
 [ -n "$TOKEN_ROOT" ] && [ -n "$TOKEN_ZHOU" ] && [ -n "$TOKEN_ZHANG" ] || { echo "❌ 登录失败"; exit 1; }
 echo "✅ 登录成功（root/周九/张三）"
 

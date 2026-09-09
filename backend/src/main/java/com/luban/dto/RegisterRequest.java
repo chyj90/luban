@@ -13,6 +13,7 @@ public class RegisterRequest {
     @NotBlank @Size(min = 2, max = 30)
     private String account;
 
-    @NotBlank @Size(min = 6, max = 50)
+    /** RSA 密文约 344 字符，不做 @Size 限制，解密后 service 层校验长度 */
+    @NotBlank
     private String password;
 }

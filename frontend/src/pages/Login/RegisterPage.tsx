@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { register as registerApi } from '@/api';
+import { encryptSecret } from '@/utils/security';
 import './LoginPage.css';
 
 export function RegisterPage() {
@@ -16,7 +17,8 @@ export function RegisterPage() {
     setError('');
     setLoading(true);
     try {
-      await registerApi({ account, email, password });
+      const encryptedPwd = await encryptSecret(password);
+      await registerApi({ account, email, password: encryptedPwd });
       navigate('/login');
     } catch {
       setError('注册失败，请稍后重试');

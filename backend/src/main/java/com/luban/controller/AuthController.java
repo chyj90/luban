@@ -61,6 +61,17 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
+    @PostMapping("/auth/change-password")
+    public ResponseEntity<ApiResponse<Void>> changePassword(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody ChangePasswordRequest request) {
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或 Token 已过期");
+        }
+        authService.changePassword(user, request);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
     @GetMapping("/users/me")
     public ResponseEntity<ApiResponse<AuthResponse.UserInfo>> me(@AuthenticationPrincipal User user) {
         boolean superAdmin = roleUserRepository.findByUserId(user.getId()).stream()

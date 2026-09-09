@@ -831,7 +831,8 @@ public class ContextBuilder {
                     .collect(Collectors.toList());
             if (!preChecks.isEmpty()) {
                 sb.append("## 前置检验指令\n");
-                sb.append("以下前置检验由本体 DERIVED_FROM 关系自动推导。在调用算法前，必须先通过 nl2sql 执行所有前置检验，全部通过后才能调用算法。\n\n");
+                sb.append("以下前置检验由本体 DERIVED_FROM 关系自动推导。在调用算法前，必须先通过 nl2sql 执行所有前置检验，全部通过后才能调用算法。\n");
+                sb.append("⚠️ 若某项检验所需的表/列不在【可用数据源】列表中，该项视为不可满足：禁止针对缺失表反复生成查询，跳过该项并在 final_answer 中说明数据缺失范围。\n\n");
                 for (String pc : preChecks) {
                     sb.append("- ").append(pc).append("\n");
                 }

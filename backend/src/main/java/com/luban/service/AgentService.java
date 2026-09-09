@@ -300,7 +300,12 @@ public class AgentService {
             }
 
             Map<String, Object> finalAnswer = new LinkedHashMap<>();
-            finalAnswer.put("answer", finalData.getOrDefault("final_answer", "处理完成"));
+            if (!finalData.containsKey("final_answer")) {
+                log.warn("Agent finished without final_answer (session={}): next_action={}, iterations={} —— 兜底文案将替代结论",
+                        sessionId, finalData.get("next_action"), finalData.getOrDefault("iteration", 0));
+            }
+            finalAnswer.put("answer", finalData.getOrDefault("final_answer",
+                    "分析已结束，但未生成结论摘要（原因已记录日志）。请重试或换个问法。"));
             finalAnswer.put("answerType", finalData.getOrDefault("answer_type", ""));
             finalAnswer.put("rootCause", finalData.getOrDefault("root_cause", ""));
             finalAnswer.put("suggestion", finalData.getOrDefault("suggestion", ""));
@@ -323,6 +328,7 @@ public class AgentService {
             }
             finalAnswer.put("queryResult", finalData.getOrDefault("query_result", null));
             finalAnswer.put("sqlExecCount", finalData.getOrDefault("sql_exec_count", 0));
+            finalAnswer.put("llmCalls", finalData.getOrDefault("llm_call_count", 0));
             finalAnswer.put("messageId", finalData.getOrDefault("message_id", UUID.randomUUID().toString()));
             finalAnswer.put("usedConcepts", usedConcepts);
 
@@ -633,7 +639,9 @@ public class AgentService {
         graph.addEdge("ontology_advisor", "agent");
         graph.addEdge("final_answer", "__END__");
 
-        return graph.compile();
+        CompiledGraph<AgentState> compiled = graph.compile();
+        compiled.setMaxIterations(MAX_ITERATIONS);
+        return compiled;
     }
 
     private AsyncEdgeAction<AgentState> buildIntentRouterEdge() {
@@ -715,8 +723,11 @@ public class AgentService {
             int iteration = (int) data.getOrDefault("iteration", 0);
 
             if (iteration >= MAX_ITERATIONS) {
+                int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
                 data.put("next_action", "final_answer");
-                data.put("final_answer", "已达到最大迭代次数，请重试。");
+                data.put("final_answer", "分析未能在限定轮次内完成（已达 " + MAX_ITERATIONS
+                        + " 轮上限），期间已完成 " + sqlExecCount + " 轮数据查询。"
+                        + "建议缩小问题范围或换个问法后重试。");
                 return CompletableFuture.completedFuture(data);
             }
 
@@ -727,8 +738,10 @@ public class AgentService {
             if (System.currentTimeMillis() - agentStartTime > AGENT_TOTAL_TIMEOUT_MS) {
                 log.warn("Agent total timeout exceeded: {}ms > {}ms, forcing final_answer",
                         System.currentTimeMillis() - agentStartTime, AGENT_TOTAL_TIMEOUT_MS);
+                int done = (int) data.getOrDefault("sql_exec_count", 0);
                 data.put("next_action", "final_answer");
-                data.put("final_answer", "分析超时（超过 " + (AGENT_TOTAL_TIMEOUT_MS / 1000) + " 秒），请简化问题或联系管理员。");
+                data.put("final_answer", "分析超时（超过 " + (AGENT_TOTAL_TIMEOUT_MS / 1000)
+                        + " 秒），期间已完成 " + done + " 轮数据查询，结果见上方。请简化问题后重试。");
                 return CompletableFuture.completedFuture(data);
             }
 
@@ -774,7 +787,20 @@ public class AgentService {
                 }
             }
 
-            return routeByType(data, messages, parsed, iteration);
+            routeByType(data, messages, parsed, iteration);
+            // 所有动作（LLM 轮 + pending 队列消费轮）统一记录签名并检测循环，
+            // 触发时强制终止（覆盖 routeByType 设置的 next_action）
+            recordActionAndDetectLoop(data, messages, parsed, config, sessionId, userId, intent,
+                    extractLatestUserQuery(messages));
+            // P1：动作摘要入执行日志（供下一轮 LLM 调用前增量注入，模型不再"失忆"复读）
+            @SuppressWarnings("unchecked")
+            List<String> executedLog = (List<String>) data.get("executed_actions_log");
+            if (executedLog == null) {
+                executedLog = new ArrayList<>();
+                data.put("executed_actions_log", executedLog);
+            }
+            executedLog.add("[" + (int) data.getOrDefault("iteration", 0) + "] " + describeAction(parsed));
+            return java.util.concurrent.CompletableFuture.completedFuture(data);
         };
     }
 
@@ -837,6 +863,9 @@ public class AgentService {
             sendProgress("正在分析第 " + sqlExecCount + " 轮下钻结果...");
         }
 
+        trimMessages(messages);
+        injectExecutedActionsSummary(data, messages);
+
         Map<String, Object> unifiedContext = getOrBuildContext(data, sessionId, userQuery, messages, userId, intent);
         boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
         populateContextData(data, unifiedContext);
@@ -868,7 +897,7 @@ public class AgentService {
         } else {
             parsed = parseResponse(allJsons.get(0));
             agentDebug.info("[NORMAL_ITER] firstJson type={}, firstJsonLen={}", parsed.get("type"), allJsons.get(0).length());
-            handleLoopDetection(data, messages, allJsons, parsed, config, sessionId, userId, intent, userQuery);
+            queueExtraActions(data, messages, allJsons, parsed, iteration, typeSignature(parsed));
         }
         return parsed;
     }
@@ -922,7 +951,13 @@ public class AgentService {
                 llmReasoning != null ? llmReasoning.length() : 0);
         if (llmReasoning != null && llmReasoning.length() > 0) {
             String prev = (String) data.getOrDefault("llm_reasoning", "");
-            data.put("llm_reasoning", prev.isEmpty() ? llmReasoning.toString() : prev + "\n\n---\n\n" + llmReasoning);
+            String combined = prev.isEmpty() ? llmReasoning.toString() : prev + "\n\n---\n\n" + llmReasoning;
+            // P2：展示层截断——只保留最近 5 段，防止长循环下思考过程无限膨胀
+            String[] segments = combined.split("\n\n---\n\n");
+            if (segments.length > 5) {
+                combined = String.join("\n\n---\n\n", java.util.Arrays.copyOfRange(segments, segments.length - 5, segments.length));
+            }
+            data.put("llm_reasoning", combined);
             agentDebug.info("[LLM_REASONING_BUFFER] STORED into data.llm_reasoning, prevLen={}, newLen={}, totalLen={}",
                     prev.length(), llmReasoning.length(), ((String) data.get("llm_reasoning")).length());
             LLM_REASONING_BUFFER.remove();
@@ -955,48 +990,68 @@ public class AgentService {
         return result;
     }
 
-    private void handleLoopDetection(Map<String, Object> data, List<Map<String, Object>> messages,
-            List<String> allJsons, Map<String, Object> parsed, AgentConfig config,
+    /**
+     * 统一循环检测（所有动作经此记录签名，含 LLM 轮与 pending 队列消费轮）。
+     * 滑动窗口判定见 {@link com.luban.service.agent.ActionLoopDetector}——
+     * 修复点：旧实现只比对相邻签名，轮转循环（A→B→A→B）永不触发。
+     * 触发后先尝试 LLM 总结，非 final_answer 时用确定性文案兜底终止。
+     */
+    private void recordActionAndDetectLoop(Map<String, Object> data, List<Map<String, Object>> messages,
+            Map<String, Object> parsed, AgentConfig config,
             String sessionId, Long userId, String intent, String userQuery) {
-        String currentSig = typeSignature(parsed);
-        String lastSig = (String) data.get("last_action_signature");
-        int repeatCount = (int) data.getOrDefault("action_repeat_count", 0);
-
-        if (currentSig != null && currentSig.equals(lastSig)) {
-            repeatCount++;
-            data.put("action_repeat_count", repeatCount);
-            if (repeatCount >= 2) {
-                log.warn("Agent iteration {}: loop detected (sig={}, count={}), requesting summary",
-                        data.get("iteration"), currentSig, repeatCount);
-                messages.add(Map.of("role", "system", "content",
-                        "请停止继续生成 SQL，直接输出 final_answer 总结当前分析结果。"));
-                try {
-                    Map<String, Object> summaryContext = contextBuilder.build(sessionId, userQuery, messages, userId, intent);
-                    boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
-                    String summaryResponse = callLlm(config, messages, (String) summaryContext.get("prompt"), isAdmin);
-                    recordLlmResponse(data, summaryResponse);
-                    List<String> summaryJsons = extractJsons(summaryResponse);
-                    Map<String, Object> finalParsed = !summaryJsons.isEmpty()
-                            ? parseResponse(summaryJsons.get(0)) : parseResponse(summaryResponse);
-                    if ("final_answer".equals(finalParsed.get("type"))) {
-                        data.putAll(finalParsed);
-                    }
-                } catch (Exception e) {
-                    log.warn("Summary call failed: {}", e.getMessage());
-                }
-                data.putIfAbsent("final_answer", "分析已达当前数据深度极限，请查看之前的分析结果。");
-                data.put("next_action", "final_answer");
-            }
-        } else {
-            data.put("action_repeat_count", 0);
-            data.put("last_action_signature", currentSig);
+        if ("final_answer".equals(data.get("next_action"))) {
+            return; // 已被其他路径终止
         }
+        String currentSig = typeSignature(parsed);
+        @SuppressWarnings("unchecked")
+        List<String> signatures = (List<String>) data.getOrDefault("action_signatures",
+                new java.util.ArrayList<String>());
+        boolean loop = com.luban.service.agent.ActionLoopDetector.recordAndDetect(signatures, currentSig);
+        data.put("action_signatures", signatures);
+        if (!loop) return;
 
-        if (allJsons.size() > 1) {
+        int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
+        int iter = (int) data.getOrDefault("iteration", 0);
+        var dominant = com.luban.service.agent.ActionLoopDetector.dominantSignature(signatures);
+        log.warn("Agent loop detected at iteration {}: dominantSig={} count={}, forcing termination",
+                iter, dominant == null ? "?" : dominant.getKey(), dominant == null ? 0 : dominant.getValue());
+        data.remove("pending_actions");
+
+        // 先尝试一次 LLM 总结（模型可能给出有价值的根因分析）
+        try {
+            messages.add(Map.of("role", "system", "content",
+                    "检测到分析动作反复重复。请停止生成查询类动作，立即输出 final_answer："
+                    + "总结基于已获取数据的分析结论；若数据不足以得出结论，如实说明缺失的数据范围。"));
+            Map<String, Object> summaryContext = contextBuilder.build(sessionId, userQuery, messages, userId, intent);
+            boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
+            String summaryResponse = callLlm(config, messages, (String) summaryContext.get("prompt"), isAdmin);
+            recordLlmResponse(data, summaryResponse);
+            List<String> summaryJsons = extractJsons(summaryResponse);
+            Map<String, Object> finalParsed = !summaryJsons.isEmpty()
+                    ? parseResponse(summaryJsons.get(0)) : parseResponse(summaryResponse);
+            if ("final_answer".equals(finalParsed.get("type"))
+                    && finalParsed.get("answer") != null && !String.valueOf(finalParsed.get("answer")).isBlank()) {
+                data.put("final_answer", finalParsed.get("answer"));
+            }
+        } catch (Exception e) {
+            log.warn("Summary call failed: {}", e.getMessage());
+        }
+        // 确定性兜底：无论总结是否成功，终止原因与统计必须透出
+        data.putIfAbsent("final_answer",
+                "分析已自动终止：检测到重复分析动作（已完成 " + sqlExecCount + " 轮数据查询）。"
+                + "已获得的部分结果见上方；若结论不完整，请缩小问题范围后重试。");
+        data.put("next_action", "final_answer");
+    }
+
+    private void queueExtraActions(Map<String, Object> data, List<Map<String, Object>> messages,
+            List<String> allJsons, Map<String, Object> parsed, int iteration, String currentSig) {
+        if (allJsons.size() <= 1) return;
             log.info("Agent iteration {}: LLM output {} JSONs, 1st={}, queuing {} extra",
                     data.get("iteration"), allJsons.size(), parsed.getOrDefault("type", "?"), allJsons.size() - 1);
             List<String> pending = new ArrayList<>();
             List<String> orphanJsons = new ArrayList<>();
+            Set<String> seenSigs = new HashSet<>();
+            seenSigs.add(currentSig);
             for (int i = 1; i < allJsons.size(); i++) {
                 String json = allJsons.get(i);
                 try {
@@ -1006,7 +1061,15 @@ public class AgentService {
                         agentDebug.info("[QUEUE] skipping invalid JSON at index={}, no type field, content={}", i,
                                 json.length() > 120 ? json.substring(0, 120) : json);
                     } else {
-                        pending.add(json);
+                        String sig = typeSignature(m);
+                        if (sig != null && seenSigs.contains(sig)) {
+                            agentDebug.info("[QUEUE] skipping duplicate action at index={}, sig={}", i, sig);
+                        } else {
+                            pending.add(json);
+                            if (sig != null) {
+                                seenSigs.add(sig);
+                            }
+                        }
                     }
                 } catch (Exception e) {
                     orphanJsons.add(json);
@@ -1018,12 +1081,18 @@ public class AgentService {
                 log.warn("Agent iteration {}: {} orphan JSONs detected, adding system message",
                         data.get("iteration"), orphanJsons.size());
             }
+            // P2：pending 队列上限，防止单轮失控输出大量动作被逐个执行
+            final int MAX_PENDING_ACTIONS = 5;
+            if (pending.size() > MAX_PENDING_ACTIONS) {
+                log.warn("Agent iteration {}: pending actions {} > {}, truncating",
+                        data.get("iteration"), pending.size(), MAX_PENDING_ACTIONS);
+                pending = new ArrayList<>(pending.subList(0, MAX_PENDING_ACTIONS));
+            }
             if (!pending.isEmpty()) {
                 data.put("pending_actions", pending);
             }
-            agentDebug.info("[QUEUE] queued {} valid actions, {} orphans rejected",
-                    pending.size(), orphanJsons.size());
-        }
+            agentDebug.info("[QUEUE] queued {} valid actions ({} duplicates removed), {} orphans rejected",
+                    pending.size(), allJsons.size() - 1 - pending.size() - orphanJsons.size(), orphanJsons.size());
     }
 
     private CompletableFuture<Map<String, Object>> routeByType(Map<String, Object> data,
@@ -1031,6 +1100,11 @@ public class AgentService {
         String type = (String) parsed.get("type");
         log.info("Agent iteration {}: action type={}, preview={}",
                 iteration, type, parsed.toString().length() > 200 ? parsed.toString().substring(0, 200) : parsed.toString());
+
+        if ("final_answer".equals(data.get("next_action"))) {
+            log.info("Agent iteration {}: next_action already final_answer (set by loop detection), skipping routeByType", iteration);
+            return CompletableFuture.completedFuture(data);
+        }
 
         if ("_no_json_continue".equals(type)) {
             log.info("Agent iteration {}: _no_json_continue, already set next_action=continue", iteration);
@@ -1739,8 +1813,101 @@ public class AgentService {
         return "当前无法查询该数据，可能缺少相关概念或数据映射配置，请联系管理员补充。";
     }
 
+    /**
+     * P1：历史裁剪——messages 超过 30 条时按"组"压缩早期反馈
+     * （assistant(tool_calls) 与其后续 tool 消息为一组，避免拆散导致 LLM API 400）。
+     */
+    private void trimMessages(List<Map<String, Object>> messages) {
+        final int KEEP = 30;
+        if (messages.size() <= KEEP) return;
+        // 组划分：assistant(tool_calls) 吸收其后续 tool 消息；其余每条一组
+        List<List<Map<String, Object>>> groups = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            Map<String, Object> m = messages.get(i);
+            List<Map<String, Object>> group = new ArrayList<>();
+            group.add(m);
+            boolean hasToolCalls = m.get("tool_calls") != null;
+            while (hasToolCalls && i + 1 < messages.size()
+                    && "tool".equals(messages.get(i + 1).get("role"))) {
+                group.add(messages.get(++i));
+            }
+            groups.add(group);
+        }
+        // 从第 2 组开始丢弃，直到剩余消息数 <= KEEP
+        int drop = 0;
+        int remain = messages.size();
+        for (int g = 1; g < groups.size() && remain > KEEP; g++) {
+            remain -= groups.get(g).size();
+            drop = g + 1;
+        }
+        if (drop <= 1) return;
+        List<Map<String, Object>> trimmed = new ArrayList<>();
+        trimmed.addAll(groups.get(0));
+        trimmed.add(Map.of("role", "system", "content",
+                "（为控制上下文长度，早期 " + (messages.size() - remain) + " 条反馈已省略；"
+                + "已执行动作摘要见下方记录）"));
+        for (int g = drop; g < groups.size(); g++) {
+            trimmed.addAll(groups.get(g));
+        }
+        log.info("trimMessages: {} -> {} (dropped {} groups)", messages.size(), trimmed.size(), drop - 1);
+        messages.clear();
+        messages.addAll(trimmed);
+    }
+
+    /** P1：动作执行摘要增量注入——让模型记住已尝试的动作，避免每轮重建同样的计划 */
+    @SuppressWarnings("unchecked")
+    private void injectExecutedActionsSummary(Map<String, Object> data, List<Map<String, Object>> messages) {
+        List<String> log = (List<String>) data.get("executed_actions_log");
+        if (log == null || log.isEmpty()) return;
+        int summarized = (int) data.getOrDefault("executed_actions_summarized", 0);
+        if (log.size() <= summarized) return;
+        String delta = String.join("\n", log.subList(summarized, log.size()));
+        messages.add(Map.of("role", "system", "content",
+                "## 你此前已执行的动作（禁止重复执行）\n" + delta));
+        data.put("executed_actions_summarized", log.size());
+    }
+
+    /** 动作摘要行（供 executed_actions_log 与循环兜底文案使用） */
+    private String describeAction(Map<String, Object> parsed) {
+        String type = (String) parsed.get("type");
+        if (type == null) return "unknown";
+        String detail = "";
+        if ("nl2sql".equals(type)) {
+            String sql = (String) parsed.get("sql");
+            detail = sql != null ? " SQL=" + (sql.length() > 100 ? sql.substring(0, 100) + "…" : sql) : "";
+        } else if ("get_enum_values".equals(type)) {
+            detail = " columns=" + parsed.get("columns");
+        } else if ("algorithm".equals(type)) {
+            detail = " algorithm=" + parsed.get("algorithm_name");
+        }
+        return type + detail;
+    }
+
+    /** 只读动作预算：每类动作最多 limit 次，超限要求模型立即输出 final_answer */
+    @SuppressWarnings("unchecked")
+    private boolean reserveReadonlyBudget(Map<String, Object> data, List<Map<String, Object>> messages,
+            String actionType) {
+        Map<String, Integer> counts = (Map<String, Integer>) data.get("readonly_budget");
+        if (counts == null) {
+            counts = new LinkedHashMap<>();
+            data.put("readonly_budget", counts);
+        }
+        boolean allowed = com.luban.service.agent.ReadonlyBudget.reserve(counts, actionType,
+                com.luban.service.agent.ReadonlyBudget.DEFAULT_LIMIT);
+        if (!allowed) {
+            log.warn("Agent readonly budget exhausted: {} (iter={})", actionType, data.get("iteration"));
+            messages.add(Map.of("role", "system", "content",
+                    actionType + " 已达执行上限（" + com.luban.service.agent.ReadonlyBudget.DEFAULT_LIMIT
+                            + " 次）。禁止再次调用该动作，请基于已获取的信息立即输出 final_answer；"
+                            + "若数据不足以得出结论，请在 final_answer 中如实说明缺失的数据范围。"));
+            data.put("next_action", "continue");
+        }
+        return allowed;
+    }
+
     private void routeRequestContext(Map<String, Object> data, List<Map<String, Object>> messages,
             Map<String, Object> parsed, int iteration) {
+        if (!reserveReadonlyBudget(data, messages, "request_context")) return;
         @SuppressWarnings("unchecked")
         List<String> conceptNames = (List<String>) parsed.getOrDefault("concept_names", List.of());
         String requestType = (String) parsed.getOrDefault("request", "all");
@@ -1753,6 +1920,7 @@ public class AgentService {
 
     private void routeGetTableSchema(Map<String, Object> data,
             List<Map<String, Object>> messages, Map<String, Object> parsed) {
+        if (!reserveReadonlyBudget(data, messages, "get_table_schema")) return;
         List<?> rawIds = (List<?>) parsed.get("datasourceIds");
         List<?> rawTables = (List<?>) parsed.get("tableNames");
         if (rawIds == null || rawIds.isEmpty()) {
@@ -1825,6 +1993,7 @@ public class AgentService {
 
     private void routeGetEnumValues(Map<String, Object> data, List<Map<String, Object>> messages,
             Map<String, Object> parsed) {
+        if (!reserveReadonlyBudget(data, messages, "get_enum_values")) return;
         agentDebug.info("[ENUM] routeGetEnumValues called, columns={}", parsed.get("columns"));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> columns = (List<Map<String, Object>>) parsed.get("columns");
@@ -3147,6 +3316,8 @@ public class AgentService {
         sb.append("- `algorithm_name`：必须与可用算法列表中的名称精确匹配\n");
         sb.append("- `input_data`：必须符合算法的 input_schema 定义\n");
         sb.append("- 前置检验未通过时，禁止调用算法，应直接 final_answer 说明原因\n");
+        sb.append("- 若某项前置检验或算法输入所需的表/列不在【可用数据源】列表中，视为该项**不可满足**：禁止再次生成针对缺失表的查询，禁止反复尝试；直接输出 final_answer，说明数据缺失范围与基于已有数据的分析结论\n");
+        sb.append("- 同一动作（相同 type+SQL 或相同参数）禁止生成两次；某查询已执行且无新信息时，应推进分析或输出 final_answer\n");
         sb.append("- 算法执行失败时，系统会提供降级建议，可按建议使用 code_mode 或 final_answer\n\n");
 
         sb.append("请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n");

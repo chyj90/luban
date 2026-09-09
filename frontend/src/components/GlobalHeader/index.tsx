@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { getApplication } from '@/api/application';
+import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import './GlobalHeader.css';
 
 const NAV_ITEMS = [
@@ -22,6 +23,19 @@ export function GlobalHeader() {
   const loaded = usePermissionStore((s) => s.loaded);
   const resetPermissions = usePermissionStore((s) => s.reset);
   const [appName, setAppName] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [changePwdOpen, setChangePwdOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const filteredNav = loaded
     ? NAV_ITEMS.filter((item) => hasPermission(item.permission))
@@ -106,20 +120,43 @@ export function GlobalHeader() {
       </div>
       <div className="global-header-right">
         {user && (
-          <div className="global-header-user">
-            <span className="global-header-user-name">{user.account}</span>
-            <div className="global-header-user-avatar">
-              {user.account?.charAt(0)?.toUpperCase() || 'U'}
+          <div className="global-header-user" ref={menuRef}>
+            <div
+              className="global-header-user-trigger"
+              onClick={() => setMenuOpen(!menuOpen)}
+            >
+              <span className="global-header-user-name">{user.account}</span>
+              <div className="global-header-user-avatar">
+                {user.account?.charAt(0)?.toUpperCase() || 'U'}
+              </div>
+              <svg
+                className={`global-header-user-arrow ${menuOpen ? 'open' : ''}`}
+                width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
             </div>
+            {menuOpen && (
+              <div className="global-header-user-menu">
+                <button
+                  className="global-header-user-menu-item"
+                  onClick={() => { setMenuOpen(false); setChangePwdOpen(true); }}
+                >
+                  修改密码
+                </button>
+                <button
+                  className="global-header-user-menu-item"
+                  onClick={handleLogout}
+                >
+                  退出登录
+                </button>
+              </div>
+            )}
           </div>
         )}
-        <button className="global-header-logout" onClick={handleLogout} title="退出登录">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="#5f6b7a">
-            <path d="M16 13v-2H7V8l-5 4 5 4v-3z" />
-            <path d="M20 3H9c-1.1 0-2 .9-2 2v4h2V5h11v14H9v-4H7v4c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" />
-          </svg>
-        </button>
       </div>
+      <ChangePasswordModal open={changePwdOpen} onClose={() => setChangePwdOpen(false)} />
     </header>
   );
 }

@@ -5,6 +5,7 @@ import com.luban.constant.Permissions;
 import com.luban.dto.ApiResponse;
 import com.luban.entity.User;
 import com.luban.entity.UserDept;
+import com.luban.exception.BusinessException;
 import com.luban.repository.UserDeptRepository;
 import com.luban.repository.UserRepository;
 import com.luban.workflow.entity.Department;
@@ -111,7 +112,7 @@ public class DepartmentController {
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         if (!departmentRepository.existsById(id)) {
-            throw new RuntimeException("部门不存在: " + id);
+            throw new BusinessException("部门不存在: " + id);
         }
         departmentRepository.deleteById(id);
         return ApiResponse.ok(null);
