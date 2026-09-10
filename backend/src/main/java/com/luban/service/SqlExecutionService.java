@@ -144,6 +144,9 @@ public class SqlExecutionService {
 
         log.info("SqlExecution: {}ms, sql={}, rows={}", System.currentTimeMillis() - t0,
                 sql.length() > 100 ? sql.substring(0, 100) + "..." : sql, result.getOrDefault("rowCount", 0));
+        if (datasourceId != null) {
+            result.put("_datasourceId", datasourceId);
+        }
         return result;
     }
 
@@ -329,5 +332,97 @@ public class SqlExecutionService {
             }
         }
         return sb.toString();
+    }
+
+    public String formatResult(Map<String, Object> result, String sql, Long datasourceId) {
+        if (result == null) return "SQL 执行结果为空";
+        if (result.containsKey("error")) return (String) result.get("error");
+        @SuppressWarnings("unchecked")
+        List<String> columns = (List<String>) result.get("columns");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("rows");
+        int rowCount = (int) result.getOrDefault("rowCount", rows != null ? rows.size() : 0);
+        boolean truncated = (boolean) result.getOrDefault("truncated", false);
+        StringBuilder sb = new StringBuilder();
+        if (rowCount == 0) {
+            sb.append("SQL 查询返回 0 行。\n");
+            if (sql != null && datasourceId != null) {
+                Set<String> tables = extractTableNames(sql);
+                if (!tables.isEmpty()) {
+                    sb.append("涉及表: ").append(String.join(", ", tables)).append("\n");
+                    Map<String, Long> existence = checkTableExistence(tables, datasourceId);
+                    List<String> existing = new ArrayList<>();
+                    List<String> empty = new ArrayList<>();
+                    List<String> missing = new ArrayList<>();
+                    for (String t : tables) {
+                        Long count = existence.get(t);
+                        if (count == null || count < 0) {
+                            missing.add(t);
+                        } else if (count == 0) {
+                            empty.add(t);
+                        } else {
+                            existing.add(t + "（共 " + count + " 行）");
+                        }
+                    }
+                    if (!empty.isEmpty()) {
+                        sb.append("【系统校验】表 ").append(String.join(", ", empty))
+                                .append(" 在数据源中为空表（0 行），任何查询该表的 SQL 都会返回 0 行。\n");
+                        sb.append("请检查是否应从其他表获取数据，或告知用户该表无数据。\n");
+                    }
+                    if (!existing.isEmpty()) {
+                        sb.append("【系统校验】表 ").append(String.join(", ", existing))
+                                .append(" 在数据源中存在且有数据。0 行表示当前 WHERE/JOIN 条件不匹配，并非表结构缺失。\n");
+                        sb.append("禁止将 0 行归因为\"表不可用\"或\"映射缺失\"。\n");
+                    }
+                    if (!missing.isEmpty()) {
+                        sb.append("【系统校验】表 ").append(String.join(", ", missing))
+                                .append(" 在数据源中不存在，SQL 可能有误。\n");
+                    }
+                }
+            }
+        } else {
+            sb.append("SQL 查询返回 ").append(rowCount).append(" 行");
+            if (truncated) sb.append("（已截断至 ").append(MAX_RESULT_ROWS).append(" 行）");
+            sb.append("。\n\n");
+            if (columns != null && rows != null) {
+                sb.append("| ").append(String.join(" | ", columns)).append(" |\n");
+                sb.append("|").append("|".repeat(columns.size()).replace("|", "---|")).append("\n");
+                for (Map<String, Object> row : rows) {
+                    sb.append("| ");
+                    for (String col : columns) {
+                        Object v = row.get(col);
+                        sb.append(v != null ? v.toString().replace("|", "\\|").replace("\n", " ") : "-");
+                        sb.append(" | ");
+                    }
+                    sb.append("\n");
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    Map<String, Long> checkTableExistence(Set<String> tables, Long datasourceId) {
+        Map<String, Long> result = new LinkedHashMap<>();
+        if (tables == null || tables.isEmpty() || datasourceId == null) return result;
+        try (Connection conn = getConnection(datasourceId);
+             Statement stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(5);
+            for (String table : tables) {
+                try {
+                    ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM " + table);
+                    if (rs.next()) {
+                        result.put(table, rs.getLong(1));
+                    } else {
+                        result.put(table, -1L);
+                    }
+                    rs.close();
+                } catch (SQLException e) {
+                    result.put(table, -1L);
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("checkTableExistence failed: {}", e.getMessage());
+        }
+        return result;
     }
 }

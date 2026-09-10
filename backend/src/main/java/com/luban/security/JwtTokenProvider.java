@@ -44,6 +44,7 @@ public class JwtTokenProvider {
         Date expiry = new Date(now.getTime() + expiration);
 
         return Jwts.builder()
+                .id(java.util.UUID.randomUUID().toString()) // jti：同秒重复登录生成不同 token，避免 session 唯一键冲突
                 .subject(user.getId().toString())
                 .claim("email", user.getEmail())
                 .claim("account", user.getAccount())

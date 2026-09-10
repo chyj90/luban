@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -683,7 +684,9 @@ public class ContextBuilder {
         }
 
         if (conceptTrace != null && !conceptTrace.isEmpty()) {
-            sb.append("## 语义层匹配的概念\n| 概念ID | 概念名 | 域ID | 域名 | 描述 | 深度 | 权限 |\n|--------|--------|------|------|------|------|------|\n");
+            sb.append("## 语义层匹配的概念\n| 概念ID | 概念名 | 域ID | 域名 | 描述 | 深度 | 权限 | 映射状态 |\n|--------|--------|------|------|------|------|------|----------|\n");
+            Set<Long> mappedConceptIds = tableMappings != null ? tableMappings.stream()
+                    .map(ConceptMapping::getConceptId).collect(Collectors.toSet()) : Set.of();
             for (Map<String, Object> c : conceptTrace) {
                 if ("pipeline".equals(c.get("type")) || "reuse".equals(c.get("type"))) continue;
                 Object cid = c.get("conceptId");
@@ -691,12 +694,27 @@ public class ContextBuilder {
                 String groupName = gid instanceof Number ? groupNameMap.getOrDefault(((Number) gid).longValue(), "-") : "-";
                 boolean authorized = cid instanceof Number && (authorizedConceptIds == null || authorizedConceptIds.isEmpty()
                         || authorizedConceptIds.contains(((Number) cid).longValue()));
+                boolean hasMapping = cid instanceof Number && mappedConceptIds.contains(((Number) cid).longValue());
+                String mappingStatus = hasMapping ? "✅ 已映射" : "⚠️ 无映射";
                 sb.append("| ").append(c.get("conceptId")).append(" | ").append(c.get("conceptName"))
                         .append(" | ").append(gid != null ? gid : "-").append(" | ").append(groupName)
                         .append(" | ").append(c.getOrDefault("description", "-")).append(" | ").append(c.get("depth"))
-                        .append(" | ").append(authorized ? "[可用]" : "[无权限]").append(" |\n");
+                        .append(" | ").append(authorized ? "[可用]" : "[无权限]")
+                        .append(" | ").append(mappingStatus).append(" |\n");
             }
             sb.append("\n");
+            // 标记无映射的概念
+            List<String> unmappedConcepts = conceptTrace.stream()
+                    .filter(c -> !"pipeline".equals(c.get("type")) && !"reuse".equals(c.get("type")))
+                    .filter(c -> c.get("conceptId") instanceof Number
+                            && !mappedConceptIds.contains(((Number) c.get("conceptId")).longValue()))
+                    .map(c -> String.valueOf(c.get("conceptName")))
+                    .collect(Collectors.toList());
+            if (!unmappedConcepts.isEmpty()) {
+                sb.append("⚠️ **以下概念已定义但未配置数据表映射，无法查询：** ")
+                        .append(String.join("、", unmappedConcepts)).append("\n");
+                sb.append("如需查询这些概念的数据，请在 ontology_action 中使用 ADD_MAPPING 为其添加表/列映射。\n\n");
+            }
         }
 
         if (drillDimensions != null && !drillDimensions.isEmpty()) {
@@ -804,6 +822,56 @@ public class ContextBuilder {
             }
         }
 
+        // ---- 本体校验：跨概念 JOIN 可达性分析 ----
+        if (tableMappings != null && !tableMappings.isEmpty() && joinMappings != null && !joinMappings.isEmpty()) {
+            Map<Long, String> conceptToTable = new LinkedHashMap<>();
+            for (ConceptMapping m : tableMappings) {
+                conceptToTable.putIfAbsent(m.getConceptId(), m.getTableName());
+            }
+            // 构建 JOIN 可达图：table -> set of reachable tables
+            Map<String, Set<String>> joinGraph = new LinkedHashMap<>();
+            for (ConceptJoinMapping j : joinMappings) {
+                String srcTable = conceptToTable.get(j.getConceptId());
+                String tgtTable = j.getJoinTable();
+                if (srcTable != null && tgtTable != null) {
+                    joinGraph.computeIfAbsent(srcTable.toLowerCase(), k -> new LinkedHashSet<>())
+                            .add(tgtTable.toLowerCase());
+                    joinGraph.computeIfAbsent(tgtTable.toLowerCase(), k -> new LinkedHashSet<>())
+                            .add(srcTable.toLowerCase());
+                }
+            }
+            // 收集当前查询涉及的概念及其表
+            List<Long> queryConceptIds = conceptTrace != null ? conceptTrace.stream()
+                    .filter(c -> !"pipeline".equals(c.get("type")) && !"reuse".equals(c.get("type")))
+                    .filter(c -> c.get("conceptId") instanceof Number)
+                    .map(c -> ((Number) c.get("conceptId")).longValue())
+                    .distinct().collect(Collectors.toList()) : List.of();
+            List<String> queryTables = new ArrayList<>();
+            for (Long cid : queryConceptIds) {
+                String t = conceptToTable.get(cid);
+                if (t != null) queryTables.add(t.toLowerCase());
+            }
+            // 检查任意两个查询表之间是否有 JOIN 路径
+            if (queryTables.size() >= 2) {
+                List<String> unreachablePairs = new ArrayList<>();
+                for (int i = 0; i < queryTables.size(); i++) {
+                    for (int j = i + 1; j < queryTables.size(); j++) {
+                        if (!hasJoinPath(joinGraph, queryTables.get(i), queryTables.get(j))) {
+                            unreachablePairs.add(queryTables.get(i) + " ↔ " + queryTables.get(j));
+                        }
+                    }
+                }
+                if (!unreachablePairs.isEmpty()) {
+                    sb.append("## ⚠️ 跨概念 JOIN 不可达警告\n");
+                    sb.append("以下表对之间没有预定义 JOIN 路径，**无法**在单条 SQL 中关联查询：\n");
+                    for (String pair : unreachablePairs) {
+                        sb.append("- `").append(pair).append("`\n");
+                    }
+                    sb.append("请分别查询各表后汇总分析，或检查是否需要补充 JOIN 映射。\n\n");
+                }
+            }
+        }
+
         if (apiTools != null && !apiTools.isEmpty()) {
             sb.append("## 可用的 API 工具\n");
             for (int i = 0; i < apiTools.size(); i++) {
@@ -832,11 +900,15 @@ public class ContextBuilder {
             if (!preChecks.isEmpty()) {
                 sb.append("## 前置检验指令\n");
                 sb.append("以下前置检验由本体 DERIVED_FROM 关系自动推导。在调用算法前，必须先通过 nl2sql 执行所有前置检验，全部通过后才能调用算法。\n");
-                sb.append("⚠️ 若某项检验所需的表/列不在【可用数据源】列表中，该项视为不可满足：禁止针对缺失表反复生成查询，跳过该项并在 final_answer 中说明数据缺失范围。\n\n");
+                sb.append("⚠️ 前置检验可能引用未配置概念映射的表，系统已自动从数据源获取这些表的结构（见下方「算法前置校验专用表结构」）。\n");
+                sb.append("若某项检验所需的表在下方也找不到，则该项不可满足，跳过并在 final_answer 中说明。\n\n");
                 for (String pc : preChecks) {
                     sb.append("- ").append(pc).append("\n");
                 }
                 sb.append("\n");
+
+                // ---- 本体校验：提取 PRE_CHECK 依赖表，从数据源动态注入 schema ----
+                injectPreCheckTableSchemas(sb, preChecks, tableMappings, availableDatasources);
             }
 
             List<ConceptToolBinding> algoBindings = conceptToolBindingRepository.findByConceptIdIn(conceptIds).stream()
@@ -857,6 +929,12 @@ public class ContextBuilder {
                         if (algo.getInputSchema() != null) sb.append("- **输入参数**: ").append(algo.getInputSchema()).append("\n");
                         if (algo.getOutputSchema() != null) sb.append("- **输出参数**: ").append(algo.getOutputSchema()).append("\n");
                         sb.append("\n");
+                    }
+                    if (!preChecks.isEmpty()) {
+                        sb.append("### 前置检验依赖总结\n");
+                        sb.append("共 ").append(preChecks.size()).append(" 项前置检验，全部通过后方可调用算法。\n");
+                        sb.append("前置检验引用的表已在上下文中展示（含自动注入的「算法前置校验专用表结构」）。\n");
+                        sb.append("**请逐项执行前置检验，每项检验通过后再执行下一项。任何一项失败都意味着算法不可调用，请直接 final_answer 说明原因。**\n\n");
                     }
                     sb.append("调用算法：\n```json\n{\"type\": \"algorithm\", \"reasoning\": \"前置检验已通过，调用算法...\", \"algorithm_name\": \"算法名称\", \"input_data\": {...}}\n```\n\n");
                 }
@@ -1045,6 +1123,106 @@ public class ContextBuilder {
                 + "4. 确定概念间的下钻和关联关系\n"
                 + "5. 确定概念对应的数据表映射，dataSourceId 必须从上方「可用数据源」表格中选择\n"
                 + "6. 使用 ontology_action 输出完整变更，industryId 和 dataSourceId 禁止编造\n";
+    }
+
+    private void injectPreCheckTableSchemas(StringBuilder sb, List<String> preChecks,
+            List<ConceptMapping> tableMappings, List<Map<String, Object>> availableDatasources) {
+        if (availableDatasources == null || availableDatasources.isEmpty()) return;
+
+        Set<String> mappedTables = tableMappings != null ? tableMappings.stream()
+                .map(ConceptMapping::getTableName)
+                .filter(Objects::nonNull)
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet()) : Set.of();
+
+        Set<String> preCheckTables = new LinkedHashSet<>();
+        Pattern tablePattern = Pattern.compile("\\b(FROM|JOIN)\\s+([A-Za-z_][A-Za-z0-9_]*)", Pattern.CASE_INSENSITIVE);
+        for (String pc : preChecks) {
+            Matcher m = tablePattern.matcher(pc);
+            while (m.find()) {
+                preCheckTables.add(m.group(2).toUpperCase());
+            }
+        }
+
+        Set<String> missingTables = new LinkedHashSet<>();
+        for (String t : preCheckTables) {
+            if (!mappedTables.contains(t.toLowerCase())) {
+                missingTables.add(t);
+            }
+        }
+
+        if (missingTables.isEmpty()) return;
+
+        Map<String, List<Map<String, Object>>> preCheckSchemas = new LinkedHashMap<>();
+        for (Map<String, Object> ds : availableDatasources) {
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> tables = (List<Map<String, Object>>) ds.get("tables");
+            if (tables == null) continue;
+            for (Map<String, Object> table : tables) {
+                String tableName = (String) table.get("name");
+                if (tableName != null && missingTables.contains(tableName.toUpperCase())) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> columns = (List<Map<String, Object>>) table.get("columns");
+                    preCheckSchemas.putIfAbsent(tableName, columns);
+                }
+            }
+        }
+
+        if (preCheckSchemas.isEmpty()) {
+            sb.append("⚠️ 前置检验引用了以下表，但这些表在数据源中也不存在：");
+            sb.append(String.join("、", missingTables)).append("\n");
+            sb.append("涉及的前置检验将无法执行，请跳过并在 final_answer 中说明。\n\n");
+            return;
+        }
+
+        sb.append("## 算法前置校验专用表结构（已自动从数据源获取，无需概念映射即可查询）\n");
+        sb.append("以下表用于算法前置检验，虽未配置概念映射，但系统已自动从数据源获取其结构。你可以直接对这些表生成 SQL 执行前置检验。\n\n");
+        for (Map.Entry<String, List<Map<String, Object>>> entry : preCheckSchemas.entrySet()) {
+            sb.append("### 表: `").append(entry.getKey()).append("`\n");
+            sb.append("| 列名 | 类型 | 可空 | 注释 |\n|------|------|------|------|\n");
+            List<Map<String, Object>> columns = entry.getValue();
+            if (columns != null) {
+                for (Map<String, Object> col : columns) {
+                    sb.append("| `").append(col.get("name")).append("`")
+                            .append(" | ").append(col.getOrDefault("type", "-"))
+                            .append(" | ").append(Boolean.TRUE.equals(col.getOrDefault("nullable", true)) ? "NULL" : "NOT NULL")
+                            .append(" | ").append(Objects.toString(col.getOrDefault("comment", ""), "-"))
+                            .append(" |\n");
+                }
+            }
+            sb.append("\n");
+        }
+
+        Set<String> foundTables = preCheckSchemas.keySet().stream()
+                .map(String::toUpperCase).collect(Collectors.toSet());
+        List<String> trulyMissing = new ArrayList<>();
+        for (String t : missingTables) {
+            if (!foundTables.contains(t.toUpperCase())) {
+                trulyMissing.add(t);
+            }
+        }
+        if (!trulyMissing.isEmpty()) {
+            sb.append("⚠️ 以下表在 PRE_CHECK 中被引用，但在数据源中也不存在：**")
+                    .append(String.join("、", trulyMissing)).append("**\n");
+            sb.append("涉及的前置检验将无法执行，请跳过并在 final_answer 中说明。\n\n");
+        }
+    }
+
+    private boolean hasJoinPath(Map<String, Set<String>> graph, String from, String to) {
+        if (from.equals(to)) return true;
+        Set<String> visited = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(from);
+        visited.add(from);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            Set<String> neighbors = graph.getOrDefault(current, Set.of());
+            for (String neighbor : neighbors) {
+                if (neighbor.equals(to)) return true;
+                if (visited.add(neighbor)) queue.add(neighbor);
+            }
+        }
+        return false;
     }
 
     public String buildMappingsForConcepts(List<String> conceptNames, String requestType) {

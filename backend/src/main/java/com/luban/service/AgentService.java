@@ -47,6 +47,8 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
@@ -754,6 +756,11 @@ public class AgentService {
             @SuppressWarnings("unchecked")
             List<String> pendingActions = (List<String>) data.get("pending_actions");
 
+            agentDebug.info("[AGENT_ENTER] iter={}, pendingActions={}, forceLlmCall={}",
+                    iteration,
+                    pendingActions != null ? pendingActions.stream().map(s -> s.length() > 60 ? s.substring(0, 60) + "..." : s).collect(java.util.stream.Collectors.toList()) : "null",
+                    data.get("_force_llm_call"));
+
             Map<String, Object> parsed = null;
             boolean forceLlmCall = Boolean.TRUE.equals(data.remove("_force_llm_call"));
             if (!forceLlmCall && pendingActions != null && !pendingActions.isEmpty()) {
@@ -764,7 +771,7 @@ public class AgentService {
                         addInvalidJsonFeedback(messages, raw != null ? raw : candidate.toString());
                         log.warn("Agent iteration {}: invalid pending action skipped, no type field", iteration);
                         if (pendingActions.isEmpty()) {
-                            data.remove("pending_actions");
+                            data.put("pending_actions", java.util.Collections.emptyList());
                         }
                     } else {
                         parsed = candidate;
@@ -772,7 +779,9 @@ public class AgentService {
                 }
             }
             if (forceLlmCall) {
-                data.remove("pending_actions");
+                data.put("pending_actions", java.util.Collections.emptyList());
+                agentDebug.info("[FORCE_LLM] iter={}, discarding {} pending actions: {}",
+                        iteration, pendingActions != null ? pendingActions.size() : 0, pendingActions);
                 log.info("Agent iteration {}: _force_llm_call, skipping {} pending actions to re-query LLM",
                         iteration, pendingActions != null ? pendingActions.size() : 0);
             }
@@ -808,7 +817,7 @@ public class AgentService {
             List<String> pendingActions, int iteration) {
         String nextJson = pendingActions.remove(0);
         if (pendingActions.isEmpty()) {
-            data.remove("pending_actions");
+            data.put("pending_actions", java.util.Collections.emptyList());
         }
         Map<String, Object> parsed = parseResponse(nextJson);
         parsed.put("_raw", nextJson);
@@ -897,6 +906,34 @@ public class AgentService {
         } else {
             parsed = parseResponse(allJsons.get(0));
             agentDebug.info("[NORMAL_ITER] firstJson type={}, firstJsonLen={}", parsed.get("type"), allJsons.get(0).length());
+            // 如果第一个 action 是 final_answer 且同批还有数据查询动作，跳过它
+            if ("final_answer".equals(parsed.get("type")) && hasDataGatheringInBatch(allJsons, 1)) {
+                for (int i = 1; i < allJsons.size(); i++) {
+                    try {
+                        String json = allJsons.get(i).trim();
+                        if (json.startsWith("[")) {
+                            List<Map<String, Object>> arr = objectMapper.readValue(json,
+                                    new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                            for (Map<String, Object> elem : arr) {
+                                if (isDataGatheringType((String) elem.get("type"))) {
+                                    parsed = elem;
+                                    allJsons.remove(i);
+                                    break;
+                                }
+                            }
+                        } else {
+                            Map<String, Object> m = objectMapper.readValue(json, Map.class);
+                            if (isDataGatheringType((String) m.get("type"))) {
+                                parsed = m;
+                                allJsons.remove(i);
+                                break;
+                            }
+                        }
+                    } catch (Exception ignored) { }
+                }
+                messages.add(Map.of("role", "system", "content",
+                        "不要在数据查询未完成时输出 final_answer。请等待所有查询结果返回后，基于实际数据做出回答。"));
+            }
             queueExtraActions(data, messages, allJsons, parsed, iteration, typeSignature(parsed));
         }
         return parsed;
@@ -1002,26 +1039,39 @@ public class AgentService {
         if ("final_answer".equals(data.get("next_action"))) {
             return; // 已被其他路径终止
         }
+        // _no_json_continue 是 LLM 纯推理无动作时的占位标记，不是真正的循环动作，不参与循环检测
+        if ("_no_json_continue".equals(parsed.get("type"))) {
+            return;
+        }
         String currentSig = typeSignature(parsed);
         @SuppressWarnings("unchecked")
         List<String> signatures = (List<String>) data.getOrDefault("action_signatures",
                 new java.util.ArrayList<String>());
         boolean loop = com.luban.service.agent.ActionLoopDetector.recordAndDetect(signatures, currentSig);
         data.put("action_signatures", signatures);
-        if (!loop) return;
-
+        // DEBUG: 记录每次签名的写入和检测结果
         int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
         int iter = (int) data.getOrDefault("iteration", 0);
+        agentDebug.info("[LOOP_DETECT] iter={}, sqlExecCount={}, sig={}, totalSigs={}, sigs={}, loop={}",
+                iter, sqlExecCount, currentSig, signatures.size(), signatures, loop);
+        if (!loop) return;
+
         var dominant = com.luban.service.agent.ActionLoopDetector.dominantSignature(signatures);
         log.warn("Agent loop detected at iteration {}: dominantSig={} count={}, forcing termination",
                 iter, dominant == null ? "?" : dominant.getKey(), dominant == null ? 0 : dominant.getValue());
-        data.remove("pending_actions");
+        data.put("pending_actions", java.util.Collections.emptyList());
 
         // 先尝试一次 LLM 总结（模型可能给出有价值的根因分析）
         try {
-            messages.add(Map.of("role", "system", "content",
-                    "检测到分析动作反复重复。请停止生成查询类动作，立即输出 final_answer："
-                    + "总结基于已获取数据的分析结论；若数据不足以得出结论，如实说明缺失的数据范围。"));
+            StringBuilder loopCtx = new StringBuilder();
+            loopCtx.append("检测到分析动作反复重复。请停止生成查询类动作，立即输出 final_answer。\n");
+            loopCtx.append("【强制】按以下格式输出你的诊断，每一项都必须基于已执行的查询结果，禁止臆测：\n");
+            loopCtx.append("1. 已执行的查询及其结果（逐条列出）\n");
+            loopCtx.append("2. 从结果中能确定什么\n");
+            loopCtx.append("3. 还需要什么数据才能回答用户问题\n");
+            loopCtx.append("4. 如果数据不足，说明具体缺什么数据（缺哪个表、缺哪个字段），不是笼统的\"表不可用\"\n");
+            loopCtx.append("【禁止】在未执行单表验证的情况下断言\"表不存在\"或\"映射缺失\"。");
+            messages.add(Map.of("role", "system", "content", loopCtx.toString()));
             Map<String, Object> summaryContext = contextBuilder.build(sessionId, userQuery, messages, userId, intent);
             boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
             String summaryResponse = callLlm(config, messages, (String) summaryContext.get("prompt"), isAdmin);
@@ -1043,6 +1093,32 @@ public class AgentService {
         data.put("next_action", "final_answer");
     }
 
+    /** 判断是否为数据查询类动作（需要等待结果才能作答） */
+    private boolean isDataGatheringType(String type) {
+        return "nl2sql".equals(type) || "get_enum_values".equals(type)
+                || "ontology_action".equals(type) || "tool_call".equals(type);
+    }
+
+    /** 检查 batch 中从 startIndex 开始是否有数据查询动作 */
+    private boolean hasDataGatheringInBatch(List<String> allJsons, int startIndex) {
+        for (int i = startIndex; i < allJsons.size(); i++) {
+            String json = allJsons.get(i).trim();
+            try {
+                if (json.startsWith("[")) {
+                    List<Map<String, Object>> arr = objectMapper.readValue(json,
+                            new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                    for (Map<String, Object> elem : arr) {
+                        if (isDataGatheringType((String) elem.get("type"))) return true;
+                    }
+                } else {
+                    Map<String, Object> m = objectMapper.readValue(json, Map.class);
+                    if (isDataGatheringType((String) m.get("type"))) return true;
+                }
+            } catch (Exception ignored) { }
+        }
+        return false;
+    }
+
     private void queueExtraActions(Map<String, Object> data, List<Map<String, Object>> messages,
             List<String> allJsons, Map<String, Object> parsed, int iteration, String currentSig) {
         if (allJsons.size() <= 1) return;
@@ -1053,8 +1129,28 @@ public class AgentService {
             Set<String> seenSigs = new HashSet<>();
             seenSigs.add(currentSig);
             for (int i = 1; i < allJsons.size(); i++) {
-                String json = allJsons.get(i);
+                String json = allJsons.get(i).trim();
                 try {
+                    // 处理 JSON 数组格式：LLM 可能输出 [{...}, {...}] 作为单个元素
+                    if (json.startsWith("[")) {
+                        List<Map<String, Object>> arr = objectMapper.readValue(json,
+                                new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                        agentDebug.info("[QUEUE] unpacking JSON array at index={}, {} elements", i, arr.size());
+                        for (Map<String, Object> elem : arr) {
+                            if (elem.get("type") == null) {
+                                orphanJsons.add(objectMapper.writeValueAsString(elem));
+                                continue;
+                            }
+                            String sig = typeSignature(elem);
+                            if (sig != null && seenSigs.contains(sig)) {
+                                agentDebug.info("[QUEUE] skipping duplicate (from array) sig={}", sig);
+                            } else {
+                                pending.add(objectMapper.writeValueAsString(elem));
+                                if (sig != null) seenSigs.add(sig);
+                            }
+                        }
+                        continue;
+                    }
                     Map<String, Object> m = objectMapper.readValue(json, Map.class);
                     if (m.get("type") == null) {
                         orphanJsons.add(json);
@@ -1081,6 +1177,29 @@ public class AgentService {
                 log.warn("Agent iteration {}: {} orphan JSONs detected, adding system message",
                         data.get("iteration"), orphanJsons.size());
             }
+            // 如果同批既有数据查询又有 final_answer，跳过 final_answer，等数据回来后再答
+            boolean firstIsDataGathering = isDataGatheringType((String) parsed.get("type"));
+            boolean hasPendingDataGathering = false;
+            boolean hasPendingFinalAnswer = false;
+            for (String json : pending) {
+                try {
+                    Map<String, Object> m = objectMapper.readValue(json, Map.class);
+                    String t = (String) m.get("type");
+                    if (isDataGatheringType(t)) hasPendingDataGathering = true;
+                    if ("final_answer".equals(t)) hasPendingFinalAnswer = true;
+                } catch (Exception ignored) { }
+            }
+            if ((firstIsDataGathering || hasPendingDataGathering) && hasPendingFinalAnswer) {
+                pending.removeIf(json -> {
+                    try {
+                        return "final_answer".equals(objectMapper.readValue(json, Map.class).get("type"));
+                    } catch (Exception e) { return false; }
+                });
+                messages.add(Map.of("role", "system", "content",
+                        "不要在数据查询未完成时输出 final_answer。请等待所有查询结果返回后，基于实际数据做出回答。"));
+                log.info("Agent iteration {}: removed final_answer from pending queue (data-gathering actions present)",
+                        data.get("iteration"));
+            }
             // P2：pending 队列上限，防止单轮失控输出大量动作被逐个执行
             final int MAX_PENDING_ACTIONS = 5;
             if (pending.size() > MAX_PENDING_ACTIONS) {
@@ -1091,8 +1210,8 @@ public class AgentService {
             if (!pending.isEmpty()) {
                 data.put("pending_actions", pending);
             }
-            agentDebug.info("[QUEUE] queued {} valid actions ({} duplicates removed), {} orphans rejected",
-                    pending.size(), allJsons.size() - 1 - pending.size() - orphanJsons.size(), orphanJsons.size());
+            agentDebug.info("[QUEUE] queued {} valid actions: sigs={}, dups={}, orphans={}",
+                    pending.size(), seenSigs, allJsons.size() - 1 - pending.size() - orphanJsons.size(), orphanJsons.size());
     }
 
     private CompletableFuture<Map<String, Object>> routeByType(Map<String, Object> data,
@@ -1159,6 +1278,23 @@ public class AgentService {
         if (answer != null && isGenericMissingConfigAnswer(answer) && conceptIds != null && !conceptIds.isEmpty()) {
             String enhanced = enhanceMissingConfigAnswer(answer, conceptIds, data);
             if (enhanced != null) answer = enhanced;
+        }
+
+        String falseClaim = validateTableClaims(answer, data);
+        if (falseClaim != null) {
+            int claimRetries = (int) data.getOrDefault("_false_claim_retries", 0);
+            if (claimRetries >= 2) {
+                log.warn("Agent final_answer: false claim retries exceeded, accepting answer as-is");
+                data.remove("_false_claim_retries");
+            } else {
+                log.warn("Agent final_answer contains false claim about table/mapping: {}", falseClaim);
+                data.put("_false_claim_retries", claimRetries + 1);
+                messages.add(Map.of("role", "system", "content", falseClaim));
+                data.put("next_action", "continue");
+                return;
+            }
+        } else {
+            data.remove("_false_claim_retries");
         }
         agentDebug.info("[ROUTE_FINAL] answerLen={}, answerPreview={}",
                 answer != null ? answer.length() : 0,
@@ -1253,6 +1389,52 @@ public class AgentService {
 
         if (sb.length() == 0) return null;
         return sb.toString();
+    }
+
+    /**
+     * 校验 final_answer 中关于"表/映射不可用"的声明是否属实。
+     * 返回 null 表示无需纠正，返回非 null 字符串表示需要注入的纠正消息。
+     */
+    @SuppressWarnings("unchecked")
+    private String validateTableClaims(String answer, Map<String, Object> data) {
+        if (answer == null || answer.isEmpty()) return null;
+        List<Map<String, Object>> tableMappings = (List<Map<String, Object>>)
+                data.getOrDefault("_tableMappings", List.of());
+        List<Map<String, Object>> joinMappings = (List<Map<String, Object>>)
+                data.getOrDefault("_joinMappings", List.of());
+
+        Set<String> availableTables = new LinkedHashSet<>();
+        for (Map<String, Object> mapping : tableMappings) {
+            String tableName = (String) mapping.get("tableName");
+            if (tableName != null) availableTables.add(tableName.toLowerCase());
+        }
+        for (Map<String, Object> join : joinMappings) {
+            String joinTable = (String) join.get("joinTable");
+            if (joinTable != null) availableTables.add(joinTable.toLowerCase());
+        }
+
+        if (availableTables.isEmpty()) return null;
+
+        Pattern tableClaim = Pattern.compile(
+                "(?:表|table)\\s*[`'\"]?(\\w+)[`'\"]?\\s*(?:不可用|不存在|未配置|找不到|无法访问|is\\s+not\\s+available|does\\s+not\\s+exist|is\\s+missing)",
+                Pattern.CASE_INSENSITIVE);
+        Matcher matcher = tableClaim.matcher(answer);
+        List<String> falseTables = new ArrayList<>();
+
+        while (matcher.find()) {
+            String claimedTable = matcher.group(1);
+            if (claimedTable != null && availableTables.contains(claimedTable.toLowerCase())) {
+                falseTables.add(claimedTable);
+            }
+        }
+
+        if (falseTables.isEmpty()) return null;
+
+        return "【系统校验纠正】你的 final_answer 中声称表 " + String.join(", ", falseTables)
+                + " 不可用/不存在，但系统已校验：这些表在数据源中确实存在，可正常查询。"
+                + " 0 行结果的原因是 WHERE/JOIN 条件不匹配，不是表结构缺失。"
+                + " 请修正你的诊断，基于实际查询结果重新输出 final_answer。"
+                + " 禁止将 0 行归因为\"表不可用\"或\"配置缺失\"。";
     }
 
     private String validateComputedFromChannels(List<Long> conceptIds, List<Map<String, Object>> messages) {
@@ -2054,13 +2236,6 @@ public class AgentService {
         messages.add(Map.of("role", "user", "content", result.toString()));
         data.put("next_action", "continue");
 
-        @SuppressWarnings("unchecked")
-        List<String> pending = (List<String>) data.get("pending_actions");
-        if (pending != null && !pending.isEmpty()) {
-            data.put("_force_llm_call", true);
-            agentDebug.info("[ENUM] enum results ready, forcing LLM call to incorporate actual data ({} pending actions will be discarded)", pending.size());
-        }
-
         agentDebug.info("[ENUM] routeGetEnumValues completed, fetched={}, whitelistSize={}", fetched, whitelist.size());
     }
 
@@ -2204,7 +2379,9 @@ public class AgentService {
                             nl2sqlToolCallId != null ? nl2sqlToolCallId : "", "content", authMsg));
                 } else {
                     data.put("sql_exec_count", sqlExecCount + 1);
-                    String resultSummary = sqlExecutionService.formatResult(queryResult);
+                    Long dsId = queryResult.containsKey("_datasourceId")
+                            ? ((Number) queryResult.get("_datasourceId")).longValue() : null;
+                    String resultSummary = sqlExecutionService.formatResult(queryResult, sql, dsId);
                     messages.add(Map.of("role", "tool", "tool_call_id",
                             nl2sqlToolCallId != null ? nl2sqlToolCallId : "", "content", resultSummary));
 
@@ -2225,6 +2402,9 @@ public class AgentService {
             }
 
             data.remove("pending_nl2sql");
+            @SuppressWarnings("unchecked")
+            List<String> pa = (List<String>) data.get("pending_actions");
+            agentDebug.info("[EXEC_RETURN] pending_actions after exec: {}", pa != null ? pa.size() : "null");
             return CompletableFuture.completedFuture(data);
         };
     }

@@ -125,10 +125,16 @@ public class AuthService {
     }
 
     private void saveSession(Long userId, String token) {
-        UserSession session = new UserSession();
-        session.setUserId(userId);
-        session.setToken(token);
-        session.setExpiresAt(LocalDateTime.now().plusDays(7));
-        userSessionRepository.save(session);
+        try {
+            UserSession session = new UserSession();
+            session.setUserId(userId);
+            session.setToken(token);
+            session.setExpiresAt(LocalDateTime.now().plusDays(7));
+            userSessionRepository.save(session);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            // 会话行非认证必需（JWT 自验证），唯一键冲突时忽略——登录不受影响
+            org.slf4j.LoggerFactory.getLogger(AuthService.class)
+                    .warn("Session save skipped (duplicate token): {}", e.getMessage());
+        }
     }
 }
