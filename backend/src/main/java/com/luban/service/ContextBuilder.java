@@ -40,6 +40,7 @@ public class ContextBuilder {
     private static final int MAX_CONCEPT_IDS = 10;
     private static final int MAX_API_TOOLS = 15;
     private static final double CONCEPT_INTERSECTION_THRESHOLD = 0.5;
+    private static final double FAISS_SCORE_RELATIVE_THRESHOLD = 0.9;
 
     public Map<String, Object> build(String sessionId, String userQuery,
             List<Map<String, Object>> messages, Long userId, String intent) {
@@ -52,6 +53,14 @@ public class ContextBuilder {
         List<ConceptJoinMapping> joinMappings = new ArrayList<>();
 
         List<Map<String, Object>> faissResults = searchConcepts(userQuery);
+        // 按相对分数阈值过滤低相关度概念，减少 prompt 体积
+        double maxScore = faissResults.stream()
+                .mapToDouble(r -> ((Number) r.getOrDefault("confidence", 0)).doubleValue())
+                .max().orElse(0);
+        double scoreThreshold = maxScore * FAISS_SCORE_RELATIVE_THRESHOLD;
+        faissResults = faissResults.stream()
+                .filter(r -> ((Number) r.getOrDefault("confidence", 0)).doubleValue() >= scoreThreshold)
+                .collect(Collectors.toList());
         List<Long> matchedConceptIds = faissResults.stream()
                 .map(r -> ((Number) r.get("conceptId")).longValue())
                 .collect(Collectors.toList());
@@ -652,6 +661,10 @@ public class ContextBuilder {
                         if (tables != null && !tables.isEmpty()) {
                             sb.append("### ").append(selName != null ? selName : ds.get("name")).append(" 表结构\n");
                             sb.append("| 表名 | 列名 | 类型 | 约束 | 注释 |\n|------|------|------|------|------|\n");
+                            // 只展示映射了的列，减少 prompt 体积
+                            Set<String> mappedColumns = tableMappings != null ? tableMappings.stream()
+                                    .map(ConceptMapping::getColumnName).filter(Objects::nonNull)
+                                    .collect(Collectors.toSet()) : Set.of();
                             for (Map<String, Object> table : tables) {
                                 String tableName = (String) table.get("name");
                                 if (selTables != null && !selTables.isEmpty() && !selTables.contains(tableName)) continue;
@@ -663,13 +676,16 @@ public class ContextBuilder {
                                         if (colObj instanceof Map) {
                                             @SuppressWarnings("unchecked")
                                             Map<String, Object> col = (Map<String, Object>) colObj;
-                                            sb.append("| ").append(first).append(" | `").append(col.get("name")).append("`")
+                                            String colName = (String) col.get("name");
+                                            if (!mappedColumns.isEmpty() && !mappedColumns.contains(colName)) continue;
+                                            sb.append("| ").append(first).append(" | `").append(colName).append("`")
                                                     .append(" | ").append(col.getOrDefault("type", "-"))
                                                     .append(" | ").append(Boolean.TRUE.equals(col.getOrDefault("nullable", true)) ? "NULL" : "NOT NULL")
                                                     .append(" | ").append(Objects.toString(col.getOrDefault("comment", ""), "-"))
                                                     .append(" |\n");
                                             first = "";
                                         } else if (colObj instanceof String) {
+                                            if (!mappedColumns.isEmpty() && !mappedColumns.contains(colObj)) continue;
                                             sb.append("| ").append(first).append(" | `").append(colObj).append("` | - | - | - |\n");
                                             first = "";
                                         }
@@ -684,7 +700,7 @@ public class ContextBuilder {
         }
 
         if (conceptTrace != null && !conceptTrace.isEmpty()) {
-            sb.append("## 语义层匹配的概念\n| 概念ID | 概念名 | 域ID | 域名 | 描述 | 深度 | 权限 | 映射状态 |\n|--------|--------|------|------|------|------|------|----------|\n");
+            sb.append("## 语义层匹配的概念\n| ID | 概念名 | 域 | 描述 | 映射 |\n|-----|--------|-----|------|------|\n");
             Set<Long> mappedConceptIds = tableMappings != null ? tableMappings.stream()
                     .map(ConceptMapping::getConceptId).collect(Collectors.toSet()) : Set.of();
             for (Map<String, Object> c : conceptTrace) {
@@ -692,15 +708,11 @@ public class ContextBuilder {
                 Object cid = c.get("conceptId");
                 Object gid = c.get("groupId");
                 String groupName = gid instanceof Number ? groupNameMap.getOrDefault(((Number) gid).longValue(), "-") : "-";
-                boolean authorized = cid instanceof Number && (authorizedConceptIds == null || authorizedConceptIds.isEmpty()
-                        || authorizedConceptIds.contains(((Number) cid).longValue()));
                 boolean hasMapping = cid instanceof Number && mappedConceptIds.contains(((Number) cid).longValue());
-                String mappingStatus = hasMapping ? "✅ 已映射" : "⚠️ 无映射";
                 sb.append("| ").append(c.get("conceptId")).append(" | ").append(c.get("conceptName"))
-                        .append(" | ").append(gid != null ? gid : "-").append(" | ").append(groupName)
-                        .append(" | ").append(c.getOrDefault("description", "-")).append(" | ").append(c.get("depth"))
-                        .append(" | ").append(authorized ? "[可用]" : "[无权限]")
-                        .append(" | ").append(mappingStatus).append(" |\n");
+                        .append(" | ").append(groupName)
+                        .append(" | ").append(c.getOrDefault("description", "-"))
+                        .append(" | ").append(hasMapping ? "已映射" : "无映射").append(" |\n");
             }
             sb.append("\n");
             // 标记无映射的概念

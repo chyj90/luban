@@ -106,7 +106,7 @@ public class AgentService {
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_IDLE_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(300);
-    private static final long AGENT_TOTAL_TIMEOUT_MS = 180_000;
+    private static final long AGENT_TOTAL_TIMEOUT_MS = 300_000;
     private static final int AGENT_CONCURRENT_LIMIT = 5;
 
     private static final int MAX_CONCEPT_EXPAND = 20;
@@ -786,6 +786,13 @@ public class AgentService {
                         iteration, pendingActions != null ? pendingActions.size() : 0);
             }
             if (parsed == null) {
+                boolean staleAnswer = Boolean.TRUE.equals(data.remove("_final_answer_stale"));
+                if (staleAnswer) {
+                    messages.add(Map.of("role", "system", "content",
+                            "所有数据查询已完成，请仔细查看上述每条查询结果（包括 tool 消息中的返回数据），"
+                            + "基于实际数据生成 final_answer。不要再进行新的查询，直接输出 final_answer。"));
+                    agentDebug.info("[STALE_FINAL] iter={}, add hint to re-generate final_answer based on actual results", iteration);
+                }
                 int sqlExecCount = (int) data.getOrDefault("sql_exec_count", 0);
                 if (sqlExecCount >= MAX_DRILL_ROUNDS) {
                     parsed = handleMaxDrillSummary(data, messages, config, sessionId, userId, intent);
@@ -1197,6 +1204,8 @@ public class AgentService {
                 });
                 messages.add(Map.of("role", "system", "content",
                         "不要在数据查询未完成时输出 final_answer。请等待所有查询结果返回后，基于实际数据做出回答。"));
+                data.put("_final_answer_stale", true);
+                agentDebug.info("[QUEUE] removed final_answer from pending, set _final_answer_stale=true");
                 log.info("Agent iteration {}: removed final_answer from pending queue (data-gathering actions present)",
                         data.get("iteration"));
             }
@@ -2232,7 +2241,10 @@ public class AgentService {
         if (fetched == 0) {
             result.append("未能获取到任何枚举值，请检查表和列名是否正确。");
         }
-        result.append("\n请继续使用 ontology_action 生成本体变更，JOIN 条件中的字符串值必须来自上述返回的实际值。");
+        String intent = (String) data.getOrDefault("intent", "query");
+        if ("ontology".equals(intent)) {
+            result.append("\n请继续使用 ontology_action 生成本体变更，JOIN 条件中的字符串值必须来自上述返回的实际值。");
+        }
         messages.add(Map.of("role", "user", "content", result.toString()));
         data.put("next_action", "continue");
 
@@ -3467,7 +3479,7 @@ public class AgentService {
         if (isAdmin) {
             sb.append("你有八种方式回答用户问题：\n");
             sb.append("1. 调用 API 工具获取数据\n");
-            sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 和 ontology_action 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
+            sb.append("2. 获取枚举列实际值（get_enum_values，**在 nl2sql 前必须执行**，验证 SQL WHERE 条件中字符串右值对应的列是否有数据，无数据时直接 final_answer 告知用户）\n");
             sb.append("3. 生成 SQL 查询数据库（仅限 SELECT，**仅当 get_enum_values 确认所有右值列有数据时才执行**，禁止臆造右值）\n");
             sb.append("4. 调用企业算法（algorithm，**前置检验全部通过后才可调用**，单次对话同一算法最多执行 1 次）\n");
             sb.append("5. 执行 Python 代码分析数据（code_mode）\n");
@@ -3500,29 +3512,20 @@ public class AgentService {
         sb.append("- 同一动作（相同 type+SQL 或相同参数）禁止生成两次；某查询已执行且无新信息时，应推进分析或输出 final_answer\n");
         sb.append("- 算法执行失败时，系统会提供降级建议，可按建议使用 code_mode 或 final_answer\n\n");
 
-        sb.append("请根据上下文信息选择最合适的方式，并在 reasoning 中说明你的推理过程。\n");
+        sb.append("请根据上下文信息选择最合适的方式，reasoning 字段请控制在 200 字以内，简明扼要。\n");
         sb.append("所有回复必须严格按照 JSON 格式，不要添加额外文本。\n");
         sb.append("如需同时调用多个工具（如 get_table_schema + get_enum_values），可一次输出多个 JSON 对象，系统会依次执行并返回所有结果。\n");
         sb.append("不要预设后续步骤，不要在一次回复中输出过多 action。\n");
         sb.append("## 表格格式规范\n");
         sb.append("final_answer 的 answer 字段中需要展示表格时，必须使用 Markdown 表格（管道符 | 分隔），禁止 Tab 字符。\n\n");
         sb.append("## 下钻分析规则\n");
-        sb.append("上文中出现「可下钻维度」表格时，说明当前查询结果可进一步按子维度拆解分析。\n");
-        sb.append("**重要：请自动继续下钻，不要停在 final_answer 给建议。**\n");
-        sb.append("每次 SQL 查询得到结果后，如果发现数据异常（超过阈值）或值得深入分析，\n");
-        sb.append("应立即生成**一个** nl2sql 继续下钻到子维度，等待结果，而不是一次性输出多个 nl2sql 或跳去 final_answer。\n");
-        sb.append("**下钻必须严格按照「可下钻维度」表格中列出的维度链依次进行，每次只走一步，不要跳步。**\n");
-        sb.append("只有当所有可下钻维度都已分析完毕、数据无明显异常无需继续、或 SQL 连续返回 0 行无法继续时，才使用 final_answer 总结根因。\n");
-        sb.append("final_answer 中如需总结已分析的下钻路径，以 `[drill_suggestions]` 为标记。\n");
-        sb.append("如果维度有异常阈值，且当前查询结果触发了阈值，必须在 reasoning 中明确指出异常。\n");
-        sb.append("例如：「订单量环比下降15%，超过10%阈值，继续按渠道下钻分析」。\n\n");
+        sb.append("上文中出现「可下钻维度」表格时，按维度链依次下钻，每次只走一步，遇异常阈值必须继续。\n");
+        sb.append("所有维度分析完毕或无异常时，才输出 final_answer。\n");
+        sb.append("final_answer 中如需总结已分析的下钻路径，以 `[drill_suggestions]` 为标记。\n\n");
         sb.append("## 关联维度交叉验证规则\n");
-        sb.append("上文中出现「关联维度（交叉验证）」表格时，说明存在与当前概念相关联的维度，需要交叉验证以排除干扰因素。\n");
-        sb.append("**在完成所有下钻维度分析后、输出 final_answer 之前，对每个关联维度逐个生成一个 nl2sql 进行交叉验证，每次只验证一个，等待结果后再验证下一个。**\n");
-        sb.append("关联维度的用途是确认根因是否由该维度变化导致，例如：\n");
-        sb.append("- 客诉率上升 → 检查订单量是否暴涨（如果是，则客诉率的上升可能是分母变大导致，而非真实客诉变多）\n");
-        sb.append("- 退货率上升 → 检查销量是否暴涨（如果是，则退货率的上升可能是分母变大导致）\n");
-        sb.append("关联维度验证完毕后，在 final_answer 的 evidence 中包含关联维度的验证结果，并标注 anomaly 为 false（除非关联维度本身也异常）。\n\n");
+        sb.append("上文中出现「关联维度（交叉验证）」表格时，在下钻完成后逐个验证关联维度，每次只验证一个。\n");
+        sb.append("关联维度用于排除分母变化导致的假异常（如客诉率上升可能是订单量暴涨导致）。\n");
+        sb.append("验证完毕后，在 final_answer 的 evidence 中包含关联维度的验证结果。\n\n");
         sb.append("## 根因分析输出规范\n");
         sb.append("final_answer 必须包含 evidence 证据链和 root_cause 根因总结。\n");
         sb.append("root_cause 为结构化对象：summary 为整体结论，items 中每个受影响实体独立描述其故障。\n");

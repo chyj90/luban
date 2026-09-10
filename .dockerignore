@@ -1,0 +1,55 @@
+# ============================================================
+# Docker build ignore - 排除不需要进入构建上下文的文件
+# ============================================================
+
+# Java / Maven
+**/target/
+**/.mvn/
+**/mvnw
+**/mvnw.cmd
+*.class
+*.jar
+*.war
+
+# Node / Frontend
+**/node_modules/
+**/dist/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+
+# IDE
+**/.idea/
+**/.vscode/
+**/.DS_Store
+**/*.swp
+**/*.swo
+
+# Git
+**/.git/
+**/.gitignore
+
+# Logs
+**/*.log
+**/logs/
+
+# Environment files (keep .env.docker)
+**/.env
+!**/.env.example
+!**/.env.docker
+
+# Sensitive
+**/*.pem
+**/*.key
+
+# Docker
+**/Dockerfile*
+**/docker-compose*
+
+# Test / Debug
+**/bug-*.log
+**/test/
+**/backups/

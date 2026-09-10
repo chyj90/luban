@@ -1,0 +1,93 @@
+# ============================================================
+# Stage 1: Build Java Backend
+# ============================================================
+FROM maven:3.9-eclipse-temurin-21-alpine AS java-build
+
+WORKDIR /build
+COPY backend/pom.xml .
+RUN mvn dependency:go-offline -B -q || true
+COPY backend/src ./src
+COPY backend/org ./org
+RUN mvn package -DskipTests -B -q
+
+# ============================================================
+# Stage 2: Build Frontend
+# ============================================================
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ .
+RUN npm run build
+
+# ============================================================
+# Stage 3: All-in-One Runtime
+# ============================================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Shanghai \
+    LANG=C.UTF-8
+
+# ---------- 安装系统依赖 ----------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # MySQL 8.0
+    mysql-server \
+    # Java 21 JRE
+    openjdk-21-jre-headless \
+    # Python 3.11
+    python3.11 python3.11-venv python3.11-dev python3-pip \
+    # Nginx
+    nginx \
+    # 进程管理
+    supervisor \
+    # 工具
+    curl netcat openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------- 设置 Python ----------
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && python3 -m pip install --no-cache-dir --upgrade pip
+
+# ---------- 安装 Python 依赖 & 预下载模型 ----------
+COPY embedding-service/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
+
+ENV HF_ENDPOINT=https://hf-mirror.com \
+    EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" || true
+
+# ---------- 复制 Embedding 服务 ----------
+COPY embedding-service/embedding_server.py /app/embedding/embedding_server.py
+COPY embedding-service/sandbox_manager.py /app/embedding/sandbox_manager.py
+
+# ---------- 复制 Java 后端 ----------
+COPY --from=java-build /build/target/*.jar /app/backend/app.jar
+COPY backend/algorithms /app/backend/algorithms
+COPY backend/drivers /app/backend/drivers
+
+# ---------- 复制前端 ----------
+COPY --from=frontend-build /build/dist /app/frontend/dist
+
+# ---------- 复制启动脚本和配置 ----------
+COPY scripts/docker-entrypoint.sh /entrypoint.sh
+COPY scripts/supervisord.conf /etc/supervisor/conf.d/luban.conf
+COPY scripts/nginx.conf /etc/nginx/sites-available/default
+
+RUN chmod +x /entrypoint.sh
+
+# ---------- 清理 ----------
+RUN rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache/pip
+
+# ---------- 创建数据目录 ----------
+RUN mkdir -p /app/data/mysql /app/data/logs /app/data/algorithms \
+    && chown -R www-data:www-data /app/frontend
+
+EXPOSE 80 8080 8765 3306
+
+VOLUME ["/app/data"]
+
+ENTRYPOINT ["/entrypoint.sh"]
