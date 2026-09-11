@@ -11,7 +11,8 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-luban123}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-luban}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      # 调试时可取消注释
+      # - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       # 可选：自动初始化 SQL 脚本
@@ -38,10 +39,11 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
     ports:
-      - "${EMBEDDING_PORT:-8765}:8765"
+      # 调试时可取消注释
+      # - "${EMBEDDING_PORT:-8765}:8765"
     volumes:
       # 持久化模型缓存，避免重启重新下载
-      - embedding_cache:/root/.cache
+      - embedding_cache:/home/luban/.cache
     networks:
       - luban-net
     restart: unless-stopped
@@ -70,11 +72,14 @@ services:
       - LUBAN_RSA_PRIVATE_KEY=${LUBAN_RSA_PRIVATE_KEY:-}
       # Embedding 服务地址
       - LUBAN_EMBEDDING_BASE_URL=http://embedding:8765
+      # 沙箱模式（Docker 容器内默认关闭，使用直接 subprocess 执行）
+      - SANDBOX_ENABLED=false
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      # 调试时可取消注释
+      # - "${BACKEND_PORT:-8080}:8080"
     volumes:
       - backend_logs:/app/logs
-      - backend_algorithms:/app/algorithms
+      - backend_secrets:/app/secrets
     networks:
       - luban-net
     restart: unless-stopped
@@ -99,7 +104,7 @@ volumes:
   mysql_data:
   embedding_cache:
   backend_logs:
-  backend_algorithms:
+  backend_secrets:
 
 networks:
   luban-net:

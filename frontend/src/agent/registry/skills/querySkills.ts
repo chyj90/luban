@@ -249,9 +249,9 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     id: 'query:execute',
     category: SkillCategory.QUERY,
     name: 'execute_sql',
-    description: `直接执行任意 SQL 语句（仅限 SELECT/INSERT/UPDATE/DELETE），不经过模板解析。
+    description: `直接执行 SQL 语句，不经过模板解析。
 用于插入数据（INSERT）、更新数据（UPDATE）、删除数据（DELETE）等操作。
-⚠️ 禁止执行 DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME），建表请在数据源管理面板手动操作。
+⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）会被后端拦截并返回失败，但可以先尝试执行。若被拦截，需生成 SQL 供用户手动执行。
 返回查询结果（SELECT）或影响行数（DML）。
 支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
 批量模式返回每条语句的执行结果数组。`,

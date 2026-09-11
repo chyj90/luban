@@ -5,6 +5,12 @@
   overflow: hidden;
 }
 
+.api-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
 .api-panel-header {
   display: flex;
   align-items: center;

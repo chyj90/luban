@@ -8,4 +8,5 @@ import java.util.Optional;
 
 public interface OrchestrationVersionRepository extends JpaRepository<OrchestrationVersion, Long> {
     Optional<OrchestrationVersion> findByDefinitionIdAndVersion(Long definitionId, Integer version);
+    void deleteAllByDefinitionId(Long definitionId);
 }

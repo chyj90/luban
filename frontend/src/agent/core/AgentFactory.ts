@@ -106,9 +106,15 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
   const tools = overrideTools || [];
 
   const name = agentName || '主智能体';
+
   const icon = agentIcon || '';
 
   const stateMachine = isMainAgent ? createAgentStateMachine() : undefined;
+
+  let interventionPending = false;
+  let interventionReason = '';
+
+  let lastAssistantContent = '';
 
   return {
     async run(userMessage: string): Promise<void> {
@@ -296,6 +302,9 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               agentIcon: icon,
             };
             addMessage(enrichedMsg);
+            if (msg.role === 'assistant' && msg.content) {
+              lastAssistantContent = msg.content;
+            }
           },
           onPlanCreate: (plan) => {
             addPlan(plan);
@@ -332,6 +341,15 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
               );
               updateMessage(messageId, { toolCalls: updatedToolCalls });
             }
+            // 结构化干预捕获：delegate_query 返回 interventionRequired 时设置标记
+            if (toolName === 'delegate_query' && result.success) {
+              const delegateData = result.data as Record<string, unknown> | undefined;
+              if (delegateData?.interventionRequired === true) {
+                interventionPending = true;
+                interventionReason = (delegateData?.interventionReason as string) || '';
+                console.log(`[AgentFactory:${name}] 捕获干预标记：${interventionReason.slice(0, 60)}`);
+              }
+            }
           },
           onError: (error) => {
             setError(error);
@@ -356,6 +374,14 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             if (!isMainAgent) {
               return { shouldContinue: false };
             }
+
+            // 结构化干预检测：delegate_query 返回 interventionRequired 时设置标记，
+            // 主智能体输出后应停止而非强制继续
+            if (interventionPending) {
+              console.log(`[AgentFactory:${name}] 拦截退出：子智能体等待用户手动操作 → ${interventionReason.slice(0, 60)}`);
+              return { shouldContinue: false };
+            }
+
             const store = useAgentStore.getState();
             const activePlans = store.plans.filter(
               (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
@@ -374,6 +400,22 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
                 };
               }
             }
+
+            // 代码级兜底：检测到输出分析报告但未调用 submit_analysis，强制继续
+            if (store.plans.length === 0 && stateMachine && stateMachine.state === AgentState.IDLE && lastAssistantContent) {
+              const hasReportTitle = /#+\s*需求分析报告/.test(lastAssistantContent);
+              const chapterMatches = lastAssistantContent.match(/##\s*\d+\./g) || [];
+              const chapterCount = new Set(chapterMatches.map((m: string) => m.trim())).size;
+              const looksLikeAnalysis = hasReportTitle && chapterCount >= 4;
+              if (looksLikeAnalysis) {
+                console.log(`[AgentFactory:${name}] 检测到分析报告（${chapterCount} 个章节）但未调用 submit_analysis，强制注入提醒`);
+                return {
+                  shouldContinue: true,
+                  message: '⚠️ 你已输出需求分析报告，但未调用 submit_analysis 提交结构化数据。请立即在本次回复中调用 submit_analysis 工具（只输出工具调用，不要输出其他文本），否则计划无法生成。',
+                };
+              }
+            }
+
             return { shouldContinue: false };
           },
         });
@@ -393,17 +435,21 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
             const runningSteps = plan.steps.filter((s) => s.status === 'running');
             if (pendingSteps.length > 0 || runningSteps.length > 0) {
-              console.warn(`[AgentFactory:${name}] 循环结束但计划未完成："${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成、${runningSteps.length} 个执行中，标记为 stopped`);
-              store.updatePlan(plan.id, { status: 'stopped' });
-              addMessage({
-                id: crypto.randomUUID(),
-                role: 'system',
-                content: `⚠️ 任务异常结束：计划 "${plan.agentName}" 仍有 ${pendingSteps.length + runningSteps.length} 个步骤未完成。`,
-                timestamp: Date.now(),
-                agentId: agentId || 'main-agent',
-                agentName: name,
-                agentIcon: icon,
-              });
+              if (interventionPending) {
+                console.log(`[AgentFactory:${name}] 人工介入待处理，计划保持 executing 状态`);
+              } else {
+                console.warn(`[AgentFactory:${name}] 循环结束但计划未完成："${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成、${runningSteps.length} 个执行中，标记为 stopped`);
+                store.updatePlan(plan.id, { status: 'stopped' });
+                addMessage({
+                  id: crypto.randomUUID(),
+                  role: 'system',
+                  content: `⚠️ 任务异常结束：计划 "${plan.agentName}" 仍有 ${pendingSteps.length + runningSteps.length} 个步骤未完成。`,
+                  timestamp: Date.now(),
+                  agentId: agentId || 'main-agent',
+                  agentName: name,
+                  agentIcon: icon,
+                });
+              }
             } else {
               store.updatePlan(plan.id, { status: 'completed' });
             }

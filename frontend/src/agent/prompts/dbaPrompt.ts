@@ -44,7 +44,11 @@ ${ctx.requirement}
 
 #### SQL 查询流程
 1. 先调用 fetch_datasource_structure 检查表结构（对话历史中已有 datasourceId 则直接调用，否则先 list_datasources → test_datasource）
-2. 确认表结构满足需求。**禁止 CREATE TABLE / ALTER TABLE / DROP TABLE 等 DDL 操作**，只能使用已有表，建表请在数据源管理面板手动操作
+2. 确认表结构是否满足需求：
+   - 已有表能满足需求 → 直接使用
+   - 需要创建新表 → 先调用 execute_sql 尝试执行 CREATE TABLE：
+     - 执行成功 → 继续后续操作（插入数据、创建查询等）
+     - 执行失败（后端拦截返回错误）→ **降级处理**：在回复中输出完整的建表 SQL，告知用户"请在数据源管理面板手动执行以下 SQL"，然后等待用户确认建表完成后再继续
 3. 如需插入数据，使用 execute_sql 执行 INSERT
 4. 先调用 list_queries 检查是否存在同名查询，若存在则复用已有查询，直接 run_query 测试
 5. 若不存在则创建查询（英文驼峰命名），用 run_query 执行测试
@@ -97,11 +101,12 @@ ${ctx.requirement}
 - 在查询 description 中注明"统计取自任一行的 stats 字段（JSON 字符串），前端取第一行解析"，方便页面代码正确消费
 
 ### 列长度与类型错误处理
-- 遇到 \`Data truncated for column\` 错误时，直接 ALTER TABLE 扩容列长度或改为更宽松的类型：
+- 遇到 \`Data truncated for column\` 错误时，先尝试用 execute_sql 执行 ALTER TABLE 扩容：
   - 字符串列扩容：ALTER TABLE xxx MODIFY COLUMN yyy VARCHAR(500)
   - ENUM 值不匹配时：将 ENUM 改为 VARCHAR(500)
   - 数字溢出：将 INT 改为 BIGINT，或 DECIMAL(10,2) 改为 DECIMAL(18,2)
 - 同一列扩容最多尝试 2 次，第 2 次直接用 VARCHAR(500)
+- 若 execute_sql 执行 ALTER TABLE 被后端拦截，则生成 ALTER TABLE SQL 告知用户手动执行
 
 ### 动态 SQL 标签（OGNL 表达式）
 - 支持 ${'<'}if test="..."${'>'}、${'<'}where${'>'}、${'<'}set${'>'}、${'<'}foreach${'>'} 标签，统一使用 this.params.X 访问参数

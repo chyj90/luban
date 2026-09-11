@@ -85,7 +85,7 @@
 
 .apphub-hero h2 {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
   color: #1a202c;
   letter-spacing: -0.3px;
@@ -93,7 +93,7 @@
 
 .apphub-hero p {
   margin: 0 0 32px;
-  font-size: 15px;
+  font-size: 13px;
   color: #5a6a7e;
   line-height: 1.6;
 }
@@ -115,6 +115,8 @@
 }
 
 .apphub-hero-btn:hover {
+  background: linear-gradient(135deg, #4096ff, #1677ff);
+  color: #fff;
   transform: translateY(-2px);
   box-shadow: 0 8px 20px rgba(22, 119, 255, 0.4);
 }
@@ -165,6 +167,8 @@
 }
 
 .apphub-btn-confirm:hover {
+  background: linear-gradient(135deg, #4096ff, #1677ff);
+  color: #fff;
   box-shadow: 0 2px 8px rgba(22, 119, 255, 0.3);
 }
 

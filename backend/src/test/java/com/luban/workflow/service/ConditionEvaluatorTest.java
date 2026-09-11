@@ -3,6 +3,7 @@ package com.luban.workflow.service;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,5 +60,72 @@ class ConditionEvaluatorTest {
         // 表单字段即使以字符串存储（"5"），数字比较也按数值判定
         assertThat(ConditionEvaluator.evaluate("leaveDays > 3", form("leaveDays", "5"))).isTrue();
         assertThat(ConditionEvaluator.evaluate("leaveDays > 3", form("leaveDays", "2"))).isFalse();
+    }
+
+    @Test
+    void nestedObjectPath() {
+        Map<String, Object> user = new HashMap<>();
+        user.put("name", "张三");
+        user.put("age", 30);
+        user.put("vip", true);
+        assertThat(ConditionEvaluator.evaluate("user.name == '张三'", form("user", user))).isTrue();
+        assertThat(ConditionEvaluator.evaluate("user.name == '李四'", form("user", user))).isFalse();
+        assertThat(ConditionEvaluator.evaluate("user.age > 20", form("user", user))).isTrue();
+    }
+
+    @Test
+    void arrayIndexPath() {
+        Map<String, Object> row0 = Map.of("name", "张三", "amount", 500);
+        Map<String, Object> row1 = Map.of("name", "李四", "amount", 2000);
+        Map<String, Object> data = Map.of("rows", List.of(row0, row1));
+        assertThat(ConditionEvaluator.evaluate("rows[0].name == '张三'", data)).isTrue();
+        assertThat(ConditionEvaluator.evaluate("rows[1].name == '张三'", data)).isFalse();
+        assertThat(ConditionEvaluator.evaluate("rows[0].amount >= 500", data)).isTrue();
+        assertThat(ConditionEvaluator.evaluate("rows[1].amount >= 1000", data)).isTrue();
+        // 也支持点分隔的数组索引：rows.1.amount
+        assertThat(ConditionEvaluator.evaluate("rows.1.amount > 1000", data)).isTrue();
+        assertThat(ConditionEvaluator.evaluate("rows.0.amount < 100", data)).isFalse();
+    }
+
+    @Test
+    void multiLevelNesting() {
+        Map<String, Object> addr = Map.of("city", "杭州", "zip", "310000");
+        Map<String, Object> user = Map.of("profile", Map.of("address", addr));
+        Map<String, Object> wrapper = Map.of("data", user);
+        assertThat(ConditionEvaluator.evaluate("data.profile.address.city == '杭州'", wrapper)).isTrue();
+        assertThat(ConditionEvaluator.evaluate("data.profile.address.city == '北京'", wrapper)).isFalse();
+    }
+
+    @Test
+    void invalidPathReturnsFalse() {
+        Map<String, Object> user = Map.of("name", "张三");
+        // 路径不存在 → null → 无法数字比较 → false
+        assertThat(ConditionEvaluator.evaluate("user.age > 20", form("user", user))).isFalse();
+        // 路径中途不是对象也不是数组 → null → false
+        assertThat(ConditionEvaluator.evaluate("user.name.length > 0", form("user", user))).isFalse();
+    }
+
+    @Test
+    void rightSideFieldReference() {
+        // 右值也是字段引用：当前分数 >= 分数线
+        assertThat(ConditionEvaluator.evaluate("score >= passLine", form("score", 85, "passLine", 60))).isTrue();
+        assertThat(ConditionEvaluator.evaluate("score >= passLine", form("score", 50, "passLine", 60))).isFalse();
+    }
+
+    @Test
+    void rightSideNestedFieldReference() {
+        Map<String, Object> user1 = Map.of("name", "张三", "dept", "A");
+        Map<String, Object> user2 = Map.of("name", "张三", "dept", "B");
+        // 比较两个嵌套字段是否相等
+        assertThat(ConditionEvaluator.evaluate("user1.name == user2.name", Map.of("user1", user1, "user2", user2))).isTrue();
+        assertThat(ConditionEvaluator.evaluate("user1.dept == user2.dept", Map.of("user1", user1, "user2", user2))).isFalse();
+    }
+
+    @Test
+    void mixedLiteralAndFieldRef() {
+        // 左值字段引用 vs 右值字面量（原有行为不变）
+        assertThat(ConditionEvaluator.evaluate("age > 18", form("age", 20))).isTrue();
+        // 右值字段引用 vs 左值字面量 —— 字面量必须在右，左值必须是字段名
+        assertThat(ConditionEvaluator.evaluate("age >= minAge", form("age", 65, "minAge", 60))).isTrue();
     }
 }

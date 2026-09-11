@@ -11,6 +11,7 @@ import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.ToolDefinition;
+import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.entity.ToolGroup;
 import com.luban.executor.HttpExecutor;
 import com.luban.executor.McpExecutor;
@@ -62,6 +63,7 @@ public class AgentService {
     private final ToolGroupRepository toolGroupRepository;
     private final HttpExecutor httpExecutor;
     private final McpExecutor mcpExecutor;
+    private final com.luban.orchestration.service.OrchestrationService orchestrationService;
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptRelationRepository conceptRelationRepository;
@@ -131,6 +133,7 @@ public class AgentService {
                         ToolGroupRepository toolGroupRepository,
                         HttpExecutor httpExecutor,
                         McpExecutor mcpExecutor,
+                        com.luban.orchestration.service.OrchestrationService orchestrationService,
                         ConceptMappingRepository conceptMappingRepository,
                         ConceptJoinMappingRepository conceptJoinMappingRepository,
                         ConceptRelationRepository conceptRelationRepository,
@@ -153,6 +156,7 @@ public class AgentService {
         this.toolGroupRepository = toolGroupRepository;
         this.httpExecutor = httpExecutor;
         this.mcpExecutor = mcpExecutor;
+        this.orchestrationService = orchestrationService;
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
         this.conceptRelationRepository = conceptRelationRepository;
@@ -3647,6 +3651,15 @@ public class AgentService {
             return switch (toolType) {
                 case HTTP -> httpExecutor.execute(tool, arguments, "agent");
                 case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
+                case ORCHESTRATION -> {
+                    var orchConfig = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                            tool.getConfig() == null ? "{}" : tool.getConfig(),
+                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+                    long orchDefId = ((Number) orchConfig.getOrDefault("orchestrationId", 0)).longValue();
+                    Map<String, Object> orchResult = orchestrationService.execute(
+                            orchDefId, null, OrchestrationExecution.TRIGGER_RUNTIME, null, arguments);
+                    yield new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(orchResult);
+                }
                 case ALGORITHM -> {
                     com.luban.service.algorithm.AlgorithmConfig algoConfig = com.luban.service.algorithm.AlgorithmConfig.parse(tool.getConfig());
                     if (algoConfig.getScriptPath() == null || algoConfig.getScriptPath().isBlank()) {

@@ -379,3 +379,17 @@ CREATE TABLE orchestration_executions (
 - M4 可视化编辑器：React Flow 画布 + 节点面板 + 属性抽屉（Python 用 Monaco）+ lint 面板 + 试运行视图 + 版本时间线；
 - M5 智能编排：orchestration-assistant（agentRegistry + delegate_orchestration skill + grounding 强制引用真实 queryId/toolId + outcomes 回传）+ agent:check 扩展；
 - M6 数据面增强：频控（per-Key QPS/日配额）+ 并发上限 + orchestration-security-smoke.sh（SSRF/越权/频控矩阵）。
+
+---
+
+## 附录 B：入口迁移到应用内（v1.2，2026-09-10，按用户归属模型修正）
+
+**归属模型定稿**：编排是**应用内资源**，与 query/API/流程同级——编排过程可引用的资源（query、数据源、API 工具、流程定义）也限定在应用范围内；入口从"系统配置"迁入**应用开发 → 进入应用**。
+
+| 变更 | 说明 |
+|------|------|
+| 路由 | 新增 `/apps/:appId/orchestrations`（列表+新建）与 `/apps/:appId/orchestrations/:orchId`（编辑器），appId 从路由取（删手填），处于 `AppAccessGate` 保护内 |
+| 编辑器 | OrchestrationBuilderPage 双视图：列表视图（应用内编排清单）+ 编辑器视图；入口在 AppEditorPage 侧边栏"流程管理"区（"API 编排 ↗"） |
+| /connect 移除 | 删除 /connect/orchestrations 路由与入口（编排不是平台级配置） |
+| 消费面不变 | 发布后仍注册为 ToolDefinition（应用内 runTool / 外部授权 Key invoke） |
+| 权限 | AppAccess 按 applicationId 判定（owner/app:develop/app:manage），AppAccessGate 挡非成员 |

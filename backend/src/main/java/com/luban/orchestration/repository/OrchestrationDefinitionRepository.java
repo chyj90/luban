@@ -7,5 +7,5 @@ import java.util.List;
 import java.util.Optional;
 
 public interface OrchestrationDefinitionRepository extends JpaRepository<OrchestrationDefinition, Long> {
-    List<OrchestrationDefinition> findByApplicationIdOrderByUpdatedAtDesc(Long applicationId);
+    List<OrchestrationDefinition> findByApplicationIdAndStatusNotOrderByUpdatedAtDesc(Long applicationId, String status);
 }

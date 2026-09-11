@@ -1,51 +1,49 @@
 #!/bin/bash
 # ============================================================
-# Luban All-in-One 镜像构建 & 导出脚本
+# Luban All-in-One 镜像构建脚本
+# 自动从 .env 文件读取大模型配置，通过 --build-arg 传入
 # ============================================================
 set -e
 
-IMAGE_NAME="${IMAGE_NAME:-luban}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-EXPORT_FILE="${EXPORT_FILE:-luban-image.tar}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+ENV_FILE="$PROJECT_DIR/.env"
+ENV_TEMPLATE="$PROJECT_DIR/.env.docker"
 
-cd "$(dirname "$0")/.."
+# ---------- 检查 .env 是否存在 ----------
+if [ ! -f "$ENV_FILE" ]; then
+    echo "[build] 未找到 .env 文件"
+    echo "[build] 请先复制模板: cp .env.docker .env"
+    echo "[build] 然后编辑 .env 填写你的 LUBAN_LLM_API_KEY"
+    exit 1
+fi
 
-echo "=========================================="
-echo " Luban All-in-One 镜像构建"
-echo "=========================================="
-echo " 镜像名称: ${IMAGE_NAME}:${IMAGE_TAG}"
-echo " 导出文件: ${EXPORT_FILE}"
-echo ""
+# ---------- 加载 .env ----------
+echo "[build] 加载配置: $ENV_FILE"
+set -a
+source "$ENV_FILE"
+set +a
 
-# 构建镜像
-echo "[1/2] 构建 Docker 镜像..."
-docker build -f Dockerfile.allinone -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+# ---------- 检查必需变量 ----------
+if [ -z "$LUBAN_LLM_API_KEY" ] || [ "$LUBAN_LLM_API_KEY" = "sk-your-api-key-here" ]; then
+    echo "[build] 错误: 请在 .env 中设置 LUBAN_LLM_API_KEY"
+    exit 1
+fi
 
-# 导出为 tar 文件
-echo ""
-echo "[2/2] 导出镜像为 ${EXPORT_FILE}..."
-docker save -o "${EXPORT_FILE}" "${IMAGE_NAME}:${IMAGE_TAG}"
+# ---------- 构建 build-arg ----------
+BUILD_ARGS=""
+[ -n "$LUBAN_LLM_API_KEY" ] && BUILD_ARGS="$BUILD_ARGS --build-arg LUBAN_LLM_API_KEY=$LUBAN_LLM_API_KEY"
+[ -n "$LUBAN_LLM_ENDPOINT" ] && BUILD_ARGS="$BUILD_ARGS --build-arg LUBAN_LLM_ENDPOINT=$LUBAN_LLM_ENDPOINT"
+[ -n "$LUBAN_LLM_MODEL" ] && BUILD_ARGS="$BUILD_ARGS --build-arg LUBAN_LLM_MODEL=$LUBAN_LLM_MODEL"
 
-# 显示大小
-SIZE=$(ls -lh "${EXPORT_FILE}" | awk '{print $5}')
-echo ""
-echo "=========================================="
-echo " 完成！"
-echo " 镜像: ${IMAGE_NAME}:${IMAGE_TAG}"
-echo " 文件: ${EXPORT_FILE} (${SIZE})"
-echo "=========================================="
-echo ""
-echo "--- 分发给其他人 ---"
-echo ""
-echo "方式一：上传到 Docker Hub"
-echo "  docker tag ${IMAGE_NAME}:${IMAGE_TAG} your-username/${IMAGE_NAME}:${IMAGE_TAG}"
-echo "  docker push your-username/${IMAGE_NAME}:${IMAGE_TAG}"
-echo ""
-echo "方式二：U 盘拷贝"
-echo "  将 ${EXPORT_FILE} 拷贝到 U 盘，对方执行："
-echo "  docker load -i ${EXPORT_FILE}"
-echo "  docker run -d --name luban -p 80:80 -v luban-data:/app/data ${IMAGE_NAME}:${IMAGE_TAG}"
-echo ""
-echo "--- 本地运行 ---"
-echo "  docker run -d --name luban -p 80:80 -v luban-data:/app/data ${IMAGE_NAME}:${IMAGE_TAG}"
-echo "  访问 http://localhost 登录，默认账号 root@luban.local / 123456"
+echo "[build] 开始构建镜像: luban:latest"
+echo "[build] 模型: $LUBAN_LLM_MODEL"
+echo "[build] 端点: $LUBAN_LLM_ENDPOINT"
+
+docker build \
+    -f "$PROJECT_DIR/Dockerfile.allinone" \
+    -t luban:latest \
+    $BUILD_ARGS \
+    "$PROJECT_DIR"
+
+echo "[build] 构建完成: luban:latest"

@@ -84,6 +84,12 @@ ${getFindWorkflowSkillSummary()}
 ## 执行规则
 - 按计划步骤顺序执行，每步用 update_plan_item 标记状态，完成后 validate_plan
 - ⚠️ **禁止跳过执行直接标记**：update_plan_item 仅用于标记已实际完成的步骤。必须先调用步骤对应的工具（delegate_query/delegate_workflow/create_code_page/update_code_page），确认执行成功后，再用 update_plan_item 标记完成。**严禁在未调用工具的情况下直接标记步骤为 completed**。系统返回"步骤 N 已自动标记为 in_progress"表示该步骤已就绪，你需要立即调用对应的工具去执行它，而不是用 update_plan_item 跳过
+- **用户介入阻断**：delegate_query 返回结果的 data 中如果包含 interventionRequired: true，说明子智能体需要用户手动操作（如建表 DDL 被拦截），此时必须：
+  1. 将子智能体的请求原样转达给用户
+  2. **不要标记该步骤为 completed**
+  3. **立即停止**，不要继续执行后续步骤，不要调任何工具
+  4. 等用户完成手动操作并回复确认后，再继续
+  - 违反此规则的典型错误：DBA 返回 interventionRequired → 主智能体转达后立刻跳到流程设计步骤。这是严格禁止的！后续步骤依赖当前步骤的结果，用户未完成操作前后续步骤无法正确执行
 - **步骤展开**：执行每个步骤前，先针对当前步骤展开详细方案（组件清单、布局、交互联动逻辑），再调用工具。不要只看步骤描述就动手，要结合分析报告中的对应模块细节
 - **查询名必须用 DBA 实际创建的名称**：仔细阅读上一步 delegate_query 的结果，使用 DBA 返回的真实查询名（如 getCustomers），不要用分析报告中的名称（如 GetCustomers），大小写必须完全一致
 - 修改页面必须先 get_code_page 获取完整代码，增量修改

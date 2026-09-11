@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { listToolGroups, listToolDefinitions, listKeyTools, requestToolPermissions, listKeyDatasources, listAvailableDatasources, requestDatasourcePermission, fetchToolTypes } from '@/api/tool';
-import { listApiKeys } from '@/api/tool';
+import { listApiKeys, listAllApplicationTools } from '@/api/tool';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
 import type { ToolGroup, ToolDefinition, ToolTypeInfo } from '@/types/tool';
@@ -27,6 +27,19 @@ interface DatasourceItem {
 
 interface DatasourceWithStatus extends DatasourceItem {
   permissionStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+}
+
+interface AppToolItem extends ToolDefinition {
+  applicationId: number;
+  applicationName: string;
+  permissionStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+}
+
+interface AppGroup {
+  applicationId: number;
+  applicationName: string;
+  tools: AppToolItem[];
+  collapsed: boolean;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -56,7 +69,7 @@ export default function ApiKeyPermissionPage() {
   const [keyToolStatuses, setKeyToolStatuses] = useState<Map<number, string>>(new Map());
   const PAGE_SIZE = 20;
 
-  const [activeTab, setActiveTab] = useState<'tools' | 'datasources'>('tools');
+  const [activeTab, setActiveTab] = useState<'tools' | 'datasources' | 'apptools'>('tools');
   const [datasources, setDatasources] = useState<DatasourceWithStatus[]>([]);
   const [selectedDsIds, setSelectedDsIds] = useState<Set<number>>(new Set());
   const [dsSearch, setDsSearch] = useState('');
@@ -64,6 +77,14 @@ export default function ApiKeyPermissionPage() {
   const [dsLoading, setDsLoading] = useState(false);
   const [keyDsStatuses, setKeyDsStatuses] = useState<Map<number, string>>(new Map());
   const [activeDsGroupId, setActiveDsGroupId] = useState<number | null>(null);
+
+  // 应用工具（编排、HTTP等）按应用折叠，服务端分页
+  const [appGroups, setAppGroups] = useState<AppGroup[]>([]);
+  const [appToolsLoading, setAppToolsLoading] = useState(false);
+  const [appSearch, setAppSearch] = useState('');
+  const [appPage, setAppPage] = useState(1);
+  const [appTotalPages, setAppTotalPages] = useState(1);
+  const [appTotalElements, setAppTotalElements] = useState(0);
 
   const fetchInit = useCallback(async () => {
     if (!keyId) return;
@@ -158,6 +179,84 @@ export default function ApiKeyPermissionPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyId, toast]);
+
+  const fetchAppTools = useCallback(async (pg: number, statuses?: Map<number, string>) => {
+    const sm = statuses || keyToolStatuses;
+    setAppToolsLoading(true);
+    try {
+      const res = await listAllApplicationTools({
+        page: pg,
+        size: 50,
+        search: appSearch.trim() || undefined,
+      });
+      const data = res.data as { tools: AppToolItem[]; totalPages: number; totalElements: number };
+      const raw = data.tools || [];
+      const withStatus: AppToolItem[] = raw.map((t) => ({
+        ...t,
+        permissionStatus: (sm.get(t.id) || 'NONE') as AppToolItem['permissionStatus'],
+      }));
+
+      // 按 applicationId 分组
+      const groupMap = new Map<number, AppToolItem[]>();
+      for (const t of withStatus) {
+        const list = groupMap.get(t.applicationId);
+        if (list) list.push(t);
+        else groupMap.set(t.applicationId, [t]);
+      }
+
+      const groups: AppGroup[] = [];
+      for (const [appId, tools] of groupMap) {
+        groups.push({
+          applicationId: appId,
+          applicationName: tools[0].applicationName || `应用 ${appId}`,
+          tools,
+          collapsed: false,
+        });
+      }
+      groups.sort((a, b) => a.applicationName.localeCompare(b.applicationName, 'zh'));
+      setAppGroups(groups);
+      setAppTotalPages(data.totalPages || 1);
+      setAppTotalElements(data.totalElements || 0);
+    } catch {
+      toast('加载应用工具失败', 'error');
+    } finally {
+      setAppToolsLoading(false);
+    }
+  }, [keyToolStatuses, appSearch, toast]);
+
+  useEffect(() => {
+    if (activeTab === 'apptools') fetchAppTools(appPage);
+  }, [activeTab, appPage, fetchAppTools]);
+
+  // 切换应用折叠
+  const toggleAppCollapse = (appId: number) => {
+    setAppGroups((prev) => prev.map((g) =>
+      g.applicationId === appId ? { ...g, collapsed: !g.collapsed } : g
+    ));
+  };
+
+  // 全选/取消某应用分组内可选工具
+  const toggleSelectAllInGroup = (groupId: number) => {
+    const group = appGroups.find((g) => g.applicationId === groupId);
+    if (!group) return;
+    const selectable = group.tools.filter((t) => t.permissionStatus === 'NONE' || t.permissionStatus === 'REJECTED');
+    const allSelected = selectable.every((t) => selectedIds.has(t.id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        selectable.forEach((t) => next.delete(t.id));
+      } else {
+        selectable.forEach((t) => next.add(t.id));
+      }
+      return next;
+    });
+  };
+
+  // 搜索变化重置页码
+  const handleAppSearchChange = (val: string) => {
+    setAppSearch(val);
+    setAppPage(1);
+  };
 
   useEffect(() => {
     if (activeTab === 'datasources' && activeDsGroupId !== null) fetchDatasources(activeDsGroupId);
@@ -274,6 +373,7 @@ export default function ApiKeyPermissionPage() {
       kt.forEach((item) => sm.set(item.toolId, item.status));
       setKeyToolStatuses(sm);
       if (activeGroupId !== null) fetchTools(activeGroupId, sm);
+      if (activeTab === 'apptools') fetchAppTools(appPage, sm);
     } catch {
       toast('申请失败', 'error');
     }
@@ -352,6 +452,12 @@ export default function ApiKeyPermissionPage() {
           >
             数据源
           </button>
+          <button
+            className={`perm-page-tab ${activeTab === 'apptools' ? 'active' : ''}`}
+            onClick={() => setActiveTab('apptools')}
+          >
+            应用工具
+          </button>
         </div>
         {activeTab === 'tools' && selectedIds.size > 0 && (
           <button className="perm-page-submit" onClick={handleBatchRequest}>
@@ -365,9 +471,15 @@ export default function ApiKeyPermissionPage() {
             申请选中 ({selectedDsIds.size})
           </button>
         )}
+      {activeTab === 'apptools' && selectedIds.size > 0 && (
+          <button className="perm-page-submit" onClick={handleBatchRequest}>
+            <Check size={16} />
+            申请选中 ({selectedIds.size})
+          </button>
+        )}
       </div>
 
-      {activeTab === 'tools' ? (
+      {activeTab === 'tools' && (
         <div className="perm-layout">
           <div className="perm-sidebar">
             <div className="perm-sidebar-search">
@@ -492,7 +604,9 @@ export default function ApiKeyPermissionPage() {
             )}
           </div>
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'datasources' && (
         <div className="perm-layout">
           <div className="perm-sidebar">
             <div className="perm-sidebar-search">
@@ -613,6 +727,134 @@ export default function ApiKeyPermissionPage() {
                     className="perm-pagination-btn"
                     disabled={dsPage >= dsTotalPages}
                     onClick={() => setDsPage((p) => Math.min(dsTotalPages, p + 1))}
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'apptools' && (
+        <div className="perm-layout">
+          <div className="perm-content perm-content">
+            <div className="perm-toolbar">
+              <div className="perm-toolbar-left">
+                <div className="perm-search">
+                  <Search size={16} />
+                  <input
+                    type="text"
+                    placeholder="搜索应用工具..."
+                    value={appSearch}
+                    onChange={(e) => handleAppSearchChange(e.target.value)}
+                  />
+                </div>
+                <span className="perm-tool-count">
+                  应用工具 · {appGroups.length} 个应用 / {appTotalElements} 个工具
+                </span>
+              </div>
+            </div>
+
+            {appToolsLoading ? (
+              <div className="perm-tool-empty">加载中...</div>
+            ) : (
+              <div className="perm-tool-list">
+                {appGroups.length === 0 ? (
+                  <div className="perm-tool-empty">暂无应用工具</div>
+                ) : (
+                  appGroups.map((group) => {
+                    const selectableInGroup = group.tools.filter((t) => t.permissionStatus === 'NONE' || t.permissionStatus === 'REJECTED');
+                    const allGroupSelected = selectableInGroup.length > 0 && selectableInGroup.every((t) => selectedIds.has(t.id));
+
+                    return (
+                      <div key={group.applicationId} className="perm-app-group">
+                        <div
+                          className="perm-app-group-header"
+                          onClick={() => toggleAppCollapse(group.applicationId)}
+                        >
+                          <span className={`perm-app-group-arrow ${group.collapsed ? '' : 'expanded'}`}>
+                            <ChevronRight size={14} />
+                          </span>
+                          <span className="perm-app-group-name">{group.applicationName}</span>
+                          <span className="perm-app-group-count">{group.tools.length} 个工具</span>
+                          {selectableInGroup.length > 0 && (
+                            <label className="perm-select-all" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={allGroupSelected}
+                                onChange={() => toggleSelectAllInGroup(group.applicationId)}
+                              />
+                              全选 ({selectableInGroup.length})
+                            </label>
+                          )}
+                        </div>
+
+                        {!group.collapsed && (
+                          <div className="perm-app-group-body">
+                            {group.tools.map((tool) => {
+                              const isSelected = selectedIds.has(tool.id);
+                              const canRequest = tool.permissionStatus === 'NONE' || tool.permissionStatus === 'REJECTED';
+
+                              return (
+                                <div
+                                  key={tool.id}
+                                  className={`perm-tool-item ${isSelected ? 'selected' : ''}`}
+                                  onClick={() => { if (canRequest) toggleSelect(tool.id); }}
+                                >
+                                  {canRequest && (
+                                    <input
+                                      type="checkbox"
+                                      className="perm-tool-checkbox"
+                                      checked={isSelected}
+                                      onChange={() => toggleSelect(tool.id)}
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  )}
+                                  <div className="perm-tool-info">
+                                    <div className="perm-tool-name-row">
+                                      <span className="perm-tool-name">{tool.displayName || tool.name}</span>
+                                      <span className={`perm-tool-type type-${tool.toolType}`}>
+                                        {toolTypes.find(t => t.value === tool.toolType)?.label || tool.toolType}
+                                      </span>
+                                      <span className={`perm-tool-status status-${tool.permissionStatus.toLowerCase()}`}>
+                                        {STATUS_LABEL[tool.permissionStatus]}
+                                      </span>
+                                    </div>
+                                    {tool.description && (
+                                      <span className="perm-tool-desc">{tool.description}</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {appTotalPages > 1 && (
+              <div className="perm-pagination">
+                <span className="perm-pagination-info">
+                  共 {appTotalElements} 个应用工具，第 {appPage}/{appTotalPages} 页
+                </span>
+                <div className="perm-pagination-btns">
+                  <button
+                    className="perm-pagination-btn"
+                    disabled={appPage <= 1}
+                    onClick={() => setAppPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button
+                    className="perm-pagination-btn"
+                    disabled={appPage >= appTotalPages}
+                    onClick={() => setAppPage((p) => Math.min(appTotalPages, p + 1))}
                   >
                     <ChevronRight size={16} />
                   </button>

@@ -668,4 +668,22 @@ export const workflowSkills: Record<string, SkillFactory> = {
       return { success: true, message: '已导航到流程设计器' };
     },
   }),
+
+  'workflow:publish': (ctx) => ({
+    id: 'workflow:publish',
+    category: SkillCategory.WORKFLOW,
+    name: 'publish_workflow',
+    description: '发布流程定义，使其生效。发布后流程才可被发起使用。',
+    parameters: {
+      type: 'object',
+      properties: { processId: { type: 'number', description: '要发布的流程定义 ID' } },
+      required: ['processId'],
+    },
+    async execute(args) {
+      try {
+        const result = await workflowApi.publishDefinition(args.processId as number);
+        return { success: true, message: '流程已发布', data: result };
+      } catch (e: unknown) { return { success: false, message: `发布失败: ${(e as Error).message}` }; }
+    },
+  }),
 };

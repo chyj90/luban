@@ -117,31 +117,23 @@ public class OrchestrationController {
     }
 
     /**
-     * 外部调用（数据面语义）：调用方必须已登录（JWT），且请求携带的 X-API-Key
-     * 需对发布该编排的 ToolDefinition 持有 APPROVED 授权——
-     * "申请-审批后可用"，同时禁止未登录直接凭 Key 调用。
+     * 内部直接调用：JWT 认证 + 用户为编排所属应用成员即可调用（无需 Key）。
      */
     @PostMapping("/{toolName}/invoke")
-    public ResponseEntity<ApiResponse<Map<String, Object>>> invokeByApiKey(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> invokeInternal(
             @PathVariable String toolName,
             @AuthenticationPrincipal User user,
-            @RequestHeader(value = "X-API-Key", required = false) String apiKey,
-            @RequestBody(required = false) Map<String, Object> body,
-            jakarta.servlet.http.HttpServletRequest request) {
+            @RequestBody(required = false) Map<String, Object> body) {
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(ApiResponse.error("未登录：外部调用需平台账号登录后携带 JWT 与已授权的 X-API-Key"));
-        }
-        Long apiKeyId = (Long) request.getAttribute("api_key_id");
-        if (apiKeyId == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(ApiResponse.error("缺少有效 X-API-Key（需申请并获批编排调用权限）"));
+                    .body(ApiResponse.error("未登录"));
         }
         try {
-            return ResponseEntity.ok(ApiResponse.ok(orchestrationService.invokeByApiKey(
-                    toolName, apiKeyId, body == null ? Map.of() : body)));
+            return ResponseEntity.ok(ApiResponse.ok(orchestrationService.invokeInternal(
+                    toolName, user.getId(), body == null ? Map.of() : body)));
         } catch (SecurityException e) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(e.getMessage()));
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiResponse.error(e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
         }
@@ -152,5 +144,13 @@ public class OrchestrationController {
     @AppAccess(action = AppAction.DEVELOP, resource = "orchestration", key = "id")
     public ResponseEntity<ApiResponse<List<OrchestrationExecution>>> executions(@PathVariable Long id) {
         return ResponseEntity.ok(ApiResponse.ok(orchestrationService.executions(id)));
+    }
+
+    /** 删除编排（ARCHIVED 关停，不可调用），级联清除关联关系 */
+    @DeleteMapping("/{id}")
+    @AppAccess(action = AppAction.DEVELOP, resource = "orchestration", key = "id")
+    public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
+        orchestrationService.delete(id);
+        return ResponseEntity.ok(ApiResponse.ok(null));
     }
 }

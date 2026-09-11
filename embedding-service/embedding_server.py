@@ -39,13 +39,19 @@ def load_model():
     global model
     from sentence_transformers import SentenceTransformer
 
-    model_dir = _try_modelscope_download()
-    if model_dir:
-        print(f"[Luban Embedding] Loading model from local: {model_dir}")
-        model = SentenceTransformer(model_dir)
-    else:
-        print(f"[Luban Embedding] ModelScope failed, trying HuggingFace via {HUGGINGFACE_MIRROR}")
-        model = SentenceTransformer(MODEL_NAME)
+    # 优先使用本地缓存（Docker 镜像已预下载），避免每次启动都尝试联网下载
+    try:
+        model = SentenceTransformer(MODEL_NAME, local_files_only=True)
+        print(f"[Luban Embedding] Model loaded from local cache")
+    except Exception:
+        print(f"[Luban Embedding] Local cache miss, trying to download...")
+        model_dir = _try_modelscope_download()
+        if model_dir:
+            print(f"[Luban Embedding] Loading model from ModelScope: {model_dir}")
+            model = SentenceTransformer(model_dir)
+        else:
+            print(f"[Luban Embedding] ModelScope failed, trying HuggingFace via {HUGGINGFACE_MIRROR}")
+            model = SentenceTransformer(MODEL_NAME)
 
     dim = model.get_sentence_embedding_dimension()
     print(f"[Luban Embedding] Model loaded, dimension: {dim}")
@@ -665,7 +671,14 @@ def check_syntax():
 
 
 if __name__ == "__main__":
-    load_model()
+    try:
+        load_model()
+    except Exception as e:
+        print(f"[Luban Embedding] FATAL: Failed to load model: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        import sys
+        sys.exit(1)
     if SANDBOX_ENABLED:
         sandbox_pool.start()
     port = int(os.environ.get("EMBEDDING_PORT", 8765))

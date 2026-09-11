@@ -804,7 +804,23 @@ public class QueryService {
             exprMatcher.appendReplacement(sb2, Matcher.quoteReplacement(replacement));
         }
         exprMatcher.appendTail(sb2);
-        return sb2.toString();
+        String afterExpr = sb2.toString();
+
+        // 第三遍：替换命名参数 :param_name（排除 PostgreSQL :: 类型转换）
+        Pattern namedPattern = Pattern.compile("(?<!:):(\\w+)");
+        Matcher namedMatcher = namedPattern.matcher(afterExpr);
+        StringBuilder sb3 = new StringBuilder();
+        while (namedMatcher.find()) {
+            String key = namedMatcher.group(1);
+            Object value = params.get(key);
+            if (value != null) {
+                namedMatcher.appendReplacement(sb3, Matcher.quoteReplacement(formatSqlValue(value)));
+            } else {
+                namedMatcher.appendReplacement(sb3, "NULL");
+            }
+        }
+        namedMatcher.appendTail(sb3);
+        return sb3.toString();
     }
 
     private String evaluateOgnlExpression(String expr, Map<String, Object> params) {

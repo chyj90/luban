@@ -61,6 +61,7 @@ Thumbs.db
 
 # ====== Docker ======
 docker-compose.override.yml
+luban-image.tar
 
 # ====== JDBC Drivers ======
 backend/drivers/

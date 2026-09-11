@@ -431,6 +431,11 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     setSqlResult(null);
     try {
       const res = await executeSql(dsId, sqlInput, false, true);
+      if (!res.success) {
+        toast(res.message || 'SQL 执行失败', 'error');
+        setSqlError(res.message || 'SQL 执行失败');
+        return;
+      }
       setSqlResult(res.data);
       const upperSql = sqlInput.trim().toUpperCase();
       if (/^(DROP|CREATE|ALTER|TRUNCATE)\b/.test(upperSql)) {
@@ -440,7 +445,9 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
         } catch { /* structure fetch failed, keep old */ }
       }
     } catch (e: unknown) {
-      setSqlError((e as Error).message || 'SQL 执行失败');
+      const errMsg = (e as Error).message || 'SQL 执行失败';
+      toast(errMsg, 'error');
+      setSqlError(errMsg);
     } finally {
       setSqlExecuting(false);
     }

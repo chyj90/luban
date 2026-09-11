@@ -253,6 +253,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const [isSsePending, setIsSsePending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isUserAtBottomRef = useRef(true);
   const lastScrollTimeRef = useRef(0);
   const chatRouterRef = useRef<ChatRouter | null>(null);
@@ -509,6 +510,11 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     const userMsg = input;
     setInput('');
 
+    // 发送后立即恢复 textarea 高度（否则要等下次输入才会恢复）
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
     isUserAtBottomRef.current = true;
     const el = messagesContainerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -601,6 +607,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     const planSteps = plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
     const confirmMsg = `确认计划，开始执行。\n计划步骤：\n${planSteps}`;
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     await runAgent(confirmMsg);
   };
 
@@ -624,6 +631,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     const pendingSummary = pendingSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
     const continueMsg = `继续执行计划。\n已完成：\n${doneSummary}\n剩余步骤：\n${pendingSummary}`;
     setInput('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     await runAgent(continueMsg);
   };
 
@@ -950,6 +958,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
 
             <div className="ap-input-area">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}

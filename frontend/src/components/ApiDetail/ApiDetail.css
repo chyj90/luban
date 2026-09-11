@@ -41,11 +41,11 @@
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: #f4f6f9;
+  background: #e6f4ff;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #cbd5e1;
+  color: #1677ff;
 }
 
 .api-detail-empty-title {

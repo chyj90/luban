@@ -138,6 +138,7 @@ public class ToolDefinitionController {
         return switch (toolType) {
             case HTTP -> httpExecutor.execute(tool, arguments, "test");
             case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
+            case ORCHESTRATION -> "{\"error\": \"请通过编排端点调用 ORCHESTRATION 工具\"}";
             case ALGORITHM -> {
                 com.luban.service.algorithm.AlgorithmConfig config = com.luban.service.algorithm.AlgorithmConfig.parse(tool.getConfig());
                 if (config.getScriptPath() == null || config.getScriptPath().isBlank()) {

@@ -54,12 +54,24 @@ else
     echo "[start.sh] LUBAN_RSA_PRIVATE_KEY 未配置，已生成并保存到 $RSA_KEY_FILE"
 fi
 
+# ---------- LUBAN_AGENT_AES_KEY ----------
+# AES-256 密钥，用于加密大模型配置中的 API Key
+if [ -z "$LUBAN_AGENT_AES_KEY" ] || [ ${#LUBAN_AGENT_AES_KEY} -lt 16 ]; then
+    LUBAN_AGENT_AES_KEY=$(openssl rand -base64 32)
+    export LUBAN_AGENT_AES_KEY
+    echo "[start.sh] LUBAN_AGENT_AES_KEY 未配置或过短，已生成随机密钥"
+else
+    export LUBAN_AGENT_AES_KEY
+    echo "[start.sh] LUBAN_AGENT_AES_KEY 已配置 (${#LUBAN_AGENT_AES_KEY} 字符)"
+fi
+
 # ---------- 持久化到 .env（默认开启） ----------
 # 注意：RSA 私钥含多行，不能写入 .env（source 会解析失败），改用文件持久化
 cat > "$ENV_FILE" << EOF
 # Luban 环境变量（由 start.sh 自动生成，请勿提交到 Git）
 LUBAN_JWT_SECRET=$LUBAN_JWT_SECRET
 LUBAN_DATASOURCE_SECRET=$LUBAN_DATASOURCE_SECRET
+LUBAN_AGENT_AES_KEY=$LUBAN_AGENT_AES_KEY
 EOF
 echo "[start.sh] 密钥已写入 $ENV_FILE"
 

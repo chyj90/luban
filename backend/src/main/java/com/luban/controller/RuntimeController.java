@@ -11,6 +11,8 @@ import com.luban.entity.Query;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.entity.ApplicationApiKey;
+import com.luban.orchestration.entity.OrchestrationExecution;
+import com.luban.orchestration.service.OrchestrationService;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.CodePageRepository;
 import com.luban.repository.PageRepository;
@@ -68,6 +70,7 @@ public class RuntimeController {
     private final ApiKeyToolRepository apiKeyToolRepository;
     private final com.luban.security.appaccess.AppAccessService appAccessService;
     private final com.luban.service.ApiKeyService apiKeyService;
+    private final OrchestrationService orchestrationService;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -89,7 +92,8 @@ public class RuntimeController {
                              ApplicationApiKeyRepository applicationApiKeyRepository,
                              ApiKeyToolRepository apiKeyToolRepository,
                              com.luban.security.appaccess.AppAccessService appAccessService,
-                             com.luban.service.ApiKeyService apiKeyService) {
+                             com.luban.service.ApiKeyService apiKeyService,
+                             OrchestrationService orchestrationService) {
         this.pageService = pageService;
         this.queryService = queryService;
         this.pageRepository = pageRepository;
@@ -105,6 +109,7 @@ public class RuntimeController {
         this.apiKeyToolRepository = apiKeyToolRepository;
         this.appAccessService = appAccessService;
         this.apiKeyService = apiKeyService;
+        this.orchestrationService = orchestrationService;
     }
 
     @GetMapping("/{pageId}/code")
@@ -220,6 +225,33 @@ public class RuntimeController {
         } else {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(ApiResponse.error("不支持的 API 类型"));
+        }
+
+        // ORCHESTRATION 类型：委托编排引擎执行，跳过 HTTP executeTool
+        if (tool.getToolType() == com.luban.constant.ToolType.ORCHESTRATION) {
+            Map<String, Object> orchConfig;
+            try {
+                orchConfig = objectMapper.readValue(
+                        tool.getConfig() == null ? "{}" : tool.getConfig(),
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            } catch (Exception e) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.error("编排工具配置解析失败"));
+            }
+            Long orchDefId = orchConfig.get("orchestrationId") instanceof Number n ? n.longValue() : null;
+            if (orchDefId == null) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.error("编排工具配置缺少 orchestrationId"));
+            }
+            var orchDef = orchestrationService.getById(orchDefId);
+            if (!orchDef.getApplicationId().equals(getPageApplicationId(pageId))) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error("无权调用此编排（属于其他应用）"));
+            }
+            Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
+            Map<String, Object> result = orchestrationService.execute(
+                    orchDefId, user.getId(), OrchestrationExecution.TRIGGER_RUNTIME, null, params);
+            return ResponseEntity.ok(ApiResponse.ok(result));
         }
 
         return executeTool(tool, body);

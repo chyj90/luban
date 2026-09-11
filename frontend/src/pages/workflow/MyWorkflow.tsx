@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ClipboardList, Play, ChevronLeft } from 'lucide-react';
+import { ClipboardList, Play, ChevronLeft, ChevronDown, ChevronRight } from 'lucide-react';
 import PageTopbar from '../../components/PageTopbar';
 import { useLoadingStore } from '../../stores/loadingStore';
 import type { WorkflowTask, WorkflowInstance } from '../../types/workflow';
@@ -42,6 +42,7 @@ export default function MyWorkflow({ embedded, onNavigate }: MyWorkflowProps = {
   const [accessibleApps, setAccessibleApps] = useState<AccessibleApp[]>([]);
   const [startWf, setStartWf] = useState<{ appId: number; wf: AccessibleWorkflow; formId: number } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [collapsedApps, setCollapsedApps] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     setGlobalLoading(loading);
@@ -101,6 +102,20 @@ export default function MyWorkflow({ embedded, onNavigate }: MyWorkflowProps = {
       setSubmitting(false);
     }
   };
+
+  const toggleApp = (appId: number) => {
+    setCollapsedApps(prev => {
+      const next = new Set(prev);
+      if (next.has(appId)) {
+        next.delete(appId);
+      } else {
+        next.add(appId);
+      }
+      return next;
+    });
+  };
+
+  const appsWithWorkflows = accessibleApps.filter(app => app.workflows.length > 0);
 
   const statusBadge = (status: string, action?: string | null) => {
     const isRejected = status === 'COMPLETED' && action === 'REJECT';
@@ -190,7 +205,7 @@ export default function MyWorkflow({ embedded, onNavigate }: MyWorkflowProps = {
             />
           </div>
         ) : (
-          accessibleApps.length === 0 ? (
+          appsWithWorkflows.length === 0 ? (
             <div className={styles.empty}>
               <div className={styles.emptyIconWrap}>
                 <Play size={28} />
@@ -200,42 +215,50 @@ export default function MyWorkflow({ embedded, onNavigate }: MyWorkflowProps = {
             </div>
           ) : (
             <div className={styles.startList}>
-              {accessibleApps.map((app) => (
-                <div key={app.id} className={styles.startAppGroup}>
-                  <div className={styles.startAppName}>{app.name}</div>
-                  {app.workflows.length === 0 ? (
-                    <div className={styles.startAppEmpty}>暂无可发起的流程</div>
-                  ) : (
-                    <div className={styles.startWorkflowGrid}>
-                      {app.workflows.map((wf) => {
-                        const defaultForm = wf.forms.find((f) => f.isDefault) || wf.forms[0];
-                        return (
-                          <div key={wf.id} className={styles.startWorkflowCard}>
-                            <div className={styles.startWorkflowInfo}>
-                              <div className={styles.startWorkflowName}>{wf.name}</div>
-                              {wf.description && (
-                                <div className={styles.startWorkflowDesc}>{wf.description}</div>
-                              )}
+              {appsWithWorkflows.map((app) => {
+                const isCollapsed = collapsedApps.has(app.id);
+                return (
+                  <div key={app.id} className={styles.startAppGroup}>
+                    <button
+                      className={styles.startAppHeader}
+                      onClick={() => toggleApp(app.id)}
+                    >
+                      {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                      <span className={styles.startAppName}>{app.name}</span>
+                      <span className={styles.startAppCount}>{app.workflows.length} 个流程</span>
+                    </button>
+                    {!isCollapsed && (
+                      <div className={styles.startWorkflowGrid}>
+                        {app.workflows.map((wf) => {
+                          const defaultForm = wf.forms.find((f) => f.isDefault) || wf.forms[0];
+                          return (
+                            <div key={wf.id} className={styles.startWorkflowCard}>
+                              <div className={styles.startWorkflowInfo}>
+                                <div className={styles.startWorkflowName}>{wf.name}</div>
+                                {wf.description && (
+                                  <div className={styles.startWorkflowDesc}>{wf.description}</div>
+                                )}
+                              </div>
+                              <button
+                                className={styles.startBtn}
+                                disabled={!defaultForm}
+                                onClick={() => {
+                                  if (defaultForm) {
+                                    setStartWf({ appId: app.id, wf, formId: defaultForm.formId });
+                                  }
+                                }}
+                              >
+                                <Play size={14} />
+                                发起
+                              </button>
                             </div>
-                            <button
-                              className={styles.startBtn}
-                              disabled={!defaultForm}
-                              onClick={() => {
-                                if (defaultForm) {
-                                  setStartWf({ appId: app.id, wf, formId: defaultForm.formId });
-                                }
-                              }}
-                            >
-                              <Play size={14} />
-                              发起
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ))}
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )
         )

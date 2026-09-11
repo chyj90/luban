@@ -23,7 +23,7 @@ import {
   type ConsistencyTarget,
 } from '../agentSelfCheck';
 import { derivePlanFromAnalysis } from '../skills/planSkills';
-import { delegateSkills, buildWorkflowDelegateSystemPrompt, extractWorkflowOutcomes } from '../skills/delegateSkills';
+import { delegateSkills, buildWorkflowDelegateSystemPrompt, extractWorkflowOutcomes, validateDDLExecution } from '../skills/delegateSkills';
 import * as contextWindowModule from '../../core/contextWindow';
 import * as agentMemoryModule from '../agentMemory';
 import { resolveSkills } from '../skillRegistry';
@@ -106,6 +106,42 @@ function evalPlanDerivation(): EvalResult {
   if (JSON.stringify(step2?.dependencies) !== '["1"]') checks.push(`步骤2 依赖应为 ["1"]，实际 ${JSON.stringify(step2?.dependencies)}`);
 
   return evalResult('E3-计划自动推导(请假审批)', checks.length === 0, checks.length === 0 ? '结构完全符合预期' : checks.join('；'));
+}
+
+/** E3b: 计划自动推导——含编排（pages[].orchestrations）的回归 */
+function evalPlanDerivationWithOrch(): EvalResult {
+  const analysis = {
+    title: '创建请假申请应用',
+    summary: '新建请假页面，绑定查询与编排，配套审批流程',
+    pages: [
+      {
+        name: '请假申请',
+        action: 'create' as const,
+        queries: [
+          { queryName: 'GetLeaves', purpose: '请假记录列表', needsNewTable: true, fields: 'id,applicant,reason,status,created_at', filterParams: 'applicant(文本,精确匹配)' },
+        ],
+        apis: [],
+        orchestrations: [
+          { orchName: 'OrcLeaveApply', purpose: '先查询再发起审批' },
+        ],
+      },
+    ],
+    workflows: [],
+  };
+  const items = derivePlanFromAnalysis(analysis);
+
+  const checks: string[] = [];
+  // 预期 3 步：delegate_query → delegate_orchestration → create_code_page
+  if (items.length !== 3) checks.push(`步骤数应为 3，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  const [step1, step2, step3] = items;
+  if (step1?.toolName !== 'delegate_query') checks.push(`步骤1 应为 delegate_query，实际 ${step1?.toolName}`);
+  if (step2?.toolName !== 'delegate_orchestration') checks.push(`步骤2 应为 delegate_orchestration，实际 ${step2?.toolName}`);
+  if (step3?.toolName !== 'create_code_page') checks.push(`步骤3 应为 create_code_page，实际 ${step3?.toolName}`);
+  // 编排依赖查询，页面依赖查询+编排
+  if (JSON.stringify(step2?.dependencies) !== '["1"]') checks.push(`步骤2 依赖应为 ["1"]，实际 ${JSON.stringify(step2?.dependencies)}`);
+  if (JSON.stringify(step3?.dependencies) !== '["1","2"]') checks.push(`步骤3 依赖应为 ["1","2"]，实际 ${JSON.stringify(step3?.dependencies)}`);
+
+  return evalResult('E3b-计划推导(含编排)', checks.length === 0, checks.length === 0 ? '步骤顺序与依赖正确' : checks.join('；'));
 }
 
 /** E4: 委派失败检测回归——子智能体工具报"不存在"时，delegate_workflow 不得返回成功 */
@@ -422,18 +458,102 @@ function evalPlanQueryBatching(): EvalResult {
   return evalResult('E12-计划查询批次合并', checks.length === 0, checks.length === 0 ? '4 查询合并为 1 次委派，页面依赖正确' : checks.join('；'));
 }
 
+/** E13: DDL 降级校验——DDL 被拦截后未提供降级 SQL 时必须报警 */
+function evalDDLFallbackValidation(): EvalResult {
+  const checks: string[] = [];
+
+  // 场景 1：DDL 被拦截 + 未提供降级 SQL → 必须报警
+  const noFallbackMessages = [
+    {
+      role: 'assistant',
+      content: '我来创建表',
+      toolCalls: [{ id: 'call_1', name: 'execute_sql', arguments: { sql: 'CREATE TABLE leaves (id INT)' } }],
+    },
+    { role: 'tool', content: JSON.stringify({ success: false, message: 'DDL 操作不允许' }), toolCallId: 'call_1' },
+    { role: 'assistant', content: '抱歉，无法创建表，请手动操作。' },
+  ];
+  const noFallbackCheck = validateDDLExecution(noFallbackMessages);
+  if (noFallbackCheck.warnings.length === 0) {
+    checks.push('场景1-无降级SQL：应产生警告但未产生');
+  }
+  if (noFallbackCheck.interventionRequired) {
+    checks.push('场景1-无降级SQL：不应标记 interventionRequired');
+  }
+
+  // 场景 2：DDL 被拦截 + 提供了降级 SQL → 不应报警
+  const withFallbackMessages = [
+    {
+      role: 'assistant',
+      content: '我来创建表',
+      toolCalls: [{ id: 'call_2', name: 'execute_sql', arguments: { sql: 'CREATE TABLE leaves (id INT)' } }],
+    },
+    { role: 'tool', content: JSON.stringify({ success: false, message: 'DDL 操作不允许' }), toolCallId: 'call_2' },
+    { role: 'assistant', content: '建表被拦截，请在数据源管理面板手动执行：\n```sql\nCREATE TABLE leaves (\n  id INT PRIMARY KEY AUTO_INCREMENT\n);\n```' },
+  ];
+  const withFallbackCheck = validateDDLExecution(withFallbackMessages);
+  if (withFallbackCheck.warnings.length > 0) {
+    checks.push(`场景2-有降级SQL：不应产生警告但产生了: ${withFallbackCheck.warnings.join('; ')}`);
+  }
+  if (!withFallbackCheck.interventionRequired) {
+    checks.push('场景2-有降级SQL：应标记 interventionRequired 但未标记');
+  }
+  if (!withFallbackCheck.interventionReason) {
+    checks.push('场景2-有降级SQL：应有 interventionReason 但为空');
+  }
+
+  // 场景 3：无 DDL 操作 → 不应报警
+  const noDDLMessages = [
+    {
+      role: 'assistant',
+      content: '我来查询数据',
+      toolCalls: [{ id: 'call_3', name: 'execute_sql', arguments: { sql: 'SELECT * FROM leaves' } }],
+    },
+    { role: 'tool', content: JSON.stringify({ success: true, message: '查询成功' }), toolCallId: 'call_3' },
+    { role: 'assistant', content: '查询完成，共 3 条记录。' },
+  ];
+  const noDDLCheck = validateDDLExecution(noDDLMessages);
+  if (noDDLCheck.warnings.length > 0) {
+    checks.push(`场景3-无DDL操作：不应产生警告但产生了: ${noDDLCheck.warnings.join('; ')}`);
+  }
+  if (noDDLCheck.interventionRequired) {
+    checks.push('场景3-无DDL操作：不应标记 interventionRequired');
+  }
+
+  // 场景 4：DDL 执行成功 → 不应报警
+  const ddlSuccessMessages = [
+    {
+      role: 'assistant',
+      content: '我来创建表',
+      toolCalls: [{ id: 'call_4', name: 'execute_sql', arguments: { sql: 'CREATE TABLE leaves (id INT)' } }],
+    },
+    { role: 'tool', content: JSON.stringify({ success: true, message: '执行成功' }), toolCallId: 'call_4' },
+    { role: 'assistant', content: '表创建成功！' },
+  ];
+  const ddlSuccessCheck = validateDDLExecution(ddlSuccessMessages);
+  if (ddlSuccessCheck.warnings.length > 0) {
+    checks.push(`场景4-DDL成功：不应产生警告但产生了: ${ddlSuccessCheck.warnings.join('; ')}`);
+  }
+  if (ddlSuccessCheck.interventionRequired) {
+    checks.push('场景4-DDL成功：不应标记 interventionRequired');
+  }
+
+  return evalResult('E13-DDL降级校验', checks.length === 0, checks.length === 0 ? '4 个场景全部通过' : checks.join('；'));
+}
+
 /** 运行全部 eval */
 export async function runAgentEvals(): Promise<EvalResult[]> {
   const results: EvalResult[] = [
     evalConsistencyClean(),
     evalIncidentToolDrift(),
     evalPlanDerivation(),
+    evalPlanDerivationWithOrch(),
     evalConfirmationGate(),
     evalDelegateModeIsolation(),
     evalDelegateOutcomes(),
     evalContextCompaction(),
     evalDelegationMemoryBound(),
     evalPlanQueryBatching(),
+    evalDDLFallbackValidation(),
   ];
   results.push(await evalDelegateFailureDetection());
   results.push(await evalStepVerifier());

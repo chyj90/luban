@@ -432,7 +432,7 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
       {loading ? (
         <div className="api-empty">加载中...</div>
       ) : (
-        <>
+        <div className="api-panel-list">
           {keyTools.length > 0 && (
             <div className="api-section">
               <div className="api-section-title">
@@ -497,7 +497,7 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
               })}
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

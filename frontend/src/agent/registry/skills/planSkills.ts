@@ -17,6 +17,7 @@ interface AnalysisPage {
   action: 'create' | 'update';
   queries: Array<{ queryName: string; purpose: string; needsNewTable?: boolean; fields?: string; filterParams?: string }>;
   apis: Array<{ apiName: string; purpose: string }>;
+  orchestrations: Array<{ orchName: string; purpose: string }>;
   noDataNeeded?: boolean;
   libraries?: string[];
 }
@@ -109,7 +110,7 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
       queryNames.push(q.queryName);
       let part = `创建查询 ${q.queryName}（用途：${q.purpose}）`;
       if (q.needsNewTable && q.fields) {
-        part += `，需要新表（请人工建表），字段：${q.fields}`;
+        part += `，需要新表（DBA 建表 + 插入测试数据），字段：${q.fields}`;
       }
       if (q.filterParams) {
         part += `，筛选参数：${q.filterParams}`;
@@ -133,15 +134,41 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
+  // pages[].orchestrations → delegate_orchestration 步骤，依赖对应页面的查询步骤
+  const pageOrchStep = new Map<string, string>();
+  for (const page of analysis.pages) {
+    if (!page.orchestrations || page.orchestrations.length === 0) continue;
+    const stepId = nextId();
+    pageOrchStep.set(page.name, stepId);
+    const ownQueryStep = pageQueryStep.get(page.name);
+    const queryNames = page.queries.map(q => q.queryName);
+    const orchDescriptions = page.orchestrations.map(o => `${o.orchName}（${o.purpose}）`).join('；');
+
+    items.push({
+      id: stepId,
+      category: 'datasource',
+      description: `创建编排 ${orchDescriptions}`,
+      toolName: 'delegate_orchestration',
+      toolInput: {
+        requirement: `为页面「${page.name}」创建以下编排，引用的查询为 ${queryNames.join('、')}：${orchDescriptions}。编排创建后需发布，发布的 ToolDefinition id 需回传给页面绑定`,
+        context: `页面: ${page.name}，查询: ${queryNames.join('、')}`,
+      },
+      dependencies: ownQueryStep ? [ownQueryStep] : [],
+    });
+  }
+
   for (const page of analysis.pages) {
     const stepId = nextId();
     const isCreate = page.action === 'create';
     const toolName = isCreate ? 'create_code_page' : 'update_code_page';
     const ownQueryStep = pageQueryStep.get(page.name);
-    const deps = page.noDataNeeded ? [] : ownQueryStep ? [ownQueryStep] : [];
+    const ownOrchStep = pageOrchStep.get(page.name);
+    const deps: string[] = [];
+    if (!page.noDataNeeded && ownQueryStep) deps.push(ownQueryStep);
+    if (ownOrchStep) deps.push(ownOrchStep);
 
     const queryNames = page.queries.map(q => q.queryName);
-    const apiNames = page.apis.map(a => a.apiName);
+    const apiNames = (page.apis || []).map(a => a.apiName);
     let desc = isCreate ? `创建页面「${page.name}」` : `更新页面「${page.name}」`;
     if (queryNames.length > 0) {
       desc += `，绑定查询 ${queryNames.join('、')}`;
@@ -308,6 +335,7 @@ function validatePlanItems(items: unknown[], dataRequirements?: unknown[]): stri
     const r = req as Record<string, unknown>;
     const pageName = r.pageName as string;
     const queries = (r.queries as unknown[]) || [];
+    const orchestrations = (r.orchestrations as unknown[]) || [];
     const apis = (r.apis as unknown[]) || [];
     const noDataNeeded = r.noDataNeeded as boolean;
 
@@ -337,6 +365,16 @@ function validatePlanItems(items: unknown[], dataRequirements?: unknown[]): stri
           return `页面「${pageName}」需要查询「${queryName}」，但计划中没有对应的 delegate_query 步骤。` +
             `请添加一个 delegate_query 步骤，requirement 中包含创建查询「${queryName}」${needsNewTable ? '（需新表，请提示用户先在数据源面板建表）' : ''}。`;
         }
+      }
+    }
+
+    if (orchestrations.length > 0) {
+      const hasOrchStep = items.some((item) =>
+        (item as Record<string, unknown>)?.toolName === 'delegate_orchestration');
+      if (!hasOrchStep) {
+        const orchNames = orchestrations.map((o) => (o as Record<string, unknown>).orchName).join('、');
+        return `页面「${pageName}」需要编排（${orchNames}），但计划中没有 delegate_orchestration 步骤。` +
+          '请添加 delegate_orchestration 步骤。';
       }
     }
   }
@@ -427,7 +465,7 @@ export const planSkills: Record<string, SkillFactory> = {
               },
               apis: {
                 type: 'array',
-                description: '该页面需要的平台 API 列表',
+                description: '该页面需要引用的**已有**平台 API/工具（无需新建，如已有的查询工具、HTTP 端点）',
                 items: {
                   type: 'object',
                   properties: {
@@ -435,6 +473,18 @@ export const planSkills: Record<string, SkillFactory> = {
                     purpose: { type: 'string', description: '用途' },
                   },
                   required: ['apiName'],
+                },
+              },
+              orchestrations: {
+                type: 'array',
+                description: '该页面需要**新建**的编排（Orchestration），系统会自动生成 delegate_orchestration 步骤',
+                items: {
+                  type: 'object',
+                  properties: {
+                    orchName: { type: 'string', description: '编排名称（如 OrcLeaveApply）' },
+                    purpose: { type: 'string', description: '编排用途（如：先查请假记录再发起审批）' },
+                  },
+                  required: ['orchName'],
                 },
               },
               noDataNeeded: { type: 'boolean', description: '是否不需要数据（纯展示/样式调整）' },

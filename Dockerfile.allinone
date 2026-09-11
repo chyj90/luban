@@ -4,11 +4,10 @@
 FROM maven:3.9-eclipse-temurin-21-alpine AS java-build
 
 WORKDIR /build
+COPY backend/settings.xml /root/.m2/settings.xml
 COPY backend/pom.xml .
-RUN mvn dependency:go-offline -B -q || true
 COPY backend/src ./src
-COPY backend/org ./org
-RUN mvn package -DskipTests -B -q
+RUN mvn package -DskipTests -B
 
 # ============================================================
 # Stage 2: Build Frontend
@@ -19,7 +18,7 @@ WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ .
-RUN npm run build
+RUN npx vite build
 
 # ============================================================
 # Stage 3: All-in-One Runtime
@@ -49,16 +48,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------- 设置 Python ----------
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && python3 -m pip install --no-cache-dir --upgrade pip
+    && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip
 
 # ---------- 安装 Python 依赖 & 预下载模型 ----------
 COPY embedding-service/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+RUN python3 -m pip install --no-cache-dir torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu \
+    && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
+       "transformers==4.46.3" "sentence-transformers==3.1.1" \
+    && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 ENV HF_ENDPOINT=https://hf-mirror.com \
-    EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
-RUN python3 -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')" || true
+    EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \
+    SANDBOX_ENABLED=false
+
+# ---------- 内置大模型配置（通过 --build-arg 传入，来源 .env 文件） ----------
+ARG LUBAN_LLM_API_KEY
+ARG LUBAN_LLM_ENDPOINT=https://api.deepseek.com/v1
+ARG LUBAN_LLM_MODEL=deepseek-chat
+ENV LUBAN_LLM_API_KEY=${LUBAN_LLM_API_KEY} \
+    LUBAN_LLM_ENDPOINT=${LUBAN_LLM_ENDPOINT} \
+    LUBAN_LLM_MODEL=${LUBAN_LLM_MODEL}
+
+RUN python3 -c "\
+from sentence_transformers import SentenceTransformer; \
+m = SentenceTransformer('${EMBEDDING_MODEL}'); \
+print('Model cached at:', m._model_card_text or 'OK'); \
+print('Dimension:', m.get_sentence_embedding_dimension()); \
+"
 
 # ---------- 复制 Embedding 服务 ----------
 COPY embedding-service/embedding_server.py /app/embedding/embedding_server.py
@@ -66,8 +83,6 @@ COPY embedding-service/sandbox_manager.py /app/embedding/sandbox_manager.py
 
 # ---------- 复制 Java 后端 ----------
 COPY --from=java-build /build/target/*.jar /app/backend/app.jar
-COPY backend/algorithms /app/backend/algorithms
-COPY backend/drivers /app/backend/drivers
 
 # ---------- 复制前端 ----------
 COPY --from=frontend-build /build/dist /app/frontend/dist
@@ -83,10 +98,10 @@ RUN chmod +x /entrypoint.sh
 RUN rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache/pip
 
 # ---------- 创建数据目录 ----------
-RUN mkdir -p /app/data/mysql /app/data/logs /app/data/algorithms \
+RUN mkdir -p /app/data/mysql /app/data/logs \
     && chown -R www-data:www-data /app/frontend
 
-EXPOSE 80 8080 8765 3306
+EXPOSE 80
 
 VOLUME ["/app/data"]
 

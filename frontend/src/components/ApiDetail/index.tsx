@@ -1,4 +1,4 @@
-import { Globe, Code, FileText, Copy, Check, ArrowUp, ArrowDown } from 'lucide-react';
+import { Cloud, Globe, Code, FileText, Copy, Check, ArrowUp, ArrowDown } from 'lucide-react';
 import { useState } from 'react';
 import './ApiDetail.css';
 
@@ -142,7 +142,7 @@ export function ApiDetail({ api }: ApiDetailProps) {
     return (
       <div className="api-detail-empty">
         <div className="api-detail-empty-icon">
-          <Globe size={32} />
+          <Cloud size={32} />
         </div>
         <span className="api-detail-empty-title">选择 API 查看详情</span>
         <span className="api-detail-empty-hint">从左侧列表选择一个 API</span>

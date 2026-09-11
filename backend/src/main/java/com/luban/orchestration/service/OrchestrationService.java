@@ -18,6 +18,7 @@ import com.luban.security.appaccess.AppAccessService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -175,7 +176,7 @@ public class OrchestrationService {
         exec.setStatus(result.success() ? "SUCCESS" : ("TIMEOUT".equals(result.errorCode()) ? "TIMEOUT" : "FAILED"));
         exec.setErrorCode(result.errorCode());
         exec.setDurationMs((int) duration);
-        executionRepository.save(exec);
+        saveExecutionRecord(exec);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", result.success());
@@ -227,11 +228,11 @@ public class OrchestrationService {
                 .findFirst().orElseGet(() -> {
                     ToolDefinition t = new ToolDefinition();
                     t.setName(toolName);
-                    // PLATFORM scope：使编排可被 API Key 申请（listAvailableTools 按 PLATFORM 过滤），
-                    // groupId 保留来源应用用于溯源
-                    t.setScope("PLATFORM");
+                    // 应用级 scope：编排只对本应用可见/可调用（跨应用隔离）。
+                    // 外部调用 = 外部开发者加入应用（或经应用 owner 授权）后，用应用绑定的 Key 调用。
+                    t.setScope("APPLICATION");
                     t.setGroupId(def.getApplicationId());
-                    t.setToolType(com.luban.constant.ToolType.HTTP); // 执行面与 http 工具同构
+                    t.setToolType(com.luban.constant.ToolType.ORCHESTRATION);
                     t.setConfig(toJson(Map.of("orchestrationId", definitionId,
                             "versionId", def.getPublishedVersionId())));
                     return t;
@@ -308,11 +309,98 @@ public class OrchestrationService {
     }
 
     public List<OrchestrationDefinition> listByApplication(Long applicationId) {
-        return definitionRepository.findByApplicationIdOrderByUpdatedAtDesc(applicationId);
+        return definitionRepository.findByApplicationIdAndStatusNotOrderByUpdatedAtDesc(
+                applicationId, STATUS_ARCHIVED);
     }
 
     public List<OrchestrationExecution> executions(Long definitionId) {
         return executionRepository.findTop50ByDefinitionIdOrderByCreatedAtDesc(definitionId);
+    }
+
+    // 频控（M6）：每 Key 滑动窗口（默认 10s 内 10 次）+ 日配额（默认 1000 次）
+    private static final int RATE_LIMIT_WINDOW_MS = 10_000;
+    private static final int RATE_LIMIT_MAX = 10;
+    private static final int DAILY_QUOTA = 1000;
+    private final java.util.concurrent.ConcurrentHashMap<Long, java.util.ArrayDeque<Long>> invokeTimestamps =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> dailyInvokeCount =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile java.time.LocalDate dailyCountDate = java.time.LocalDate.now();
+
+    /** 频控检查：超限抛 SecurityException（由 controller 转 429） */
+    private void checkRateLimit(Long apiKeyId) {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        if (!today.equals(dailyCountDate)) {
+            dailyInvokeCount.clear();
+            dailyCountDate = today;
+        }
+        String quotaKey = "k:" + apiKeyId;
+        int used = dailyInvokeCount.merge(quotaKey, 1, Integer::sum);
+        if (used > DAILY_QUOTA) {
+            throw new SecurityException("API KEY 日配额已用尽（" + DAILY_QUOTA + " 次/天）");
+        }
+        long now = System.currentTimeMillis();
+        java.util.ArrayDeque<Long> window = invokeTimestamps.computeIfAbsent(apiKeyId,
+                k -> new java.util.ArrayDeque<>());
+        synchronized (window) {
+            while (!window.isEmpty() && now - window.peekFirst() > RATE_LIMIT_WINDOW_MS) {
+                window.pollFirst();
+            }
+            if (window.size() >= RATE_LIMIT_MAX) {
+                throw new SecurityException("调用过于频繁（" + RATE_LIMIT_MAX + " 次/" + (RATE_LIMIT_WINDOW_MS / 1000) + "s），请稍后重试");
+            }
+            window.addLast(now);
+        }
+    }
+
+    /**
+     * 内部直接调用（JWT 认证）：用户必须是编排所属应用的成员，无需 Key。
+     */
+    public Map<String, Object> invokeInternal(String toolName, Long userId, Map<String, Object> inputs) {
+        ToolDefinition tool = toolDefinitionRepository.findAll().stream()
+                .filter(t -> toolName.equals(t.getName()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("编排工具不存在: " + toolName));
+        var config = parseConfigJson(tool.getConfig());
+        long definitionId = ((Number) config.get("orchestrationId")).longValue();
+        long publishedVersionId = ((Number) config.getOrDefault("versionId", 0)).longValue();
+
+        OrchestrationDefinition def = getById(definitionId);
+        if (!STATUS_PUBLISHED.equals(def.getStatus())) {
+            throw new IllegalArgumentException("编排未发布，无法调用");
+        }
+        // 用户必须是编排所属应用成员
+        appAccessService.assertAccess(userId, def.getApplicationId(),
+                com.luban.security.appaccess.AppAction.RUN);
+
+        OrchestrationVersion version = versionRepository.findById(publishedVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("发布版本不存在"));
+
+        long start = System.currentTimeMillis();
+        OrchestrationDsl.Dsl dsl = parseDsl(version.getDsl());
+        OrchestrationEngine.ExecutionResult result = engine.execute(dsl, inputs, inputSchemaOf(dsl));
+        long duration = System.currentTimeMillis() - start;
+
+        OrchestrationExecution exec = new OrchestrationExecution();
+        exec.setDefinitionId(definitionId);
+        exec.setVersionId(publishedVersionId);
+        exec.setTriggerType(OrchestrationExecution.TRIGGER_USER_TEST);
+        exec.setInputs(maskAndTruncate(inputs));
+        exec.setNodeTrace(toJson(result.nodeTrace()));
+        exec.setStatus(result.success() ? "SUCCESS" : ("TIMEOUT".equals(result.errorCode()) ? "TIMEOUT" : "FAILED"));
+        exec.setErrorCode(result.errorCode());
+        exec.setDurationMs((int) duration);
+        saveExecutionRecord(exec);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", result.success());
+        out.put("data", result.success() ? result.output() : Map.of());
+        out.put("errorCode", result.errorCode());
+        out.put("errorMessage", result.errorMessage());
+        out.put("nodeTrace", result.nodeTrace());
+        out.put("durationMs", duration);
+        out.put("executionId", exec.getId());
+        return out;
     }
 
     /**
@@ -320,6 +408,7 @@ public class OrchestrationService {
      * 无状态校验（不依赖 SecurityContext）——供 ApiKeyAuthFilter 白名单路径调用。
      */
     public Map<String, Object> invokeByApiKey(String toolName, Long apiKeyId, Map<String, Object> inputs) {
+        checkRateLimit(apiKeyId);
         ToolDefinition tool = toolDefinitionRepository.findAll().stream()
                 .filter(t -> toolName.equals(t.getName()))
                 .findFirst()
@@ -357,7 +446,7 @@ public class OrchestrationService {
         exec.setStatus(result.success() ? "SUCCESS" : "FAILED");
         exec.setErrorCode(result.errorCode());
         exec.setDurationMs((int) duration);
-        executionRepository.save(exec);
+        saveExecutionRecord(exec);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", result.success());
@@ -384,5 +473,23 @@ public class OrchestrationService {
 
     public boolean exists(Long definitionId) {
         return definitionRepository.existsById(definitionId);
+    }
+
+    @Transactional
+    public void delete(Long definitionId) {
+        OrchestrationDefinition def = definitionRepository.findById(definitionId)
+                .orElseThrow(() -> new IllegalArgumentException("编排不存在: " + definitionId));
+        def.setStatus(STATUS_ARCHIVED);
+        definitionRepository.save(def);
+    }
+
+    /**
+     * 独立事务保存执行记录，避免被编排节点内的 @Transactional 异常污染。
+     * 例如 workflow 节点调用 ProcessService（@Transactional）抛出 BusinessException 时，
+     * 外层事务会被标记为 rollback-only，此时执行记录仍需落库。
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    private OrchestrationExecution saveExecutionRecord(OrchestrationExecution exec) {
+        return executionRepository.save(exec);
     }
 }

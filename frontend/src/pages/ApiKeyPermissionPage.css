@@ -368,6 +368,16 @@
   color: #fa8c16;
 }
 
+.perm-tool-type.type-ORCHESTRATION {
+  background: #f3e8ff;
+  color: #722ed1;
+}
+
+.perm-tool-type.type-ALGORITHM {
+  background: #e6fffb;
+  color: #13c2c2;
+}
+
 .perm-tool-status {
   padding: 1px 6px;
   border-radius: 3px;
@@ -476,4 +486,69 @@
 .perm-pagination-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* 应用工具分组折叠 */
+.perm-app-group {
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.perm-app-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #f7f8fa;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.perm-app-group-header:hover {
+  background: #eef0f4;
+}
+
+.perm-app-group-arrow {
+  display: flex;
+  align-items: center;
+  transition: transform 0.2s;
+  color: #666;
+}
+
+.perm-app-group-arrow.expanded {
+  transform: rotate(90deg);
+}
+
+.perm-app-group-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1a1a2e;
+}
+
+.perm-app-group-count {
+  font-size: 12px;
+  color: #999;
+}
+
+.perm-app-group-body {
+  border-top: 1px solid #e8edf3;
+}
+
+.perm-app-group-body .perm-tool-item {
+  border: none;
+  border-bottom: 1px solid #f0f2f5;
+  border-radius: 0;
+  margin: 0;
+}
+
+.perm-app-group-body .perm-tool-item:last-child {
+  border-bottom: none;
+}
+
+.perm-app-group-body .perm-pagination {
+  border-top: 1px solid #e8edf3;
+  padding: 8px 16px;
 }

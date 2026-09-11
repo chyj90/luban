@@ -37,8 +37,8 @@ public class OrchestrationLinter {
             "\\b(eval|exec|compile|__import__|open|globals|locals)\\s*\\(");
 
     private static final Pattern CONDITION_SYNTAX = Pattern.compile(
-            "^\\s*\\w+\\s*(<=|>=|==|!=|<|>)\\s*(\\d+(?:\\.\\d+)?|'[^']*'|\"[^\"]*\")"
-                    + "(\\s*(&&|\\|\\|)\\s*\\w+\\s*(<=|>=|==|!=|<|>)\\s*(\\d+(?:\\.\\d+)?|'[^']*'|\"[^\"]*\"))*\\s*$");
+            "^\\s*[\\w\\[\\]\\.]+\\s*(<=|>=|==|!=|<|>)\\s*(\\d+(?:\\.\\d+)?|'[^']*'|\"[^\"]*\"|[\\w\\[\\]\\.]+)"
+                    + "(\\s*(&&|\\|\\|)\\s*[\\w\\[\\]\\.]+\\s*(<=|>=|==|!=|<|>)\\s*(\\d+(?:\\.\\d+)?|'[^']*'|\"[^\"]*\"|[\\w\\[\\]\\.]+))*\\s*$");
 
     private static final Pattern VAR_REF = Pattern.compile(
             "\\$(?:input|nodes)\\.\\w+(?:\\.\\w+)*");
@@ -77,6 +77,10 @@ public class OrchestrationLinter {
             }
             if (!NODE_TYPES.contains(n.getNodeType())) {
                 errors.add("节点 " + n.getId() + " 的 nodeType 无效: " + n.getNodeType());
+            }
+            // 名称建议：缺 label 不阻塞，但提醒
+            if (n.getData() == null || n.getData().getLabel() == null || n.getData().getLabel().isBlank()) {
+                warnings.add("节点 " + n.getId() + " 缺少名称（label），建议为每个节点设置可读名称");
             }
             types.add(n.getNodeType());
         }

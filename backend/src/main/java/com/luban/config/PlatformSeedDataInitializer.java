@@ -14,7 +14,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.List;
 
 @Slf4j
@@ -214,18 +218,46 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
 
     private void initDefaultAgentConfig() {
         if (agentConfigRepository.findByIsDefaultTrue().isEmpty()) {
-            log.info("初始化默认 Agent 配置...");
+            String apiKey = System.getenv("LUBAN_LLM_API_KEY");
+            String endpoint = System.getenv("LUBAN_LLM_ENDPOINT");
+            String model = System.getenv("LUBAN_LLM_MODEL");
 
-            AgentConfig config = new AgentConfig();
-            config.setName("Default Agent");
-            config.setModelEndpoint("https://api.openai.com/v1/chat/completions");
-            config.setModelName("gpt-4o");
-            config.setSecretKeyEnc("");
-            config.setIsDefault(true);
-            config.setStatus("ENABLED");
-            agentConfigRepository.save(config);
+            if (apiKey != null && !apiKey.isBlank()) {
+                log.info("从环境变量初始化默认 Agent 配置...");
+                AgentConfig config = new AgentConfig();
+                config.setName("Default Agent");
+                config.setModelEndpoint(endpoint != null ? endpoint : "https://api.openai.com/v1/chat/completions");
+                config.setModelName(model != null ? model : "gpt-4o");
+                config.setSecretKeyEnc(encryptAes(apiKey));
+                config.setIsDefault(true);
+                config.setStatus("ENABLED");
+                agentConfigRepository.save(config);
+                log.info("默认 Agent 配置初始化完成 (model={})", config.getModelName());
+            } else {
+                log.info("初始化默认 Agent 配置（占位）...");
+                AgentConfig config = new AgentConfig();
+                config.setName("Default Agent");
+                config.setModelEndpoint("https://api.openai.com/v1/chat/completions");
+                config.setModelName("gpt-4o");
+                config.setSecretKeyEnc("");
+                config.setIsDefault(true);
+                config.setStatus("ENABLED");
+                agentConfigRepository.save(config);
+                log.info("默认 Agent 配置初始化完成（需手动配置 API Key）");
+            }
+        }
+    }
 
-            log.info("默认 Agent 配置初始化完成");
+    private String encryptAes(String plainText) {
+        try {
+            String aesSecret = System.getenv().getOrDefault("LUBAN_AGENT_AES_KEY", "Luban@Agent#2026");
+            byte[] key = MessageDigest.getInstance("SHA-256").digest(aesSecret.getBytes("UTF-8"));
+            SecretKeySpec secretKey = new SecretKeySpec(key, "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+            return Base64.getEncoder().encodeToString(cipher.doFinal(plainText.getBytes("UTF-8")));
+        } catch (Exception e) {
+            throw new RuntimeException("AES 加密失败", e);
         }
     }
 

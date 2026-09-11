@@ -13,6 +13,7 @@ import { querySkills } from './querySkills';
 import { apiSkills } from './apiSkills';
 import { workflowSkills } from './workflowSkills';
 import { delegateSkills } from './delegateSkills';
+import { orchestrationSkills } from './orchestrationSkills';
 
 export function registerAllSkills(): void {
   const allSkills: Record<string, SkillFactory> = {
@@ -25,6 +26,7 @@ export function registerAllSkills(): void {
     ...apiSkills,
     ...workflowSkills,
     ...delegateSkills,
+    ...orchestrationSkills,
   };
 
   Object.entries(allSkills).forEach(([id, factory]) => {

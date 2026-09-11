@@ -1,19 +1,28 @@
 #!/bin/bash
 # ============================================================
 # Luban All-in-One Docker Entrypoint
+# 密钥优先从环境变量读取，否则自动生成并持久化
 # 初始化 MySQL → 启动所有服务
 # ============================================================
 set -e
 
 MYSQL_DATA_DIR="/app/data/mysql"
-MYSQL_PID_FILE="/var/run/mysqld/mysqld.pid"
 MYSQL_SOCKET="/var/run/mysqld/mysqld.sock"
+SECRETS_FILE="/app/data/.luban-secrets"
 
 # ---------- 环境变量默认值 ----------
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-luban123}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-luban}"
 
-# ---------- 生成安全密钥 ----------
+# ---------- 加载已持久化的密钥 ----------
+if [ -f "$SECRETS_FILE" ]; then
+    echo "[entry] 加载持久化密钥: $SECRETS_FILE"
+    set -a
+    source "$SECRETS_FILE"
+    set +a
+fi
+
+# ---------- 生成/校验安全密钥 ----------
 if [ -z "$LUBAN_JWT_SECRET" ] || [ ${#LUBAN_JWT_SECRET} -lt 32 ]; then
     export LUBAN_JWT_SECRET=$(openssl rand -hex 32)
     echo "[entry] LUBAN_JWT_SECRET 已生成"
@@ -26,6 +35,19 @@ if [ -z "$LUBAN_RSA_PRIVATE_KEY" ]; then
     export LUBAN_RSA_PRIVATE_KEY=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null)
     echo "[entry] LUBAN_RSA_PRIVATE_KEY 已生成"
 fi
+if [ -z "$LUBAN_AGENT_AES_KEY" ] || [ ${#LUBAN_AGENT_AES_KEY} -lt 16 ]; then
+    export LUBAN_AGENT_AES_KEY=$(openssl rand -base64 32)
+    echo "[entry] LUBAN_AGENT_AES_KEY 已生成"
+fi
+
+# ---------- 持久化密钥（下次重启复用） ----------
+cat > "$SECRETS_FILE" << EOF
+LUBAN_JWT_SECRET='${LUBAN_JWT_SECRET}'
+LUBAN_DATASOURCE_SECRET='${LUBAN_DATASOURCE_SECRET}'
+LUBAN_RSA_PRIVATE_KEY='${LUBAN_RSA_PRIVATE_KEY}'
+LUBAN_AGENT_AES_KEY='${LUBAN_AGENT_AES_KEY}'
+EOF
+echo "[entry] 密钥已持久化到 $SECRETS_FILE"
 
 # ---------- 初始化 MySQL 数据目录 ----------
 if [ ! -d "$MYSQL_DATA_DIR/mysql" ]; then
@@ -33,15 +55,12 @@ if [ ! -d "$MYSQL_DATA_DIR/mysql" ]; then
     mkdir -p "$MYSQL_DATA_DIR" /var/run/mysqld
     chown -R mysql:mysql "$MYSQL_DATA_DIR" /var/run/mysqld
 
-    # 初始化 MySQL 系统表
     mysqld --initialize-insecure --user=mysql --datadir="$MYSQL_DATA_DIR"
     echo "[entry] MySQL 系统表初始化完成"
 
-    # 启动 MySQL（无权限模式）
     mysqld --user=mysql --datadir="$MYSQL_DATA_DIR" --skip-networking --socket="$MYSQL_SOCKET" &
     MYSQL_PID=$!
 
-    # 等待 MySQL 启动
     for i in $(seq 1 30); do
         if mysqladmin ping --socket="$MYSQL_SOCKET" --silent 2>/dev/null; then
             break
@@ -58,8 +77,7 @@ GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 EOF
 
-    # 关闭临时 MySQL
-    mysqladmin --socket="$MYSQL_SOCKET" -u root -p"${MYSQL_ROOT_PASSWORD}" shutdown
+    MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin --socket="$MYSQL_SOCKET" -u root shutdown
     wait "$MYSQL_PID" 2>/dev/null || true
     echo "[entry] MySQL 初始化完成"
 else
@@ -74,8 +92,8 @@ export SPRING_DATASOURCE_USERNAME=root
 export SPRING_DATASOURCE_PASSWORD="$MYSQL_ROOT_PASSWORD"
 export LUBAN_EMBEDDING_BASE_URL="http://127.0.0.1:8765"
 
-# 写入 /etc/environment 确保 supervisord 子进程能读取
 env | grep -E '^(LUBAN_|SPRING_|MYSQL_|EMBEDDING_|HF_)' > /etc/luban.env
 
 echo "[entry] 启动所有服务..."
+mkdir -p /app/data/logs
 exec /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf

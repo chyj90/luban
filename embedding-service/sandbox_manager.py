@@ -42,6 +42,29 @@ EXEC_TIMEOUT = int(os.environ.get("SANDBOX_TIMEOUT", "30"))
 SANDBOX_ENABLED = os.environ.get("SANDBOX_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
+def _docker_available() -> bool:
+    """Check if Docker is installed and the socket is accessible."""
+    try:
+        result = subprocess.run(
+            ["docker", "info"], capture_output=True, text=True, timeout=5
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+# 自动降级：如果 Docker 不可用，强制关闭沙箱模式
+if SANDBOX_ENABLED and not _docker_available():
+    SANDBOX_ENABLED = False
+    log.warning(
+        "SANDBOX_ENABLED=true but Docker is not available (no socket or docker not installed). "
+        "Automatically falling back to direct subprocess execution. "
+        "This is expected when running inside a Docker container."
+    )
+
+log.info("Sandbox mode: %s", "ENABLED" if SANDBOX_ENABLED else "DISABLED (direct subprocess)")
+
+
 class SandboxContainer:
     """A pre-started Docker container that can be reused for multiple script executions."""
 

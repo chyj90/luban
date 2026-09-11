@@ -43,7 +43,8 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
-                .requestMatchers("/api/v1/auth/**", "/api/v1/security/public-key", "/error").permitAll()
+                .requestMatchers("/api/v1/auth/**", "/api/v1/security/public-key",
+                        "/api/v1/public/**", "/error").permitAll()
                 .anyRequest().authenticated()
             )
             .headers(headers -> headers

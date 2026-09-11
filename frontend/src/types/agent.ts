@@ -86,6 +86,10 @@ export interface DelegateQueryResult {
   message: string;
   details?: string;
   data?: unknown;
+  /** DDL 被拦截后降级为手动 SQL，需要等待用户操作 */
+  interventionRequired?: boolean;
+  /** 干预原因 */
+  interventionReason?: string;
   _noRetry?: boolean;
 }
 

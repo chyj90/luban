@@ -230,6 +230,13 @@ public class OrchestrationEngine {
         if (input instanceof Map<?, ?> m) {
             m.forEach((k, v) -> eval.put(String.valueOf(k), v));
         }
+        // 已执行节点输出：扁平合并到顶层，输入参数优先
+        for (var entry : context.entrySet()) {
+            if ("__input__".equals(entry.getKey())) continue;
+            if (entry.getValue() instanceof Map<?, ?> m) {
+                m.forEach((k, v) -> eval.putIfAbsent(String.valueOf(k), v));
+            }
+        }
         return eval;
     }
 

@@ -351,10 +351,10 @@
   min-height: 0;
 }
 
-/* Start list - card grid */
+/* Start list - app groups, one per row */
 .startList {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -437,16 +437,41 @@
 
 /* Start app group */
 .startAppGroup {
-  margin-bottom: 24px;
+  background: #fff;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.startAppHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  background: #fafafa;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+  color: #1f1f1f;
+}
+
+.startAppHeader:hover {
+  background: #f0f2f5;
 }
 
 .startAppName {
   font-size: 14px;
   font-weight: 600;
   color: #1f1f1f;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #f0f2f5;
+  flex: 1;
+}
+
+.startAppCount {
+  font-size: 12px;
+  color: #8c9cab;
+  font-weight: 400;
 }
 
 .startAppEmpty {
@@ -503,25 +528,25 @@
 
 /* Workflow card in start list */
 .startWorkflowGrid {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding: 16px 20px;
 }
 
 .startWorkflowCard {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: 20px 24px;
+  padding: 16px;
   background: #fff;
   border: 1px solid #e8edf3;
   border-radius: 8px;
-  transition: box-shadow 0.2s, border-color 0.2s;
+  transition: background 0.15s;
 }
 
 .startWorkflowCard:hover {
-  border-color: #1677ff;
-  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.1);
+  background: #fafafa;
 }
 
 .startWorkflowInfo {

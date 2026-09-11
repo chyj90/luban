@@ -3,6 +3,7 @@ import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { loadDelegationMemory, saveDelegationMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
 import { listQueries } from '@/api';
+import { useAuthStore } from '@/stores/authStore';
 import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
 
 const activeDelegations = new Set<string>();
@@ -206,7 +207,19 @@ export type WorkflowDelegateMode = 'design_form' | 'design_workflow' | 'full';
  */
 export function buildWorkflowDelegateSystemPrompt(
   mode: WorkflowDelegateMode,
-  opts: { applicationId: number; existingFormsInfo?: string; context?: string },
+  opts: {
+    applicationId: number;
+    existingFormsInfo?: string;
+    context?: string;
+    /** 当前用户身份，供流程助手识别"我/当前用户" */
+    currentUser?: {
+      memberId: number;
+      name: string;
+      account?: string | null;
+      email?: string | null;
+      deptName?: string | null;
+    };
+  },
 ): string {
   const modePrompt = mode === 'design_form'
     ? DESIGN_FORM_WORKFLOW
@@ -214,9 +227,23 @@ export function buildWorkflowDelegateSystemPrompt(
       ? DESIGN_WORKFLOW_ONLY_PROMPT
       : FULL_WORKFLOW_PROMPT;
 
+  const userIdentity = opts.currentUser
+    ? `
+## 当前用户身份
+你正在为以下用户设计流程，当用户描述中出现"我""当前用户""本人"等指代时，均指这个用户：
+- 用户 ID：${opts.currentUser.memberId}
+- 姓名：${opts.currentUser.name}
+${opts.currentUser.account ? `- 账号：${opts.currentUser.account}` : ''}
+${opts.currentUser.email ? `- 邮箱：${opts.currentUser.email}` : ''}
+${opts.currentUser.deptName ? `- 部门：${opts.currentUser.deptName}` : ''}
+
+⚠️ 当需要把审批人设为"当前用户"时，直接用 memberId=${opts.currentUser.memberId} 设置审批人，**不需要调用 search_members**。`
+    : '';
+
   return `你是流程设计专家，负责设计和管理业务流程。你必须调用工具来实际创建表单和流程，禁止只输出文本方案而不调用工具。
 
 当前应用 ID: ${opts.applicationId}
+${userIdentity}
 ${opts.existingFormsInfo || ''}
 ${opts.context ? `上下文信息：${opts.context}` : ''}
 ${WORKFLOW_ENGINE_SEMANTICS}
@@ -267,6 +294,91 @@ detail_table 类型需额外提供 columns 数组，每个子字段同上格式
 - 审批节点必须设置审批人
 - 已有可复用表单时不要重复创建，直接使用已有表单 ID
 - ⚠️ **如实汇报**：完成后汇报实际结果（表单 ID/流程 ID/节点结构）；任何工具调用失败时，必须如实说明失败原因和已尝试的方案，禁止谎报完成`;
+}
+
+const DDL_PATTERN = /^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i;
+const FALLBACK_SQL_PATTERN = /(CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE)\s/i;
+
+export interface DDLValidationResult {
+  /** 警告列表（供上层展示） */
+  warnings: string[];
+  /** 是否需要用户手动干预（DDL 被拦截且已提供降级 SQL） */
+  interventionRequired: boolean;
+  /** 干预原因（供主智能体判断是否停止） */
+  interventionReason?: string;
+}
+
+/**
+ * DDL 执行校验（代码层兜底）：
+ * 扫描子智能体消息，检查 DDL 操作是否遵循"先尝试执行 → 失败降级生成 SQL"流程。
+ *
+ * 校验规则：
+ * 1. execute_sql 被调用且 sql 为 DDL 语句 → 检查执行结果
+ * 2. DDL 被后端拦截（success=false）→ 检查 assistant 最终回复是否包含降级 SQL
+ * 3. 未提供降级 SQL → 生成警告
+ * 4. DDL 被拦截且提供了降级 SQL → interventionRequired=true，主智能体应停止等待用户
+ */
+export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>): DDLValidationResult {
+  const warnings: string[] = [];
+  const argsByCallId = new Map<string, { name: string; args: Record<string, unknown> }>();
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'assistant' || !Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls as Array<Record<string, unknown>>) {
+      if (typeof tc.id === 'string' && typeof tc.name === 'string') {
+        argsByCallId.set(tc.id, { name: tc.name, args: (tc.arguments as Record<string, unknown>) || {} });
+      }
+    }
+  }
+
+  const blockedDDL: Array<{ sql: string; error: string }> = [];
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'tool' || typeof m.content !== 'string' || !m.toolCallId) continue;
+    const call = argsByCallId.get(String(m.toolCallId));
+    if (!call || call.name !== 'execute_sql') continue;
+
+    const sql = String(call.args.sql || '');
+    if (!DDL_PATTERN.test(sql)) continue;
+
+    let parsed: { success?: boolean; message?: string };
+    try { parsed = JSON.parse(String(m.content)) as typeof parsed; } catch { continue; }
+
+    if (!parsed.success) {
+      blockedDDL.push({ sql, error: parsed.message || '未知错误' });
+    }
+  }
+
+  if (blockedDDL.length === 0) {
+    return { warnings: [], interventionRequired: false };
+  }
+
+  const assistantContents = (messages as Array<Record<string, unknown>>)
+    .filter((m) => m.role === 'assistant' && typeof m.content === 'string')
+    .map((m) => String(m.content));
+
+  const lastAssistantMsg = assistantContents[assistantContents.length - 1] || '';
+
+  const hasFallback = FALLBACK_SQL_PATTERN.test(lastAssistantMsg);
+
+  if (!hasFallback) {
+    const ddlSummary = blockedDDL.map((d) =>
+      `  • ${d.sql.slice(0, 80)}${d.sql.length > 80 ? '...' : ''} → ${d.error.slice(0, 60)}`
+    ).join('\n');
+    warnings.push(
+      `DDL 操作被后端拦截，但未提供降级 SQL：\n${ddlSummary}\n` +
+      `→ 请在回复中输出完整 SQL，告知用户前往数据源管理面板手动执行。`
+    );
+    return { warnings, interventionRequired: false };
+  }
+
+  console.log(`[validateDDLExecution] DDL 降级校验通过：${blockedDDL.length} 条 DDL 被拦截，已提供降级 SQL`);
+
+  return {
+    warnings,
+    interventionRequired: true,
+    interventionReason: `DDL 操作被后端拦截（${blockedDDL.map(d => d.sql.slice(0, 40)).join('、')}），已降级生成手动 SQL。请等待用户在数据源管理面板完成操作后再继续。`,
+  };
 }
 
 async function validateFilterParamsCoverage(
@@ -418,6 +530,20 @@ export const delegateSkills: Record<string, SkillFactory> = {
             result.details += `\n\n⚠️ 筛选参数校验:\n${warningMsg}`;
           }
 
+          // 校验 DDL 降级流程：代码层兜底，确保 DDL 被拦截后提供了降级 SQL
+          const ddlCheck = validateDDLExecution(messages);
+          if (ddlCheck.warnings.length > 0) {
+            const ddlWarningMsg = ddlCheck.warnings.join('\n');
+            console.warn(`[delegate_query] DDL 降级校验警告:\n${ddlWarningMsg}`);
+            result.details += `\n\n⚠️ DDL 降级校验:\n${ddlWarningMsg}`;
+          }
+          // 结构化干预标记：DDL 被拦截且已降级 → 主智能体应停止等待用户
+          if (ddlCheck.interventionRequired) {
+            result.interventionRequired = true;
+            result.interventionReason = ddlCheck.interventionReason;
+            result.message = '需要用户手动操作（建表/改表），请等待用户完成后再继续';
+          }
+
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
             payload: { requirement: typedArgs.requirement, success: true, details: dbaResponse },
@@ -502,6 +628,17 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             applicationId: ctx.applicationId,
             existingFormsInfo,
             context,
+            currentUser: (() => {
+              const u = useAuthStore.getState().user;
+              if (!u) return undefined;
+              return {
+                memberId: u.id,
+                name: u.displayName,
+                account: u.account,
+                email: u.email,
+                deptName: u.deptName,
+              };
+            })(),
           });
 
           const executor = await chatRouter!.routeTo('workflow-assistant', `请设计流程：${requirement}`, `wf-${Date.now()}`, {
@@ -573,6 +710,52 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           return { success: false, message: `流程设计智能体执行失败: ${e.message}`, _noRetry: true };
         } finally {
           activeDelegations.delete('workflow');
+        }
+      },
+    };
+  },
+
+  'delegate:orchestration': (ctx, chatRouter) => {
+    if (!chatRouter) {
+      return {
+        id: 'delegate:orchestration',
+        category: SkillCategory.DELEGATE,
+        name: 'delegate_orchestration',
+        description: '委派 API 编排任务（不可用：缺少 ChatRouter）',
+        parameters: { type: 'object', properties: {} },
+        async execute() { return { success: false, message: 'ChatRouter 不可用' }; },
+      };
+    }
+
+    return {
+      id: 'delegate:orchestration',
+      category: SkillCategory.DELEGATE,
+      name: 'delegate_orchestration',
+      description: `委派 API 编排任务给编排设计助手：自然语言描述数据聚合/调用链需求，助手产出 DSL 并完成校验、试运行；发布需你确认。`,
+      parameters: {
+        type: 'object',
+        properties: {
+          requirement: { type: 'string', description: '编排需求描述，如"聚合客户 360 视图：查客户基础信息+订单列表，Python 合并返回"' },
+          context: { type: 'string', description: '相关上下文（页面名称、已有 queryId/toolId 等）' },
+        },
+        required: ['requirement'],
+      },
+      async execute(args) {
+        const { requirement, context } = args as unknown;
+        console.log(`[delegate_orchestration] 开始 | ${String(requirement).slice(0, 60)}`);
+        try {
+          const executor = await chatRouter.routeTo('orchestration-assistant',
+            `请设计编排：${requirement}${context ? `（上下文：${context}）` : ''}`,
+            `orch-${Date.now()}`, { isDelegated: true, agentContext: { requirement, context } });
+          const messages = executor.getMessages();
+          const response = messages
+            .filter((m: unknown) => (m as { role?: string }).role === 'assistant')
+            .map((m: unknown) => (m as { content?: string }).content || '')
+            .join('\n\n')
+            .trim();
+          return { success: true, message: response || '编排设计助手已完成', data: { response } };
+        } catch (e) {
+          return { success: false, message: `编排设计助手执行失败: ${(e as Error).message}` };
         }
       },
     };

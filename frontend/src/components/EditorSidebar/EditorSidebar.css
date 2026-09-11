@@ -328,9 +328,27 @@
 }
 
 .editor-sidebar-hint {
-  padding: 16px 12px;
+  padding: 12px 8px;
   text-align: center;
   color: #8c9cab;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.editor-sidebar-item-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  font-weight: 500;
+}
+
+.editor-sidebar-item-badge.published {
+  background: #e6f7ed;
+  color: #389e0d;
+}
+
+.editor-sidebar-item-badge.draft {
+  background: #f5f5f5;
+  color: #8c8c8c;
 }

@@ -142,11 +142,21 @@
 }
 
 .api-key-table-wrap {
+  flex: 1;
+  overflow-y: auto;
   background: #fff;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
-  overflow: hidden;
-  margin: 24px 32px;
+  margin: 0 32px 24px 32px;
+}
+
+.api-key-table-wrap::-webkit-scrollbar {
+  width: 4px;
+}
+
+.api-key-table-wrap::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
 }
 
 .api-key-table {

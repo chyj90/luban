@@ -22,10 +22,11 @@ import type { Page } from '@/types/page';
 import type { Query, RunQueryResponse } from '@/types/query';
 import { SHOWCASE_PAGE } from '@/luban-ui/showcase';
 import './AppEditorPage.css';
+import { OrchestrationBuilder } from './OrchestrationBuilder';
 
 type EditingFile = 'html' | 'css' | 'js';
 
-type SidebarTab = 'pages' | 'queries' | 'workflow' | 'datasources' | 'apis';
+type SidebarTab = 'pages' | 'queries' | 'workflow' | 'orchestrations' | 'datasources' | 'apis';
 
 export type WorkflowView =
   | { view: 'processes'; appId?: number }
@@ -33,6 +34,11 @@ export type WorkflowView =
   | { view: 'forms'; appId?: number }
   | { view: 'form-preview'; formId: number; appId?: number }
   | { view: 'instance-detail'; instanceId: number; appId?: number };
+
+export type OrchView =
+  | { view: 'list' }
+  | { view: 'new' }
+  | { view: 'edit'; orchId: number };
 
 const FILE_TABS: { key: EditingFile; label: string }[] = [
   { key: 'html', label: 'index.html' },
@@ -54,6 +60,7 @@ export function AppEditorPage() {
   const [pendingApiId, setPendingApiId] = useState<number | null>(null);
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null);
   const [workflowView, setWorkflowView] = useState<WorkflowView>({ view: 'processes', appId: Number(appId) });
+  const [orchView, setOrchView] = useState<OrchView>({ view: 'list' });
   const [editingFile, setEditingFile] = useState<EditingFile | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
@@ -187,6 +194,20 @@ export function AppEditorPage() {
     setSidebarTab('workflow');
   }, [appId]);
 
+  const handleOrchestrationSelect = useCallback((orchId: number) => {
+    setOrchView({ view: 'edit', orchId });
+    setEditingFile(null);
+    setSelectedQuery(null);
+  }, []);
+
+  const handleOrchestrationCreate = useCallback(() => {
+    setOrchView({ view: 'new' });
+    setEditingFile(null);
+    setSelectedQuery(null);
+  }, []);
+
+  const selectedOrchId = orchView.view === 'edit' ? orchView.orchId : null;
+
   const handleSidebarTabChange = useCallback((tab: SidebarTab) => {
     setSidebarTab(tab);
     if (tab !== 'apis') {
@@ -194,6 +215,9 @@ export function AppEditorPage() {
     }
     if (tab !== 'workflow') {
       setEditingFile(null);
+    }
+    if (tab !== 'orchestrations') {
+      setOrchView({ view: 'list' });
     }
     if (tab === 'queries') {
       listQueries(Number(appId)).then((res) => {
@@ -241,6 +265,9 @@ export function AppEditorPage() {
           onQuerySelect={setSelectedQuery}
           onWorkflowNavigate={handleWorkflowNavigate}
           onTabChange={handleSidebarTabChange}
+          onOrchestrationSelect={handleOrchestrationSelect}
+          onOrchestrationCreate={handleOrchestrationCreate}
+          selectedOrchId={selectedOrchId}
           selectedApi={selectedApi}
           onApiSelect={setSelectedApi}
           onToolsChange={setAppTools}
@@ -250,7 +277,35 @@ export function AppEditorPage() {
         />
 
         <div className="app-editor-main">
-          {sidebarTab === 'workflow' ? (
+          {sidebarTab === 'orchestrations' ? (
+            orchView.view !== 'list' ? (
+              <OrchestrationBuilder
+                appId={Number(appId)}
+                orchId={orchView.view === 'edit' ? orchView.orchId : null}
+                onBack={() => setOrchView({ view: 'list' })}
+              />
+            ) : (
+              <div className="orch-list-panel">
+                <div className="orch-list-header">
+                  <h3>编排</h3>
+                  <span className="orch-list-subtitle">将 Query、API、流程组合为新的 API，发布后可在页面中调用</span>
+                </div>
+                <div className="orch-list-empty">
+                  <div className="orch-list-empty-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="2" width="6" height="6" rx="1"/>
+                      <rect x="15" y="2" width="6" height="6" rx="1"/>
+                      <rect x="9" y="16" width="6" height="6" rx="1"/>
+                      <line x1="9" y1="5" x2="15" y2="5"/>
+                      <line x1="12" y1="8" x2="12" y2="16"/>
+                    </svg>
+                  </div>
+                  <span className="orch-list-empty-text">暂无编排</span>
+                  <span className="orch-list-empty-hint">在左侧选择已有编排，或点击 + 新建编排</span>
+                </div>
+              </div>
+            )
+          ) : sidebarTab === 'workflow' ? (
             <div className="app-editor-workflow-panel">
               {workflowView.view === 'processes' && (
                 <ProcessList

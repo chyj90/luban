@@ -129,7 +129,7 @@ export function getFindAnalysisSkillSummary(): string {
   - **交互复杂度（0-25）**：纯展示页满分；有交互按丰富度加分（筛选+联动+下钻+图表点击+跨组件刷新各+4）；无交互说明得0分
   - **数据覆盖度（0-25）**：每个模块有对应查询/API得满分；模块无数据来源扣分
   - **字段具体性（0-25）**：字段有类型标注（文本/数字/日期/选项）得满分；笼统字段扣分；needsNewTable 但缺 fields 扣分
-- 输出分析报告后，**不要重复报告内容**，只需简短说明「分析完成，请确认以上计划」并等待用户确认
+- **submit_analysis 必须在输出分析报告的同一个 assistant message 中调用**：先输出报告文本，紧接着调用 submit_analysis（不要分两条消息）。submit_analysis 返回后计划自动展示，此时不要重复报告内容，等待用户确认。**禁止只输出报告文本而不调 submit_analysis——这会导致计划无法生成**
 - **禁止自行调用 confirm_plan**，用户明确回复后（如"确认"、"开始"）才调用 confirm_plan 开始执行
 - 不要在分析阶段调用其他工具（数据操作、创建页面等）
 - 分析结果中的字段都是业务语言描述，实际的数据库字段由 DBA 负责映射`;
@@ -154,10 +154,12 @@ export function getPlanPromptFragment(): string {
 1. **需求澄清** → 需求不明确时直接提问，不创建计划
 2. **提交分析** → 调用 submit_analysis，提交结构化分析数据（pages + workflows）。**系统自动推导执行步骤**，无需手动构造 items：
    - 每个数据查询需求 → 系统自动生成 delegate_query 步骤
-   - 每个新增页面 → 系统自动生成 create_code_page 步骤
+   - 每个编排需求（pages[].orchestrations） → 系统自动生成 delegate_orchestration 步骤（依赖对应查询步骤）
+   - 每个已有 API 引用（pages[].apis） → 仅作为页面绑定信息，不生成步骤
+   - 每个新增页面 → 系统自动生成 create_code_page 步骤（依赖对应查询 + 编排步骤）
    - 每个需修改的页面 → 系统自动生成 update_code_page 步骤
    - 每个流程需求 → 系统自动生成 delegate_workflow 步骤（先 form 后 workflow）
-   - 步骤依赖关系 → 系统自动推导（页面依赖查询，流程依赖表单）
+   - 步骤依赖关系 → 系统自动推导（页面依赖查询+编排，编排依赖查询，流程依赖表单）
 3. **用户确认** → 计划展示给用户，确认所有步骤
 4. **执行步骤** → 按顺序调用工具，每步用 update_plan_item 标记状态。**禁止跳过任何步骤**，一个代码更新可能覆盖多个步骤，但每个步骤都必须单独标记为 completed
 5. **完成验证** → 所有步骤标记完成后，调用 validate_plan 检查。如果 validate_plan 返回未完成的步骤，必须立即标记完成
@@ -165,7 +167,8 @@ export function getPlanPromptFragment(): string {
 ### 计划灵活性
 - 执行中用户补充需求 → 调用 adjust_plan 追加步骤
 - 用户说"先做别的" → 调用 list_unfinished_plans 查看，set_focus_plan 切换
-- 步骤失败 → 自动标记为 error，继续执行后续步骤`;
+- 步骤失败 → 自动标记为 error，继续执行后续步骤
+- **⚠️ 计划完整性检查**：展示计划给用户前，确认所有需求（含编排/工作流）都在计划步骤中有对应项。若用户需求涉及编排但计划缺少 delegate_orchestration 步骤，立即调用 adjust_plan 补上`;
 }
 
 export function getAnalysisPromptFragment(): string {

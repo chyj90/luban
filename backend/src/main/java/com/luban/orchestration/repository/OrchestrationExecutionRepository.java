@@ -8,4 +8,5 @@ import java.util.Optional;
 
 public interface OrchestrationExecutionRepository extends JpaRepository<OrchestrationExecution, Long> {
     List<OrchestrationExecution> findTop50ByDefinitionIdOrderByCreatedAtDesc(Long definitionId);
+    void deleteAllByDefinitionId(Long definitionId);
 }

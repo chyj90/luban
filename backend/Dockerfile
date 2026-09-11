@@ -5,6 +5,9 @@ FROM maven:3.9-eclipse-temurin-21-alpine AS build
 
 WORKDIR /build
 
+# Use Aliyun Maven mirror for faster downloads in China
+COPY settings.xml /root/.m2/settings.xml
+
 # Copy pom.xml first for dependency caching
 COPY pom.xml .
 # Download dependencies (this layer is cached unless pom.xml changes)
@@ -12,7 +15,6 @@ RUN mvn dependency:go-offline -B -q || true
 
 # Copy source code
 COPY src ./src
-COPY org ./org
 
 # Build the fat jar (skip tests for Docker build)
 RUN mvn package -DskipTests -B -q
@@ -35,12 +37,6 @@ COPY --from=build /build/target/*.jar app.jar
 # Copy entrypoint script
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
-
-# Copy algorithms directory (Python scripts used by the orchestration engine)
-COPY algorithms ./algorithms
-
-# Copy driver jars
-COPY drivers ./drivers
 
 USER luban
 

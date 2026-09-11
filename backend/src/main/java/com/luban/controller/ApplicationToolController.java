@@ -7,6 +7,7 @@ import com.luban.entity.ToolDefinition;
 import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.entity.User;
+import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.ApiKeyTool;
 import com.luban.repository.ApplicationRepository;
@@ -45,6 +46,8 @@ import java.util.stream.Collectors;
 @AppAccess(action = AppAction.RUN, from = AppAccess.Source.PATH, key = "applicationId")
 public class ApplicationToolController {
 
+    private final com.luban.orchestration.service.OrchestrationService orchestrationService;
+
     private static final Logger log = LoggerFactory.getLogger(ApplicationToolController.class);
     private static final Pattern VAR_PATTERN = Pattern.compile("\\{\\{(\\w+)\\}\\}");
     private static final HttpClient httpClient = HttpClient.newBuilder()
@@ -67,7 +70,8 @@ public class ApplicationToolController {
                                      ApiKeyToolRepository apiKeyToolRepository,
                                      UserRepository userRepository,
                                      PageService pageService,
-                                     ApplicationRepository applicationRepository) {
+                                     ApplicationRepository applicationRepository,
+            com.luban.orchestration.service.OrchestrationService orchestrationService) {
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
@@ -76,6 +80,7 @@ public class ApplicationToolController {
         this.userRepository = userRepository;
         this.pageService = pageService;
         this.applicationRepository = applicationRepository;
+        this.orchestrationService = orchestrationService;
     }
 
     @PostMapping("/{applicationId}")
@@ -218,6 +223,34 @@ public class ApplicationToolController {
         } else if (!"PLATFORM".equals(scope)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN)
                     .body(ApiResponse.error("不支持的 API 类型"));
+        }
+
+        // ORCHESTRATION 类型工具：委托编排引擎执行（params 即 start 入参）。
+        // 编排属应用级资源：工具所属应用必须与请求应用一致（防跨应用越权执行）。
+        if (tool.getToolType() == com.luban.constant.ToolType.ORCHESTRATION) {
+            Map<String, Object> orchConfig;
+            try {
+                orchConfig = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                        tool.getConfig() == null ? "{}" : tool.getConfig(),
+                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            } catch (Exception parseEx) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.error("编排工具配置解析失败"));
+            }
+            Long orchDefId = orchConfig.get("orchestrationId") instanceof Number n ? n.longValue() : null;
+            if (orchDefId == null) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.error("编排工具配置缺少 orchestrationId"));
+            }
+            var orchDef = orchestrationService.getById(orchDefId);
+            if (!orchDef.getApplicationId().equals(applicationId)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(ApiResponse.error("无权调用此编排（属于其他应用）"));
+            }
+            Map<String, Object> orchResult = orchestrationService.execute(
+                    orchDefId, user.getId(), OrchestrationExecution.TRIGGER_RUNTIME, null,
+                    (Map<String, Object>) body.getOrDefault("params", Map.of()));
+            return ResponseEntity.ok(ApiResponse.ok(orchResult));
         }
 
         // 授权 API（PLATFORM scope）额外校验：白名单 + KEY 绑定权限

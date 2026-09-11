@@ -11,9 +11,12 @@ import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.Datasource;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
+import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.service.ApiKeyService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -30,13 +33,16 @@ public class ApiKeyController {
     private final ApiKeyService apiKeyService;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final DatasourceRepository datasourceRepository;
+    private final ApplicationRepository applicationRepository;
 
     public ApiKeyController(ApiKeyService apiKeyService,
                             ToolDefinitionRepository toolDefinitionRepository,
-                            DatasourceRepository datasourceRepository) {
+                            DatasourceRepository datasourceRepository,
+                            ApplicationRepository applicationRepository) {
         this.apiKeyService = apiKeyService;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.datasourceRepository = datasourceRepository;
+        this.applicationRepository = applicationRepository;
     }
 
     @GetMapping
@@ -96,6 +102,49 @@ public class ApiKeyController {
     @GetMapping("/available-tools")
     public ResponseEntity<ApiResponse<List<ToolDefinition>>> listAvailableTools() {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.listAvailableTools()));
+    }
+
+    @GetMapping("/application-tools")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> listApplicationTools(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "") String search) {
+        PageRequest pageRequest = PageRequest.of(page - 1, size);
+        Page<ToolDefinition> toolPage;
+        if (search.isBlank()) {
+            toolPage = toolDefinitionRepository.findByScope("APPLICATION", pageRequest);
+        } else {
+            toolPage = toolDefinitionRepository.findByScopeAndSearch("APPLICATION", search, pageRequest);
+        }
+
+        Map<Long, String> appNameMap = new LinkedHashMap<>();
+        List<Map<String, Object>> tools = toolPage.getContent().stream().map(t -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", t.getId());
+            item.put("name", t.getName());
+            item.put("displayName", t.getDisplayName());
+            item.put("description", t.getDescription());
+            item.put("toolType", t.getToolType() != null ? t.getToolType().getValue() : "");
+            item.put("inputSchema", t.getInputSchema());
+            item.put("outputSchema", t.getOutputSchema());
+            item.put("config", t.getConfig());
+            item.put("groupId", t.getGroupId());
+            item.put("applicationId", t.getGroupId());
+            String appName = appNameMap.computeIfAbsent(t.getGroupId(),
+                    gid -> applicationRepository.findById(gid)
+                            .map(Application::getName)
+                            .orElse("未知应用"));
+            item.put("applicationName", appName);
+            return item;
+        }).collect(Collectors.toList());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tools", tools);
+        result.put("totalPages", toolPage.getTotalPages());
+        result.put("totalElements", toolPage.getTotalElements());
+        result.put("page", page);
+        result.put("size", size);
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     @PostMapping("/tool-permission/{id}/approve")

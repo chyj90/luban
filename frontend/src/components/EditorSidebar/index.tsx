@@ -4,14 +4,16 @@ import { QueryPanel } from '@/components/QueryPanel';
 import { ApiPanel } from '@/components/ApiPanel';
 import type { SelectedApi } from '@/components/ApiDetail';
 import { createCodePage, deletePage, renamePage, updateCodePage } from '@/api';
+import { listOrchestrations, type OrchestrationDefinition, deleteOrchestration } from '@/api/orchestration';
 import { confirm } from '@/stores/confirmStore';
+import { useToastStore } from '@/stores/toastStore';
 import type { Page } from '@/types/page';
 import type { Query } from '@/types/query';
 import type { WorkflowView } from '@/pages/AppEditor/AppEditorPage';
 import { SHOWCASE_PAGE } from '@/luban-ui/showcase';
 import './EditorSidebar.css';
 
-type TabKey = 'pages' | 'queries' | 'workflow' | 'datasources' | 'apis' | 'settings';
+type TabKey = 'pages' | 'queries' | 'workflow' | 'orchestrations' | 'datasources' | 'apis' | 'settings';
 
 interface EditorSidebarProps {
   appId: number;
@@ -27,6 +29,9 @@ interface EditorSidebarProps {
   onQuerySelect: (query: Query | null) => void;
   onWorkflowNavigate: (view: WorkflowView) => void;
   onTabChange: (tab: TabKey) => void;
+  onOrchestrationSelect?: (orchId: number) => void;
+  onOrchestrationCreate?: () => void;
+  selectedOrchId?: number | null;
   selectedApi?: SelectedApi | null;
   onApiSelect?: (api: SelectedApi | null) => void;
   onToolsChange?: (tools: Array<{ id: number; name: string }>) => void;
@@ -35,7 +40,7 @@ interface EditorSidebarProps {
   onPendingApiHandled?: () => void;
 }
 
-export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, selectedApi, onApiSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: EditorSidebarProps) {
+export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, onOrchestrationSelect, onOrchestrationCreate, selectedOrchId, selectedApi, onApiSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: EditorSidebarProps) {
   const _navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');
@@ -43,7 +48,10 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
   const [menuOpen, setMenuOpen] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<number | null>(null);
   const [renameName, setRenameName] = useState('');
+  const [orchItems, setOrchItems] = useState<OrchestrationDefinition[]>([]);
+  const [orchMenuOpen, setOrchMenuOpen] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const toast = useToastStore((s) => s.show);
 
   useEffect(() => {
     if (controlledActiveTab) {
@@ -55,11 +63,39 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(null);
+        setOrchMenuOpen(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'orchestrations') {
+      listOrchestrations(appId).then((res) => setOrchItems(res.data || [])).catch(() => setOrchItems([]));
+    }
+  }, [activeTab, appId]);
+
+  const refreshOrch = () => {
+    listOrchestrations(appId).then((res) => setOrchItems(res.data || [])).catch(() => setOrchItems([]));
+  };
+
+  const handleDeleteOrch = async (e: React.MouseEvent, orch: OrchestrationDefinition) => {
+    e.stopPropagation();
+    setOrchMenuOpen(null);
+    const confirmed = await confirm({
+      title: '删除编排',
+      message: `确定删除编排「${orch.name}」？已发布的编排将变为不可调用。`,
+      confirmText: '删除',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      await deleteOrchestration(orch.id);
+      refreshOrch();
+      toast('编排已删除', 'success');
+    } catch { /* ignore */ }
+  };
 
   const handleCreatePage = async () => {
     if (!newPageName.trim()) return;
@@ -132,6 +168,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
     { key: 'queries', label: '查询' },
     { key: 'apis', label: 'API' },
     { key: 'workflow', label: '流程' },
+    { key: 'orchestrations', label: '编排' },
     { key: 'datasources', label: '数据源' },
     { key: 'settings', label: '设置' },
   ];
@@ -146,6 +183,8 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 20l4-16m4 4l4-4-4-4M6 16l-4 4 4 4"/></svg>;
       case 'workflow':
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 8h8v8H8z"/></svg>;
+      case 'orchestrations':
+        return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9z"/></svg>;
       case 'datasources':
         return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 7v10c0 2 1.79 3 4 3h8c2.21 0 4-1 4-3V7"/><path d="M4 7c0 2 1.79 4 4 4h8c2.21 0 4-2 4-4"/><path d="M4 7c0-2 1.79-4 4-4h8c2.21 0 4 2 4 4"/></svg>;
       case 'settings':
@@ -332,11 +371,70 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
               </span>
               <span className="editor-sidebar-item-name">表单管理</span>
               </div>
+
             </div>
           </div>
         )}
 
-        {activeTab === 'datasources' && (
+        {activeTab === 'orchestrations' && (
+          <div className="editor-sidebar-section">
+            <div className="editor-sidebar-section-header">
+              <span>编排</span>
+              <button
+                className="editor-sidebar-add-btn"
+                onClick={() => onOrchestrationCreate?.()}
+              >
+                +
+              </button>
+            </div>
+            <div className="editor-sidebar-list">
+              {orchItems.length === 0 ? (
+                <div className="editor-sidebar-hint">暂无编排，点击 + 新建</div>
+              ) : (
+                orchItems.map((o) => (
+                  <div
+                    key={o.id}
+                    className={`editor-sidebar-item ${selectedOrchId === o.id ? 'active' : ''}`}
+                    onClick={() => onOrchestrationSelect?.(o.id)}
+                  >
+                    <span className="editor-sidebar-item-icon">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9z"/></svg>
+                    </span>
+                    <span className="editor-sidebar-item-name">{o.name}</span>
+                    <span className={`editor-sidebar-item-badge ${o.status.toLowerCase()}`}>{o.status === 'PUBLISHED' ? '已发布' : o.status === 'DRAFT' ? '草稿' : o.status}</span>
+                    <div className="editor-sidebar-item-menu" ref={orchMenuOpen === o.id ? menuRef : null}>
+                      <button
+                        className="editor-sidebar-item-dots"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOrchMenuOpen(orchMenuOpen === o.id ? null : o.id);
+                        }}
+                      >
+                        ⋯
+                      </button>
+                      {orchMenuOpen === o.id && (
+                        <div className="editor-sidebar-item-dropdown">
+                          <button className="danger" onClick={(e) => handleDeleteOrch(e, o)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                              <path d="M10 11v6" />
+                              <path d="M14 11v6" />
+                              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                            </svg>
+                            删除
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === ('datasources' as TabKey) && (
           <div className="editor-sidebar-section">
             <div className="editor-sidebar-section-header">
               <span>数据源</span>

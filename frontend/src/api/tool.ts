@@ -228,6 +228,16 @@ export function listApplicationDatasources(applicationId: number) {
   return get<unknown[]>(`/api-keys/application/${applicationId}/datasources`);
 }
 
+// List all APPLICATION-scoped tools (orchestration, app HTTP tools) with pagination
+export function listAllApplicationTools(params?: { page?: number; size?: number; search?: string }) {
+  const qs = params ? '?' + new URLSearchParams({
+    page: String(params.page || 1),
+    size: String(params.size || 50),
+    search: params.search || '',
+  }).toString() : '';
+  return get<{ tools: unknown[]; totalPages: number; totalElements: number; page: number; size: number }>(`/api-keys/application-tools${qs}`);
+}
+
 // Application tool CRUD
 export function createAppTool(applicationId: number, data: Record<string, unknown>) {
   return post<unknown>(`/application-tools/${applicationId}`, data);
