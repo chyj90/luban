@@ -527,6 +527,44 @@ window.LubanUI = window.LubanUI || {};
     return UI.chart(containerId, finalizeOption(option, opts));
   };
 
+  // Spark — 迷你趋势线（KPI 卡内嵌 sparkline，无坐标轴）
+  // 用法：LubanUI.chartPresets.spark('spark1', { data: [3,8,5,9,4,7], color: '#00d4ff', type: 'line'|'bar' })
+  F.spark = function(containerId, opts) {
+    opts = opts || {};
+    var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!el || typeof echarts === 'undefined') return null;
+    var isDark = UI.getTheme() === 'dark';
+    if (opts.theme === 'light') isDark = false;
+    var color = opts.color || (isDark ? '#00d4ff' : '#1677ff');
+    var data = opts.data || [];
+    function rgba(hex, a) {
+      var h = String(hex).replace('#', '');
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      var n = parseInt(h, 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+    }
+    var series = opts.type === 'bar' ? {
+      type: 'bar', data: data, barWidth: '55%',
+      itemStyle: { borderRadius: [2, 2, 0, 0], color: color, opacity: 0.85 }
+    } : {
+      type: 'line', data: data, smooth: true, symbol: 'none',
+      lineStyle: { width: opts.width || 2, color: color },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: rgba(color, 0.35) },
+        { offset: 1, color: rgba(color, 0) }
+      ]) }
+    };
+    var chart = echarts.init(el);
+    chart.setOption({
+      grid: { left: 2, right: 2, top: 4, bottom: 2 },
+      xAxis: { type: 'category', show: false, data: data.map(function(_, i) { return i; }) },
+      yAxis: { type: 'value', show: false },
+      tooltip: { show: false },
+      series: [series]
+    });
+    return chart;
+  };
+
   // ==========================================
   // Chart Presets — Glow 光晕增强变体（大屏高端效果）
   // barGlow: 霓虹光柱 + 深阴影   lineGlow: 发光曲线 + 面积渐变   pieGlow: 立体饼图 + 阴影
@@ -1384,6 +1422,67 @@ window.LubanUI = window.LubanUI || {};
       console.warn('LubanUI: fetch 不可用');
       if (callback) callback();
     }
+  };
+
+// ==========================================
+  // ScreenScaler — 1920×1080 设计稿等比缩放（指挥中心大屏底座）
+  // 用法：LubanUI.screenScaler({ width: 1920, height: 1080, target: '.screen-wrap' })
+  // 目标元素按固定设计尺寸布局，整体随窗口等比缩放居中，任意分辨率下布局不散架
+  // ==========================================
+  UI.screenScaler = function(opts) {
+    opts = opts || {};
+    var w = opts.width || 1920, h = opts.height || 1080;
+    var el = opts.target ? document.querySelector(opts.target) : (document.body.firstElementChild || null);
+    if (!el) return null;
+    el.style.width = w + 'px';
+    el.style.height = h + 'px';
+    el.style.minHeight = h + 'px';
+    el.style.transformOrigin = 'left top';
+    el.style.position = 'absolute';
+    el.style.left = '50%';
+    el.style.top = '50%';
+    function resize() {
+      var scale = Math.min(window.innerWidth / w, window.innerHeight / h);
+      el.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
+      window.__LUBAN__.onPageUnload(function() { window.removeEventListener('resize', resize); });
+    }
+    return { el: el, resize: resize };
+  };
+
+  // ==========================================
+  // WorldClock — 多时区时钟条（指挥中心标题栏）
+  // 用法：LubanUI.worldClock('clockBar', { zones: [{ label: '北京', offset: 8 }, { label: '莫斯科', offset: 3 }] })
+  // offset 为相对 UTC 的小时数；组件内部自动注册定时器清理
+  // ==========================================
+  UI.worldClock = function(containerId, opts) {
+    var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!el) return null;
+    opts = opts || {};
+    var zones = opts.zones || [{ label: '北京时间', offset: 8 }];
+    el.innerHTML = zones.map(function(z, i) {
+      return '<span style="display:inline-flex;align-items:center;gap:8px;' + (i > 0 ? 'margin-left:18px;' : '') + '">' +
+        '<b style="font-weight:600;">' + z.label + '</b>' +
+        '<span data-tz-idx="' + i + '" style="font-family:Consolas,monospace;"></span></span>';
+    }).join('');
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function tick() {
+      var now = Date.now();
+      zones.forEach(function(z, i) {
+        var d = new Date(now + (z.offset || 0) * 3600 * 1000);
+        var cell = el.querySelector('[data-tz-idx="' + i + '"]');
+        if (cell) cell.textContent = pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' 周' + '日一二三四五六'[d.getUTCDay()];
+      });
+    }
+    tick();
+    var timer = setInterval(tick, 1000);
+    if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
+      window.__LUBAN__.onPageUnload(function() { clearInterval(timer); });
+    }
+    return { update: tick };
   };
 
 // ==========================================

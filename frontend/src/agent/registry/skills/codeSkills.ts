@@ -688,79 +688,112 @@ if (document.readyState === 'loading') {
           const readName = primaryRead?.name || 'GetStats';
           const theme = args.theme === 'light' ? 'light' : 'dark';
 
-          // 深色大屏骨架：默认即深色科技风，模型在其上填充业务模块，
-          // 而不是像旧模板那样生成浅色通用统计页再被全量重写
+          // 指挥中心级密集骨架：1920×1080 设计稿 + 等比缩放，标题栏/多时区时钟/
+          // 4 张 sparkline KPI 卡/左右面板堆叠/中央地图/底部装饰，10+ 数据区块。
+          // 模型在其上填数据和联动，而不是从空白页拼布局
           html = `<div class="screen-wrap luban-screen-bg luban-bg-dots">
-  <div class="screen-header">
+  <div class="screen-header luban-corner-tech">
     <div class="screen-title luban-glow-text">${name}</div>
-    <div class="screen-time" id="currentTime">--</div>
+    <div id="worldClock" class="screen-clock"></div>
   </div>
 
-  <div class="luban-stats-grid">
-    <div class="luban-stat-card luban-glow-card">
-      <div class="luban-stat-label">指标一</div>
-      <div class="luban-stat-value" id="kpi1">-</div>
+  <div class="kpi-row">
+    <div class="kpi-card luban-glow-card">
+      <div class="kpi-label">指标一</div>
+      <div class="kpi-value" id="kpi1">-</div>
+      <div class="kpi-spark" id="kpi1Spark"></div>
     </div>
-    <div class="luban-stat-card luban-glow-card">
-      <div class="luban-stat-label">指标二</div>
-      <div class="luban-stat-value" id="kpi2">-</div>
+    <div class="kpi-card luban-glow-card">
+      <div class="kpi-label">指标二</div>
+      <div class="kpi-value" id="kpi2">-</div>
+      <div class="kpi-spark" id="kpi2Spark"></div>
     </div>
-    <div class="luban-stat-card luban-glow-card">
-      <div class="luban-stat-label">指标三</div>
-      <div class="luban-stat-value" id="kpi3">-</div>
+    <div class="kpi-card luban-glow-card">
+      <div class="kpi-label">指标三</div>
+      <div class="kpi-value" id="kpi3">-</div>
+      <div class="kpi-spark" id="kpi3Spark"></div>
     </div>
-    <div class="luban-stat-card luban-glow-card">
-      <div class="luban-stat-label">指标四</div>
-      <div class="luban-stat-value" id="kpi4">-</div>
+    <div class="kpi-card luban-glow-card">
+      <div class="kpi-label">指标四</div>
+      <div class="kpi-value" id="kpi4">-</div>
+      <div class="kpi-spark" id="kpi4Spark"></div>
     </div>
   </div>
 
-  <div class="luban-chart-screen-grid luban-chart-style-glow" style="margin-top:14px;">
-    <div class="luban-chart-item luban-corner-tech-full">
-      <div class="luban-chart-title">图表一</div>
-      <div class="luban-divider-glow"></div>
-      <div id="chart1" style="height:280px;"></div>
+  <div class="screen-grid">
+    <div class="panel-col">
+      <div class="panel luban-chart-item luban-corner-tech-full">
+        <div class="panel-title">面板标题一</div>
+        <div class="luban-divider-glow"></div>
+        <div id="chart1" class="chart-fill"></div>
+      </div>
+      <div class="panel luban-chart-item luban-corner-tech-full">
+        <div class="panel-title">面板标题二</div>
+        <div class="luban-divider-glow"></div>
+        <div id="chart2" class="chart-fill"></div>
+      </div>
     </div>
-    <div class="luban-chart-item luban-corner-tech-full">
-      <div class="luban-chart-title">图表二</div>
+
+    <div class="panel luban-chart-item luban-corner-tech-full panel-center">
+      <div class="panel-title">全国站点分布</div>
       <div class="luban-divider-glow"></div>
-      <div id="chart2" style="height:280px;"></div>
+      <div id="mapChart" class="chart-fill"></div>
+    </div>
+
+    <div class="panel-col">
+      <div class="panel luban-chart-item luban-corner-tech-full">
+        <div class="panel-title">面板标题三</div>
+        <div class="luban-divider-glow"></div>
+        <div id="chart3" class="chart-fill"></div>
+      </div>
+      <div class="panel luban-chart-item luban-corner-tech-full">
+        <div class="panel-title">面板标题四</div>
+        <div class="luban-divider-glow"></div>
+        <div id="chart4" class="chart-fill"></div>
+      </div>
     </div>
   </div>
+
+  <div class="luban-data-flow"></div>
 </div>`;
 
-          css = `body { margin: 0; }
-.screen-wrap { min-height: 100vh; padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; }
-.screen-header { display: flex; justify-content: space-between; align-items: center; }
-.screen-title { font-size: 26px; font-weight: 700; letter-spacing: 6px; }
-.screen-time { font-family: Consolas, 'Courier New', monospace; color: #7ee0ff; }`;
+          css = `body { margin: 0; overflow: hidden; }
+.screen-wrap { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
+.screen-header { display: flex; justify-content: space-between; align-items: center; height: 56px; padding: 0 10px; border-bottom: 1px solid rgba(0,212,255,0.25); }
+.screen-title { font-size: 28px; font-weight: 700; letter-spacing: 8px; }
+.screen-clock { font-size: 13px; }
+.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.kpi-card { padding: 12px 16px; border-radius: 10px; }
+.kpi-label { font-size: 13px; letter-spacing: 2px; opacity: 0.75; }
+.kpi-value { font-size: 34px; font-weight: 700; line-height: 1.3; }
+.kpi-spark { height: 36px; }
+.screen-grid { flex: 1; display: grid; grid-template-columns: 3fr 5fr 3fr; gap: 12px; min-height: 0; }
+.panel-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.panel { padding: 10px 12px; border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
+.panel-col .panel { flex: 1; min-height: 0; }
+.panel-title { font-size: 15px; letter-spacing: 2px; padding-bottom: 6px; }
+.chart-fill { flex: 1; min-height: 0; }`;
 
           js = `function initPage() {
   // 按需求设置主题（dark=深色大屏 / light=浅色），图表/地图/组件配色跟随主题
   LubanUI.setTheme('${theme}');
-  startClock();
+  // 固定 1920×1080 设计稿，等比缩放适配任意分辨率（指挥中心大屏底座）
+  LubanUI.screenScaler({ width: 1920, height: 1080, target: '.screen-wrap' });
+  // 多时区时钟条（内部自动注册定时器清理）
+  LubanUI.worldClock('worldClock', { zones: [
+    { label: '北京', offset: 8 }, { label: '伦敦', offset: 1 }, { label: '纽约', offset: -4 }
+  ]});
   loadStats();
-}
-
-function startClock() {
-  function pad(n) { return n < 10 ? '0' + n : '' + n; }
-  function tick() {
-    var d = new Date();
-    var el = document.getElementById('currentTime');
-    if (el) el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-  }
-  tick();
-  var timer = setInterval(tick, 1000);
-  // 定时器/监听必须注册清理，页面切换和热更新时平台会自动调用
-  window.__LUBAN__.onPageUnload(function() { clearInterval(timer); });
 }
 
 function loadStats() {
   DataQuery.${readName}({}).then(function(result) {
     var rows = result.rows || [];
     if (rows.length === 0) return;
-    // TODO: 用 result.columns 中的真实列名填充 kpi1-kpi4（LubanUI.countUp 数字滚动），
-    // 并用 LubanUI.chartPresets.*（大屏推荐 barGlow/lineGlow/pieGlow/combo）初始化 chart1/chart2
+    // TODO: 按 result.columns 中的真实列名填充本骨架：
+    // 1) KPI：LubanUI.countUp('kpi1', 值, { separator: true }) + LubanUI.chartPresets.spark('kpi1Spark', { data: 趋势数组, type: 'bar' })
+    // 2) 左右面板：LubanUI.chartPresets.combo / barGlow / lineGlow / pieGlow / gauge / radar 初始化 chart1-chart4
+    // 3) 中央地图：LubanUI.loadChinaMap(function() { LubanUI.map('mapChart', { mapType: 'china', layers: [...], drillDown: true }) })
   }).catch(function() {
     LubanUI.toast.error('数据加载失败');
   });
