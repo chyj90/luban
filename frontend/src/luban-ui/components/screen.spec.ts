@@ -73,8 +73,8 @@ LubanUI.loadChinaMap(function() {
 #### 6. 布局启发式：按需求域选范式（不要所有大屏都套地图模板）
 | 需求域 | 主视图范式 | 典型布局 |
 |--------|-----------|---------|
-| 地理态势/站点分布 | 中央大地图（map layers + 下钻） | KPI行 + 左右面板 + 中央地图 |
-| 城区/园区/街道级真实地理 | 中央 GIS 地图（LubanUI.gis，真实瓦片底图，优先于逻辑地图） | KPI行 + 左右面板 + 中央GIS |
+| 地理态势/站点分布 | 中央 GIS 地图（LubanUI.gis，默认优先） | KPI行 + 左右面板 + 中央GIS |
+| 省份级填色统计（choropleth） | 逻辑地图（LubanUI.map，GIS 的唯一常规例外之一） | KPI行 + 左右面板 + 中央地图 |
 | 端到端链路/调用链/分层架构 | 中央 layered 拓扑（topology layout:'layered'） | 左侧分组KPI列 + 中央拓扑 + 右侧资源/巡检列 |
 | 指标趋势网格 | sparkline KPI 阵列 + 小图网格 | luban-chart-screen-grid-3x2 |
 | 混合型 | 中央主视图 + 四周面板 | 面板自由拼装 |

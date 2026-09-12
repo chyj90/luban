@@ -5,7 +5,7 @@ export default {
   category: 'data-display',
   spec: `### GIS 地图（真实地理底图，优先于逻辑地图）
 基于 Leaflet（已内置，禁止 CDN 引入）+ 高德瓦片（国内可达、无需 key）。
-**优先级规则：涉及真实地理（城区/园区/街道/导航/距离）的场景必须用 LubanUI.gis；只有全国/省份大区域态势聚合才用 LubanUI.map（逻辑地图 map:'china'）。**
+**优先级规则：地图默认用 LubanUI.gis（GIS 优先）。逻辑地图（LubanUI.map / map:'china'）仅作兜底，只允许两种例外：① 需要省份级填色统计（choropleth）；② 无外网部署环境。使用逻辑地图前须向用户说明理由。**
 
 #### 基础用法
 \`\`\`html

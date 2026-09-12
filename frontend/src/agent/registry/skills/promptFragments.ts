@@ -19,8 +19,8 @@ export function getLibraryRulesSummary(): string {
   return `## 外部库与内置能力（声明 libraries 前必读）
 - **ECharts 与 echarts-gl 已内置**，libraries 禁止引入 echarts 相关 CDN（echarts.min.js、echarts-gl、china.js 等地图 JS）
 - **中国地图已内置注册**：map: 'china' 可直接使用；省级地图下钻用 LubanUI.loadProvinceMap(adcode)；geoJSON 属于内置能力，禁止引入 china.js / geo.datav.aliyun.com / .json 数据 URL——提交分析时会被自动剥离
-- **Leaflet 已内置**（GIS 底座）：真实地理（城区/园区/街道级）场景必须用 LubanUI.gis，优先级高于逻辑地图；libraries 中禁止引入 Leaflet/地图瓦片 CDN
-- **逻辑地图**（LubanUI.map / map: 'china'）仅用于全国/省份大区域态势聚合
+- **地图默认用 GIS**：凡是有地图的页面，中央/主视图优先用 LubanUI.gis（真实瓦片底观感更佳），打点/飞线/下钻能力齐全
+- **逻辑地图（LubanUI.map / map: 'china'）仅作兜底**，只允许两种例外：① 需要省份级填色统计（choropleth，各省按数值着色）；② 明确的无外网部署环境（GIS 瓦片需要网络）。其余情况用逻辑地图前必须向用户说明理由
 - 绝大多数页面 libraries 应为空数组`;
 }
 

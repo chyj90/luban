@@ -3,7 +3,9 @@ import type { ComponentSpec } from '../componentSpecs';
 export default {
   name: 'Map',
   category: 'data-display',
-  spec: `### 地图 Map（运营商站点分布、光缆路由）
+  spec: `### 地图 Map（逻辑地图——省份填色统计/无外网环境的兜底选择）
+⚠️ 日常地图需求默认用 LubanUI.gis（真实瓦片底图，见 GIS 组件规范）；本组件仅在需要省份级填色统计（choropleth）或无外网部署环境时使用。
+基于中国地图的站点分布与光缆路由可视化，支持散点/涟漪散点/热力图/光缆线路。
 基于中国地图的站点分布与光缆路由可视化，支持散点/涟漪散点/热力图/光缆线路。
 **v3 新增：多图层架构 — LLM 自由组合任意图层，支持动态增删。**
 **支持图层类型：scatter / effectScatter / breathingScatter / heatmap / lines / custom。**
