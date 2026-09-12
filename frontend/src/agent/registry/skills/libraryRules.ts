@@ -22,4 +22,13 @@ export const LIBRARY_RULES: Record<string, string> = {
     '   示例：LubanUI.chart(\'mapChart\', { series: [{ type: \'map\', map: \'china\', ... }] })',
     '2. 禁止在任何 HTML/JS/CSS 中引用 leaflet、L.map、tileLayer 等 Leaflet API',
   ].join('\n'),
+  'echarts': [
+    '❌ 禁止通过 CDN 引入 ECharts 相关资源（echarts.min.js、echarts-gl、china.js 等地图 JS）！',
+    '原因：平台已内置 ECharts 与 echarts-gl 并注入页面，重复引入会造成版本冲突和加载竞态',
+    '（典型报错：china.js "ECharts is not Loaded"，地图注册失败后整块地图空白）。',
+    '替代方案：',
+    '1. 图表 → 直接使用全局 echarts 或 LubanUI.chart()，无需任何引入',
+    '2. 中国地图 → 直接使用 map: \'china\'（平台已内置注册），或调用 LubanUI.loadChinaMap() / LubanUI.map 组件',
+    '3. 省级地图下钻 → LubanUI.loadProvinceMap(adcode)（6 位行政区划编码）',
+  ].join('\n'),
 };

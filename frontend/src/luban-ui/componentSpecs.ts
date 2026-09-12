@@ -4,13 +4,18 @@ export interface ComponentSpec {
   spec: string;
 }
 
-const globFn = (import.meta as unknown as Record<string, unknown>).glob as
-  | (<T>(pattern: string, opts: { eager: boolean }) => Record<string, T>)
-  | undefined;
-
-const specModules = globFn
-  ? globFn<{ default: ComponentSpec }>('./components/*.spec.ts', { eager: true })
-  : {};
+// ⚠️ 必须直调 import.meta.glob：它是 Vite 的编译期宏，只有直接调用才会被静态转换。
+// 先赋值给变量再调用（旧写法）在浏览器运行时是 undefined，会导致所有组件 spec 聚合失败、
+// 目录只剩下方手写的 3 条——Agent 据此误判"平台没有 Toast/Modal 等组件"。
+// 在 node 环境（agent:check 自检）中 import.meta.glob 不存在，调用会抛错，用 try/catch 兜底为空集合。
+let specModules: Record<string, { default: ComponentSpec }> = {};
+try {
+  specModules = import.meta.glob<{ default: ComponentSpec }>('./components/*.spec.ts', {
+    eager: true,
+  });
+} catch {
+  specModules = {};
+}
 
 const allSpecs: ComponentSpec[] = Object.values(specModules)
   .map((m) => m.default)
@@ -85,6 +90,10 @@ export function getComponentCatalog(): string {
   };
 
   const lines = ['## LubanUI 组件目录', ''];
+  if (allSpecs.length === 0) {
+    lines.push('⚠️ 组件 spec 聚合失败（import.meta.glob 未生效），以下仅列内置 API。完整可用组件见 LubanUI.js：toast、modal、chart、map、countUp、table、select、stats 等。');
+    lines.push('');
+  }
   for (const [cat, names] of Object.entries(categories)) {
     lines.push(`**${categoryLabels[cat] || cat}**：${names.join('、')}`);
   }

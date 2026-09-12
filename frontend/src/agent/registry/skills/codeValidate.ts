@@ -265,12 +265,24 @@ function validateJs(code: string, errors: string[], warnings: string[], _fixable
     );
   }
 
-  // 检查 addEventListener 缺少 { once: true }，SPA 中会导致多次初始化
-  const loadListenerMatch = /addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/g;
-  if (loadListenerMatch.test(code) && !/\{\s*once\s*:\s*true\s*\}/.test(code)) {
-    const lineNum = code.substring(0, code.search(/addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/)).split('\n').length;
+  // 检查 addEventListener 缺少 { once: true }，SPA 中会导致多次初始化。
+  // 例外：代码已包含 readyState 兼容守卫时（validateDomInit 要求的标准模式），首载时机已正确处理，不再告警
+  const loadListenerRegex = /addEventListener\s*\(\s*['"](?:load|DOMContentLoaded)['"]/g;
+  const hasReadyStateGuard = /document\.readyState\s*===?\s*['"]loading['"]/.test(code);
+  let firstListenerLine = 0;
+  let hasOnceAnywhere = false;
+  let listenerMatch: RegExpExecArray | null;
+  while ((listenerMatch = loadListenerRegex.exec(code)) !== null) {
+    if (firstListenerLine === 0) {
+      firstListenerLine = code.substring(0, listenerMatch.index).split('\n').length;
+    }
+    if (/\{\s*once\s*:\s*true\s*\}/.test(code.slice(listenerMatch.index, listenerMatch.index + 120))) {
+      hasOnceAnywhere = true;
+    }
+  }
+  if (firstListenerLine > 0 && !hasOnceAnywhere && !hasReadyStateGuard) {
     warnings.push(
-      `[JS] 第 ${lineNum} 行：addEventListener 在 SPA 中可能多次触发，` +
+      `[JS] 第 ${firstListenerLine} 行：addEventListener 在 SPA 中可能多次触发，` +
       `请使用 addEventListener('load', fn, { once: true }) 确保只执行一次。`
     );
   }
@@ -1333,7 +1345,8 @@ function validateLubanUIHtml(html: string, warnings: string[]) {
 
   if (warningItems.length > 0) {
     warnings.push(
-      `[LubanUI] 以下元素未使用 LubanUI 组件库，建议替换以保持风格一致：\n` +
+      `[LubanUI] 以下元素未使用 LubanUI 组件库，建议替换以保持风格一致` +
+      `（风格建议项，不阻断、不计入待修问题；深色大屏等特殊风格页面可保留自定义样式）：\n` +
       warningItems.map((w) => `  - ${w}`).join('\n')
     );
   }
@@ -1778,15 +1791,15 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fi
         const varName = nullMatch[1];
         const lineNum = js.substring(0, nullMatch.index).split('\n').length;
 
-        // 检查前面是否有空值保护：varName.rows || [] 或 if (varName.rows) 或 (varName.rows || [])
+        // 检查前面是否有空值保护：varName.rows || [] / if (varName.rows) / varName.rows ? / varName.rows && ...
         const beforeMatch = js.substring(Math.max(0, nullMatch.index - 200), nullMatch.index);
         const hasGuard = new RegExp(
-          `\\b${varName}\\.rows\\s*\\|\\|\\s*\\[\\]|if\\s*\\(\\s*${varName}\\.rows\\s*\\)|\\b${varName}\\.rows\\s*\\?`
+          `\\b${varName}\\.rows\\s*\\|\\|\\s*\\[\\]|if\\s*\\(\\s*${varName}\\.rows\\s*\\)|\\b${varName}\\.rows\\s*\\?|\\b${varName}\\.rows\\s*&&`
         ).test(beforeMatch);
 
         if (!hasGuard) {
           warnings.push(
-            `[JS 空值保护] 第 ${lineNum} 行：\`${varName}.rows${name}\` 未做空值保护。` +
+            `[JS 空值保护] 第 ${lineNum} 行：\`${varName}${name}\` 未做空值保护。` +
             `如果查询失败或返回空，${varName}.rows 可能是 undefined，直接访问会报错。` +
             `正确：\`var data = ${varName}.rows || [];\` 或 \`if (${varName}.rows) { ... }\``
           );
@@ -1796,6 +1809,27 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fi
     }
   } catch {
     // 空值保护校验失败时静默跳过
+  }
+
+  // 12b. innerHTML 拼接变量 → XSS 风险告警（建议级）
+  // 场景：.innerHTML = '<div>' + row.name + '</div>'——数据含 HTML 字符时会被注入执行
+  try {
+    const htmlLines = js.split('\n');
+    for (let i = 0; i < htmlLines.length; i++) {
+      const line = htmlLines[i];
+      if (!/\.innerHTML\s*(\+=|=)/.test(line)) continue;
+      const expr = line.replace(/\.innerHTML\s*(\+=|=)/, '');
+      // 只拦截"字符串 + 变量"形态，常量字符串拼接不告警
+      if (/\+\s*[A-Za-z_$][\w$.]*/.test(expr) || /[A-Za-z_$][\w$.]*\s*\+\s*['"`]/.test(expr)) {
+        warnings.push(
+          `[JS XSS 防护] 第 ${i + 1} 行：innerHTML 拼接变量构建 HTML，若数据来自用户输入或外部查询存在 XSS 注入风险。` +
+          `建议：纯文本用 document.createElement + textContent；必须拼 HTML 时对变量转义（replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')）`
+        );
+        break; // 只报一次，避免刷屏
+      }
+    }
+  } catch {
+    // XSS 检查失败时静默跳过
   }
 
   // 11. 检测 toast 假成功：保存/删除函数中只有 toast.success 没有 DataQuery/callApi 调用
@@ -2100,6 +2134,11 @@ function validateLibraries(libraries: string[], warnings: string[]) {
     if (url.toLowerCase().includes('leaflet')) {
       warnings.push(
         `[libraries] "${url}" — ${LIBRARY_RULES['leaflet']}`
+      );
+    }
+    if (/echarts/i.test(url)) {
+      warnings.push(
+        `[libraries] "${url}" — ${LIBRARY_RULES['echarts']}`
       );
     }
     if (url.endsWith('.css')) {
