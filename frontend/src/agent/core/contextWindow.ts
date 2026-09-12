@@ -8,7 +8,9 @@
  * 1. 预算内 → 原样返回（短会话零行为变化）；
  * 2. 超预算 → 第一层：保护窗口外的旧工具结果裁剪为占位标记（保留 assistant 结论）；
  * 3. 仍超 → 第二层：从最旧开始整组丢弃（assistant+其后相邻 tool 消息作为一个单元，
- *    保证 tool_call 配对不变，不产生孤儿 tool 消息）；system 消息与最近 N 条永不丢弃。
+ *    保证 tool_call 配对不变，不产生孤儿 tool 消息）；system 消息与最近 N 条永不丢弃；
+ * 4. 仍超 → 第三层：保护窗口内的大工具结果也裁剪（从最旧开始，最近 TAIL 条原样保留，
+ *    裁剪上限放宽到 RECENT_TRIM_MAX——执行阶段大体积来源是整页代码/分析示例等工具结果）。
  */
 import type { LLMMessage } from './llmClient';
 
@@ -16,6 +18,10 @@ import type { LLMMessage } from './llmClient';
 export const CONTEXT_BUDGET_CHARS = 120_000;
 /** 压缩时永远完整保留的最近消息条数 */
 export const CONTEXT_KEEP_RECENT = 24;
+/** 第三层：保护窗口内最近 TAIL 条消息原样保留（模型正在使用的最新结果不裁剪） */
+export const RECENT_TAIL_UNTOUCHED = 6;
+/** 第三层：保护窗口内工具结果的裁剪上限（保留足够上下文，砍掉整页代码级别的大块） */
+export const RECENT_TRIM_MAX = 2000;
 /** 旧工具结果裁剪后保留的占位标记上限 */
 const TRIM_MARKER_MAX = 240;
 
@@ -108,9 +114,31 @@ export function compactForApi(
 
   if (dropped.size > 0) {
     working = working.filter((_, idx) => !dropped.has(idx));
-    console.log(`[ContextWindow] 压缩：丢弃 ${dropped.size} 条最旧消息，当前约 ${estimateChars(working)} 字符`);
-  } else {
-    console.warn(`[ContextWindow] 保护窗口外的消息已全部裁剪仍超预算（约 ${estimate} 字符），按原样发送`);
+    estimate = estimateChars(working);
+    console.log(`[ContextWindow] 压缩：丢弃 ${dropped.size} 条最旧消息，当前约 ${estimate} 字符`);
+  }
+
+  // 第三层：保护窗口内的大工具结果裁剪（从最旧开始，最近 TAIL 条原样保留）
+  estimate = estimateChars(working);
+  if (estimate > budgetChars) {
+    const tailStart = Math.max(0, working.length - RECENT_TAIL_UNTOUCHED);
+    let trimmedCount = 0;
+    for (let i = 0; i < tailStart; i++) {
+      if (estimate <= budgetChars) break;
+      const m = working[i];
+      if (m.role === 'tool' && m.content.length > RECENT_TRIM_MAX) {
+        working[i] = { ...m, content: `${m.content.slice(0, RECENT_TRIM_MAX)}…[工具结果已裁剪，原 ${m.content.length} 字符]` };
+        trimmedCount++;
+        estimate = estimateChars(working);
+      }
+    }
+    if (trimmedCount > 0) {
+      console.log(`[ContextWindow] 压缩：裁剪保护窗口内 ${trimmedCount} 条大工具结果，当前约 ${estimate} 字符`);
+    }
+  }
+
+  if (estimate > budgetChars) {
+    console.warn(`[ContextWindow] 三层压缩后仍超预算（约 ${estimate} 字符），按原样发送`);
   }
   return working;
 }

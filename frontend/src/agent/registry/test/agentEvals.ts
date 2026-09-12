@@ -361,6 +361,32 @@ function evalContextCompaction(): EvalResult {
     }
   }
 
+  // 层 3：全部消息都在保护窗口内且 tool 结果巨大 → 裁剪窗口内旧工具结果（最近 6 条原样）
+  const heavy: LLMMessage[] = [
+    { role: 'system', content: 'S'.repeat(2000) },
+    { role: 'user', content: '改页面' },
+  ];
+  for (let i = 0; i < 8; i++) {
+    heavy.push({
+      role: 'assistant', content: '', tool_calls: [{ id: `h${i}`, type: 'function', function: { name: 'get_code_page', arguments: '{}' } }],
+    });
+    heavy.push({ role: 'tool', content: 'Y'.repeat(18000), tool_call_id: `h${i}` });
+  }
+  const l3 = compactForApi(heavy, 70_000, 24);
+  const l3Tools = l3.filter((m) => m.role === 'tool');
+  const trimmed = l3Tools.filter((m) => m.content.includes('已裁剪'));
+  const intact = l3Tools.filter((m) => m.content === 'Y'.repeat(18000));
+  if (trimmed.length !== 5) checks.push(`层3应裁剪窗口内 5 条旧工具结果（最近 6 条消息原样），实际裁剪 ${trimmed.length} 条`);
+  if (intact.length !== 3) checks.push(`最近 6 条消息内的工具结果应原样保留，实际完整 ${intact.length} 条`);
+  if (estimateChars(l3) > 70_000) checks.push(`层3结果应回到预算内，实际 ${estimateChars(l3)}`);
+  for (let i = 0; i < l3.length; i++) {
+    if (l3[i].role === 'tool') {
+      const prev = l3[i - 1];
+      const paired = prev?.role === 'assistant' && (prev.tool_calls || []).some((tc) => tc.id === l3[i].tool_call_id);
+      if (!paired) { checks.push('层3 tool 配对断裂'); break; }
+    }
+  }
+
   return evalResult('E9-上下文压缩', checks.length === 0, checks.length === 0 ? '预算直通/裁剪/整组丢弃/配对不变量全部正确' : checks.join('；'));
 }
 
