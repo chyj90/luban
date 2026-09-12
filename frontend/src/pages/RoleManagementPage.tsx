@@ -118,7 +118,11 @@ export default function RoleManagementPage() {
 
   useEffect(() => {
     if (urlAppId) {
-      setExpandedApps(new Set([urlAppId]));
+      setCollapsedApps((prev) => {
+        const next = new Set(prev);
+        next.delete(urlAppId);
+        return next;
+      });
     }
   }, [urlAppId]);
 

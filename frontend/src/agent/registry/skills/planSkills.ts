@@ -1,8 +1,7 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { useAgentStore } from '@/stores/agentStore';
-import { getUnfinishedPlans } from '../../core/planContext';
 import { verifyStepCompletion } from './stepVerifier';
-import type { ToolExecuteResult } from '@/types/agent';
+import type { ToolExecuteResult, StepStatus } from '@/types/agent';
 
 function generatePlanId(): string {
   return `plan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -37,6 +36,13 @@ interface AnalysisData {
   workflows: AnalysisWorkflow[];
   interactions?: string[];
   analysisReport?: string;
+  score?: {
+    moduleDetail: number;
+    interactionComplexity: number;
+    dataCoverage: number;
+    fieldSpecificity: number;
+    deductions?: Array<{ rule?: string; reason: string; points: number }>;
+  };
 }
 
 interface ScoreDeduction {
@@ -293,98 +299,9 @@ const VALID_PLAN_TOOL_NAMES = new Set([
   'delegate_workflow',
 ]);
 
-function validatePlanItems(items: unknown[], dataRequirements?: unknown[]): string | null {
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i] as Record<string, unknown>;
-    const toolName = item?.toolName as string | undefined;
-    if (toolName && !VALID_PLAN_TOOL_NAMES.has(toolName)) {
-      return `步骤 ${i + 1} 的 toolName "${toolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}`;
-    }
-  }
-
-  if (!dataRequirements || !Array.isArray(dataRequirements) || dataRequirements.length === 0) {
-    const hasPageStep = items.some((item) => {
-      const tn = (item as Record<string, unknown>)?.toolName as string;
-      return tn === 'create_code_page' || tn === 'update_code_page';
-    });
-    if (hasPageStep) {
-      return '计划中包含页面步骤但未提供 dataRequirements。' +
-        '请根据分析报告第 8 章「数据需求」补充 dataRequirements 参数，' +
-        '或确认所有页面均不需要数据加载（传入 noDataNeeded: true）。';
-    }
-    return null;
-  }
-
-  const hasPageStep = items.some((item) => {
-    const tn = (item as Record<string, unknown>)?.toolName as string;
-    return tn === 'create_code_page' || tn === 'update_code_page';
-  });
-
-  const pagesNeedingData = (dataRequirements as Record<string, unknown>[]).filter((r) => !r.noDataNeeded);
-  if (pagesNeedingData.length > 0 && !hasPageStep) {
-    const pageNames = pagesNeedingData.map((r) => r.pageName).join('、');
-    return `dataRequirements 声明了页面（${pageNames}）需要数据，但计划中没有 create_code_page 或 update_code_page 步骤。` +
-      '请添加页面创建/更新步骤。计划必须同时包含数据准备步骤和页面步骤。';
-  }
-
-  const hasDelegateQuery = items.some((item) => {
-    return (item as Record<string, unknown>)?.toolName === 'delegate_query';
-  });
-
-  for (const req of dataRequirements) {
-    const r = req as Record<string, unknown>;
-    const pageName = r.pageName as string;
-    const queries = (r.queries as unknown[]) || [];
-    const orchestrations = (r.orchestrations as unknown[]) || [];
-    const apis = (r.apis as unknown[]) || [];
-    const noDataNeeded = r.noDataNeeded as boolean;
-
-    if (noDataNeeded) continue;
-
-    if (queries.length > 0 && !hasDelegateQuery) {
-      const queryNames = queries.map((q) => (q as Record<string, unknown>).queryName).join('、');
-      return `页面「${pageName}」需要查询（${queryNames}），但计划中没有 delegate_query 步骤。` +
-        '请在页面步骤之前添加 delegate_query 步骤来准备数据。';
-    }
-
-    if (queries.length > 0 && hasDelegateQuery) {
-      const delegateQuerySteps = items.filter((item) => {
-        return (item as Record<string, unknown>)?.toolName === 'delegate_query';
-      });
-      for (const query of queries) {
-        const q = query as Record<string, unknown>;
-        const queryName = q.queryName as string;
-        const hasMatchingStep = delegateQuerySteps.some((step) => {
-          const desc = ((step as Record<string, unknown>)?.description as string) || '';
-          const toolInput = ((step as Record<string, unknown>)?.toolInput as Record<string, unknown>) || {};
-          const requirement = (toolInput.requirement as string) || '';
-          return desc.includes(queryName) || requirement.includes(queryName);
-        });
-        if (!hasMatchingStep) {
-          const needsNewTable = q.needsNewTable as boolean;
-          return `页面「${pageName}」需要查询「${queryName}」，但计划中没有对应的 delegate_query 步骤。` +
-            `请添加一个 delegate_query 步骤，requirement 中包含创建查询「${queryName}」${needsNewTable ? '（需新表，请提示用户先在数据源面板建表）' : ''}。`;
-        }
-      }
-    }
-
-    if (orchestrations.length > 0) {
-      const hasOrchStep = items.some((item) =>
-        (item as Record<string, unknown>)?.toolName === 'delegate_orchestration');
-      if (!hasOrchStep) {
-        const orchNames = orchestrations.map((o) => (o as Record<string, unknown>).orchName).join('、');
-        return `页面「${pageName}」需要编排（${orchNames}），但计划中没有 delegate_orchestration 步骤。` +
-          '请添加 delegate_orchestration 步骤。';
-      }
-    }
-  }
-
-  return null;
-}
-
 export function createPlanInternal(
   title: string,
-  summary: string,
+  _summary: string,
   items: PlanItem[],
   score?: AnalysisScore,
   analysisReport?: string,
@@ -413,10 +330,10 @@ export function createPlanInternal(
   upsertPlanMessage(planId);
 
   let message = `计划「${title}」已创建，计划 ID: ${planId}，共 ${items.length} 个步骤，等待用户确认。`;
-  const activePlans = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing');
+  const activePlans = store.plans.filter((p) => p.status === 'confirmed' || p.status === 'executing');
   if (activePlans.length > 0) {
-    const activeList = activePlans.map((p: unknown) => {
-      const doneCount = p.steps.filter((s: unknown) => s.status === 'done').length;
+    const activeList = activePlans.map((p) => {
+      const doneCount = p.steps.filter((s) => s.status === 'done').length;
       return `  - ${p.id}「${p.agentName}」${doneCount}/${p.steps.length} 已完成`;
     }).join('\n');
     message += `\n\n⚠️ 当前存在 ${activePlans.length} 个活跃计划，新计划创建后将覆盖旧计划：\n${activeList}\n\n如本次创建是用户明确要求的新需求，请忽略此提醒。`;
@@ -556,7 +473,7 @@ export const planSkills: Record<string, SkillFactory> = {
         return { success: false, message: `分析数据存在基础错误，请修正后重新提交：\n${errorLines}` };
       }
 
-      const llmScore = analysis.score as { moduleDetail: number; interactionComplexity: number; dataCoverage: number; fieldSpecificity: number; deductions?: Array<{ reason: string; points: number }> } | undefined;
+      const llmScore = analysis.score;
       if (!llmScore || llmScore.moduleDetail === undefined || llmScore.interactionComplexity === undefined || llmScore.dataCoverage === undefined || llmScore.fieldSpecificity === undefined) {
         return { success: false, message: 'score 为必填，请按评分标准（模块展开深度、交互复杂度、数据覆盖度、字段具体性，各 0-25 分）自评打分后重新提交' };
       }
@@ -573,7 +490,7 @@ export const planSkills: Record<string, SkillFactory> = {
           dataCoverage: llmScore.dataCoverage,
           fieldSpecificity: llmScore.fieldSpecificity,
         },
-        deductions: llmScore.deductions || [],
+        deductions: (llmScore.deductions || []).map(d => ({ rule: d.rule || 'unknown', points: d.points, reason: d.reason })),
       };
 
       const items = derivePlanFromAnalysis(analysis);
@@ -621,12 +538,12 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'action'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const typedArgs = args as unknown;
+      const typedArgs = args as { plan_id: string; action: string; step_index?: number; new_description?: string; new_tool_name?: string };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
+      const plan = store.plans.find((p) => p.id === typedArgs.plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
 
-      const newToolName = typedArgs.new_tool_name as string | undefined;
+      const newToolName = typedArgs.new_tool_name;
       if (newToolName && !VALID_PLAN_TOOL_NAMES.has(newToolName)) {
         return { success: false, message: `toolName "${newToolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}` };
       }
@@ -641,14 +558,14 @@ export const planSkills: Record<string, SkillFactory> = {
         }
         case 'remove': {
           if (typedArgs.step_index === undefined) return { success: false, message: 'remove 操作需要 step_index' };
-          const filtered = plan.steps.filter((_: unknown, i: number) => i !== typedArgs.step_index).map((s: unknown, i: number) => ({ ...s, order: i }));
+          const filtered = plan.steps.filter((_, i) => i !== typedArgs.step_index).map((s, i) => ({ ...s, order: i }));
           store.updatePlan(typedArgs.plan_id, { steps: filtered });
           upsertPlanMessage(typedArgs.plan_id);
           return { success: true, message: `已删除步骤 ${typedArgs.step_index}` };
         }
         case 'replace': {
           if (typedArgs.step_index === undefined || !typedArgs.new_description) return { success: false, message: 'replace 操作需要 step_index 和 new_description' };
-          const updated = plan.steps.map((s: unknown, i: number) => i === typedArgs.step_index ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name } : s);
+          const updated = plan.steps.map((s, i) => i === typedArgs.step_index ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name } : s);
           store.updatePlan(typedArgs.plan_id, { steps: updated });
           upsertPlanMessage(typedArgs.plan_id);
           return { success: true, message: `已替换步骤 ${typedArgs.step_index}` };
@@ -674,23 +591,23 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'item_id', 'status'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, item_id, status, result } = args as unknown;
+      const { plan_id, item_id, status, result } = args as { plan_id: string; item_id: string; status: string; result?: string };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === plan_id);
+      const plan = store.plans.find((p) => p.id === plan_id);
       if (!plan) {
-        const activeIds = store.plans.filter((p: unknown) => p.status === 'confirmed' || p.status === 'executing').map((p: unknown) => p.id);
+        const activeIds = store.plans.filter((p) => p.status === 'confirmed' || p.status === 'executing').map((p) => p.id);
         const hint = activeIds.length > 0 ? `，当前活跃计划 ID: ${activeIds.join(', ')}` : '，当前无活跃计划';
         return { success: false, message: `未找到计划 "${plan_id}"${hint}。请使用 submit_analysis 返回的正确 planId 重试 update_plan_item，不要重新创建计划。` };
       }
-      const step = plan.steps.find((s: unknown) => String(s.id) === String(item_id));
-      if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s: unknown) => s.id).join(', ')}` };
+      const step = plan.steps.find((s) => String(s.id) === String(item_id));
+      if (!step) return { success: false, message: `未找到步骤 ${item_id}，当前计划步骤 ID 为：${plan.steps.map((s) => s.id).join(', ')}` };
 
       // R2 步骤完成核验：标记 completed 前验证副作用真实存在，杜绝"工具失败但谎报完成"
-      if (status === 'completed' && (step as { toolName?: string }).toolName) {
+      if (status === 'completed' && step.toolName) {
         const verify = await verifyStepCompletion(
-          (step as { toolName?: string }).toolName!,
+          step.toolName!,
           Number(ctx.applicationId),
-          (step as { description?: string }).description || '',
+          step.description || '',
           result || '',
         );
         if (!verify.verified) {
@@ -704,15 +621,15 @@ export const planSkills: Record<string, SkillFactory> = {
       }
 
       const statusMap: Record<string, string> = { pending: 'pending', in_progress: 'running', completed: 'done', skipped: 'done' };
-      store.updateStep(plan_id, String(item_id), { status: statusMap[status] as unknown, result: result || undefined });
+      store.updateStep(plan_id, String(item_id), { status: statusMap[status] as StepStatus, result: result || undefined });
 
       let autoNextMsg = '';
       if (status === 'completed') {
-        const currentIdx = plan.steps.findIndex((s: unknown) => String((s as any).id) === String(item_id));
+        const currentIdx = plan.steps.findIndex((s) => String(s.id) === String(item_id));
         const nextStep = plan.steps[currentIdx + 1];
-        if (nextStep && (nextStep as any).status === 'pending') {
-          store.updateStep(plan_id, String((nextStep as any).id), { status: 'running' });
-          autoNextMsg = `\n步骤 ${(nextStep as any).id} 已自动标记为 in_progress，无需手动调用 update_plan_item。`;
+        if (nextStep && nextStep.status === 'pending') {
+          store.updateStep(plan_id, String(nextStep.id), { status: 'running' });
+          autoNextMsg = `\n步骤 ${nextStep.id} 已自动标记为 in_progress，无需手动调用 update_plan_item。`;
         }
       }
 
@@ -735,11 +652,18 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'action'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id, action } = args as unknown;
+      const { plan_id, action } = args as { plan_id: string; action: string };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === plan_id);
-      if (!plan) return { success: false, message: `未找到计划 ${plan_id}，当前计划列表：${store.plans.map((p: unknown) => p.id).join(', ') || '无'}` };
-      if (action === 'confirm') { store.updatePlan(plan_id, { status: 'confirmed' }); upsertPlanMessage(plan_id); return { success: true, message: '计划已确认，开始执行' }; }
+      const plan = store.plans.find((p) => p.id === plan_id);
+      if (!plan) return { success: false, message: `未找到计划 ${plan_id}，当前计划列表：${store.plans.map((p) => p.id).join(', ') || '无'}` };
+      if (action === 'confirm') {
+        const lastUserMsg = [...store.messages].reverse().find((m: { role: string }) => m.role === 'user');
+        const confirmKeywords = /确认|开始|没问题|好的|执行|同意|可以|继续|ok|yes|确认了/;
+        if (!lastUserMsg || !confirmKeywords.test(lastUserMsg.content)) {
+          return { success: false, message: 'confirm_plan 必须在用户明确确认后才能调用。请先向用户展示计划并等待确认回复。' };
+        }
+        store.updatePlan(plan_id, { status: 'confirmed' }); upsertPlanMessage(plan_id); return { success: true, message: '计划已确认，开始执行' };
+      }
       store.updatePlan(plan_id, { status: 'rejected' }); upsertPlanMessage(plan_id);
       return { success: true, message: '计划已放弃' };
     },
@@ -756,22 +680,20 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id } = args as unknown;
+      const { plan_id } = args as { plan_id: string };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === plan_id);
+      const plan = store.plans.find((p) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
-      const pendingSteps = plan.steps.filter((s: unknown) => s.status === 'pending');
-      const doneSteps = plan.steps.filter((s: unknown) => s.status === 'done');
-      const runningSteps = plan.steps.filter((s: unknown) => s.status === 'running');
+      const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
+      const doneSteps = plan.steps.filter((s) => s.status === 'done');
+      const runningSteps = plan.steps.filter((s) => s.status === 'running');
 
       if (pendingSteps.length === 0 && runningSteps.length === 0) {
         store.updatePlan(plan_id, { status: 'completed' });
         upsertPlanMessage(plan_id);
-        // R2：输出各步骤 result 摘要，供主智能体汇报时对照真实资源，禁止编造
         const resultSummary = plan.steps
-          .map((s: unknown) => {
-            const st = s as { status?: string; result?: string; description?: string };
-            return st.result ? `- ${st.result}` : `- [无 result 摘要] ${st.description || ''}`;
+          .map((s) => {
+            return s.result ? `- ${s.result}` : `- [无 result 摘要] ${s.description || ''}`;
           })
           .join('\n');
         return {
@@ -796,7 +718,10 @@ export const planSkills: Record<string, SkillFactory> = {
     description: '列出所有未完成的计划。',
     parameters: { type: 'object', properties: {} },
     async execute(): Promise<ToolExecuteResult> {
-      const plans = getUnfinishedPlans();
+      const store = useAgentStore.getState();
+      const plans = store.plans.filter(
+        (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
+      );
       return { success: true, message: plans.length > 0 ? `共 ${plans.length} 个未完成的计划` : '没有未完成的计划', data: { plans } };
     },
   }),
@@ -812,9 +737,9 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const { plan_id } = args as unknown;
+      const { plan_id } = args as { plan_id: string };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === plan_id);
+      const plan = store.plans.find((p) => p.id === plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${plan_id}` };
       return { success: true, message: `已聚焦计划「${plan_id}」` };
     },
@@ -846,12 +771,17 @@ export const planSkills: Record<string, SkillFactory> = {
       required: ['plan_id', 'reason'],
     },
     async execute(args): Promise<ToolExecuteResult> {
-      const typedArgs = args as unknown;
+      const typedArgs = args as {
+        plan_id: string; reason: string; changes?: string; action?: string;
+        step_index?: number; step_indices?: number[];
+        new_description?: string; new_descriptions?: string[];
+        new_tool_name?: string; new_id?: string;
+      };
       const store = useAgentStore.getState();
-      const plan = store.plans.find((p: unknown) => p.id === typedArgs.plan_id);
+      const plan = store.plans.find((p) => p.id === typedArgs.plan_id);
       if (!plan) return { success: false, message: `未找到计划 ${typedArgs.plan_id}` };
 
-      const newToolName = typedArgs.new_tool_name as string | undefined;
+      const newToolName = typedArgs.new_tool_name;
       if (newToolName && !VALID_PLAN_TOOL_NAMES.has(newToolName)) {
         return { success: false, message: `toolName "${newToolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}` };
       }
@@ -878,19 +808,19 @@ export const planSkills: Record<string, SkillFactory> = {
           if (typedArgs.step_index === undefined) return { success: false, message: 'remove 操作需要 step_index' };
           const removed = plan.steps[typedArgs.step_index];
           if (!removed) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
-          const filtered = plan.steps.filter((_: unknown, i: number) => i !== typedArgs.step_index).map((s: unknown, i: number) => ({ ...s, order: i }));
+          const filtered = plan.steps.filter((_, i) => i !== typedArgs.step_index).map((s, i) => ({ ...s, order: i }));
           store.updatePlan(typedArgs.plan_id, { steps: filtered });
           actionMessage = `已删除步骤 ${typedArgs.step_index + 1}：${removed.description}`;
           break;
         }
         case 'replace': {
-          const stepArray = typedArgs.step_indices as number[] | undefined;
+          const stepArray = typedArgs.step_indices;
           if (stepArray && Array.isArray(stepArray) && stepArray.length > 0) {
-            const descArray = typedArgs.new_descriptions as string[] | undefined;
+            const descArray = typedArgs.new_descriptions;
             if (!descArray || !Array.isArray(descArray) || descArray.length !== stepArray.length) {
               return { success: false, message: `批量替换需要 new_descriptions 数组与 step_indices 长度一致（step_indices: ${stepArray.length}，new_descriptions: ${descArray?.length || 0}）` };
             }
-            const updated = plan.steps.map((s: unknown, i: number) => {
+            const updated = plan.steps.map((s, i) => {
               const idx = stepArray.indexOf(i);
               if (idx >= 0) {
                 return { ...s, description: descArray[idx], toolName: typedArgs.new_tool_name || s.toolName };
@@ -898,14 +828,14 @@ export const planSkills: Record<string, SkillFactory> = {
               return s;
             });
             store.updatePlan(typedArgs.plan_id, { steps: updated });
-            const replacedLabels = stepArray.map((si: number) => si + 1).join('、');
+            const replacedLabels = stepArray.map((si) => si + 1).join('、');
             actionMessage = `已批量替换步骤 ${replacedLabels}`;
           } else {
             if (typedArgs.step_index === undefined || !typedArgs.new_description) {
               return { success: false, message: 'replace 操作需要 step_index + new_description（单个替换）或 step_indices + new_descriptions（批量替换）' };
             }
             if (!plan.steps[typedArgs.step_index]) return { success: false, message: `步骤索引 ${typedArgs.step_index} 不存在` };
-            const updated = plan.steps.map((s: unknown, i: number) =>
+            const updated = plan.steps.map((s, i) =>
               i === typedArgs.step_index
                 ? { ...s, description: typedArgs.new_description!, toolName: typedArgs.new_tool_name || s.toolName }
                 : s,
@@ -922,11 +852,33 @@ export const planSkills: Record<string, SkillFactory> = {
 
       upsertPlanMessage(typedArgs.plan_id);
 
-      const summary = buildPlanSummary(store.plans.find((p: unknown) => p.id === typedArgs.plan_id)!);
+      const summary = buildPlanSummary(store.plans.find((p) => p.id === typedArgs.plan_id)!);
       return {
         success: true,
         message: `计划 ${typedArgs.plan_id} 调整完成。${actionMessage}${typedArgs.changes ? `\n调整内容：${typedArgs.changes}` : ''}\n\n当前完整计划：\n${summary}`,
         data: { planId: typedArgs.plan_id, newItemId: newItemId || undefined },
+      };
+    },
+  }),
+
+  'plan:report_user_action_done': () => ({
+    id: 'plan:report_user_action_done',
+    category: SkillCategory.PLAN,
+    name: 'report_user_action_done',
+    description: '报告用户的手动操作已完成，恢复执行流程。当用户表示已建好表、已完成配置等手动操作时调用。note 字段可填用户附带的补充信息（如"加了字段xxx"或"遇到了报错"）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        note: { type: 'string', description: '用户附带的补充信息，如新增字段、遇到的问题等' },
+      },
+      required: [],
+    },
+    async execute(args): Promise<ToolExecuteResult> {
+      const { note } = args as { note?: string };
+      return {
+        success: true,
+        message: `用户手动操作已报告完成${note ? `，补充信息：${note}` : ''}，将恢复执行后续步骤。`,
+        data: { note: note || '' },
       };
     },
   }),

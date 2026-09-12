@@ -68,11 +68,8 @@ export function agentChat(params: AgentChatParams) {
   return post<Record<string, unknown>>('/agent/chat', params);
 }
 
-export function agentChatStream(params: AgentChatParams): EventSource {
-  const url = '/api/v1/agent/chat/stream';
-  const body = JSON.stringify(params);
+export function agentChatStream(_params: AgentChatParams): EventSource {
   // SSE 不支持 POST body，降级使用 fetch + ReadableStream
-  // 返回一个 EventSource-like 对象的 URL 供外部使用
   throw new Error('Use fetchSSE for streaming');
 }
 

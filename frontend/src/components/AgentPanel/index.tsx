@@ -5,11 +5,10 @@ import { toast } from '@/stores/toastStore';
 import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
-import { getSubPlans } from '@/agent/core/planContext';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
 import { setAgentMemory } from '@/agent/registry/agentMemory';
 import { listPages } from '@/api';
-import type { Plan } from '@/types/agent';
+import type { SessionStatus } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
 import './AgentPanel.css';
 
@@ -76,7 +75,6 @@ interface AgentPanelProps {
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
 }
 
-type TabView = 'chat' | 'plan';
 
 const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
   const isPlanMsg = msg.role === 'plan';
@@ -243,11 +241,9 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
 export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
-  const [activeTab, setActiveTab] = useState<TabView>('chat');
   const [showMentions, setShowMentions] = useState(false);
   const [mentionFilter, setMentionFilter] = useState('');
   const [mentionIndex, setMentionIndex] = useState(0);
-  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [tokenUsage, setTokenUsage] = useState<{ inputTokens: number; outputTokens: number; totalTokens: number } | null>(null);
   const [showDebugMenu, setShowDebugMenu] = useState(false);
   const [isSsePending, setIsSsePending] = useState(false);
@@ -287,7 +283,8 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     setStatus,
     setStreaming,
     setError,
-    confirmPlan,
+    setPendingInput,
+    pendingInput,
     rejectPlan,
     stopPlan,
     reset,
@@ -327,6 +324,13 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     }
   }, [messages, isSsePending]);
 
+  // 挂起/终态时清除"正在思考"：挂起回合没有流式消息，仅靠上面的 effect 永远清不掉
+  useEffect(() => {
+    if (isSsePending && (status === 'suspended' || status === 'completed' || status === 'error' || status === 'cancelled')) {
+      setIsSsePending(false);
+    }
+  }, [status, isSsePending]);
+
   // 打开面板时滚动到底部
   useEffect(() => {
     const el = messagesContainerRef.current;
@@ -334,7 +338,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     requestAnimationFrame(() => {
       setTimeout(() => {
         el.scrollTop = el.scrollHeight;
-        (window as unknown).bug_trace_log('scroll-init', {
+        (window as any).bug_trace_log('scroll-init', {
           scrollHeight: el.scrollHeight,
           clientHeight: el.clientHeight,
         });
@@ -352,7 +356,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         const el = messagesContainerRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-        (window as unknown).bug_trace_log('scroll-auto', {
+        (window as any).bug_trace_log('scroll-auto', {
           scrollTop: el.scrollTop,
           scrollHeight: el.scrollHeight,
           clientHeight: el.clientHeight,
@@ -369,7 +373,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       case 'DELEGATE_QUERY_START': {
         const payload = event.payload as { taskType: string; targetPage: string; queryName: string; requirement: string };
         console.log(`[AgentPanel] DELEGATE_QUERY_START | queryName=${payload.queryName} | targetPage=${payload.targetPage}`);
-        const _displayName = payload.queryName || '查询';
         addMessage({
           id: crypto.randomUUID(),
           role: 'system',
@@ -446,9 +449,10 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     addPlan,
     updatePlan,
     updateStep,
-    setStatus,
+    setStatus: (status: string) => setStatus(status as SessionStatus),
     setStreaming,
     setError,
+    setPendingInput,
     dispatch: dispatchEvent,
     onPagesChange,
     onPageChange,
@@ -458,7 +462,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onDatasourceChange,
     onToolsChange,
     onWorkflowNavigate,
-  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
+  }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, setPendingInput, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
 
   const runAgent = async (userMessage: string) => {
     setIsSsePending(true);
@@ -497,6 +501,19 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       if (result.agentId !== 'main-agent') {
         setAgentMemory(Number(appId), result.agentId, result.executor.getMessages());
       }
+    } catch (e) {
+      setError((e as Error).message);
+      setIsSsePending(false);
+    }
+  };
+
+  /** 挂起恢复：UI 确认/取消/完成按钮 → 显式 ResumeCommand（控制流唯一入口，无文本猜测） */
+  const handleResume = async (command: 'confirm' | 'cancel' | 'complete') => {
+    const executor = chatRouterRef.current?.getActiveExecutor();
+    if (!executor) return;
+    setIsSsePending(true);
+    try {
+      await executor.resume({ kind: command });
     } catch (e) {
       setError((e as Error).message);
       setIsSsePending(false);
@@ -585,6 +602,11 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     }
   };
 
+  const draftPlans = plans.filter((p) => p.status === 'draft');
+  const focusedPlans = plans.filter((p) => p.id === focusPlanId && p.status !== 'completed' && p.status !== 'draft' && p.status !== 'stopped');
+
+  const isRunning = status === 'streaming' || status === 'executing' || status === 'planning';
+
   const handleCancel = () => {
     console.log('[AgentPanel] handleCancel 被调用');
     setIsSsePending(false);
@@ -601,135 +623,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     setStatus('cancelled');
   };
 
-  const handleConfirmPlan = async (plan: Plan) => {
-    confirmPlan(plan.id);
-    upsertPlanMessage(plan.id);
-    const planSteps = plan.steps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
-    const confirmMsg = `确认计划，开始执行。\n计划步骤：\n${planSteps}`;
-    setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    await runAgent(confirmMsg);
-  };
-
-  const handleRejectPlan = (planId: string) => {
-    rejectPlan(planId);
-    upsertPlanMessage(planId);
-    addMessage({
-      id: crypto.randomUUID(),
-      role: 'system',
-      content: '计划已拒绝',
-      timestamp: Date.now(),
-    });
-  };
-
-  const handleContinuePlan = async (plan: Plan) => {
-    confirmPlan(plan.id);
-    upsertPlanMessage(plan.id);
-    const doneSteps = plan.steps.filter((s) => s.status === 'done');
-    const pendingSteps = plan.steps.filter((s) => s.status !== 'done');
-    const doneSummary = doneSteps.map((s) => `- ${s.description} [完成]`).join('\n');
-    const pendingSummary = pendingSteps.map((s, i) => `${i + 1}. ${s.description}`).join('\n');
-    const continueMsg = `继续执行计划。\n已完成：\n${doneSummary}\n剩余步骤：\n${pendingSummary}`;
-    setInput('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    await runAgent(continueMsg);
-  };
-
-  useEffect(() => {
-    if (!showDebugMenu) return;
-    const handler = () => setShowDebugMenu(false);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [showDebugMenu]);
-
-  const isRunning = status === 'streaming' || status === 'executing' || status === 'planning';
-
-  const draftPlans = plans.filter((p) => p.status === 'draft');
-  const focusedPlans = plans.filter((p) => p.id === focusPlanId && p.status !== 'completed' && p.status !== 'draft' && p.status !== 'stopped');
-  const executingPlans = plans.filter((p) => p.id !== focusPlanId && (p.status === 'executing' || p.status === 'confirmed'));
-  const stoppedPlans = plans.filter((p) => p.status === 'stopped');
-  const completedPlans = plans.filter((p) => p.status === 'completed');
-
-  const toggleStep = (stepId: string) => {
-    setExpandedSteps((prev) => {
-      const next = new Set(prev);
-      if (next.has(stepId)) {
-        next.delete(stepId);
-      } else {
-        next.add(stepId);
-      }
-      return next;
-    });
-  };
-
-  const renderPlanCard = (plan: Plan, isFocused: boolean) => {
-    const subPlans = getSubPlans(plan.id);
-    const statusLabel =
-      plan.status === 'draft' ? '待确认' :
-      plan.status === 'executing' ? '执行中' :
-      plan.status === 'completed' ? '已完成' :
-      plan.status === 'stopped' ? '已停止' :
-      plan.status === 'rejected' ? '已拒绝' : '等待中';
-    return (
-      <div key={plan.id} className={`ap-plan-card ${isFocused ? 'focused' : ''} ${plan.status}`}>
-        <div className="ap-plan-card-header">
-          <span className="ap-plan-card-agent">{plan.agentIcon} {plan.agentName}</span>
-          <span className={`ap-plan-card-status ${plan.status}`}>
-            {statusLabel}
-          </span>
-          {plan.score && (
-            <span className={`ap-plan-score ${plan.score.total >= 70 ? 'pass' : 'low'}`}>
-              {plan.score.total}/100
-            </span>
-          )}
-        </div>
-        {plan.score && plan.score.deductions.length > 0 && (
-          <div className="ap-plan-score-details">
-            {plan.score.deductions.map((d, i) => (
-              <div key={i} className="ap-plan-deduction">- {d.reason}（{d.points}分）</div>
-            ))}
-          </div>
-        )}
-        <div className="ap-plan-steps">
-          {plan.steps.map((step) => {
-            const hasSubPlan = !!step.subPlanId;
-            const isExpanded = expandedSteps.has(step.id);
-            const stepSubPlans = subPlans.filter((sp) => sp.parentStepId === step.id);
-            return (
-              <div key={step.id} className="ap-plan-step-wrapper">
-                <div
-                  className={`ap-plan-step ${step.status} ${hasSubPlan ? 'expandable' : ''}`}
-                  onClick={() => hasSubPlan && toggleStep(step.id)}
-                >
-                  <span className="ap-plan-step-icon">
-                    {hasSubPlan ? (isExpanded ? '▼' : '▶') : ''}
-                    <span className={`ap-step-status-dot ${step.status}`} />
-                  </span>
-                  <span className="ap-plan-step-desc">{step.description}</span>
-                </div>
-                {isExpanded && hasSubPlan && stepSubPlans.length > 0 && (
-                  <div className="ap-plan-sub-plans">
-                    {stepSubPlans.map((sp) => renderPlanCard(sp, false))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-        {plan.status === 'draft' && (
-          <div className="ap-plan-actions">
-            <button className="ap-btn-confirm" onClick={() => handleConfirmPlan(plan)}>确认计划</button>
-            <button className="ap-btn-reject" onClick={() => handleRejectPlan(plan.id)}>拒绝</button>
-          </div>
-        )}
-        {plan.status === 'stopped' && (
-          <div className="ap-plan-actions">
-            <button className="ap-btn-continue" onClick={() => handleContinuePlan(plan)}>继续执行</button>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <div className="ap-panel">
@@ -854,72 +747,10 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               </div>
             )}
           </div>
-          <div className="ap-tabs">
-            <button
-              className={`ap-tab ${activeTab === 'chat' ? 'active' : ''}`}
-              onClick={() => setActiveTab('chat')}
-            >
-              对话
-            </button>
-            <button
-              className={`ap-tab ${activeTab === 'plan' ? 'active' : ''}`}
-              onClick={() => setActiveTab('plan')}
-            >
-              计划
-            </button>
-          </div>
         </div>
       </div>
 
       <div className="ap-body">
-        {activeTab === 'plan' && (
-          <div className="ap-plan">
-            {plans.length === 0 ? (
-              <div className="ap-plan-empty">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-                </svg>
-                <p>暂无计划</p>
-                <span>在对话中描述需求后，AI 将自动生成执行计划</span>
-              </div>
-            ) : (
-              <div className="ap-plan-content">
-                {draftPlans.length > 0 && (
-                  <div className="ap-plan-section">
-                    <div className="ap-plan-section-title">待确认</div>
-                    {draftPlans.map((p) => renderPlanCard(p, true))}
-                  </div>
-                )}
-                {focusedPlans.length > 0 && (
-                  <div className="ap-plan-section">
-                    <div className="ap-plan-section-title">当前焦点</div>
-                    {focusedPlans.map((p) => renderPlanCard(p, true))}
-                  </div>
-                )}
-                {executingPlans.length > 0 && (
-                  <div className="ap-plan-section">
-                    <div className="ap-plan-section-title">进行中</div>
-                    {executingPlans.map((p) => renderPlanCard(p, false))}
-                  </div>
-                )}
-                {stoppedPlans.length > 0 && (
-                  <div className="ap-plan-section">
-                    <div className="ap-plan-section-title">已停止</div>
-                    {stoppedPlans.map((p) => renderPlanCard(p, false))}
-                  </div>
-                )}
-                {completedPlans.length > 0 && (
-                  <div className="ap-plan-section">
-                    <div className="ap-plan-section-title">已完成</div>
-                    {completedPlans.map((p) => renderPlanCard(p, false))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'chat' && (
           <>
             <div className="ap-messages" ref={messagesContainerRef}
                 onScroll={() => {
@@ -956,6 +787,25 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               <div ref={messagesEndRef} />
             </div>
 
+            {pendingInput && (
+              <div className="ap-suspend-bar">
+                <span className="ap-suspend-msg">{pendingInput.message}</span>
+                <div className="ap-suspend-actions">
+                  {(pendingInput.kind === 'danger-confirm' || pendingInput.kind === 'plan-confirm') && (
+                    <button className="ap-btn-confirm" onClick={() => handleResume('confirm')}>
+                      {pendingInput.kind === 'plan-confirm' ? '确认计划' : '确认执行'}
+                    </button>
+                  )}
+                  {pendingInput.kind === 'user-action' && (
+                    <button className="ap-btn-confirm" onClick={() => handleResume('complete')}>已完成</button>
+                  )}
+                  <button className="ap-btn-cancel" onClick={() => handleResume('cancel')}>
+                    {pendingInput.kind === 'plan-confirm' ? '放弃' : '取消'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="ap-input-area">
               <textarea
                 ref={textareaRef}
@@ -990,7 +840,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               </div>
             </div>
           </>
-        )}
       </div>
     </div>
   );

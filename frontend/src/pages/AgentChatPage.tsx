@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useCallback, Fragment } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Database, Search, Sparkles } from 'lucide-react';
 import { fetchAgentChatStream, getSessionMessages, clearChatSession } from '@/api/agent';
-import { listConcepts, listConceptFeedback, createProblemFeedback } from '@/api/concept';
+import { listConceptFeedback, createProblemFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { fixMarkdownTable } from '@/lib/markdown';
@@ -51,6 +51,8 @@ interface ConceptTraceItem {
     };
     submitted?: {
       conceptCount?: number;
+      concepts?: { conceptId: number; conceptName: string; depth?: number }[];
+      tableCount?: number;
       toolCount?: number;
       tools?: { name: string; description: string }[];
       tableMappingCount?: number;

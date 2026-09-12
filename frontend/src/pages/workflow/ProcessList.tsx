@@ -14,7 +14,7 @@ interface ProcessListProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function ProcessList({ _embedded, appId: propAppId, onNavigate }: ProcessListProps = {}) {
+export default function ProcessList({ appId: propAppId, onNavigate }: ProcessListProps = {}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const appId = propAppId ?? (searchParams.get('appId') ? Number(searchParams.get('appId')) : undefined);

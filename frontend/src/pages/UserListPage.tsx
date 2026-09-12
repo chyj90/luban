@@ -14,7 +14,7 @@ export default function UserListPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [accountFilter, setAccountFilter] = useState<string>('');
@@ -129,6 +129,12 @@ export default function UserListPage() {
     };
     return build(null);
   }, [departments]);
+
+  const flowTesterId = roles.find((r) => r.name.includes('流程测试'))?.id;
+  const wasFlowTester = !!editingUser?.roleIds && editingUser.roleIds
+    .split(',')
+    .map(Number)
+    .some((id) => id === flowTesterId);
 
   const handleCreateAccount = async (user: User, userType: 'normal' | 'test') => {
     setCreateMenuOpen(null);

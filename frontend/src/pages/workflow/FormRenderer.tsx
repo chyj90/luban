@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { FormDefinition } from '../../types/workflow';
 import { formApi } from '../../api/workflow';
 import styles from './FormRenderer.module.css';
@@ -23,7 +23,6 @@ export default function FormRenderer({
   const [form, setForm] = useState<FormDefinition | null>(null);
   const [formData, setFormData] = useState<Record<string, unknown>>(initialData);
   const [loading, setLoading] = useState(true);
-  const _iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
     formApi.get(formId)
@@ -55,7 +54,7 @@ export default function FormRenderer({
     if (!rows || rows.length === 0) {
       return (
         <tr>
-          {field.columns.map((col) => (
+          {(field.columns || []).map((col) => (
             <td key={col.key} className={styles.excelPlaceholder}>&mdash;</td>
           ))}
         </tr>
@@ -63,7 +62,7 @@ export default function FormRenderer({
     }
     return rows.map((row, ri) => (
       <tr key={ri}>
-        {field.columns.map((col) => (
+        {(field.columns || []).map((col) => (
           <td key={col.key}>{String(row[col.key] ?? '')}</td>
         ))}
       </tr>
@@ -166,9 +165,9 @@ export default function FormRenderer({
                     }
                   }}
                 />
-                {formData[field.key] && (
+                {!!formData[field.key] && (
                   <div className={styles.fileInfo}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style="vertical-align: middle; margin-right: 4px;"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>{(formData[field.key] as { name: string }).name}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ verticalAlign: 'middle', marginRight: 4 }}><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>{(formData[field.key] as { name: string }).name}
                   </div>
                 )}
               </div>

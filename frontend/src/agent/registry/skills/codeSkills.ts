@@ -1,7 +1,9 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createCodePage, getCodePage, updateCodePage, runQuery, listApplicationTools, runAppTool, listPages, listQueries } from '@/api';
-import { validateCode, prioritizeFixable, type QueryRunResult, type ApiRunResult } from './codeValidate';
-import { getLubanUIDesignSpec } from '../../prompts/systemPrompt';
+import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
+import { getComponentSpecByName, getComponentCatalog } from '@/luban-ui/componentSpecs';
+import { getAnalysisExamples, getDataQueryGuide } from './promptFragments';
+import type { ToolExecuteResult } from '@/types/agent';
 
 function extractQueryNamesFromJS(js: string): string[] {
   const names = new Set<string>();
@@ -104,8 +106,7 @@ export const codeSkills: Record<string, SkillFactory> = {
 ## queryIds 必须填写实际查询 ID，不能留空数组，否则页面无法加载数据
 ## toolIds 必须填写实际 API 工具 ID，不能留空数组，否则页面无法调用 API
 ## 页面已存在时用 update_code_page，新建用 create_code_page
-
-${getLubanUIDesignSpec()}`,
+## 组件库用法通过 get_component_spec 工具按需获取`,
     parameters: {
       type: 'object',
       properties: {
@@ -272,8 +273,7 @@ ${getLubanUIDesignSpec()}`,
 ## 参数必须使用纯 JSON 格式，禁止 XML 标签
 ## pageId 为必填参数
 ## queryIds/toolIds 为可选参数，不传时自动保留页面原有绑定
-
-${getLubanUIDesignSpec()}`,
+## 组件库用法通过 get_component_spec 工具按需获取`,
     parameters: {
       type: 'object',
       properties: {
@@ -313,7 +313,7 @@ ${getLubanUIDesignSpec()}`,
         const changes = args.changes as Array<{ action: string; target: string; newContent?: string; section: string }> | undefined;
         let html = args.html as string | undefined;
         let css = args.css as string | undefined;
-        let js = args.js as string | undefined;
+        let js = (args.js as string) || '';
 
         let currentCode: { html?: string; css?: string; js?: string; queryIds?: number[]; toolIds?: number[] } | null = null;
         try {
@@ -888,6 +888,52 @@ if (document.readyState === 'loading') {
       } catch (e: any) {
         return { success: false, message: `创建页面脚手架失败: ${(e as Error).message}` };
       }
+    },
+  }),
+
+  'code:component-spec': (_ctx) => ({
+    id: 'code:component-spec',
+    category: SkillCategory.CODE,
+    name: 'get_component_spec',
+    description: `按需获取 LubanUI 组件的详细用法。创建/修改页面时调用此工具获取所需组件的 API、HTML 结构和 JS 用法，避免猜测组件用法。不传 components 参数则返回组件目录。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        components: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '组件名列表，如 ["Table", "Modal", "Toast"]。不传则返回组件目录',
+        },
+      },
+    },
+    async execute(args): Promise<ToolExecuteResult> {
+      const names = (args.components as string[] | undefined) || [];
+      if (names.length === 0) {
+        return { success: true, message: getComponentCatalog() };
+      }
+      return { success: true, message: getComponentSpecByName(names) };
+    },
+  }),
+
+  'code:analysis-examples': (_ctx) => ({
+    id: 'code:analysis-examples',
+    category: SkillCategory.CODE,
+    name: 'get_analysis_examples',
+    description: `获取需求分析报告的完整示例（客户管理页面、监控大屏、审批流程），包含 8 章节格式和 submit_analysis 参数。L4 新建页面时建议先查看示例再写分析报告。`,
+    parameters: { type: 'object', properties: {} },
+    async execute(): Promise<ToolExecuteResult> {
+      return { success: true, message: getAnalysisExamples() };
+    },
+  }),
+
+  'code:dataquery-guide': (_ctx) => ({
+    id: 'code:dataquery-guide',
+    category: SkillCategory.CODE,
+    name: 'get_dataquery_guide',
+    description: `获取 DataQuery 完整使用指南，包含读/写操作示例、禁止用法和常见错误修复。写页面代码前建议先查看。`,
+    parameters: { type: 'object', properties: {} },
+    async execute(): Promise<ToolExecuteResult> {
+      return { success: true, message: getDataQueryGuide() };
     },
   }),
 };

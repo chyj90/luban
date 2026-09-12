@@ -99,7 +99,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       };
       const driver = getDriverInfo(form.type);
       if (driver?.extraFields) {
-        const fieldValues = form as Record<string, unknown>;
+        const fieldValues = form as unknown as Record<string, unknown>;
         for (const ef of driver.extraFields) {
           const val = fieldValues[ef.name];
           if (val !== undefined && val !== '') {
@@ -636,7 +636,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 </>
               )}
               {selectedDriver?.extraFields?.map((ef: ExtraField) => {
-                const val = (form as Record<string, unknown>)[ef.name] as string || '';
+                const val = (form as unknown as Record<string, unknown>)[ef.name] as string || '';
                 if (ef.type === 'select') {
                   return (
                     <Select
@@ -963,7 +963,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                               sqlResult.rows.map((row, ri) => (
                                 <tr key={ri}>
                                   <td className="ds-sql-row-num">{ri + 1}</td>
-                                  {sqlResult.columns.map((col, ci) => (
+                                  {sqlResult.columns.map((_, ci) => (
                                     <td key={ci}>{row[ci] != null ? String(row[ci]) : <span className="ds-sql-null">NULL</span>}</td>
                                   ))}
                                 </tr>

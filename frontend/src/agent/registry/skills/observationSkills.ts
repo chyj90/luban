@@ -18,7 +18,7 @@ export const observationSkills: Record<string, SkillFactory> = {
           message: `共 ${res.data.length} 个页面，当前页面 ID 为 ${ctx.pageId}`,
           data: { pages: res.data, currentPageId: ctx.pageId },
         };
-      } catch {
+      } catch (e) {
         return { success: false, message: `获取页面列表失败: ${(e as Error).message}` };
       }
     },
@@ -61,7 +61,7 @@ export const observationSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'observation:record': (ctx) => ({
+  'observation:record': () => ({
     id: 'observation:record',
     category: SkillCategory.OBSERVATION,
     name: 'record_observation',

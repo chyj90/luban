@@ -2,7 +2,7 @@ export type ProviderType = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'cus
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool' | 'plan';
 
-export type SessionStatus = 'idle' | 'planning' | 'executing' | 'streaming' | 'completed' | 'error' | 'cancelled';
+export type SessionStatus = 'idle' | 'planning' | 'executing' | 'streaming' | 'completed' | 'error' | 'cancelled' | 'suspended';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error';
 
@@ -56,6 +56,8 @@ export interface ToolContext {
   applicationId: number;
   pageId: number;
   dispatch: (event: AgentEvent) => void;
+  /** 内核执行标记：callId 为本次调用 ID；resume=true 表示这是确认门挂起后的内核重执行（delegate 类工具消费） */
+  kernelCall?: { callId: string; resume?: boolean };
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
@@ -156,7 +158,10 @@ export type AgentEventType =
   | 'SESSION_ERROR'
   | 'SESSION_CANCELLED'
   | 'DELEGATE_QUERY_START'
+  | 'DELEGATE_QUERY_END'
   | 'DELEGATE_QUERY_COMPLETE'
+  | 'DELEGATE_WORKFLOW_START'
+  | 'DELEGATE_WORKFLOW_END'
   | 'FIND_WORKFLOW_START'
   | 'FIND_WORKFLOW_COMPLETE'
   | 'TOKEN_USAGE'
@@ -173,6 +178,8 @@ export interface AgentState {
   executingStepId: string | null;
   isStreaming: boolean;
   error: string | null;
+  /** 内核挂起请求（Phase 2.4）：非空时 UI 显示确认/取消按钮，点击产生显式 ResumeCommand */
+  pendingInput: { kind: string; message: string } | null;
 }
 
 export interface LLMConfig {

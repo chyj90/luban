@@ -1,16 +1,16 @@
-import { useAgentStore } from '@/stores/agentStore';
 import type { Plan, Step } from '@/types/agent';
+import type { IStoreReader } from './ports';
 
-export function getUnfinishedPlans(): Plan[] {
-  const state = useAgentStore.getState();
-  return state.plans.filter(
+export function getUnfinishedPlans(storeReader: IStoreReader): Plan[] {
+  return storeReader.getPlans().filter(
     (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
   );
 }
 
-export function formatUnfinishedPlansForPrompt(): string {
-  const state = useAgentStore.getState();
-  const unfinished = state.plans.filter(
+export function formatUnfinishedPlansForPrompt(storeReader: IStoreReader): string {
+  const plans = storeReader.getPlans();
+  const focusPlanId = storeReader.getFocusPlanId();
+  const unfinished = plans.filter(
     (p) => p.status === 'draft' || p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
   );
   if (unfinished.length === 0) return '';
@@ -23,7 +23,7 @@ export function formatUnfinishedPlansForPrompt(): string {
   ];
 
   unfinished.forEach((plan) => {
-    const isFocused = plan.id === state.focusPlanId;
+    const isFocused = plan.id === focusPlanId;
     const statusLabel = plan.status === 'draft' ? '[待确认]' : plan.status === 'confirmed' ? '[已确认]' : plan.status === 'executing' ? '[执行中]' : '[异常中断]';
     lines.push(
       `### ${isFocused ? '【当前焦点】' : ''}${plan.id} | ${plan.agentName} [${statusLabel}]: ${plan.steps.map((s) => s.description).join(' → ')}`,
@@ -50,33 +50,33 @@ export function formatUnfinishedPlansForPrompt(): string {
   return lines.join('\n');
 }
 
-export function getFocusPlanId(): string | null {
-  return useAgentStore.getState().focusPlanId;
+export function getFocusPlanId(storeReader: IStoreReader): string | null {
+  return storeReader.getFocusPlanId();
 }
 
-export function setFocusPlan(planId: string | null): void {
-  useAgentStore.getState().setFocusPlan(planId);
+export function setFocusPlan(storeReader: IStoreReader, planId: string | null): void {
+  storeReader.setFocusPlan(planId);
 }
 
-export function findPlanByDescription(description: string): Plan | undefined {
-  const plans = useAgentStore.getState().plans;
+export function findPlanByDescription(storeReader: IStoreReader, description: string): Plan | undefined {
+  const plans = storeReader.getPlans();
   return plans.find((p) =>
     p.steps.some((s) => s.description.includes(description)),
   );
 }
 
-export function getPlanWithSubPlans(planId: string): Plan | undefined {
-  const plans = useAgentStore.getState().plans;
+export function getPlanWithSubPlans(storeReader: IStoreReader, planId: string): Plan | undefined {
+  const plans = storeReader.getPlans();
   return plans.find((p) => p.id === planId);
 }
 
-export function getSubPlans(parentPlanId: string): Plan[] {
-  const plans = useAgentStore.getState().plans;
+export function getSubPlans(storeReader: IStoreReader, parentPlanId: string): Plan[] {
+  const plans = storeReader.getPlans();
   return plans.filter((p) => p.parentPlanId === parentPlanId);
 }
 
-export function getStepWithSubPlan(stepId: string): { step: Step; plan: Plan } | null {
-  const plans = useAgentStore.getState().plans;
+export function getStepWithSubPlan(storeReader: IStoreReader, stepId: string): { step: Step; plan: Plan } | null {
+  const plans = storeReader.getPlans();
   for (const plan of plans) {
     const step = plan.steps.find((s) => s.id === stepId);
     if (step?.subPlanId) {

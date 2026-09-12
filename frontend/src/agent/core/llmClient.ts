@@ -48,7 +48,7 @@ export interface LLMCallOptions {
 }
 
 export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> {
-  const { model, messages, tools, temperature, timeout, signal } = options;
+  const { model, tools, temperature, timeout, signal } = options;
 
   const startTime = Date.now();
   const toolNames = tools.map((t) => t.function.name).join(', ');
@@ -93,7 +93,7 @@ export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> 
   clearTimeout(timeoutId);
 
   if (streamError) {
-    if (streamError.message.includes('Cancelled')) {
+    if ((streamError as Error).message.includes('Cancelled')) {
       throw new Error('Cancelled', { cause: streamError });
     }
     throw streamError;
@@ -217,20 +217,26 @@ export function tryTrimJson(jsonStr: string): string | null {
   return null;
 }
 
-export function parseToolArguments(rawArgs: string): Record<string, unknown> {
+/**
+ * 解析工具调用参数。空参数（无参工具）返回 {}；解析失败返回 null，
+ * 由调用方作为工具错误反馈给模型，禁止静默降级为 {}（会导致工具带着空参数"成功"执行）。
+ */
+export function parseToolArguments(rawArgs: string): Record<string, unknown> | null {
+  const trimmed = (rawArgs || '').trim();
+  if (!trimmed) return {};
   try {
-    return JSON.parse(rawArgs);
+    return JSON.parse(trimmed) as Record<string, unknown>;
   } catch {
-    const repaired = tryRepairJson(rawArgs) || tryTrimJson(rawArgs);
+    const repaired = tryRepairJson(trimmed) || tryTrimJson(trimmed);
     if (repaired) {
       try {
-        return JSON.parse(repaired);
+        return JSON.parse(repaired) as Record<string, unknown>;
       } catch {
-        // ignore
+        // fallthrough
       }
     }
-    console.warn('[parseToolArguments] JSON 解析失败，返回空对象。原始参数:', rawArgs.slice(0, 300));
-    return {};
+    console.warn('[parseToolArguments] JSON 解析失败。原始参数:', trimmed.slice(0, 300));
+    return null;
   }
 }
 
@@ -418,7 +424,7 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
   }
 
   if (streamError) {
-    if (streamError.message.includes('Cancelled') || streamError.message.includes('abort')) {
+    if ((streamError as Error).message.includes('Cancelled') || (streamError as Error).message.includes('abort')) {
       throw new Error('Cancelled');
     }
     throw streamError;

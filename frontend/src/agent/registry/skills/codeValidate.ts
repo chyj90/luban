@@ -1,4 +1,5 @@
 import { parse as acornParse } from 'acorn';
+import type { Node as AcornNode } from 'acorn';
 import { listQueries } from '@/api/query';
 import { LIBRARY_RULES } from './libraryRules';
 
@@ -98,7 +99,7 @@ export async function validateCode(
   };
 }
 
-function validateHtml(code: string, errors: string[], warnings: string[]) {
+function validateHtml(code: string, errors: string[], _warnings: string[]) {
   const lines = code.split('\n');
 
   // 检查 Vue 指令（页面是纯原生 HTML，不允许 Vue 语法）
@@ -177,7 +178,7 @@ function validateHtml(code: string, errors: string[], warnings: string[]) {
   }
 }
 
-function validateCss(code: string, errors: string[], warnings: string[]) {
+function validateCss(code: string, errors: string[], _warnings: string[]) {
   try {
     const sheet = new CSSStyleSheet();
     sheet.replaceSync(code);
@@ -197,7 +198,7 @@ function validateCss(code: string, errors: string[], warnings: string[]) {
   }
 }
 
-function validateJs(code: string, errors: string[], warnings: string[], fixable: string[]) {
+function validateJs(code: string, errors: string[], warnings: string[], _fixable: string[]) {
   try {
     acornParse(code, { ecmaVersion: 2022, sourceType: 'script' });
   } catch (e: any) {
@@ -341,7 +342,7 @@ async function validateFieldNames(
   js: string,
   options: ValidateFieldNamesOptions,
   errors: string[],
-  warnings: string[],
+  _warnings: string[],
 ) {
   const { queryIds, applicationId, queryResults } = options;
   if (!js) return;
@@ -726,9 +727,9 @@ function collectQueryDataVars(js: string): Set<string> {
   const queryDataVars = new Set<string>();
   const queryResultVars = new Set<string>();
 
-  let ast: acorn.Node;
+  let ast: AcornNode;
   try {
-    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as acorn.Node;
+    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as AcornNode;
   } catch {
     return queryDataVars;
   }
@@ -865,9 +866,9 @@ function getRootIdentifier(node: any): string | null {
 
 function collectAllIterParamNames(js: string, queryDataVars?: Set<string>): Set<string> {
   const iterVars = new Set<string>();
-  let ast: acorn.Node;
+  let ast: AcornNode;
   try {
-    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as acorn.Node;
+    ast = acornParse(js, { ecmaVersion: 2022, sourceType: 'script' }) as AcornNode;
   } catch {
     return iterVars;
   }
@@ -1341,12 +1342,11 @@ function validateLubanUIHtml(html: string, warnings: string[]) {
 /**
  * 检查 JS 中 LubanUI API 调用是否正确 → 错误
  */
-function validateLubanUIJs(js: string, errors: string[], warnings: string[], fixable: string[], html?: string) {
+function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fixable: string[], html?: string) {
   // 1. LubanUI.table() — 第一个参数必须是字符串（元素 ID）
   const tableCalls = js.matchAll(/LubanUI\.table\s*\(\s*(['"])?(\w+)\1?\s*,/g);
   for (const m of tableCalls) {
     const lineNum = js.substring(0, m.index!).split('\n').length;
-    const id = m[2];
     if (!m[1]) {
       // 第一个参数不是字符串字面量
       errors.push(
@@ -1506,7 +1506,7 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
   // 合法查询调用：DataQuery.xxx(params) 或 window.DataQuery.xxx(params)
   // 禁止：xxx.run()、__xxx.run()、QueryApi.xxx.run()、回调方式
   try {
-    const ast9b = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as acorn.Node;
+    const ast9b = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as AcornNode;
 
     function isLubanCallApi(node: any): boolean {
       return node?.type === 'CallExpression' &&
@@ -1645,7 +1645,7 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
     const dqResultAliasVars = new Map<string, string>();
     const VALID_DQ_PROPS = new Set(['rows', 'columns', 'totalCount', 'then']);
 
-    const ast10 = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as acorn.Node;
+    const ast10 = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as AcornNode;
 
     function isDataQueryCall10(node: any): boolean {
       if (node?.type !== 'CallExpression') return false;
@@ -1799,7 +1799,7 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
   }
 
   // 11. 检测 toast 假成功：保存/删除函数中只有 toast.success 没有 DataQuery/callApi 调用
-  // → fixable：页面能渲染，但操作不会持久化，需 update_code_page 修复
+  // → errors：阻断提交，假成功导致数据不持久化是严重运行时错误
   const crudFuncPattern = /function\s+(save|submit|confirmDelete|doDelete|handleSave|handleDelete|handleSubmit)\s*\(/g;
   for (const m of js.matchAll(crudFuncPattern)) {
     const funcName = m[1];
@@ -1813,14 +1813,14 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
     const hasFetch = /\bfetch\s*\(/.test(body);
     if (hasToastSuccess && !hasDataQuery && !hasCallApi && !hasFetch) {
       const lineNum = js.substring(0, m.index!).split('\n').length;
-      fixable.push(
-        `[可修] 第 ${lineNum} 行：函数 ${funcName}() 中 LubanUI.toast.success() 没有对应的 DataQuery/callApi/fetch 调用，这是"假成功"——数据没有持久化。正确做法：DataQuery.insertXxx(params).then(function() { LubanUI.toast.success('保存成功'); searchData(); })`
+      errors.push(
+        `[JS] 第 ${lineNum} 行：函数 ${funcName}() 中 LubanUI.toast.success() 没有对应的 DataQuery/callApi/fetch 调用，这是"假成功"——数据没有持久化。正确做法：DataQuery.insertXxx(params).then(function() { LubanUI.toast.success('保存成功'); searchData(); })`
       );
     }
   }
 
   // 11b. 检测 TODO 假成功：函数体中有 TODO 注释 + toast.success 但无 DataQuery
-  // → fixable：页面能渲染，需 update_code_page 修复
+  // → errors：阻断提交，TODO 假成功同样导致数据不持久化
   const todoPattern = /\/\/\s*TODO[:\s]/g;
   for (const m of js.matchAll(todoPattern)) {
     const todoLineNum = js.substring(0, m.index!).split('\n').length;
@@ -1829,8 +1829,8 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
     const hasToastSuccess = /LubanUI\.toast\.success\s*\(/.test(next200);
     const hasDataQuery = /DataQuery\.\w+\s*\(/.test(next200);
     if (hasToastSuccess && !hasDataQuery) {
-      fixable.push(
-        `[可修] 第 ${todoLineNum} 行：检测到 TODO + toast.success 但无 DataQuery 调用，这是"假成功"。写操作必须调用 DataQuery 写查询（如 DataQuery.insertCustomer(params)），不能只写 TODO`
+      errors.push(
+        `[JS] 第 ${todoLineNum} 行：检测到 TODO + toast.success 但无 DataQuery 调用，这是"假成功"。写操作必须调用 DataQuery 写查询（如 DataQuery.insertCustomer(params)），不能只写 TODO`
       );
     }
   }
@@ -1847,12 +1847,12 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], fix
   }
 
   // 14. 检测 JSON.stringify(row) 在 render 函数中的使用（会触发 toJSON 属性访问导致字段名校验报错）
-  // → fixable：页面能渲染但控制台有字段名错误
+  // → errors：阻断提交，JSON.stringify 触发 toJSON 属性访问导致运行时错误
   const jsonStrPattern = /JSON\.stringify\s*\(\s*(row|item|record|r)\s*\)/g;
   for (const m of js.matchAll(jsonStrPattern)) {
     const lineNum = js.substring(0, m.index!).split('\n').length;
-    fixable.push(
-      `[可修] 第 ${lineNum} 行：JSON.stringify(${m[1]}) 在 render 中使用会触发 toJSON 属性访问，导致字段名校验报错。请改为只传 id，在编辑时通过 table.getData() 查找行数据，或用 var rowData = {}; Object.keys(${m[1]}).forEach(function(k) { rowData[k] = ${m[1]}[k]; }); JSON.stringify(rowData)`
+    errors.push(
+      `[JS] 第 ${lineNum} 行：JSON.stringify(${m[1]}) 在 render 中使用会触发 toJSON 属性访问，导致字段名校验报错。请改为只传 id，在编辑时通过 table.getData() 查找行数据，或用 var rowData = {}; Object.keys(${m[1]}).forEach(function(k) { rowData[k] = ${m[1]}[k]; }); JSON.stringify(rowData)`
     );
   }
 
@@ -2021,7 +2021,6 @@ function validateFormContainer(html: string, js: string, errors: string[]) {
   if (divFormMatches.length === 0) return;
 
   const formDotNamePattern = /(\w+)\.\w+\.value\b/g;
-  const formDotNameInBrackets = /(\w+)\[['"]\w+['"]\]\.value\b/g;
   const getElementByIdForm = /getElementById\s*\(\s*['"](\w+)['"]\s*\)/g;
 
   const formVarNames = new Set<string>();

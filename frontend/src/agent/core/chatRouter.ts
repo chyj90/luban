@@ -4,6 +4,8 @@ import type { AgentExecutor, AgentFactoryOptions } from './AgentFactory';
 import { getAgentById, getAgentByName, getDefaultAgent, parseMentions, stripMentions, resolveAgentTools } from '../registry/agentRegistry';
 import type { AgentDefinition } from '../registry/agentRegistry';
 import { getAgentMemory } from '../registry/agentMemory';
+import { useAgentStore } from '@/stores/agentStore';
+import type { IStoreReader } from './ports';
 
 export type QueryRunInfo = {
   queryId: number;
@@ -41,6 +43,7 @@ export type RouterCallbacks = {
   setStatus: AgentFactoryOptions['setStatus'];
   setStreaming: AgentFactoryOptions['setStreaming'];
   setError: AgentFactoryOptions['setError'];
+  setPendingInput?: AgentFactoryOptions['setPendingInput'];
   dispatch: AgentFactoryOptions['dispatch'];
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
@@ -198,6 +201,7 @@ export class ChatRouter {
       systemPrompt?: string;
       tools?: ToolDefinition[];
       agentContext?: Record<string, unknown>;
+      isDelegated?: boolean;
       initialMessages?: Message[];
     },
   ): Promise<AgentExecutor> {
@@ -224,6 +228,15 @@ export class ChatRouter {
       ...(overrides?.agentContext as Record<string, unknown> || {}),
     });
 
+    const storeReader: IStoreReader = {
+      getPlans: () => useAgentStore.getState().plans,
+      getMessages: () => useAgentStore.getState().messages,
+      getFocusPlanId: () => useAgentStore.getState().focusPlanId,
+      confirmPlan: (planId) => useAgentStore.getState().confirmPlan(planId),
+      setFocusPlan: (planId) => useAgentStore.getState().setFocusPlan(planId),
+      updatePlan: (planId, updates) => useAgentStore.getState().updatePlan(planId, updates),
+    };
+
     return createAgent({
       ...this.sessionOptions,
       sessionId,
@@ -237,6 +250,8 @@ export class ChatRouter {
       setStatus: this.callbacks.setStatus,
       setStreaming: this.callbacks.setStreaming,
       setError: this.callbacks.setError,
+      setPendingInput: this.callbacks.setPendingInput,
+      storeReader,
       agentType: agentDef.id === 'main-agent' ? 'main-agent' : 'data-assistant',
       overrideSystemPrompt: systemPrompt,
       overrideTools: tools,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
-import { MessageSquare, X, Loader2, Eye, Zap, ChevronRight, AlertTriangle, Trash2, BarChart3, Target, Play, Layers } from 'lucide-react';
+import { MessageSquare, X, Loader2, Eye, Zap, AlertTriangle, Trash2, Target, Play, Layers } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import {
   listConceptFeedback,
@@ -10,8 +10,6 @@ import {
   ignoreConceptFeedback,
   deleteConceptFeedback,
   locateConceptFeedback,
-  batchAnalyzeFeedback,
-  getFeedbackDashboard,
 } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -269,8 +267,6 @@ export default function ConceptFeedbackPage() {
     }
   });
 
-  const selectedItem = expandedId ? feedbackList.find(fb => fb.id === expandedId) || null : null;
-
   const toggleExpand = (fb: ConceptFeedback) => {
     if (expandedId === fb.id) {
       setExpandedId(null);
@@ -299,7 +295,7 @@ export default function ConceptFeedbackPage() {
     setAnalyzing(fb.id);
     try {
       const res = await analyzeConceptFeedback(fb.id);
-      const raw = (res.data || []) as Suggestion[];
+      const raw = (res.data || []) as unknown as Suggestion[];
       setSuggestions(prev => ({ ...prev, [fb.id]: raw }));
       if (raw.length === 0) {
         toast('LLM 未产出建议，该反馈可能无需调整', 'info');
@@ -317,7 +313,7 @@ export default function ConceptFeedbackPage() {
     setPreviewingIdx(idx);
     try {
       const res = await previewConceptFeedbackSuggestion(fbId, idx);
-      setPreviewResult(res.data as PreviewResult);
+      setPreviewResult(res.data as unknown as PreviewResult);
       setPreviewedIdx(idx);
     } catch {
       toast('加载预览失败', 'error');
@@ -395,7 +391,7 @@ export default function ConceptFeedbackPage() {
   const handleLocate = async (fb: ConceptFeedback) => {
     setLocating(fb.id);
     try {
-      const res = await locateConceptFeedback(fb.id);
+      await locateConceptFeedback(fb.id);
       toast('阶段定位完成', 'success');
       setLocateFailed(null);
       fetchFeedback();

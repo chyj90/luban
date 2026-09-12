@@ -227,3 +227,15 @@ return approvers.unique()
 - 简洁明了，直接给出方案
 - 询问关键信息：流程名称、审批人、审批层级
 - 提供示例选项帮助用户快速决策`;
+
+import { formatCallerContext, getCallerIdentity } from './callerContext';
+
+/**
+ * @提及直连入口的系统提示词：静态职责 prompt + 当前登录用户身份。
+ * 此前直连路径完全没有用户信息（只有委派路径注入），用户问"我是谁/审批人是我"
+ * 时行为取决于入口，时好时坏——两条入口现在共享同一身份来源。
+ */
+export function buildWorkflowAgentPrompt(): string {
+  const callerCtx = formatCallerContext(getCallerIdentity());
+  return callerCtx ? `${WORKFLOW_AGENT_PROMPT}\n\n${callerCtx}` : WORKFLOW_AGENT_PROMPT;
+}

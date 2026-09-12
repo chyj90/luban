@@ -4,7 +4,6 @@ import {
   lintOrchestration, testRunOrchestration, publishOrchestration,
   saveOrchestration, listOrchestrationExecutions,
 } from '@/api/orchestration';
-import type { ToolContext } from '@/types/agent';
 
 /** 编排技能：供 orchestration-assistant 使用（调用方为已登录用户，AppAccess 天然生效） */
 export const orchestrationSkills: Record<string, SkillFactory> = {
@@ -101,7 +100,7 @@ export const orchestrationSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'orchestration:testRun': (ctx) => ({
+  'orchestration:testRun': (_ctx) => ({
     id: 'orchestration:testRun',
     category: SkillCategory.ORCHESTRATION,
     name: 'test_run_orchestration',
@@ -132,7 +131,7 @@ export const orchestrationSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'orchestration:publish': (ctx) => ({
+  'orchestration:publish': (_ctx) => ({
     id: 'orchestration:publish',
     category: SkillCategory.ORCHESTRATION,
     name: 'publish_orchestration',

@@ -19,7 +19,7 @@ export default function DepartmentManagementPage() {
     try {
       const [deptsRes, usersRes] = await Promise.all([listDepartments(), listUsers()]);
       setDepartments(deptsRes.data as Department[]);
-      setUsers(usersRes.data as User[]);
+      setUsers(usersRes.data.items);
     } catch {
       setDepartments([]);
       setUsers([]);

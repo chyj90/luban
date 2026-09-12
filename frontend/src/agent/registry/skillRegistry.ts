@@ -17,17 +17,20 @@ import type { ChatRouter } from '../core/chatRouter';
 // Types
 // ============================================================================
 
-export enum SkillCategory {
-  PAGE = 'page',
-  CODE = 'code',
-  OBSERVATION = 'observation',
-  PLAN = 'plan',
-  DATASOURCE = 'datasource',
-  QUERY = 'query',
-  API = 'api',
-  WORKFLOW = 'workflow',
-  DELEGATE = 'delegate',
-}
+export const SkillCategory = {
+  PAGE: 'page',
+  CODE: 'code',
+  OBSERVATION: 'observation',
+  PLAN: 'plan',
+  DATASOURCE: 'datasource',
+  QUERY: 'query',
+  API: 'api',
+  WORKFLOW: 'workflow',
+  DELEGATE: 'delegate',
+  ORCHESTRATION: 'orchestration',
+} as const;
+
+export type SkillCategory = (typeof SkillCategory)[keyof typeof SkillCategory];
 
 export interface SkillDefinition {
   id: string;

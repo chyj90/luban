@@ -37,6 +37,7 @@ export interface ToolBindingInfo {
   toolId: number;
   toolName: string;
   relation: string;
+  bindingType?: string;
 }
 
 export interface ConceptTreeResponse {

@@ -49,7 +49,7 @@ export default function OntologyGroupPage() {
   const [expandedIndustryId, setExpandedIndustryId] = useState<number | null>(null);
   const [industryRelations, setIndustryRelations] = useState<Record<number, IndustryRelation[]>>({});
   const [showRelationForm, setShowRelationForm] = useState(false);
-  const [editingRelation, setEditingRelation] = useState<IndustryRelation | null>(null);
+  const [, setEditingRelation] = useState<IndustryRelation | null>(null);
   const [relationForm, setRelationForm] = useState({ relationType: '', description: '', label: '', color: '#999999', sourceRole: '', targetRole: '', sourceToTarget: false, isTransitive: false, isSymmetric: false, sortOrder: 0 });
   const [relationSaving, setRelationSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -69,12 +69,12 @@ export default function OntologyGroupPage() {
   const [importContent, setImportContent] = useState('');
   const [importTargetGroupId, setImportTargetGroupId] = useState<number | null>(null);
   const [importPreview, setImportPreview] = useState<Array<Record<string, unknown>>>([]);
-  const [importPreviewTotal, setImportPreviewTotal] = useState(0);
+  const [importPreviewTotal] = useState(0);
   const [importLoading, setImportLoading] = useState(false);
   const [importResult, setImportResult] = useState<{ created: number; skipped: number } | null>(null);
   const [importMode, setImportMode] = useState<'url' | 'file' | 'paste'>('url');
   const [importFile, setImportFile] = useState<File | null>(null);
-  const [importSuggestedDomains, setImportSuggestedDomains] = useState<Array<{ name: string; conceptCount: number; isNew: boolean }>>([]);
+  const [importSuggestedDomains] = useState<Array<{ name: string; conceptCount: number; isNew: boolean }>>([]);
   const [importProgress, setImportProgress] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -184,7 +184,7 @@ export default function OntologyGroupPage() {
     }
   };
 
-  const openRelationCreate = (industryId: number) => {
+  const openRelationCreate = (_industryId: number) => {
     setEditingRelation(null);
     setRelationForm({ relationType: '', description: '', label: '', color: '#999999', sourceRole: '', targetRole: '', sourceToTarget: false, isTransitive: false, isSymmetric: false, sortOrder: 0 });
     setShowRelationForm(true);

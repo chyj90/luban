@@ -4,6 +4,7 @@ export interface Query {
   datasourceId: number;
   name: string;
   body: string;
+  sqlBody?: string;
   params: Record<string, unknown>;
   createdAt: string;
 }
@@ -14,12 +15,14 @@ export interface CreateQueryRequest {
   name: string;
   body?: string;
   params?: Record<string, unknown>;
+  description?: string;
 }
 
 export interface UpdateQueryRequest {
   name?: string;
   body?: string;
   params?: Record<string, unknown>;
+  description?: string;
 }
 
 export interface RunQueryRequest {

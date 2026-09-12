@@ -51,8 +51,10 @@ async function getRsaPublicKey(): Promise<CryptoKey> {
 export async function encryptSecret(plain: string): Promise<string> {
   const key = await getRsaPublicKey();
   const enc = new TextEncoder().encode(plain);
+  // hash 已在 importKey 时绑定到公钥，加密算法只需 name
+  const algo: RsaOaepParams = { name: 'RSA-OAEP' };
   const cipher = await crypto.subtle.encrypt(
-    { name: 'RSA-OAEP', hash: 'SHA-256' },
+    algo,
     key,
     enc,
   );

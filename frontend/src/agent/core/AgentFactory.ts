@@ -1,13 +1,29 @@
+/**
+ * AgentFactory（Phase 2.4：内核接线版）
+ *
+ * 职责收缩为两件事：
+ * 1. 组装 KernelRuntime（系统提示词、工具、计划策略、确认门适配）；
+ * 2. 事件适配器：把内核 SessionEvent 映射为 zustand store 操作（旧回调管道的替代）。
+ *
+ * 旧职责的去向：
+ * - runAgentLoop / 状态机 / streamingManager / planCompletionChecker → 已删除，内核取代；
+ * - 计划确认（旧状态机正则猜意图）→ planPolicy 的 plan-confirm 挂起 + UI 显式按钮；
+ * - 危险操作确认 → 内核挂起 danger-confirm + UI 按钮；委派链路经确认门批准接力保留。
+ */
 import type { Message, Plan, Step, ToolDefinition } from '@/types/agent';
-import { useAgentStore } from '@/stores/agentStore';
 import { AGENT_CONFIG } from '../config';
-import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
-import { formatUnfinishedPlansForPrompt } from './planContext';
-import { runAgentLoop } from './agentLoop';
-import { onUserMessage as onConfirmGateUserMessage } from './confirmationGuard';
-import { getPlanPromptFragment } from '../registry/skills/promptFragments';
+import {
+  onUserMessage as onConfirmGateUserMessage,
+  consumeApproval,
+} from './confirmationGuard';
 import type { ChatRouter } from './chatRouter';
-import { createAgentStateMachine, AgentState, isUserConfirming, type AgentStateMachine } from './agentStateMachine';
+import type { IStoreReader } from './ports';
+import { buildAnalysisPrompt, buildExecutionPrompt, type PromptBuildContext } from './promptBuilder';
+import { createKernelRuntime } from '../kernel/runtime';
+import { createPlanPolicy } from '../kernel/planPolicy';
+import { describeInputRequest, type SessionEvent } from '../kernel/events';
+import { createSessionState, type SessionState } from '../kernel/session';
+import type { ResumeCommand } from '../kernel/events';
 
 export interface AgentFactoryOptions {
   model: string;
@@ -23,10 +39,12 @@ export interface AgentFactoryOptions {
   setStatus: (status: string) => void;
   setStreaming: (isStreaming: boolean) => void;
   setError: (error: string) => void;
+  setPendingInput?: (pending: { kind: string; message: string } | null) => void;
   addPlan: (plan: Plan) => void;
   updatePlan: (planId: string, updates: Partial<Plan>) => void;
   updateStep: (planId: string, stepId: string, updates: Partial<Step>) => void;
   agentType?: 'main-agent' | 'data-assistant';
+  storeReader?: IStoreReader;
   overrideSystemPrompt?: string;
   overrideTools?: ToolDefinition[];
   chatRouter?: ChatRouter;
@@ -39,39 +57,60 @@ export interface AgentFactoryOptions {
 
 export type AgentExecutor = {
   run: (userMessage: string) => Promise<void>;
+  /** 恢复挂起回合（UI 确认/取消/完成按钮的入口） */
+  resume: (command: ResumeCommand) => Promise<void>;
+  isSuspended: () => boolean;
   cancel: () => void;
   getMessages: () => Message[];
 };
 
-function handleToolResultTransition(
-  toolName: string,
-  result: { success: boolean; data?: { planId?: string } },
-  stateMachine: AgentStateMachine,
+function injectRecentCompletedSummary(
+  storeReader: IStoreReader,
+  conversationMessages: Message[],
+  isMainAgent: boolean,
 ) {
-  if (toolName === 'create_plan' && result.success) {
-    const store = useAgentStore.getState();
-    const draftPlan = store.plans.find((p) => p.status === 'draft');
-    if (draftPlan) {
-      stateMachine.transition(AgentState.AWAITING_CONFIRM, draftPlan.id);
-      console.log(`[AgentFactory] create_plan 完成，发现 draft plan: ${draftPlan.id}，切换到 AWAITING_CONFIRM`);
+  if (!isMainAgent) return;
+
+  const recentCompleted = storeReader
+    .getPlans()
+    .filter((p) => p.status === 'completed')
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 1);
+
+  for (const plan of recentCompleted) {
+    const doneSteps = plan.steps.filter((s) => s.status === 'done' && s.result);
+    if (doneSteps.length > 0) {
+      const summary = doneSteps.map((s) => `- ${s.result}`).join('\n');
+      conversationMessages.push({
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: `## 上轮操作摘要\n${summary}`,
+        timestamp: Date.now(),
+      });
     }
-    return;
   }
+}
 
-  if (toolName === 'confirm_plan' && result.success) {
-    stateMachine.transition(AgentState.EXECUTING, stateMachine.planId);
-    return;
-  }
+function injectActivePlanContext(
+  storeReader: IStoreReader,
+  conversationMessages: Message[],
+) {
+  const executingPlan = storeReader.getPlans().find((p) => p.status === 'executing');
+  if (!executingPlan) return;
 
-  if (toolName === 'abandon_plan' && result.success) {
-    stateMachine.transition(AgentState.IDLE, null);
-    return;
-  }
+  const steps = executingPlan.steps
+    .map((s) => {
+      const icon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
+      return `${icon} ${s.description}`;
+    })
+    .join('\n');
 
-  if (toolName === 'validate_plan' && result.success) {
-    stateMachine.transition(AgentState.IDLE, null);
-    return;
-  }
+  conversationMessages.push({
+    id: crypto.randomUUID(),
+    role: 'system',
+    content: `当前活跃计划 ID: ${executingPlan.id}\n状态: ${executingPlan.status}\n步骤:\n${steps}`,
+    timestamp: Date.now(),
+  });
 }
 
 export async function createAgent(options: AgentFactoryOptions): Promise<AgentExecutor> {
@@ -80,50 +119,308 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     currentPageId, currentPageName, allPages,
     sessionId: _sessionId, dispatch,
     applicationId,
-    addMessage, updateMessage, removeMessage, setStatus, setStreaming, setError,
-    addPlan, updatePlan: _updatePlan, updateStep,
-    overrideSystemPrompt, overrideTools, chatRouter: _chatRouter,
+    addMessage, updateMessage, removeMessage, setStatus, setStreaming, setError, setPendingInput,
+    updatePlan: _updatePlan,
+    storeReader: _storeReader,
+    overrideSystemPrompt, overrideTools,
     agentId, agentName, agentIcon, isDelegated, initialMessages,
   } = options;
 
-  let abortController: AbortController | null = null;
-  const conversationMessages: Message[] = initialMessages ? [...initialMessages] : [];
-  const tempName = agentName || '主智能体';
-  console.log(`[AgentFactory:${tempName}] createAgent | initialMessages 参数: ${initialMessages?.length || 0} 条 | conversationMessages 初始化后: ${conversationMessages.length} 条 | roles: [${conversationMessages.map((m) => m.role).join(', ')}]`);
-
+  const storeReader = _storeReader!;
+  const name = agentName || '主智能体';
+  const icon = agentIcon || '';
+  const agentIdFinal = agentId || 'main-agent';
   const isMainAgent = options.agentType !== 'data-assistant';
-  const systemPrompt = overrideSystemPrompt || buildInteliSystemPrompt(
-    Number(applicationId), currentPageId, currentPageName, allPages, 'analysis',
-  );
-  const planContext = isMainAgent ? formatUnfinishedPlansForPrompt() : '';
-  const skillPrompts = isMainAgent ? getPlanPromptFragment() : '';
-  const finalSystemPrompt = [
-    systemPrompt,
-    skillPrompts,
-    planContext,
-  ].filter(Boolean).join('\n\n');
 
+  const promptCtx: PromptBuildContext = {
+    applicationId,
+    currentPageId,
+    currentPageName,
+    allPages,
+    storeReader,
+    isMainAgent,
+    overrideSystemPrompt,
+  };
+  const finalSystemPrompt = buildAnalysisPrompt(promptCtx);
   const tools = overrideTools || [];
 
-  const name = agentName || '主智能体';
+  // —— 计划策略（仅主智能体）：计划确认挂起 + 完成拦截，确认后切换执行阶段提示词 ——
+  const policy = isMainAgent
+    ? createPlanPolicy(
+        {
+          getPlans: () => storeReader.getPlans(),
+          confirmPlan: (planId) => storeReader.confirmPlan(planId),
+          updatePlan: (planId, updates) => storeReader.updatePlan(planId, updates),
+        },
+        {
+          buildExecutionPrompt: (planId) =>
+            buildExecutionPrompt(promptCtx, storeReader.getPlans().find((p) => p.id === planId)?.analysisReport),
+        },
+      )
+    : undefined;
 
-  const icon = agentIcon || '';
+  // —— 确认门适配：已批准的操作直接执行（委派批准接力），否则交内核挂起等 UI 按钮 ——
+  const confirmGate = (toolName: string, args: Record<string, unknown>) =>
+    consumeApproval(toolName, args) === 'approved' ? 'execute' as const : 'suspend' as const;
 
-  const stateMachine = isMainAgent ? createAgentStateMachine() : undefined;
+  // —— 事件适配器：SessionEvent → store 操作 ——
+  let streamingId = '';
+  let streamingContent = '';
+  let streamingReasoning = '';
+  let lastFlush = 0;
+  let llmContent = '';
+  let lastResultSuspended = false;
+  let assistantMsgId = '';
+  let batchToolCalls: Message['toolCalls'] = [];
+  let batchFlushed = false;
 
-  let interventionPending = false;
-  let interventionReason = '';
+  const clearStreamingPlaceholder = () => {
+    if (streamingId) {
+      removeMessage(streamingId);
+      streamingId = '';
+    }
+    streamingContent = '';
+    streamingReasoning = '';
+    setStreaming(false);
+  };
 
-  let lastAssistantContent = '';
+  const flushAssistantBatch = () => {
+    if (batchFlushed) return;
+    assistantMsgId = crypto.randomUUID();
+    batchToolCalls = [];
+    batchFlushed = true;
+    addMessage({
+      id: assistantMsgId,
+      role: 'assistant',
+      content: llmContent,
+      timestamp: Date.now(),
+      isStreaming: false,
+      agentId: agentIdFinal,
+      agentName: name,
+      agentIcon: icon,
+      toolCalls: batchToolCalls,
+    });
+  };
+
+  const updateBatchToolCall = (callId: string, patch: Partial<NonNullable<Message['toolCalls']>[number]>) => {
+    if (!assistantMsgId) return;
+    batchToolCalls = batchToolCalls?.map((tc) => (tc.id === callId ? { ...tc, ...patch } : tc)) || [];
+    updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
+  };
+
+  const onEvent = (event: SessionEvent) => {
+    switch (event.type) {
+      case 'llm.request': {
+        dispatch({ type: 'DEBUG_CHAT_LOG', payload: event.messages });
+        break;
+      }
+
+      case 'llm.delta': {
+        streamingContent += event.text;
+        if (event.reasoning) streamingReasoning += event.text;
+        const now = Date.now();
+        if (now - lastFlush < 50 && streamingId) return;
+        lastFlush = now;
+        if (!streamingId) {
+          streamingId = crypto.randomUUID();
+          setStreaming(true);
+          setStatus('streaming');
+          addMessage({
+            id: streamingId,
+            role: 'assistant',
+            content: streamingContent,
+            reasoningContent: streamingReasoning || undefined,
+            timestamp: Date.now(),
+            isStreaming: true,
+            agentId: agentIdFinal,
+            agentName: name,
+            agentIcon: icon,
+          });
+        } else {
+          updateMessage(streamingId, {
+            content: streamingContent,
+            reasoningContent: streamingReasoning || undefined,
+            isStreaming: true,
+          });
+        }
+        break;
+      }
+
+      case 'llm.turn.finished': {
+        clearStreamingPlaceholder();
+        llmContent = event.content;
+        batchFlushed = false;
+        break;
+      }
+
+      case 'tool.call.started': {
+        flushAssistantBatch();
+        batchToolCalls = [...(batchToolCalls || []), {
+          id: event.callId,
+          name: event.name,
+          arguments: event.args,
+          status: 'running' as const,
+        }];
+        updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
+        break;
+      }
+
+      case 'tool.call.finished': {
+        updateBatchToolCall(event.callId, {
+          status: event.ok ? 'done' : 'error',
+          result: event.message,
+        });
+        break;
+      }
+
+      case 'tool.call.blocked': {
+        flushAssistantBatch();
+        if (!batchToolCalls?.some((tc) => tc.id === event.callId)) {
+          batchToolCalls = [...(batchToolCalls || []), {
+            id: event.callId,
+            name: event.name,
+            arguments: {},
+            status: 'error' as const,
+            result: event.reason,
+          }];
+          updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
+        } else {
+          updateBatchToolCall(event.callId, { status: 'error', result: event.reason });
+        }
+        break;
+      }
+
+      case 'turn.started': {
+        lastResultSuspended = false;
+        setPendingInput?.(null);
+        break;
+      }
+
+      case 'turn.completed': {
+        clearStreamingPlaceholder();
+        if (!batchFlushed) {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: event.response,
+            timestamp: Date.now(),
+            agentId: agentIdFinal,
+            agentName: name,
+            agentIcon: icon,
+          });
+        }
+        setStatus('completed');
+        setPendingInput?.(null);
+        break;
+      }
+
+      case 'turn.suspended': {
+        clearStreamingPlaceholder();
+        lastResultSuspended = true;
+        setStatus('suspended');
+        setPendingInput?.({
+          kind: event.request.kind,
+          message: describeInputRequest(event.request),
+        });
+        break;
+      }
+
+      case 'turn.failed': {
+        clearStreamingPlaceholder();
+        setError(event.error);
+        setStatus('error');
+        setPendingInput?.(null);
+        break;
+      }
+
+      case 'turn.cancelled': {
+        clearStreamingPlaceholder();
+        setStatus('cancelled');
+        setPendingInput?.(null);
+        break;
+      }
+
+      default:
+        break;
+    }
+  };
+
+  // 对话与会话状态留在工厂跨回合持有；内核按回合创建（独立的 AbortSignal / 迭代预算），
+  // 结束后取回对话与折叠状态——挂起恢复依赖状态迁移，不能随实例丢弃
+  let conversation: Message[] = initialMessages ? [...initialMessages] : [];
+  let lastSession: SessionState = createSessionState();
+  let abortController: AbortController | null = null;
+
+  const runStartLog = (action: string, detail: string) =>
+    console.log(`[AgentFactory:${name}] ${action} | ${detail}`);
+
+  async function settlePlansAfterRun(suspended: boolean): Promise<void> {
+    if (!isMainAgent) return;
+    const activePlans = storeReader.getPlans().filter(
+      (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
+    );
+    for (const plan of activePlans) {
+      const unfinished = plan.steps.filter((s) => s.status === 'pending' || s.status === 'running');
+      if (unfinished.length === 0) {
+        storeReader.updatePlan(plan.id, { status: 'completed' });
+      } else if (!suspended) {
+        console.warn(`[AgentFactory:${name}] 回合结束但计划未完成：${plan.id}，标记为 stopped`);
+        storeReader.updatePlan(plan.id, { status: 'stopped' });
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `⚠️ 任务异常结束：计划仍有 ${unfinished.length} 个步骤未完成。`,
+          timestamp: Date.now(),
+          agentId: agentIdFinal,
+          agentName: name,
+          agentIcon: icon,
+        });
+      }
+    }
+  }
+
+  async function executeTurn(input: Parameters<ReturnType<typeof createKernelRuntime>['runTurn']>[number]): Promise<void> {
+    setStatus('planning');
+    setStreaming(true);
+    abortController = new AbortController();
+    const kernel = createKernelRuntime({
+      model,
+      systemPrompt: conversation.find((m) => m.role === 'system')?.content || finalSystemPrompt,
+      tools,
+      maxIterations: AGENT_CONFIG.maxIterations,
+      temperature: AGENT_CONFIG.temperature,
+      timeout: AGENT_CONFIG.timeout,
+      conversationMessages: conversation,
+      initialSession: lastSession,
+      signal: abortController.signal,
+      onEvent,
+      policy,
+      confirmGate,
+    });
+    try {
+      const result = await kernel.runTurn(input);
+      conversation = result.conversationMessages;
+      lastSession = result.state;
+      lastResultSuspended = result.suspended;
+      if (!result.suspended && !result.cancelled) {
+        await settlePlansAfterRun(false);
+      }
+      runStartLog('回合结束', `suspended=${result.suspended} cancelled=${result.cancelled}`);
+    } catch (err: unknown) {
+      if ((err as Error).message === 'Cancelled' || (err as Error).name === 'AbortError') {
+        runStartLog('回合被取消', '');
+        return;
+      }
+      setError((err as Error).message);
+      setStreaming(false);
+      setStatus('error');
+    }
+  }
 
   return {
     async run(userMessage: string): Promise<void> {
-      abortController = new AbortController();
-      const runStart = Date.now();
-
-      console.log(`[AgentFactory:${name}] run() 开始 | userMessage: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '...' : ''}"`);
-
-      // 危险操作确认门（R3）：用户消息可能是对待确认操作的确认/取消
+      runStartLog('run() 开始', `userMessage: "${userMessage.slice(0, 80)}${userMessage.length > 80 ? '...' : ''}"`);
+      // 委派批准接力：用户文本确认（兼容旧链路）经确认门放行子会话操作
       onConfirmGateUserMessage(userMessage);
 
       const userMsg: Message = {
@@ -131,348 +428,33 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         role: 'user',
         content: userMessage,
         timestamp: Date.now(),
-        agentId: agentId || 'main-agent',
+        agentId: agentIdFinal,
         agentName: name,
         agentIcon: icon,
       };
       if (!isDelegated) {
         addMessage(userMsg);
-        console.log(`[AgentFactory:${name}] addMessage(user) | id=${userMsg.id.slice(0, 8)}`);
-      }
-      conversationMessages.push(userMsg);
-
-      if (!conversationMessages.some((m) => m.role === 'system')) {
-        conversationMessages.unshift({
-          id: crypto.randomUUID(),
-          role: 'system',
-          content: finalSystemPrompt,
-          timestamp: Date.now(),
-        });
       }
 
-      if (isMainAgent && stateMachine && stateMachine.state === AgentState.IDLE) {
-        const store = useAgentStore.getState();
-        const recentCompleted = store.plans
-          .filter((p) => p.status === 'completed')
-          .sort((a, b) => b.createdAt - a.createdAt)
-          .slice(0, 1);
-        for (const plan of recentCompleted) {
-          const doneSteps = plan.steps.filter((s) => s.status === 'done' && s.result);
-          if (doneSteps.length > 0) {
-            const summary = doneSteps.map((s) => `- ${s.result}`).join('\n');
-            conversationMessages.push({
-              id: crypto.randomUUID(),
-              role: 'system',
-              content: `## 上轮操作摘要\n${summary}`,
-              timestamp: Date.now(),
-            });
-            console.log(`[AgentFactory:${name}] 注入上轮操作摘要，共 ${doneSteps.length} 个步骤结果`);
-          }
-        }
-      }
+      // 注意：用户消息由内核 runTurn 统一入对话；工厂只做 UI 展示与上下文注入，
+      // 在这里 push 会造成对话中出现两条相同的 user 消息
+      injectRecentCompletedSummary(storeReader, conversation, isMainAgent);
+      injectActivePlanContext(storeReader, conversation);
 
-      if (stateMachine && stateMachine.state === AgentState.AWAITING_CONFIRM) {
-        if (isUserConfirming(userMessage)) {
-          const store = useAgentStore.getState();
-          const planId = stateMachine.planId;
-          if (planId) {
-            store.confirmPlan(planId);
-            stateMachine.transition(AgentState.EXECUTING, planId);
-            const executionSystemPrompt = buildInteliSystemPrompt(
-              Number(applicationId), currentPageId, currentPageName, allPages, 'execution',
-            );
-            const planContextExec = formatUnfinishedPlansForPrompt();
-            const skillPromptExec = getPlanPromptFragment();
-            const confirmedPlan = store.plans.find((p) => p.id === planId);
-            const analysisReportSection = confirmedPlan?.analysisReport
-              ? `\n\n## 需求分析报告（执行上下文）\n\n以下是完整的需求分析报告，执行每个步骤时请参考此报告中的模块、布局、交互联动等细节：\n\n${confirmedPlan.analysisReport}`
-              : '';
-            const fullExecutionPrompt = [
-              executionSystemPrompt,
-              skillPromptExec,
-              planContextExec,
-            ].filter(Boolean).join('\n\n') + analysisReportSection;
-            const systemMsg = conversationMessages.find((m) => m.role === 'system');
-            if (systemMsg) {
-              systemMsg.content = fullExecutionPrompt;
-            }
-            conversationMessages.push({
-              id: crypto.randomUUID(),
-              role: 'system',
-              content: '计划已确认，已切换到执行阶段。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
-              timestamp: Date.now(),
-            });
-            console.log(`[AgentFactory:${name}] 自动确认计划 ${planId}，切换到 EXECUTING，替换 system prompt 为执行阶段`);
-          }
-        } else {
-          stateMachine.transition(AgentState.IDLE, null);
-          console.log(`[AgentFactory:${name}] 用户消息非确认，切换回 IDLE`);
-        }
-      }
-
-      if (stateMachine && stateMachine.planId && stateMachine.state === AgentState.EXECUTING) {
-        const store = useAgentStore.getState();
-        const plan = store.plans.find((p) => p.id === stateMachine.planId);
-        if (plan) {
-          const steps = plan.steps.map((s) => {
-            const statusIcon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
-            return `${statusIcon} ${s.description}`;
-          }).join('\n');
-          conversationMessages.push({
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: `当前活跃计划 ID: ${plan.id}\n状态: ${plan.status}\n步骤:\n${steps}`,
-            timestamp: Date.now(),
-          });
-          console.log(`[AgentFactory:${name}] 注入活跃计划 ${plan.id}，共 ${plan.steps.length} 个步骤`);
-        }
-      }
-
-      setStatus('planning');
-      setStreaming(true);
-
-      let streamingContent = '';
-      let streamingReasoning = '';
-      let streamingMsgId = '';
-      let lastStreamingUpdate = 0;
-      const STREAMING_THROTTLE_MS = 50;
-
-      try {
-        const result = await runAgentLoop({
-          model,
-          systemPrompt: finalSystemPrompt,
-          tools,
-          maxIterations: AGENT_CONFIG.maxIterations,
-          temperature: AGENT_CONFIG.temperature,
-          timeout: AGENT_CONFIG.timeout,
-          signal: abortController.signal,
-          conversationMessages,
-          stateMachine,
-          onStatusChange: (status) => {
-            setStatus(status);
-          },
-          onStreamingContent: (content, reasoning) => {
-            if (reasoning) {
-              streamingReasoning += content;
-            } else {
-              streamingContent += content;
-            }
-            const now = Date.now();
-            if (now - lastStreamingUpdate < STREAMING_THROTTLE_MS && streamingMsgId) {
-              return;
-            }
-            lastStreamingUpdate = now;
-            if (!streamingMsgId) {
-              streamingMsgId = crypto.randomUUID();
-              addMessage({
-                id: streamingMsgId,
-                role: 'assistant',
-                content: streamingContent,
-                reasoningContent: streamingReasoning || undefined,
-                timestamp: Date.now(),
-                isStreaming: true,
-                agentId: agentId || 'main-agent',
-                agentName: name,
-                agentIcon: icon,
-              });
-            } else {
-              updateMessage(streamingMsgId, {
-                content: streamingContent,
-                reasoningContent: streamingReasoning || undefined,
-                isStreaming: true,
-              });
-            }
-          },
-          onClearStreaming: () => {
-            console.log(`[AgentFactory:${name}] onClearStreaming | msgId=${streamingMsgId ? streamingMsgId.slice(0, 8) : 'none'}`);
-            if (streamingMsgId) {
-              removeMessage(streamingMsgId);
-            }
-            streamingMsgId = '';
-            streamingContent = '';
-            streamingReasoning = '';
-            setStreaming(false);
-          },
-          onAddMessage: (msg) => {
-            console.log(`[AgentFactory:${name}] onAddMessage | role=${msg.role} | content="${(msg.content || '').slice(0, 60)}"`);
-            const enrichedMsg = {
-              ...msg,
-              agentId: agentId || 'main-agent',
-              agentName: name,
-              agentIcon: icon,
-            };
-            addMessage(enrichedMsg);
-            if (msg.role === 'assistant' && msg.content) {
-              lastAssistantContent = msg.content;
-            }
-          },
-          onPlanCreate: (plan) => {
-            addPlan(plan);
-          },
-          onPlanConfirm: (_planId, _action) => {
-            return true;
-          },
-          onStepUpdate: (planId, stepId, status, result) => {
-            updateStep(planId, stepId, { status: status as unknown, result });
-          },
-          onToolCall: (toolName, input, messageId, toolCallId) => {
-            console.log(`[${name}] tool call: ${toolName}`, JSON.stringify(input, null, 2));
-            const store = useAgentStore.getState();
-            const msg = store.messages.find((m) => m.id === messageId);
-            if (msg?.toolCalls) {
-              const updatedToolCalls = msg.toolCalls.map((tc) =>
-                tc.id === toolCallId
-                  ? { ...tc, status: 'running' as const }
-                  : tc,
-              );
-              updateMessage(messageId, { toolCalls: updatedToolCalls });
-            }
-          },
-          onToolResult: (toolName, result, messageId, toolCallId) => {
-            const status = result.success ? 'SUCCESS' : 'FAIL';
-            console.log(`[${name}] tool result: ${status} ${toolName}`);
-            const store = useAgentStore.getState();
-            const msg = store.messages.find((m) => m.id === messageId);
-            if (msg?.toolCalls) {
-              const updatedToolCalls = msg.toolCalls.map((tc) =>
-                tc.id === toolCallId
-                  ? { ...tc, status: result.success ? 'done' as const : 'error' as const, result: result.message }
-                  : tc,
-              );
-              updateMessage(messageId, { toolCalls: updatedToolCalls });
-            }
-            // 结构化干预捕获：delegate_query 返回 interventionRequired 时设置标记
-            if (toolName === 'delegate_query' && result.success) {
-              const delegateData = result.data as Record<string, unknown> | undefined;
-              if (delegateData?.interventionRequired === true) {
-                interventionPending = true;
-                interventionReason = (delegateData?.interventionReason as string) || '';
-                console.log(`[AgentFactory:${name}] 捕获干预标记：${interventionReason.slice(0, 60)}`);
-              }
-            }
-          },
-          onError: (error) => {
-            setError(error);
-            setStreaming(false);
-          },
-          onTokenUsage: (input, output) => {
-            dispatch({
-              type: 'TOKEN_USAGE',
-              payload: { phase: 'agent', inputTokens: input, outputTokens: output, totalTokens: input + output },
-            });
-          },
-          onApiMessages: (messages) => {
-            dispatch({
-              type: 'DEBUG_CHAT_LOG',
-              payload: messages,
-            });
-          },
-          onAfterToolResult: (toolName, result, sm) => {
-            handleToolResultTransition(toolName, result, sm);
-          },
-          onShouldComplete: () => {
-            if (!isMainAgent) {
-              return { shouldContinue: false };
-            }
-
-            // 结构化干预检测：delegate_query 返回 interventionRequired 时设置标记，
-            // 主智能体输出后应停止而非强制继续
-            if (interventionPending) {
-              console.log(`[AgentFactory:${name}] 拦截退出：子智能体等待用户手动操作 → ${interventionReason.slice(0, 60)}`);
-              return { shouldContinue: false };
-            }
-
-            const store = useAgentStore.getState();
-            const activePlans = store.plans.filter(
-              (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
-            );
-            for (const plan of activePlans) {
-              const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
-              const runningSteps = plan.steps.filter((s) => s.status === 'running');
-              if (pendingSteps.length > 0 || runningSteps.length > 0) {
-                const pendingList = pendingSteps.map((s) => `  - [待完成] ${s.description}`).join('\n');
-                const runningList = runningSteps.map((s) => `  - [执行中] ${s.description}`).join('\n');
-                const allIncomplete = [pendingList, runningList].filter(Boolean).join('\n');
-                console.log(`[AgentFactory:${name}] 拦截退出：计划 "${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成步骤、${runningSteps.length} 个执行中步骤`);
-                return {
-                  shouldContinue: true,
-                  message: `[系统提醒] 以下计划步骤还未执行完毕：\n\n${allIncomplete}\n\n请继续执行这些未完成的步骤，每完成一步调用 update_plan_item 标记（completed 需通过系统核验，result 中应包含真实资源 ID，如"表单ID: 21"）。若某步骤确实无法完成（工具持续失败、缺少前置条件），请如实说明原因并将该步骤标记为 error 后继续其余步骤——禁止将未实际完成的步骤标记为 completed。`,
-                };
-              }
-            }
-
-            // 代码级兜底：检测到输出分析报告但未调用 submit_analysis，强制继续
-            if (store.plans.length === 0 && stateMachine && stateMachine.state === AgentState.IDLE && lastAssistantContent) {
-              const hasReportTitle = /#+\s*需求分析报告/.test(lastAssistantContent);
-              const chapterMatches = lastAssistantContent.match(/##\s*\d+\./g) || [];
-              const chapterCount = new Set(chapterMatches.map((m: string) => m.trim())).size;
-              const looksLikeAnalysis = hasReportTitle && chapterCount >= 4;
-              if (looksLikeAnalysis) {
-                console.log(`[AgentFactory:${name}] 检测到分析报告（${chapterCount} 个章节）但未调用 submit_analysis，强制注入提醒`);
-                return {
-                  shouldContinue: true,
-                  message: '⚠️ 你已输出需求分析报告，但未调用 submit_analysis 提交结构化数据。请立即在本次回复中调用 submit_analysis 工具（只输出工具调用，不要输出其他文本），否则计划无法生成。',
-                };
-              }
-            }
-
-            return { shouldContinue: false };
-          },
-        });
-
-        setStatus('completed');
-        setStreaming(false);
-
-        conversationMessages.length = 0;
-        conversationMessages.push(...result.conversationMessages);
-
-        if (isMainAgent) {
-          const store = useAgentStore.getState();
-          const activePlans = store.plans.filter(
-            (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
-          );
-          for (const plan of activePlans) {
-            const pendingSteps = plan.steps.filter((s) => s.status === 'pending');
-            const runningSteps = plan.steps.filter((s) => s.status === 'running');
-            if (pendingSteps.length > 0 || runningSteps.length > 0) {
-              if (interventionPending) {
-                console.log(`[AgentFactory:${name}] 人工介入待处理，计划保持 executing 状态`);
-              } else {
-                console.warn(`[AgentFactory:${name}] 循环结束但计划未完成："${plan.agentName}" 仍有 ${pendingSteps.length} 个待完成、${runningSteps.length} 个执行中，标记为 stopped`);
-                store.updatePlan(plan.id, { status: 'stopped' });
-                addMessage({
-                  id: crypto.randomUUID(),
-                  role: 'system',
-                  content: `⚠️ 任务异常结束：计划 "${plan.agentName}" 仍有 ${pendingSteps.length + runningSteps.length} 个步骤未完成。`,
-                  timestamp: Date.now(),
-                  agentId: agentId || 'main-agent',
-                  agentName: name,
-                  agentIcon: icon,
-                });
-              }
-            } else {
-              store.updatePlan(plan.id, { status: 'completed' });
-            }
-          }
-        }
-
-        console.log(`[AgentFactory:${name}] run() 完成 | ${Date.now() - runStart}ms`);
-      } catch (err: unknown) {
-        if (err.message === 'Cancelled' || err.name === 'AbortError') {
-          console.log(`[AgentFactory:${name}] run() 被取消 | ${Date.now() - runStart}ms`);
-          return;
-        }
-        console.log(`[AgentFactory:${name}] run() 错误 | ${err.message}`);
-        setError(err.message);
-        setStreaming(false);
-        setStatus('error');
-      }
+      await executeTurn({ kind: 'user-message', text: userMessage });
     },
+
+    async resume(command: ResumeCommand): Promise<void> {
+      runStartLog('resume()', `command=${command.kind}`);
+      await executeTurn(command);
+    },
+
+    isSuspended: () => lastResultSuspended,
 
     cancel(): void {
       abortController?.abort();
     },
 
-    getMessages: () => [...conversationMessages],
+    getMessages: () => [...conversation],
   };
 }

@@ -1,7 +1,7 @@
 import type { ToolDefinition, ToolContext } from '@/types/agent';
 import { buildInteliSystemPrompt } from '../prompts/systemPrompt';
 import { buildDataAssistantPrompt } from '../prompts/dbaPrompt';
-import { WORKFLOW_AGENT_PROMPT } from '../prompts/workflowAgent';
+import { buildWorkflowAgentPrompt } from '../prompts/workflowAgent';
 import { resolveSkills } from './skillRegistry';
 import type { ChatRouter } from '../core/chatRouter';
 
@@ -61,6 +61,7 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'page:delete', 'page:rename',
       'code:create', 'code:get', 'code:update', 'code:scaffold',
+      'code:component-spec', 'code:analysis-examples', 'code:dataquery-guide',
       'observation:list_pages', 'observation:list_queries', 'observation:record',
       'query:get',
       'plan:submit_analysis', 'plan:update', 'plan:update_item', 'plan:confirm',
@@ -124,7 +125,7 @@ export const AGENTS: AgentDefinition[] = [
     icon: '',
     description: '流程设计助手，负责设计表单、审批流程、查询组织、管理审批',
     isDefault: false,
-    buildSystemPrompt: () => WORKFLOW_AGENT_PROMPT,
+    buildSystemPrompt: () => buildWorkflowAgentPrompt(),
     allowedSkills: [
       'workflow:design_form', 'workflow:design', 'workflow:update_definition', 'workflow:get_definition', 'workflow:bind',
       'workflow:search_members', 'workflow:search_roles', 'workflow:search_departments',

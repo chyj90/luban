@@ -427,7 +427,6 @@ export default function ApiKeyPermissionPage() {
     return <div className="perm-page-loading">加载中...</div>;
   }
 
-  const _totalSelectable = tools.filter((t) => t.permissionStatus === 'NONE' || t.permissionStatus === 'REJECTED').length;
 
   return (
     <div className="perm-page">

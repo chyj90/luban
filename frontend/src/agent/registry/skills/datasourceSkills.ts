@@ -15,7 +15,7 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'datasource:test': (ctx) => ({
+  'datasource:test': () => ({
     id: 'datasource:test',
     category: SkillCategory.DATASOURCE,
     name: 'test_datasource',
@@ -30,12 +30,12 @@ export const datasourceSkills: Record<string, SkillFactory> = {
         await testDatasource(args.datasourceId as number);
         return { success: true, message: '数据源连接正常' };
       } catch (e: unknown) {
-        return { success: false, message: `数据源连接失败: ${e.message || '未知错误'}` };
+        return { success: false, message: `数据源连接失败: ${(e as Error).message || '未知错误'}` };
       }
     },
   }),
 
-  'datasource:structure': (ctx) => ({
+  'datasource:structure': () => ({
     id: 'datasource:structure',
     category: SkillCategory.DATASOURCE,
     name: 'fetch_datasource_structure',

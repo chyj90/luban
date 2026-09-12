@@ -49,6 +49,7 @@ interface AgentStore extends AgentState {
   rejectPlan: (planId: string) => void;
   stopPlan: (planId: string) => void;
   setError: (error: string | null) => void;
+  setPendingInput: (pending: { kind: string; message: string } | null) => void;
   reset: () => void;
   generateSessionId: () => void;
 }
@@ -63,6 +64,7 @@ const initialAgentState: AgentState = {
   executingStepId: null,
   isStreaming: false,
   error: null,
+  pendingInput: null,
 };
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
@@ -97,6 +99,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
       isStreaming: false,
       executingStepId: null,
       error: null,
+      pendingInput: null,
     });
   },
 
@@ -206,6 +209,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
     })),
 
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
+  setPendingInput: (pendingInput) => set({ pendingInput }),
 
   reset: () => {
     const current = get();

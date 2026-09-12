@@ -19,7 +19,7 @@ export const pageSkills: Record<string, SkillFactory> = {
         await deletePage(args.pageId as number);
         ctx.onPagesChange?.();
         return { success: true, message: '页面删除成功' };
-      } catch {
+      } catch (e) {
         return { success: false, message: `删除页面失败: ${(e as Error).message}` };
       }
     },
@@ -43,7 +43,7 @@ export const pageSkills: Record<string, SkillFactory> = {
         const res = await renamePage(args.pageId as number, args.name as string);
         ctx.onPagesChange?.();
         return { success: true, message: `页面已重命名为 "${args.name}"`, data: res.data };
-      } catch {
+      } catch (e) {
         return { success: false, message: `重命名页面失败: ${(e as Error).message}` };
       }
     },

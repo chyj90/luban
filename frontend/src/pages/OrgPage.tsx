@@ -24,7 +24,7 @@ export default function OrgPage() {
   const [managerOptions, setManagerOptions] = useState<User[]>([]);
   const [managerSearching, setManagerSearching] = useState(false);
   const [selectedManagerName, setSelectedManagerName] = useState('');
-  const managerSearchRef = useRef<ReturnType<typeof setTimeout>>();
+  const managerSearchRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const toast = useToastStore((s) => s.show);
   const confirm = useConfirmStore((s) => s.confirm);

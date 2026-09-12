@@ -25,74 +25,86 @@ export function getCodePageSkillSummary(): string {
 3. 如有待修问题 → 每次修 1-2 个，逐步完善
 这种方式对 LLM 最友好，避免一次生成大量代码导致多个错误。
 
-### ⚠️ 所有数据操作必须使用 DataQuery
-平台在 window.DataQuery 上自动注册了所有绑定查询的包装函数，包括读（SELECT）和写（INSERT/UPDATE/DELETE），**这是唯一正确的数据调用方式**。
-  \`\`\`js
-  // ✅ 读操作：DataQuery.queryName(params) — 返回 Promise<{rows, columns, totalCount}>
-  DataQuery.getCustomerList(params).then(function(result) {
-    var rows = result.rows;
-  });
+### ⚠️ DataQuery 调用规则（详细示例请调用 get_dataquery_guide 工具）
+- **唯一正确方式**：DataQuery.queryName(params).then(fn)，返回 Promise<{rows, columns, totalCount}>
+- 写操作同样用 DataQuery，返回 Promise<{affectedRows, success}>
+- 禁止 .run() / result.data.rows / async function 声明 / JSON.stringify(row) / TODO假成功
+- 可用查询名在 window.__QUERIES__ 数组中列出
+- 写操作必须有对应 DataQuery 写查询，否则委派 DBA 创建
 
-  // ✅ 写操作：同样用 DataQuery，DBA 会为 INSERT/UPDATE/DELETE 创建对应查询
-  // 写查询返回 Promise<{affectedRows, success}>
-  DataQuery.insertCustomer(formData).then(function(result) {
-    LubanUI.toast.success('保存成功');
-    searchData();
-  });
-  DataQuery.updateCustomer({ id: editId, ...formData }).then(function(result) {
-    LubanUI.toast.success('更新成功');
-    searchData();
-  });
-  DataQuery.deleteCustomer({ id: deleteId }).then(function(result) {
-    LubanUI.toast.success('删除成功');
-    searchData();
-  });
-
-  // ❌ 禁止：直接调 .run()（容易写错查询名/命名空间/回调模式）
-  getCustomers.run(params)          // 禁止
-  __getCustomers.run(params)        // 禁止（__前缀不存在）
-  window.QueryApi.getCustomers.run() // 禁止（QueryApi不存在）
-  getCustomers.run(params, cb)      // 禁止（.run()不支持回调）
-  result.data.rows                  // 禁止（没有.data包裹）
-
-  // ❌ 禁止：TODO + 假成功（没有调用 DataQuery 就 toast.success）
-  // TODO: 调用API
-  LubanUI.toast.success('保存成功'); // 禁止！这是假成功，数据没有持久化
-
-  // ❌ 禁止：async function 声明（onclick 无法访问，运行时 ReferenceError）
-  async function saveCustomer() { ... }  // 禁止！onclick="saveCustomer()" 会报 is not defined
-  // ✅ 正确：用 function + .then() 或 var + async function 表达式
-  function saveCustomer() {
-    DataQuery.insertCustomer(formData).then(function(result) { ... });
-  }
-  // 或
-  var saveCustomer = async function() {
-    var result = await DataQuery.insertCustomer(formData);
-  };
-
-  // ❌ 禁止：JSON.stringify(row) 在 render 中使用（触发 toJSON 属性访问导致字段名校验报错）
-  render: { operation: function(v, row) {
-    return '<button onclick="openEdit(' + JSON.stringify(row) + ')">编辑</button>';  // 禁止！
-  }}
-  // ✅ 正确：只传 id，编辑时从 table.getData() 查找行数据
-  render: { operation: function(v, row) {
-    return '<button onclick="openEdit(' + row.id + ')">编辑</button>';
-  }}
-  function openEdit(id) {
-    var row = table.getData().find(function(item) { return item.id === id; });
-    // 回填表单...
-  }
-  \`\`\`
-  可用查询名在 window.__QUERIES__ 数组中列出，**必须使用 DataQuery 上的同名方法**。
-  **写操作（新增/编辑/删除）必须调用对应的 DataQuery 写查询，禁止写 TODO 或假成功。如果 DataQuery 上没有写查询，说明需求分析遗漏了，应委派 DBA 创建。**
-- API 调用：window.__LUBAN__.callApi(apiName, params)，apiName 是平台维护的 API 名称（如果有 API 资产的话）
+### 其他规则
+- API 调用：window.__LUBAN__.callApi(apiName, params)
 - **禁止 fetch() 获取平台内部数据**（/api/... 会被 CORS 拦截）。fetch() 仅允许第三方公开数据源
 - 字段名必须与查询 columns 完全一致，禁止编造
 - queryIds / toolIds 必须填写实际 ID，不能留空数组
-- **筛选/搜索必须服务端完成**：在 filterParams 中声明筛选参数（DBA 会据此生成参数化 SQL），页面代码用 DataQuery.queryName(params) 传入筛选参数，服务端返回已过滤数据。禁止全量加载后 JS 过滤
-- 排序可客户端完成（数据量小时 JS 排序）
+- **筛选/搜索必须服务端完成**：在 filterParams 中声明筛选参数，禁止全量加载后 JS 过滤
 - 平台注入：window.__LUBAN_USER__（当前用户）、window.__LUBAN__（navigateToPage/callApi/startWorkflow/getPageParams/getAllPages）
 - 跨页面参数名必须一致：navigateToPageByName('详情', { orderNo }) → 目标页面 params.orderNo`;
+}
+
+export function getDataQueryGuide(): string {
+  return `## DataQuery 完整使用指南
+
+平台在 window.DataQuery 上自动注册了所有绑定查询的包装函数，包括读（SELECT）和写（INSERT/UPDATE/DELETE），**这是唯一正确的数据调用方式**。
+
+\`\`\`js
+// ✅ 读操作：DataQuery.queryName(params) — 返回 Promise<{rows, columns, totalCount}>
+DataQuery.getCustomerList(params).then(function(result) {
+  var rows = result.rows;
+});
+
+// ✅ 写操作：同样用 DataQuery，DBA 会为 INSERT/UPDATE/DELETE 创建对应查询
+// 写查询返回 Promise<{affectedRows, success}>
+DataQuery.insertCustomer(formData).then(function(result) {
+  LubanUI.toast.success('保存成功');
+  searchData();
+});
+DataQuery.updateCustomer({ id: editId, ...formData }).then(function(result) {
+  LubanUI.toast.success('更新成功');
+  searchData();
+});
+DataQuery.deleteCustomer({ id: deleteId }).then(function(result) {
+  LubanUI.toast.success('删除成功');
+  searchData();
+});
+
+// ❌ 禁止：直接调 .run()（容易写错查询名/命名空间/回调模式）
+getCustomers.run(params)          // 禁止
+__getCustomers.run(params)        // 禁止（__前缀不存在）
+window.QueryApi.getCustomers.run() // 禁止（QueryApi不存在）
+getCustomers.run(params, cb)      // 禁止（.run()不支持回调）
+result.data.rows                  // 禁止（没有.data包裹）
+
+// ❌ 禁止：TODO + 假成功（没有调用 DataQuery 就 toast.success）
+// TODO: 调用API
+LubanUI.toast.success('保存成功'); // 禁止！这是假成功，数据没有持久化
+
+// ❌ 禁止：async function 声明（onclick 无法访问，运行时 ReferenceError）
+async function saveCustomer() { ... }  // 禁止！onclick="saveCustomer()" 会报 is not defined
+// ✅ 正确：用 function + .then() 或 var + async function 表达式
+function saveCustomer() {
+  DataQuery.insertCustomer(formData).then(function(result) { ... });
+}
+// 或
+var saveCustomer = async function() {
+  var result = await DataQuery.insertCustomer(formData);
+};
+
+// ❌ 禁止：JSON.stringify(row) 在 render 中使用（触发 toJSON 属性访问导致字段名校验报错）
+render: { operation: function(v, row) {
+  return '<button onclick="openEdit(' + JSON.stringify(row) + ')">编辑</button>';  // 禁止！
+}}
+// ✅ 正确：只传 id，编辑时从 table.getData() 查找行数据
+render: { operation: function(v, row) {
+  return '<button onclick="openEdit(' + row.id + ')">编辑</button>';
+}}
+function openEdit(id) {
+  var row = table.getData().find(function(item) { return item.id === id; });
+  // 回填表单...
+}
+\`\`\`
+
+**写操作（新增/编辑/删除）必须调用对应的 DataQuery 写查询，禁止写 TODO 或假成功。如果 DataQuery 上没有写查询，说明需求分析遗漏了，应委派 DBA 创建。**`;
 }
 
 export function getDelegateQuerySkillSummary(): string {
@@ -188,10 +200,20 @@ export function getAnalysisPromptFragment(): string {
 ## 8. 交互与联动（操作路径 + 数据刷新范围 + 异常处理，逐条列出）
 \`\`\`
 
+### 第 2 章「功能模块」规则
+- **必须逐模块展开**，每个模块写明：展示内容、数据来源、交互方式
+- 禁止一句话概括（❌ "告警指标统计（总数/critical/warning/已恢复）"）
+- **领域组件推断**：根据需求领域主动推断组件类型（地理/位置/区域/线路/站点→ECharts地图、监控/运维→统计卡片、占比→饼图、排名/对比→柱状图、列表/明细→表格+筛选），不要只写显而易见的模块
+
 ### 第 7 章「数据需求」规则
 - 每个查询必须声明**筛选参数**（来自第5章的筛选字段），即使当前无筛选也要显式写"无筛选参数"
 - ⚠️ **主智能体不写 SQL**：只需声明筛选参数的名称、类型、匹配方式（如 keyword(文本,模糊搜索)/level(选项,精确匹配)），SQL 由 DBA 根据筛选参数自动生成参数化查询（OGNL <where><if> 标签）
 - 禁止在数据需求中写 SELECT / WHERE / JOIN 等 SQL 语句
+- 每个页面独立声明查询/API 需求
+- 查询名称用英文驼峰（如 GetAlertsWide），对应代码中 QueryName.run() 调用
+- 需要新建宽表时，标注"新建宽表"并列出字段（⚠️ Agent 禁止 DDL，建表需人工在数据源面板操作）
+- 无数据页面标注"无需数据加载"
+- 自查：每个模块的数据来源是否在第 7 章有对应查询？每个字段是否被查询覆盖？
 
 ### 第 8 章「交互与联动」规则
 - **必须逐条列出完整的触发→响应链路**，禁止省略或写"无"
@@ -200,6 +222,20 @@ export function getAnalysisPromptFragment(): string {
 - **交互模式**：联动（操作一个组件影响其他组件）、下钻（点击进入更细粒度视图）、跳转（导航到其他页面）、展开收起
 - **可点击组件必须写出交互**：地图标记、图表扇区/柱子、表格行等可点击元素，必须写出点击后触发什么（联动筛选/下钻详情/弹窗/跳转）
 - 无交互时写"纯展示页面，无交互联动"
+
+### 提交分析规则
+调用 submit_analysis 时，只需提交结构化数据（pages + workflows），计划步骤由系统自动推导：
+- L4 新建页面：pages 中 action=create，queries 填写查询需求 → 系统自动生成 delegate_query + create_code_page
+- L3 页面改造（需新查询）：pages 中 action=update，queries 填写新增查询 → 系统自动生成 delegate_query + update_code_page
+- L3 页面改造（无需新查询）：pages 中 action=update，queries 为空 → 系统只生成 update_code_page
+- 审批流程：workflows 中 hasForm=true, hasWorkflow=true → 系统自动生成 design_form + design_workflow
+建表 ≠ 创建查询：建表是 DDL，创建查询是 SQL SELECT。needsNewTable=true 仅表示需要新表，实际建表需人工操作，Agent 只负责创建查询。
+
+⚠️ **完整示例（客户管理/监控大屏/审批流程）请调用 get_analysis_examples 工具获取**。L4 新建页面时建议先查看示例再写分析报告。`;
+}
+
+export function getAnalysisExamples(): string {
+  return `## 需求分析完整示例
 
 ### 示例 1：普通业务页面（表格+表单+指标）— "客户管理页面"
 
@@ -467,27 +503,5 @@ export function getAnalysisPromptFragment(): string {
 }
 \`\`\`
 
-⚠️ **审批流程至少两步**：先 design_form 设计表单，再 design_workflow 设计流程（依赖表单）。不创建页面步骤。
-
-### 第 2 章「功能模块」规则
-- **必须逐模块展开**，每个模块写明：展示内容、数据来源、交互方式
-- 禁止一句话概括（❌ "告警指标统计（总数/critical/warning/已恢复）"）
-- **领域组件推断**：根据需求领域主动推断组件类型（地理/位置/区域/线路/站点→ECharts地图、监控/运维→统计卡片、占比→饼图、排名/对比→柱状图、列表/明细→表格+筛选），不要只写显而易见的模块
-
-### 第 7 章「数据需求」规则
-- 每个页面独立声明查询/API 需求
-- 查询名称用英文驼峰（如 GetAlertsWide），对应代码中 QueryName.run() 调用
-- 需要新建宽表时，标注"新建宽表"并列出字段（⚠️ Agent 禁止 DDL，建表需人工在数据源面板操作）
-- 无数据页面标注"无需数据加载"
-- 自查：每个模块的数据来源是否在第 7 章有对应查询？每个字段是否被查询覆盖？
-
-### 提交分析规则
-
-调用 submit_analysis 时，只需提交结构化数据（pages + workflows），计划步骤由系统自动推导：
-- L4 新建页面：pages 中 action=create，queries 填写查询需求 → 系统自动生成 delegate_query + create_code_page
-- L3 页面改造（需新查询）：pages 中 action=update，queries 填写新增查询 → 系统自动生成 delegate_query + update_code_page
-- L3 页面改造（无需新查询）：pages 中 action=update，queries 为空 → 系统只生成 update_code_page
-- 审批流程：workflows 中 hasForm=true, hasWorkflow=true → 系统自动生成 design_form + design_workflow
-
-建表 ≠ 创建查询：建表是 DDL，创建查询是 SQL SELECT。needsNewTable=true 仅表示需要新表，实际建表需人工操作，Agent 只负责创建查询。`;
+⚠️ **审批流程至少两步**：先 design_form 设计表单，再 design_workflow 设计流程（依赖表单）。不创建页面步骤。`;
 }

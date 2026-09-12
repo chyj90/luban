@@ -27,7 +27,7 @@ export function WorkAppPageViewer() {
   const pid = pageId ? Number(pageId) : null;
   const aid = appId ? Number(appId) : null;
   const { buildShellScript, buildBridgeContent } = useQueryBridge(
-    queries, userInfo, [{ id: pid || 0, name: appName }], () => {}, aid, appTools, pid || undefined,
+    queries, userInfo, [{ id: pid || 0, name: appName }], () => {}, aid ?? undefined, appTools, pid || undefined,
   );
 
   const queryNames = queries.map(q => q.name);

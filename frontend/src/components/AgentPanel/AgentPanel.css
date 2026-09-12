@@ -1493,3 +1493,43 @@
   background: #fff2f0;
   border-color: #ff4d4f;
 }
+/* Phase 2.4：内核挂起（等待显式确认/取消命令） */
+.ap-suspend-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid #f0c36d;
+  background: #fffaf0;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.ap-suspend-msg {
+  flex: 1;
+  color: #7a5b00;
+}
+.ap-suspend-actions {
+  display: flex;
+  gap: 8px;
+}
+.ap-btn-confirm {
+  padding: 4px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #d97b00;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ap-btn-confirm:hover { background: #b96800; }
+.ap-btn-cancel {
+  padding: 4px 14px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  background: #fff;
+  color: #555;
+  cursor: pointer;
+  font-size: 13px;
+}
+.ap-btn-cancel:hover { background: #f2f2f2; }

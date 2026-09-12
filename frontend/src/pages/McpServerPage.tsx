@@ -16,8 +16,8 @@ export default function McpServerPage() {
   const [discovering, setDiscovering] = useState<number | null>(null);
   const [syncGroupId, setSyncGroupId] = useState<number>(0);
   const [showSync, setShowSync] = useState<number | null>(null);
-  const toast = useToastStore((s) => s.add);
-  const confirm = useConfirmStore((s) => s.show);
+  const toast = useToastStore((s) => s.show);
+  const confirm = useConfirmStore((s) => s.confirm);
 
   const fetchData = useCallback(async () => {
     try {
@@ -63,19 +63,18 @@ export default function McpServerPage() {
   };
 
   const handleDelete = async (server: McpServer) => {
-    confirm({
+    const ok = await confirm({
       title: '确认删除',
       message: `确定要删除 MCP 服务「${server.name}」吗？`,
-      onConfirm: async () => {
-        try {
-          await deleteMcpServer(server.id);
-          toast('删除成功', 'success');
-          fetchData();
-        } catch {
-          toast('删除失败', 'error');
-        }
-      },
     });
+    if (!ok) return;
+    try {
+      await deleteMcpServer(server.id);
+      toast('删除成功', 'success');
+      fetchData();
+    } catch {
+      toast('删除失败', 'error');
+    }
   };
 
   const handleTest = async (id: number) => {

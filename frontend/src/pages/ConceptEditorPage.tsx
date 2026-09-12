@@ -40,7 +40,6 @@ import {
   deleteConceptMapping,
   autoMatchConceptMappings,
   autoMatchConceptMappingsV2,
-  applyAutoMatchMappings,
   listConceptJoinMappings,
   createConceptJoinMapping,
   updateConceptJoinMapping,
@@ -117,24 +116,24 @@ function formatSnapshot(obj: Record<string, unknown> | null, entityType: string)
     return fields.length > 0 ? fields.join(' | ') : JSON.stringify(data);
   }
   if (entityType === 'RELATION') {
-    const source = data.sourceConceptName || data.sourceConceptId || '?';
-    const target = data.targetConceptName || data.targetConceptId || '?';
-    const type = data.relationType || '?';
+    const source = String(data.sourceConceptName || data.sourceConceptId || '?');
+    const target = String(data.targetConceptName || data.targetConceptId || '?');
+    const type = String(data.relationType || '?');
     return <span>{source} <strong>{type}</strong> {target}</span>;
   }
   if (entityType === 'MAPPING') {
-    const cn = data.conceptName || data.conceptId || '?';
-    const tbl = data.tableName || '?';
-    const col = data.columnName || data.columnId || '?';
-    const mt = data.mappingType || '?';
+    const cn = String(data.conceptName || data.conceptId || '?');
+    const tbl = String(data.tableName || '?');
+    const col = String(data.columnName || data.columnId || '?');
+    const mt = String(data.mappingType || '?');
     return <span>{cn} → {tbl}.{col} <em>({mt})</em></span>;
   }
   if (entityType === 'JOIN_MAPPING') {
-    const lt = data.leftTable || '?';
-    const lc = data.leftColumn || '?';
-    const rt = data.rightTable || '?';
-    const rc = data.rightColumn || '?';
-    const jt = data.joinType || '?';
+    const lt = String(data.leftTable || '?');
+    const lc = String(data.leftColumn || '?');
+    const rt = String(data.rightTable || '?');
+    const rc = String(data.rightColumn || '?');
+    const jt = String(data.joinType || '?');
     return <span>{lt}.{lc} → {rt}.{rc} <em>({jt})</em></span>;
   }
   return JSON.stringify(data);
@@ -142,7 +141,7 @@ function formatSnapshot(obj: Record<string, unknown> | null, entityType: string)
 
 function getNodeType(
   concept: Concept,
-  concepts: Concept[],
+  _concepts: Concept[],
   relations: ConceptRelation[],
   sourceRoles: Record<string, string>,
   targetRoles: Record<string, string>,
@@ -222,7 +221,7 @@ function getRelationTypeDirection(
   return sourceToTarget[type] ? 'source_to_target' : 'target_to_source';
 }
 
-function suggestRelationType(sourceName: string, targetName: string, availableTypes: string[]): string {
+function suggestRelationType(_sourceName: string, _targetName: string, availableTypes: string[]): string {
   if (availableTypes.length > 0) return availableTypes[0];
   return 'PARENT_OF';
 }
@@ -271,7 +270,6 @@ function layoutNodes(
     };
   });
 
-  const conceptIdSet = new Set(concepts.map((c) => c.id));
   const edges: Edge[] = [];
 
   for (const r of relations) {
@@ -341,7 +339,7 @@ export default function ConceptEditorPage() {
   const urlDomainId = Number(searchParams.get('domainId')) || null;
   const urlDomainIdRef = useRef<number | null>(urlDomainId);
 
-  const { labels, colors, sourceToTarget, sourceRoles, targetRoles, isSymmetric, types: relationTypes } = useRelationTypes();
+  const { labels, colors, sourceToTarget, sourceRoles, targetRoles, isSymmetric } = useRelationTypes();
 
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [relations, setRelations] = useState<ConceptRelation[]>([]);
@@ -468,7 +466,7 @@ export default function ConceptEditorPage() {
   const [searchRelTargetId, setSearchRelTargetId] = useState<number | null>(null);
   const [searchRelType, setSearchRelType] = useState('PARENT_OF');
   const [searchRelExpression, setSearchRelExpression] = useState('');
-  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const reactFlow = useReactFlow();
   const toast = useToastStore((s) => s.show);
@@ -888,8 +886,8 @@ export default function ConceptEditorPage() {
   const loadPendingChanges = async () => {
     setChangesLoading(true);
     try {
-      const data = await listPendingOntologyChanges();
-      setPendingChanges(data);
+      const res = await listPendingOntologyChanges();
+      setPendingChanges(res.data);
       setSelectedChangeIds(new Set());
     } catch {
       toast('加载变更记录失败', 'error');
@@ -1785,7 +1783,6 @@ export default function ConceptEditorPage() {
                     (sourceRoles[r.relationType] || '').includes('计算')
                 )
               : [];
-            const currentFactor = rel ? concepts.find((c) => c.id === rel.targetConceptId) : null;
             return (
           <div className="relationPanel">
             <div className="relationPanelHeader">

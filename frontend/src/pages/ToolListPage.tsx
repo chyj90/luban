@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactElement } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes, fetchBindingTypes, uploadAlgorithmScript, getAlgorithmScript, updateAlgorithmScript, checkAlgorithmHealth, getAlgorithmExecutionLogs } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, createToolDefinition, updateToolDefinition, deleteToolDefinition, searchTools, testTool, parseSwagger, batchImportSwagger, listMcpServers, fetchToolTypes, fetchBindingTypes, getAlgorithmScript, updateAlgorithmScript, checkAlgorithmHealth } from '@/api/tool';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
 import { listDrivers, installDriver } from '@/api/driver';
 import { getToolConcepts, listConcepts, bindToolConcept, unbindToolConcept } from '@/api/concept';
@@ -16,7 +16,7 @@ import './ToolListPage.css';
 
 const ALGO_SCRIPT_TEMPLATE = 'import json\nimport sys\n\n\ndef main(input_data):\n    work_center = input_data.get("work_center", "")\n    daily_capacity = input_data.get("daily_capacity", 0)\n    order_quantity = input_data.get("order_quantity", 0)\n\n    feasible = order_quantity <= daily_capacity\n    utilization = order_quantity / daily_capacity if daily_capacity > 0 else 0\n\n    return {\n        "feasible": feasible,\n        "utilization_after": round(utilization, 4),\n        "bottlenecks": [] if feasible else ["capacity_exceeded"],\n        "summary": f"工作中心 {work_center}: 排产{\'可行\' if feasible else \'不可行\'}，利用率 {utilization:.1%}"\n    }\n\n\nif __name__ == "__main__":\n    input_json = json.loads(sys.stdin.read())\n    result = main(input_json)\n    print(json.dumps(result, ensure_ascii=False))\n';
 
-const TYPE_ICONS: Record<string, JSX.Element> = {
+const TYPE_ICONS: Record<string, ReactElement> = {
   HTTP: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
   MCP_PASSTHROUGH: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>,
   ALGORITHM: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>,
@@ -68,7 +68,7 @@ export default function ToolListPage() {
   const [selectedConceptId, setSelectedConceptId] = useState<number | null>(null);
   const [selectedBindRelation, setSelectedBindRelation] = useState('');
   const [bindingTypes, setBindingTypes] = useState<{ value: string; label: string; description: string }[]>([]);
-  const [selectedBindIsDefault, setSelectedBindIsDefault] = useState(false);
+  const [selectedBindIsDefault] = useState(false);
   const [activeTab, setActiveTab] = useState<'tools' | 'datasources'>('tools');
   const [dsList, setDsList] = useState<Datasource[]>([]);
   const [dsShowForm, setDsShowForm] = useState(false);
@@ -1350,7 +1350,7 @@ export default function ToolListPage() {
                     <button type="button" className="algo-script-icon-btn" title="格式化代码" onClick={() => {
                       try {
                         const lines = algoScriptContent.split('\n');
-                        const formatted = lines.map((l) => l.rstrip ? l.rstrip() : l.replace(/\s+$/, '')).join('\n');
+                        const formatted = lines.map((l) => l.replace(/\s+$/, '')).join('\n');
                         setAlgoScriptContent(formatted);
                         toast('已整理行尾空白', 'success');
                       } catch { toast('格式化失败', 'error'); }

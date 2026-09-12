@@ -3,8 +3,10 @@ import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { loadDelegationMemory, saveDelegationMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
 import { listQueries } from '@/api';
-import { useAuthStore } from '@/stores/authStore';
-import type { DelegateQueryArgs, DelegateQueryResult } from '@/types/agent';
+import { getCallerIdentity } from '../../prompts/callerContext';
+import { toolArgsKey } from '../../kernel/runtime';
+import { approvePendingApproval } from '../../core/confirmationGuard';
+import type { DelegateQueryArgs, DelegateQueryResult, Message } from '@/types/agent';
 
 const activeDelegations = new Set<string>();
 
@@ -81,6 +83,35 @@ interface ToolMessageLike {
   role?: string;
   content?: string;
   toolCalls?: Array<{ name?: string; arguments?: Record<string, unknown> }>;
+}
+
+/**
+ * 委派记忆跨轮累积，分析子智能体行为（暂停/失败/DDL 干预）时只看本次任务的消息：
+ * 即最后一条 user 消息（本次委派的任务描述）之后的部分。
+ * 否则上一轮已解决/已确认的暂停与失败会在后续委派中反复误报。
+ */
+function messagesSinceLastUserTask(messages: Message[]): Message[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages.slice(i + 1);
+  }
+  return messages;
+}
+
+/**
+ * 检测子智能体是否带着未确认的危险操作返回：agentLoop 的确认门暂停会写入带
+ * _pause 的 tool 结果消息。返回暂停原因（供主智能体转述用户），无暂停返回 null。
+ */
+function detectSubAgentPause(messages: Message[]): string | null {
+  for (const m of messagesSinceLastUserTask(messages)) {
+    if (m.role !== 'tool' || !m.content) continue;
+    try {
+      const parsed = JSON.parse(m.content) as { _pause?: boolean; message?: string };
+      if (parsed._pause === true && parsed.message) return parsed.message;
+    } catch {
+      // 非 JSON 的 tool 消息跳过
+    }
+  }
+  return null;
 }
 
 /**
@@ -398,7 +429,7 @@ async function validateFilterParamsCoverage(
 
   try {
     const res = await listQueries(applicationId);
-    const query = res.data.find((q: any) => q.name === queryName);
+    const query = res.data.find((q: { name: string }) => q.name === queryName);
     if (!query) {
       warnings.push(`未找到查询 ${queryName}，无法校验筛选参数覆盖`);
       return warnings;
@@ -455,8 +486,12 @@ export const delegateSkills: Record<string, SkillFactory> = {
         },
         required: ['requirement'],
       },
-      async execute(args) {
+      async execute(args, execCtx) {
         const typedArgs = args as unknown as DelegateQueryArgs;
+        // 内核确认重执行：为子会话即将重试的危险操作放行（批准接力）
+        if ((execCtx as { kernelCall?: { resume?: boolean } } | undefined)?.kernelCall?.resume) {
+          approvePendingApproval();
+        }
         const execStart = Date.now();
         const guardKey = `query:${typedArgs.query_name || 'general'}`;
         if (activeDelegations.has(guardKey)) {
@@ -470,7 +505,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
         ctx.dispatch?.({
           type: 'DELEGATE_QUERY_START',
           payload: { requirement: typedArgs.requirement, targetPage: typedArgs.target_page, queryName: typedArgs.query_name },
-        } as unknown);
+        });
 
         try {
           const dbaPrompt = buildDataAssistantPrompt({
@@ -500,14 +535,40 @@ export const delegateSkills: Record<string, SkillFactory> = {
             },
           });
           const messagesAfter = executor.getMessages();
-          console.log(`[delegate_query] executor.getMessages 返回 ${messagesAfter.length} 条消息 | roles: [${messagesAfter.map((m: unknown) => m.role).join(', ')}]`);
+          console.log(`[delegate_query] executor.getMessages 返回 ${messagesAfter.length} 条消息 | roles: [${messagesAfter.map((m) => (m as Message).role).join(', ')}]`);
           saveDelegationMemory(ctx.applicationId, 'data-assistant', messagesAfter);
           console.log(`[delegate_query] data-assistant 完成 | ${Date.now() - routeStart}ms`);
 
           const messages = executor.getMessages();
+
+          // 确认门暂停传播：DBA 带着未确认的危险操作返回时，必须向主智能体返回 _pause，
+          // 让主循环硬暂停。否则委派被当作"已完成"，主智能体会继续执行后续步骤。
+          const pauseReason = detectSubAgentPause(messages);
+          if (pauseReason) {
+            console.warn(`[delegate_query] 子智能体等待用户确认，主智能体暂停 | ${pauseReason.slice(0, 80)}`);
+            // 把子会话的 danger-confirm 上浮为父层挂起请求：内核确认后精确重执行本委派调用，
+            // 本工具经 kernelCall.resume 感知批准并为子会话放行
+            const kernelCallId = (execCtx as { kernelCall?: { callId?: string } } | undefined)?.kernelCall?.callId || '';
+            return {
+              success: false,
+              _pause: true,
+              message: `数据辅助智能体有一个危险操作等待用户确认，本次任务未完成。请向用户转述下面的确认请求，等用户回复"确认"后重新委派本任务；用户回复"取消"则放弃该操作：\n${pauseReason}`,
+              data: kernelCallId ? {
+                suspendRequest: {
+                  kind: 'danger-confirm',
+                  callId: kernelCallId,
+                  toolName: 'delegate_query',
+                  args: typedArgs as unknown as Record<string, unknown>,
+                  argsKey: toolArgsKey(typedArgs as unknown as Record<string, unknown>),
+                  message: `子智能体危险操作待确认：${pauseReason}`,
+                },
+              } : undefined,
+            };
+          }
+
           const dbaResponse = messages
-            .filter((m: unknown) => m.role === 'assistant')
-            .map((m: unknown) => m.content)
+            .filter((m) => (m as Message).role === 'assistant')
+            .map((m) => (m as Message).content)
             .join('\n\n')
             .trim();
 
@@ -530,24 +591,34 @@ export const delegateSkills: Record<string, SkillFactory> = {
             result.details += `\n\n⚠️ 筛选参数校验:\n${warningMsg}`;
           }
 
-          // 校验 DDL 降级流程：代码层兜底，确保 DDL 被拦截后提供了降级 SQL
-          const ddlCheck = validateDDLExecution(messages);
+          // 校验 DDL 降级流程：代码层兜底，确保 DDL 被拦截后提供了降级 SQL。
+          // 只看本次任务的消息，避免上一轮已解决的 DDL 干预在后续委派中误报
+          const ddlCheck = validateDDLExecution(messagesSinceLastUserTask(messages));
           if (ddlCheck.warnings.length > 0) {
             const ddlWarningMsg = ddlCheck.warnings.join('\n');
             console.warn(`[delegate_query] DDL 降级校验警告:\n${ddlWarningMsg}`);
             result.details += `\n\n⚠️ DDL 降级校验:\n${ddlWarningMsg}`;
           }
-          // 结构化干预标记：DDL 被拦截且已降级 → 主智能体应停止等待用户
+          // 结构化干预标记：DDL 被拦截且已降级 → 返回 _pause 让主循环硬暂停，
+          // 等待用户在数据源管理面板完成手动操作。此前只把标记放进 data，
+          // 停止全靠 prompt 劝说 LLM，模型不听话时主智能体会继续跑
           if (ddlCheck.interventionRequired) {
             result.interventionRequired = true;
             result.interventionReason = ddlCheck.interventionReason;
             result.message = '需要用户手动操作（建表/改表），请等待用户完成后再继续';
+            console.warn(`[delegate_query] DDL 干预，主智能体暂停 | ${(ddlCheck.interventionReason || '').slice(0, 80)}`);
+            return {
+              success: false,
+              _pause: true,
+              message: `需要用户手动操作后本次任务才算完成：${ddlCheck.interventionReason || ''}。请将需要手动执行的 SQL 转达给用户，等用户在数据源管理面板执行完成并回复后，再继续后续步骤。`,
+              data: { ...result, outcomes: extractQueryOutcomes(messages) },
+            };
           }
 
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
             payload: { requirement: typedArgs.requirement, success: true, details: dbaResponse },
-          } as unknown);
+          });
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
           return { success: true, message: result.message, data: { ...result, outcomes: extractQueryOutcomes(messages) } };
@@ -556,8 +627,8 @@ export const delegateSkills: Record<string, SkillFactory> = {
           ctx.dispatch?.({
             type: 'DELEGATE_QUERY_END',
             payload: { requirement: typedArgs.requirement, success: false, error: (e as Error).message },
-          } as unknown);
-          return { success: false, message: `数据辅助智能体执行失败: ${e.message}`, _noRetry: true };
+          });
+          return { success: false, message: `数据辅助智能体执行失败: ${(e as Error).message}`, _noRetry: true };
         } finally {
           activeDelegations.delete(guardKey);
         }
@@ -593,8 +664,12 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
         },
         required: ['requirement'],
       },
-      async execute(args) {
-        const { requirement, context } = args as unknown;
+      async execute(args, execCtx) {
+        // 内核确认重执行：为子会话即将重试的危险操作放行（批准接力）
+        if ((execCtx as { kernelCall?: { resume?: boolean } } | undefined)?.kernelCall?.resume) {
+          approvePendingApproval();
+        }
+        const { requirement, context } = args as { requirement: string; context?: string };
         const taskType = (args as { task_type?: string }).task_type;
         const mode: WorkflowDelegateMode
           = taskType === 'design_form' || taskType === 'design_workflow' ? taskType : 'full';
@@ -611,7 +686,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
         ctx.dispatch?.({
           type: 'DELEGATE_WORKFLOW_START',
           payload: { requirement },
-        } as unknown);
+        });
 
         try {
           let existingFormsInfo = '';
@@ -628,17 +703,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             applicationId: ctx.applicationId,
             existingFormsInfo,
             context,
-            currentUser: (() => {
-              const u = useAuthStore.getState().user;
-              if (!u) return undefined;
-              return {
-                memberId: u.id,
-                name: u.displayName,
-                account: u.account,
-                email: u.email,
-                deptName: u.deptName,
-              };
-            })(),
+            currentUser: getCallerIdentity(),
           });
 
           const executor = await chatRouter!.routeTo('workflow-assistant', `请设计流程：${requirement}`, `wf-${Date.now()}`, {
@@ -650,17 +715,42 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
 
           const messages = executor.getMessages();
           saveDelegationMemory(ctx.applicationId, 'workflow-assistant', messages);
+
+          // 确认门暂停传播：与 delegate_query 相同，子智能体带未确认操作返回时主智能体必须暂停
+          const pauseReason = detectSubAgentPause(messages);
+          if (pauseReason) {
+            console.warn(`[delegate_workflow] 子智能体等待用户确认，主智能体暂停 | ${pauseReason.slice(0, 80)}`);
+            const kernelCallId = (execCtx as { kernelCall?: { callId?: string } } | undefined)?.kernelCall?.callId || '';
+            const delegateArgs = args as Record<string, unknown>;
+            return {
+              success: false,
+              _pause: true,
+              message: `流程设计助手有一个危险操作等待用户确认，本次任务未完成。请向用户转述下面的确认请求，等用户回复"确认"后重新委派本任务；用户回复"取消"则放弃该操作：\n${pauseReason}`,
+              data: kernelCallId ? {
+                suspendRequest: {
+                  kind: 'danger-confirm',
+                  callId: kernelCallId,
+                  toolName: 'delegate_workflow',
+                  args: delegateArgs,
+                  argsKey: toolArgsKey(delegateArgs),
+                  message: `子智能体危险操作待确认：${pauseReason}`,
+                },
+              } : undefined,
+            };
+          }
+
           const response = messages
-            .filter((m: unknown) => m.role === 'assistant')
-            .map((m: unknown) => m.content)
+            .filter((m) => (m as Message).role === 'assistant')
+            .map((m) => (m as Message).content)
             .join('\n\n')
             .trim();
 
-          // 检测子智能体执行过程中的工具失败，失败时不能向主智能体返回成功
+          // 检测子智能体执行过程中的工具失败，失败时不能向主智能体返回成功。
+          // 只看本次任务的消息，避免上一轮已解决的失败反复误报为"本次失败"
           const failedToolMessages = Array.from(new Set(
-            messages
-              .filter((m: unknown) => (m as { role?: string }).role === 'tool')
-              .map((m: unknown) => (m as { content?: string }).content || '')
+            messagesSinceLastUserTask(messages)
+              .filter((m) => (m as Message).role === 'tool')
+              .map((m) => (m as Message).content || '')
               .filter((content: string) => !content.includes('已暂停，等待用户确认后继续'))
               .map((content: string) => {
                 try {
@@ -678,7 +768,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             ctx.dispatch?.({
               type: 'DELEGATE_WORKFLOW_END',
               payload: { success: false, error: failedToolMessages.join('；'), details: response },
-            } as unknown);
+            });
             return {
               success: false,
               message: `流程设计智能体执行过程中有工具调用失败，任务可能未完成，请将以下失败信息如实转达用户，禁止标记为已完成：\n${failedToolMessages.map((f) => `- ${f}`).join('\n')}\n\n子智能体最后回复：${response || '（无）'}`,
@@ -690,7 +780,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
             payload: { success: true, details: response },
-          } as unknown);
+          });
 
           console.log(`[delegate_workflow] 完成 | 总耗时: ${Date.now() - execStart}ms | outcomes: ${JSON.stringify(outcomes)}`);
           const outcomeSummary = outcomes
@@ -705,9 +795,9 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           console.error(`[delegate_workflow] 失败:`, e);
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
-            payload: { success: false, error: e.message },
-          } as unknown);
-          return { success: false, message: `流程设计智能体执行失败: ${e.message}`, _noRetry: true };
+            payload: { success: false, error: (e as Error).message },
+          });
+          return { success: false, message: `流程设计智能体执行失败: ${(e as Error).message}`, _noRetry: true };
         } finally {
           activeDelegations.delete('workflow');
         }
@@ -715,7 +805,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
     };
   },
 
-  'delegate:orchestration': (ctx, chatRouter) => {
+  'delegate:orchestration': (_ctx, chatRouter) => {
     if (!chatRouter) {
       return {
         id: 'delegate:orchestration',
@@ -741,7 +831,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
         required: ['requirement'],
       },
       async execute(args) {
-        const { requirement, context } = args as unknown;
+        const { requirement, context } = args as { requirement: string; context?: string };
         console.log(`[delegate_orchestration] 开始 | ${String(requirement).slice(0, 60)}`);
         try {
           const executor = await chatRouter.routeTo('orchestration-assistant',
@@ -749,8 +839,8 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             `orch-${Date.now()}`, { isDelegated: true, agentContext: { requirement, context } });
           const messages = executor.getMessages();
           const response = messages
-            .filter((m: unknown) => (m as { role?: string }).role === 'assistant')
-            .map((m: unknown) => (m as { content?: string }).content || '')
+            .filter((m) => (m as Message).role === 'assistant')
+            .map((m) => (m as Message).content || '')
             .join('\n\n')
             .trim();
           return { success: true, message: response || '编排设计助手已完成', data: { response } };

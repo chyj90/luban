@@ -12,7 +12,7 @@ export default function SystemPermissionPage() {
   const [applyGroupId, setApplyGroupId] = useState<number>(0);
   const [reason, setReason] = useState('');
   const [activeTab, setActiveTab] = useState<'systems' | 'my'>('systems');
-  const toast = useToastStore((s) => s.add);
+  const toast = useToastStore((s) => s.show);
 
   const fetchData = useCallback(async () => {
     try {

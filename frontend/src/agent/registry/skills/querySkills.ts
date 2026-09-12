@@ -39,8 +39,8 @@ export const querySkills: Record<string, SkillFactory> = {
         testedDatasources.add(datasourceId);
         return null;
       } catch (e) {
-        const datasources = await listDatasources(ctx.applicationId).then(r => r.data).catch(() => []);
-        const ds = datasources.find((d: unknown) => d.id === datasourceId);
+        const datasources = await listDatasources('APPLICATION', ctx.applicationId).then(r => r.data).catch(() => []);
+        const ds = datasources.find((d: { id: number; name?: string }) => d.id === datasourceId);
         const dsName = ds ? `「${ds.name}」` : `ID:${datasourceId}`;
         return `数据源 ${dsName} 连接失败，请先在「数据源管理」中检查连接配置并确保测试通过后再继续。`;
       }
@@ -90,7 +90,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         try {
           const paramsArray = (args.params as unknown[]) || [];
           const params = paramsArray.length > 0
-            ? Object.fromEntries(paramsArray.map((p: unknown) => [p.name || p.key, p]))
+            ? Object.fromEntries(paramsArray.map((p: any) => [p.name || p.key, p]))
             : undefined;
 
           const res = await createQuery({
@@ -131,7 +131,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
       try {
         const paramsArray = (args.params as unknown[]) || [];
           const params = paramsArray.length > 0
-            ? Object.fromEntries(paramsArray.map((p: unknown) => [p.name || p.key, p]))
+            ? Object.fromEntries(paramsArray.map((p: any) => [p.name || p.key, p]))
             : undefined;
 
           const res = await updateQuery(args.queryId as number, {
@@ -235,7 +235,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     async execute(args) {
       try {
         const res = await listQueries(ctx.applicationId);
-        const query = res.data.find((q: unknown) => q.id === args.queryId);
+        const query = res.data.find((q: { id: number; name?: string }) => q.id === args.queryId);
         if (!query) return { success: false, message: `未找到查询 ${args.queryId}` };
         ctx.onQuerySelect?.({ id: query.id as number, name: query.name as string });
         return { success: true, message: '获取查询成功', data: query };
@@ -245,7 +245,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     },
   }),
 
-  'query:execute': (ctx) => ({
+  'query:execute': () => ({
     id: 'query:execute',
     category: SkillCategory.QUERY,
     name: 'execute_sql',

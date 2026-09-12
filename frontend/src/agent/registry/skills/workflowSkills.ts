@@ -275,7 +275,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
       required: ['name', 'applicationId', 'nodes', 'edges'],
     },
     async execute(args) {
-      const { name, applicationId, nodes, edges } = args as unknown;
+      const { name, applicationId, nodes, edges } = args as { name: string; applicationId: number; nodes: unknown[]; edges: unknown[] };
       const description = (args as Record<string, unknown>).description as string | undefined;
 
       const missing: string[] = [];
@@ -417,7 +417,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:bind': (ctx) => ({
+  'workflow:bind': (_ctx) => ({
     id: 'workflow:bind',
     category: SkillCategory.WORKFLOW,
     name: 'bind_workflow',
@@ -440,7 +440,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:search_members': (ctx) => ({
+  'workflow:search_members': (_ctx) => ({
     id: 'workflow:search_members',
     category: SkillCategory.WORKFLOW,
     name: 'search_members',
@@ -480,7 +480,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:search_departments': (ctx) => ({
+  'workflow:search_departments': (_ctx) => ({
     id: 'workflow:search_departments',
     category: SkillCategory.WORKFLOW,
     name: 'search_departments',
@@ -509,9 +509,9 @@ export const workflowSkills: Record<string, SkillFactory> = {
       type: 'object',
       properties: { status: { type: 'string', description: '按状态筛选' } },
     },
-    async execute(args) {
+    async execute(_args) {
       try {
-        const result = await instanceApi.list({ status: args.status as string | undefined });
+        const result = await instanceApi.list({ applicationId: ctx.applicationId });
         return { success: true, message: `共 ${result.length} 个流程实例`, data: result };
       } catch (e: unknown) {
         return { success: false, message: `获取流程实例失败: ${(e as Error).message}` };
@@ -519,7 +519,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:approve': (ctx) => ({
+  'workflow:approve': (_ctx) => ({
     id: 'workflow:approve',
     category: SkillCategory.WORKFLOW,
     name: 'approve_workflow',
@@ -535,7 +535,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:reject': (ctx) => ({
+  'workflow:reject': (_ctx) => ({
     id: 'workflow:reject',
     category: SkillCategory.WORKFLOW,
     name: 'reject_workflow',
@@ -551,7 +551,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:freeze': (ctx) => ({
+  'workflow:freeze': (_ctx) => ({
     id: 'workflow:freeze',
     category: SkillCategory.WORKFLOW,
     name: 'freeze_workflow',
@@ -567,7 +567,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:unfreeze': (ctx) => ({
+  'workflow:unfreeze': (_ctx) => ({
     id: 'workflow:unfreeze',
     category: SkillCategory.WORKFLOW,
     name: 'unfreeze_workflow',
@@ -583,7 +583,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:cancel': (ctx) => ({
+  'workflow:cancel': (_ctx) => ({
     id: 'workflow:cancel',
     category: SkillCategory.WORKFLOW,
     name: 'cancel_workflow',
@@ -601,7 +601,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:lint': (ctx) => ({
+  'workflow:lint': (_ctx) => ({
     id: 'workflow:lint',
     category: SkillCategory.WORKFLOW,
     name: 'lint_workflow',
@@ -615,19 +615,20 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const def = await workflowApi.getDefinition(args.processId as number);
         const result = await lintApi.lintWorkflow(def.nodes || '', def.edges || '', '');
-        const { passed, errors, warnings, errorCount, warningCount } = result as unknown;
+        const lintResult = result as { passed?: boolean; errors?: Array<{ category?: string; message?: string }>; warnings?: Array<{ category?: string; message?: string }>; errorCount?: number; warningCount?: number };
+        const { passed, errors, warnings, errorCount, warningCount } = lintResult;
         const parts: string[] = [];
         if (passed) {
           parts.push('流程检查通过');
         } else {
           parts.push(`流程检查不通过：${errorCount} 个错误`);
           if (errors?.length) {
-            parts.push(...errors.map((e: unknown) => `- [${e.category}] ${e.message}`));
+            parts.push(...errors.map((e) => `- [${e.category || ''}] ${e.message || ''}`));
           }
         }
         if (warningCount && warnings?.length) {
           parts.push(`${warningCount} 个警告：`);
-          parts.push(...warnings.map((w: unknown) => `- [${w.category}] ${w.message}`));
+          parts.push(...warnings.map((w) => `- [${w.category || ''}] ${w.message || ''}`));
         }
         return { success: true, message: parts.join('\n'), data: result };
       }
@@ -635,7 +636,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:copy': (ctx) => ({
+  'workflow:copy': (_ctx) => ({
     id: 'workflow:copy',
     category: SkillCategory.WORKFLOW,
     name: 'copy_workflow',
@@ -669,7 +670,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
   }),
 
-  'workflow:publish': (ctx) => ({
+  'workflow:publish': (_ctx) => ({
     id: 'workflow:publish',
     category: SkillCategory.WORKFLOW,
     name: 'publish_workflow',

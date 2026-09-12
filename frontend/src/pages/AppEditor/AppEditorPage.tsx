@@ -26,7 +26,7 @@ import { OrchestrationBuilder } from './OrchestrationBuilder';
 
 type EditingFile = 'html' | 'css' | 'js';
 
-type SidebarTab = 'pages' | 'queries' | 'workflow' | 'orchestrations' | 'datasources' | 'apis';
+type SidebarTab = 'pages' | 'queries' | 'workflow' | 'orchestrations' | 'datasources' | 'apis' | 'settings';
 
 export type WorkflowView =
   | { view: 'processes'; appId?: number }
@@ -476,7 +476,7 @@ export function AppEditorPage() {
               onQueriesChange={handleQueriesChange}
               onDatasourceChange={handleDatasourceChange}
               onToolsChange={handleToolsChange}
-              onWorkflowNavigate={handleWorkflowNavigate}
+              onWorkflowNavigate={(v) => handleWorkflowNavigate(v as WorkflowView)}
             />
           </div>
         </>

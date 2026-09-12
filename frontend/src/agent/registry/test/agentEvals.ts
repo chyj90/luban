@@ -15,6 +15,7 @@
 import type { ChatRouter } from '../../core/chatRouter';
 import type { ToolContext, ToolExecuteResult, Message } from '@/types/agent';
 import type { LLMMessage } from '../../core/llmClient';
+import { parseToolArguments } from '../../core/llmClient';
 import {
   runConsistencyCheck,
   checkTarget,
@@ -27,7 +28,7 @@ import { delegateSkills, buildWorkflowDelegateSystemPrompt, extractWorkflowOutco
 import * as contextWindowModule from '../../core/contextWindow';
 import * as agentMemoryModule from '../agentMemory';
 import { resolveSkills } from '../skillRegistry';
-import { consumeApproval, onUserMessage, resetConfirmationGuard } from '../../core/confirmationGuard';
+import { consumeApproval, onUserMessage, resetConfirmationGuard, hasPending } from '../../core/confirmationGuard';
 
 export interface EvalResult {
   name: string;
@@ -433,6 +434,7 @@ function evalPlanQueryBatching(): EvalResult {
           { queryName: 'DeleteCustomer', purpose: '删除客户', needsNewTable: false },
         ],
         apis: [],
+        orchestrations: [],
       },
     ],
     workflows: [],
@@ -540,6 +542,181 @@ function evalDDLFallbackValidation(): EvalResult {
   return evalResult('E13-DDL降级校验', checks.length === 0, checks.length === 0 ? '4 个场景全部通过' : checks.join('；'));
 }
 
+// ============================================================================
+// Phase 0 止血补丁回归（E14-E20）
+// ============================================================================
+
+/** 构造 routeTo 返回固定消息的 fake ChatRouter（E4 同款模式） */
+function makeFakeRouter(messages: Message[]): ChatRouter {
+  return {
+    routeTo: async () => ({
+      run: async () => {},
+      cancel: () => {},
+      getMessages: () => messages,
+    }),
+  } as unknown as ChatRouter;
+}
+
+/** agentLoop 确认门暂停时写入的 tool 结果消息（与 agentLoop 实际 JSON 结构一致） */
+const PAUSE_TOOL_MSG: Message = {
+  id: 'm-pause',
+  role: 'tool',
+  toolCallId: 't-del',
+  content: JSON.stringify({
+    success: false,
+    _pause: true,
+    message: '⚠️ 危险操作待确认：「delete_query」。本次未执行。请向用户说明该操作的影响，等待用户回复"确认"后重新调用相同工具；用户回复"取消"则放弃该操作。',
+  }),
+  timestamp: 0,
+};
+
+/** E14: delegate_query —— 子智能体带未确认危险操作返回时，必须以 _pause 暂停主智能体（此前返回 success=true） */
+async function evalDelegatePausePropagationQuery(): Promise<EvalResult> {
+  const factory = delegateSkills['delegate:query'];
+  if (!factory) return evalResult('E14-委派暂停传播(query)', false, 'delegate:query 技能未注册');
+
+  const messages: Message[] = [
+    { id: 'u1', role: 'user', content: '为页面创建查询 A', timestamp: 0 },
+    {
+      id: 'a1', role: 'assistant', content: '', timestamp: 0,
+      toolCalls: [{ id: 't-del', name: 'delete_query', arguments: { queryId: 7 }, status: 'done' }],
+    },
+    PAUSE_TOOL_MSG,
+  ];
+  const skill = factory(STUB_CTX, makeFakeRouter(messages));
+  const result = await skill.execute({ requirement: '为页面创建查询 A' }, STUB_CTX);
+
+  const passed = result._pause === true && result.success === false && result.message.includes('等待用户确认');
+  return evalResult(
+    'E14-委派暂停传播(query)',
+    passed,
+    passed
+      ? '子智能体确认门暂停被正确传播为 _pause'
+      : `期望 success=false + _pause=true，实际 success=${result.success}，_pause=${String(result._pause)}`,
+  );
+}
+
+/** E15: delegate_workflow —— 同上，且暂停不得被误报为"工具失败" */
+async function evalDelegatePausePropagationWorkflow(): Promise<EvalResult> {
+  const factory = delegateSkills['delegate:workflow'];
+  if (!factory) return evalResult('E15-委派暂停传播(workflow)', false, 'delegate:workflow 技能未注册');
+
+  const messages: Message[] = [
+    { id: 'u1', role: 'user', content: '请设计流程：请假审批', timestamp: 0 },
+    {
+      id: 'a1', role: 'assistant', content: '', timestamp: 0,
+      toolCalls: [{ id: 't-cancel', name: 'cancel_workflow', arguments: { instanceId: 9 }, status: 'done' }],
+    },
+    PAUSE_TOOL_MSG,
+  ];
+  const skill = factory(STUB_CTX, makeFakeRouter(messages));
+  const result = await skill.execute({ requirement: '请假审批', task_type: 'design_workflow' }, STUB_CTX);
+
+  const passed = result._pause === true && result.success === false && result.message.includes('等待用户确认');
+  return evalResult(
+    'E15-委派暂停传播(workflow)',
+    passed,
+    passed
+      ? '暂停正确传播且未被失败扫描误报'
+      : `期望暂停传播，实际 success=${result.success}，message="${result.message.slice(0, 120)}"`,
+  );
+}
+
+/** E16: delegate_query —— DDL 被拦截且已提供降级 SQL 时，必须返回 _pause 让主循环硬暂停（此前只放 data，主循环不停） */
+async function evalDDLInterventionPause(): Promise<EvalResult> {
+  const factory = delegateSkills['delegate:query'];
+  if (!factory) return evalResult('E16-DDL干预暂停', false, 'delegate:query 技能未注册');
+
+  const messages: Message[] = [
+    { id: 'u1', role: 'user', content: '为订单页创建查询 orders', timestamp: 0 },
+    {
+      id: 'a1', role: 'assistant', content: '我来创建表', timestamp: 0,
+      toolCalls: [{ id: 't-sql', name: 'execute_sql', arguments: { sql: 'CREATE TABLE orders (id INT)' }, status: 'done' }],
+    },
+    { id: 'm1', role: 'tool', content: JSON.stringify({ success: false, message: 'DDL 操作不允许' }), toolCallId: 't-sql', timestamp: 0 },
+    { id: 'a2', role: 'assistant', content: '建表被拦截，请在数据源管理面板手动执行：\nCREATE TABLE orders (id INT);', timestamp: 0 },
+  ];
+  const skill = factory(STUB_CTX, makeFakeRouter(messages));
+  const result = await skill.execute({ requirement: '为订单页创建查询 orders' }, STUB_CTX);
+
+  const data = result.data as { interventionRequired?: boolean } | undefined;
+  const passed = result._pause === true && result.success === false && data?.interventionRequired === true;
+  return evalResult(
+    'E16-DDL干预暂停',
+    passed,
+    passed
+      ? 'DDL 干预以 _pause 硬暂停主循环，不再依赖 prompt 劝说'
+      : `期望 _pause=true + data.interventionRequired=true，实际 _pause=${String(result._pause)}，data=${JSON.stringify(data)?.slice(0, 120)}`,
+  );
+}
+
+/** E17: 委派记忆切片 —— 上一轮已解决的 DDL 干预不得在后续委派中误报（修复前每次委派都会重复暂停） */
+async function evalDelegationMemorySlice(): Promise<EvalResult> {
+  const factory = delegateSkills['delegate:query'];
+  if (!factory) return evalResult('E17-委派记忆切片', false, 'delegate:query 技能未注册');
+
+  const messages: Message[] = [
+    // 上一轮任务：DDL 被拦截，用户已完成手动操作（已解决）
+    { id: 'u-old', role: 'user', content: '为旧页创建查询 legacy', timestamp: 0 },
+    {
+      id: 'a-old1', role: 'assistant', content: '我来创建表', timestamp: 0,
+      toolCalls: [{ id: 't-old', name: 'execute_sql', arguments: { sql: 'CREATE TABLE legacy_tmp (id INT)' }, status: 'done' }],
+    },
+    { id: 'm-old', role: 'tool', content: JSON.stringify({ success: false, message: 'DDL 操作不允许' }), toolCallId: 't-old', timestamp: 0 },
+    { id: 'a-old2', role: 'assistant', content: '请手动执行：CREATE TABLE legacy_tmp (id INT);', timestamp: 0 },
+    // 当前任务：干净完成，无任何 DDL
+    { id: 'u-new', role: 'user', content: '创建查询 current', timestamp: 0 },
+    { id: 'a-new', role: 'assistant', content: '查询 current 已创建完成。', timestamp: 0 },
+  ];
+  const skill = factory(STUB_CTX, makeFakeRouter(messages));
+  const result = await skill.execute({ requirement: '创建查询 current' }, STUB_CTX);
+
+  const passed = result.success === true && result._pause !== true;
+  return evalResult(
+    'E17-委派记忆切片',
+    passed,
+    passed
+      ? '历史干预不再误报，本次干净任务正常返回成功'
+      : `历史 DDL 干预被误报（应只看本次任务），实际 success=${result.success}，_pause=${String(result._pause)}`,
+  );
+}
+
+/** E18: 确认门收紧 —— 长句含"确认"不误放行、长句"不要…"不误取消 */
+function evalConfirmationGuardTightening(): EvalResult {
+  const checks: string[] = [];
+  resetConfirmationGuard();
+
+  if (consumeApproval('delete_page', { pageId: 1 }) !== 'blocked') checks.push('首次调用应 blocked');
+  onUserMessage('我确认一下需求：你是要删除页面A吗？');
+  if (consumeApproval('delete_page', { pageId: 1 }) !== 'blocked') checks.push('长句含"确认"不应放行（includes 兜底已删）');
+  onUserMessage('不要忘了加筛选字段，另外把标题改成蓝色');
+  if (!hasPending()) checks.push('长句"不要…"不应取消挂起操作（长度门生效）');
+  onUserMessage('算了');
+  if (hasPending()) checks.push('短句"算了"应取消挂起操作');
+
+  // 重新登记一个挂起操作，验证短句"确认"放行一次（取消后 pending 已清空，需重新拦截登记）
+  if (consumeApproval('delete_query', { queryId: 2 }) !== 'blocked') checks.push('重新登记应 blocked');
+  onUserMessage('确认');
+  if (consumeApproval('delete_query', { queryId: 2 }) !== 'approved') checks.push('短句"确认"应放行一次');
+
+  resetConfirmationGuard();
+  return evalResult('E18-确认门收紧', checks.length === 0, checks.length === 0 ? '误放行/误取消路径全部封死' : checks.join('；'));
+}
+
+/** E19: parseToolArguments —— 不可修复的非法 JSON 返回 null（此前静默返回 {}，工具带空参数"成功"执行） */
+function evalParseToolArgumentsStrictness(): EvalResult {
+  const checks: string[] = [];
+
+  if (JSON.stringify(parseToolArguments('{"a":1}')) !== '{"a":1}') checks.push('合法 JSON 解析错误');
+  const empty = parseToolArguments('');
+  if (empty === null || Object.keys(empty).length !== 0) checks.push('空参数应返回 {}（无参工具）');
+  if (parseToolArguments('{"broken json') !== null) checks.push('不可修复的非法 JSON 应返回 null 而非 {}');
+  const repaired = parseToolArguments('{"sql":"SELECT 1\nFROM t"}');
+  if (repaired === null || (repaired as { sql?: string }).sql !== 'SELECT 1\nFROM t') checks.push('字符串内裸换行应被修复');
+
+  return evalResult('E19-参数解析严格化', checks.length === 0, checks.length === 0 ? '解析失败不再静默降级' : checks.join('；'));
+}
+
 /** 运行全部 eval */
 export async function runAgentEvals(): Promise<EvalResult[]> {
   const results: EvalResult[] = [
@@ -554,10 +731,16 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
     evalDelegationMemoryBound(),
     evalPlanQueryBatching(),
     evalDDLFallbackValidation(),
+    evalConfirmationGuardTightening(),
+    evalParseToolArgumentsStrictness(),
   ];
   results.push(await evalDelegateFailureDetection());
   results.push(await evalStepVerifier());
   results.push(await evalFormContainerFalsePositive());
+  results.push(await evalDelegatePausePropagationQuery());
+  results.push(await evalDelegatePausePropagationWorkflow());
+  results.push(await evalDDLInterventionPause());
+  results.push(await evalDelegationMemorySlice());
   return results;
 }
 

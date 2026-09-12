@@ -126,7 +126,7 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
 
   useEffect(() => {
     if (applicationId) {
-      listDatasources(applicationId).then((res) => setDatasources(res.data));
+      listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
     }
   }, [applicationId]);
 

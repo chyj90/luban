@@ -96,7 +96,7 @@ export function useQueryBridge(
         const res = pageId
           ? await runRuntimeQuery(pageId, query.id, { params: msg.params })
           : await runQuery(query.id, { params: msg.params });
-        const { columns, rows, totalCount, executionTime } = res.data;
+        const { columns, rows, totalCount } = res.data;
         const objectRows: Record<string, unknown>[] = rows.map((row: unknown[]) => {
           const obj: Record<string, unknown> = {};
           columns.forEach((col, i) => { obj[col] = row[i]; });
@@ -481,10 +481,9 @@ export function useQueryBridge(
 </script>`;
   }, [userInfo, allPages]);
 
-  const buildBridgeContent = useCallback((queryNames: string[], apiNames?: string[]) => {
+  const buildBridgeContent = useCallback((queryNames: string[], _apiNames?: string[]) => {
     const userJson = userInfo ? JSON.stringify(userInfo) : 'null';
     const allPagesJson = JSON.stringify(allPages || []);
-    const apiNamesJson = JSON.stringify(apiNames || []);
 
     return `window.__LUBAN_USER__ = ${userJson};
 window.__LUBAN__ = {

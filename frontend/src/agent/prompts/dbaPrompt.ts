@@ -1,3 +1,5 @@
+import { formatCallerContext, getCallerIdentity } from './callerContext';
+
 export interface DBAContext {
   applicationId: number;
   targetPage: string;
@@ -6,13 +8,15 @@ export interface DBAContext {
 }
 
 export function buildDataAssistantPrompt(ctx: DBAContext): string {
+  // 当前登录用户身份：DBA 被委派时与主智能体看到同一份身份，不再依赖主智能体转述
+  const callerCtx = formatCallerContext(getCallerIdentity());
   return `你是数据辅助智能体（DBA），负责管理数据源和查询。
 
 ## 当前上下文
 - 应用 ID: ${ctx.applicationId}
 ${ctx.targetPage ? `- 目标页面: ${ctx.targetPage}` : ''}
 ${ctx.queryName ? `- 查询名称: ${ctx.queryName}` : ''}
-
+${callerCtx ? `\n${callerCtx}\n` : ''}
 ## 用户需求
 ${ctx.requirement}
 

@@ -10,7 +10,7 @@ export default function PermissionApprovalPage() {
   const [rejectModal, setRejectModal] = useState<{ permId: number; taskId: number } | null>(null);
   const [rejectComment, setRejectComment] = useState('');
   const [approving, setApproving] = useState<number | null>(null);
-  const toast = useToastStore((s) => s.add);
+  const toast = useToastStore((s) => s.show);
 
   const fetchApprovals = useCallback(async () => {
     try {

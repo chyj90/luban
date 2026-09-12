@@ -33,7 +33,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
     return user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
   }, [user?.id, user?.account, user?.email]);
   const pageList = useMemo(() => pages.map(p => ({ id: p.id, name: p.name })), [pages]);
-  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate, app.id, appTools, currentPageId);
+  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate, app.id, appTools, currentPageId ?? undefined);
 
   function handlePageNavigate(pageId: number) {
     const target = pages.find(p => p.id === pageId);

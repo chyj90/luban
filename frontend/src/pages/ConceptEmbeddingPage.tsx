@@ -540,7 +540,7 @@ export default function ConceptEmbeddingPage() {
                               <div className="importConceptInfo">
                                 <span className="importConceptName">
                                   {attr} ← {table}.{col}
-                                  <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>{item.datasourceName || `数据源${dsId}`}</span>
+                                  <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>{String(item.datasourceName || `数据源${dsId}`)}</span>
                                   {rule && <span style={{ marginLeft: 4, fontSize: 10, color: '#722ed1', background: '#f9f0ff', padding: '0 4px', borderRadius: 3 }}>{rule}</span>}
                                 </span>
                                 <span className="importConceptSlug">
@@ -569,7 +569,7 @@ export default function ConceptEmbeddingPage() {
                                   <span className="importConceptName">
                                     {jType} JOIN {jTable}
                                     {jc.targetConcept ? ` → ${String(jc.targetConcept)}` : null}
-                                    <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>{jc.datasourceName || `数据源${jdsId}`}</span>
+                                    <span style={{ marginLeft: 8, fontSize: 11, color: '#999' }}>{String(jc.datasourceName || `数据源${jdsId}`)}</span>
                                   </span>
                                   <span className="importConceptSlug">
                                     <span className="importMappingTypeTag" style={{ background: '#e6fffb', color: '#13c2c2', borderColor: '#b5f5ec' }}>{jType}</span>

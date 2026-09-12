@@ -47,7 +47,19 @@ async function main(): Promise<void> {
   console.log('\n=== Agent 回归评测（R11 首批） ===');
   const evalsPassed = await runAgentEvalsAndReport();
 
-  if (violations.length > 0 || !evalsPassed) {
+  console.log('\n=== Session 内核测试（Phase 2） ===');
+  const { runSessionTests } = await import('../kernel/sessionTests');
+  const { runRuntimeTests } = await import('../kernel/runtimeTests');
+  const kernelResults = [...runSessionTests(), ...(await runRuntimeTests())];
+  let kernelPassed = true;
+  for (const r of kernelResults) {
+    const line = `${r.passed ? '✅' : '❌'} ${r.name}${r.passed ? '' : `\n   ${r.detail}`}`;
+    if (r.passed) console.log(line);
+    else { console.error(line); kernelPassed = false; }
+  }
+  console.log(`[SessionKernel] ${kernelResults.filter((r) => r.passed).length}/${kernelResults.length} 通过`);
+
+  if (violations.length > 0 || !evalsPassed || !kernelPassed) {
     console.error('\n[agent:check] ❌ 自检未通过');
     exitWithCode(1);
     return;

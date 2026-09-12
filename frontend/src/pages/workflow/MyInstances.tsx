@@ -11,7 +11,7 @@ interface MyInstancesProps {
   onNavigate?: (view: WorkflowView) => void;
 }
 
-export default function MyInstances({ _embedded, onNavigate }: MyInstancesProps = {}) {
+export default function MyInstances({ onNavigate }: MyInstancesProps = {}) {
   const navigate = useNavigate();
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,7 +113,7 @@ export default function MyInstances({ _embedded, onNavigate }: MyInstancesProps 
                                 variant: 'danger',
                               });
                               if (!confirmed) return;
-                              await instanceApi.cancel(inst.id, 0, '');
+                              await instanceApi.cancel(inst.id);
                               setInstances((prev) =>
                                 prev.map((i) =>
                                   i.id === inst.id ? { ...i, status: 'CANCELLED' } : i,
