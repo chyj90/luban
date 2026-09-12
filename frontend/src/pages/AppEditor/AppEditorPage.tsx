@@ -409,7 +409,7 @@ export function AppEditorPage() {
               </div>
             </div>
           ) : (
-            <div className="app-editor-preview-panel">
+            <div className={`app-editor-preview-panel ${previewFullscreen ? 'app-editor-preview-panel--fullscreen' : ''}`}>
               <div className="app-editor-preview-header">
                 <span className="app-editor-preview-label">预览</span>
                 <div className="app-editor-preview-tabs">
@@ -417,7 +417,7 @@ export function AppEditorPage() {
                     <button
                       key={tab.key}
                       className="app-editor-preview-file-btn"
-                      onClick={() => setEditingFile(tab.key)}
+                      onClick={() => { setEditingFile(tab.key); setPreviewFullscreen(false); }}
                     >
                       {tab.label}
                     </button>
@@ -426,15 +426,24 @@ export function AppEditorPage() {
                 <div className="app-editor-preview-spacer" />
                 <button
                   className="app-editor-preview-fullscreen-btn"
-                  onClick={() => setPreviewFullscreen(true)}
-                  title="全屏预览"
+                  onClick={() => setPreviewFullscreen(!previewFullscreen)}
+                  title={previewFullscreen ? '退出全屏' : '全屏预览'}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="15 3 21 3 21 9" />
-                    <polyline points="9 21 3 21 3 15" />
-                    <line x1="21" y1="3" x2="14" y2="10" />
-                    <line x1="3" y1="21" x2="10" y2="14" />
-                  </svg>
+                  {previewFullscreen ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="4 14 10 14 10 20" />
+                      <polyline points="20 10 14 10 14 4" />
+                      <line x1="14" y1="10" x2="21" y2="3" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="15 3 21 3 21 9" />
+                      <polyline points="9 21 3 21 3 15" />
+                      <line x1="21" y1="3" x2="14" y2="10" />
+                      <line x1="3" y1="21" x2="10" y2="14" />
+                    </svg>
+                  )}
                 </button>
               </div>
               <InteliPreview
@@ -482,19 +491,8 @@ export function AppEditorPage() {
         </>
       )}
 
-      {previewFullscreen && currentPage && (
-        <div className="app-editor-fullscreen-overlay">
-          <InteliPreview
-            codePage={currentPage!.codePage}
-            queries={queries}
-            userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
-            allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
-            onNavigate={handlePageChange}
-            applicationId={Number(appId)}
-            appTools={appTools}
-          />
-        </div>
-      )}
+      {/* 全屏预览：通过 CSS 放大同一个预览面板（同一 iframe 实例），
+          避免重挂 InteliPreview 导致 iframe/页面脚本重跑、定时器翻倍 */}
     </div>
   );
 }

@@ -207,6 +207,11 @@ export function useQueryBridge(
   var _pending = {};
   var _results = {};
   var _loadedLibs = {};
+  // 字段名校验警告去重：跨刷新持久（每次 QUERY_RESULT 会重建 Proxy，局部去重每 10s 轮询会重复刷屏）
+  var _fieldWarned = {};
+  // ECharts 等第三方库会访问数据对象的内部属性（__ec_primitive__、nodeType 等），
+  // 这些不是用户代码的字段拼写错误，不应报警
+  var _fieldIgnored = /^(__|_ec_|ec_|toJSON$|nodeType$|nodeName$)/;
 
   window.__bridge_pending = _pending;
   window.__bridge_results = _results;
@@ -287,8 +292,22 @@ export function useQueryBridge(
           type: 'START_WORKFLOW', id: id, definitionId: definitionId, formData: typeof formData === 'string' ? formData : JSON.stringify(formData || {})
         }, '*');
       });
+    },
+    // 页面卸载钩子：页面脚本用 setInterval/addEventListener 后必须在此注册清理函数，
+    // 页面热更新（UPDATE_PAGE）和 iframe 卸载时平台会自动调用
+    onPageUnload: function(fn) {
+      (window.__luban_cleanup_fns__ = window.__luban_cleanup_fns__ || []).push(fn);
     }
   };
+
+  function _runPageCleanup() {
+    var fns = window.__luban_cleanup_fns__ || [];
+    for (var i = 0; i < fns.length; i++) {
+      try { fns[i](); } catch (e) {}
+    }
+    window.__luban_cleanup_fns__ = [];
+  }
+  window.addEventListener('beforeunload', _runPageCleanup);
 
   window.addEventListener('message', function(e) {
     var d = e.data;
@@ -297,7 +316,6 @@ export function useQueryBridge(
     if (d.type === 'QUERY_RESULT') {
       if (d.result && d.result.rows && d.result.columns) {
         var cols = d.result.columns;
-        var warned = {};
         d.result.rows = d.result.rows.map(function(row) {
           var obj;
           if (Array.isArray(row)) {
@@ -310,9 +328,10 @@ export function useQueryBridge(
           }
           return new Proxy(obj, {
             get: function(target, prop) {
-              if (typeof prop === 'string' && prop !== 'then' && !(prop in target)) {
-                if (!warned[prop]) {
-                  warned[prop] = true;
+              if (typeof prop === 'string' && prop !== 'then' && !_fieldIgnored.test(prop) && !(prop in target)) {
+                var warnKey = cols.join(',') + '|' + prop;
+                if (!_fieldWarned[warnKey]) {
+                  _fieldWarned[warnKey] = true;
                   console.error('[鲁班] 字段名错误：' + prop + ' 不存在，可用字段：' + cols.join(', '));
                 }
               }
@@ -360,10 +379,18 @@ export function useQueryBridge(
     }
 
     if (d.type === 'UPDATE_PAGE') {
+      // shell 的 SHELL_READY 在 <head> 中发出，此时 body 内联的 __echarts__ 尚未执行；
+      // 若立即注入外部库（如 china.js），CDN 命中缓存时可能在 echarts 全局就绪前执行
+      // （报 "ECharts is not Loaded" 且地图注册失败）。统一延迟到 DOMContentLoaded，
+      // 保证所有内联脚本已执行完毕。
+      function startApplyPage() {
       var libs = d.libraries || [];
       var pending = libs.length;
 
       function applyPage() {
+        // 页面热更新前先执行旧页面的清理函数（清定时器/解绑监听），避免泄漏和重复初始化
+        _runPageCleanup();
+
         var bodyScripts = document.body.querySelectorAll('script');
         for (var i = 0; i < bodyScripts.length; i++) {
           if (bodyScripts[i].id !== '__luban_ui_js__' && bodyScripts[i].id !== '__echarts__') {
@@ -411,11 +438,29 @@ export function useQueryBridge(
 
       function onLibLoaded() {
         pending--;
-        if (pending <= 0) applyPage();
+        if (pending <= 0) ensureChinaMap(applyPage);
+      }
+
+      // 平台内置中国地图：页面代码引用地图时，先从本域 /luban/china.json 懒加载并
+      // registerMap 再渲染页面，页面代码无需（也不应）从 CDN 引入 china.js。
+      // 注册失败不阻断渲染，页面自身的 getMap 兜底逻辑仍然生效。
+      function ensureChinaMap(ready) {
+        var pageCode = (d.html || '') + (d.js || '');
+        if (!/china|registerMap|loadChinaMap/i.test(pageCode)) { ready(); return; }
+        try {
+          if (typeof echarts !== 'undefined' && echarts.getMap && echarts.getMap('china')) { ready(); return; }
+          fetch('${(import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/'}luban/china.json').then(function(res) { return res.json(); }).then(function(geoJson) {
+            try { if (typeof echarts !== 'undefined') echarts.registerMap('china', geoJson); } catch (e) {}
+            ready();
+          }).catch(function(err) {
+            console.warn('[鲁班] 内置中国地图加载失败（/luban/china.json）:', err && err.message);
+            ready();
+          });
+        } catch (e) { ready(); }
       }
 
       if (pending === 0) {
-        applyPage();
+        ensureChinaMap(applyPage);
       } else {
         libs.forEach(function(url) {
           if (_loadedLibs[url]) {
@@ -445,6 +490,13 @@ export function useQueryBridge(
             }
           }
         });
+      }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startApplyPage, { once: true });
+      } else {
+        startApplyPage();
       }
     }
 
@@ -542,6 +594,10 @@ window.__LUBAN__ = {
         type: 'START_WORKFLOW', id: id, definitionId: definitionId, formData: typeof formData === 'string' ? formData : JSON.stringify(formData || {})
       }, '*');
     });
+  },
+  // 页面卸载钩子（与 shell 中的定义一致：清理函数列表挂在 window 上，__LUBAN__ 被本脚本覆盖不影响已注册的清理函数）
+  onPageUnload: function(fn) {
+    (window.__luban_cleanup_fns__ = window.__luban_cleanup_fns__ || []).push(fn);
   }
 };
 ${JSON.stringify(queryNames)}.forEach(function(name) {

@@ -330,7 +330,8 @@
   border-color: #1677ff;
 }
 
-.app-editor-fullscreen-overlay {
+/* 全屏预览：直接放大同一个预览面板（保持同一 iframe 实例，不重挂 InteliPreview） */
+.app-editor-preview-panel--fullscreen {
   position: fixed;
   top: 0;
   left: 0;
@@ -338,54 +339,17 @@
   bottom: 0;
   z-index: 1000;
   background: #f4f6f9;
-  display: flex;
-  flex-direction: column;
 }
 
-.app-editor-fullscreen-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 44px;
-  padding: 0 16px;
-  background: linear-gradient(180deg, #fdfdfd 0%, #f4f6f9 100%);
-  border-bottom: 1px solid #e8edf3;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  flex-shrink: 0;
-}
-
-.app-editor-fullscreen-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1f1f1f;
-}
-
-.app-editor-fullscreen-close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 1px solid #e8edf3;
-  border-radius: 6px;
-  background: #fff;
-  color: #5a6a7e;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  padding: 0;
-}
-
-.app-editor-fullscreen-close-btn:hover {
-  background: transparent;
-  color: #1677ff;
-  border-color: #1677ff;
-}
-
-.app-editor-fullscreen-overlay .ip-frame-wrap {
+.app-editor-preview-panel--fullscreen .ip-frame-wrap {
   margin: 0;
   border-radius: 0;
   box-shadow: none;
   background: transparent;
+}
+
+.app-editor-preview-panel--fullscreen .ip-frame-wrap:hover {
+  box-shadow: none;
 }
 
 /* Query empty state */
@@ -441,8 +405,4 @@
   height: 100%;
   overflow-y: auto;
   padding: 20px 24px;
-}
-
-.app-editor-fullscreen-overlay .ip-frame-wrap:hover {
-  box-shadow: none;
 }
