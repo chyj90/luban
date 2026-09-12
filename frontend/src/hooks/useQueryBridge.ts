@@ -425,6 +425,17 @@ export function useQueryBridge(
         var root = document.getElementById('__page_root__');
         if (root) root.innerHTML = d.html || '';
 
+        // GIS 按需激活：页面引用 LubanUI.gis/leaflet 时，从 shell 惰性标签取出 Leaflet 源码
+        // 同步执行（内联 script 插入即执行，无竞态）——未使用的页面零加载成本
+        if (/LubanUI\.gis|leaflet/i.test((d.html || '') + (d.js || '')) && typeof window.L === 'undefined') {
+          var lazyEl = document.getElementById('__leaflet_src__');
+          if (lazyEl && lazyEl.textContent) {
+            var lazyScript = document.createElement('script');
+            lazyScript.textContent = lazyEl.textContent;
+            document.body.appendChild(lazyScript);
+          }
+        }
+
         if (d.js) {
           var script = document.createElement('script');
           script.setAttribute('data-luban-page', '1');

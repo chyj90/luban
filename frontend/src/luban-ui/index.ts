@@ -77,9 +77,9 @@ export const LUBAN_UI_JS = [
   selectJS,
   pageHeaderJS,
   lubanUIJS,
-  // GIS 地图底座（LubanUI.gis 依赖全局 L；打包内置，禁止 CDN 引入）
-  leafletSource,
 ].join('\n');
+// Leaflet 不常驻：随 shell 以惰性文本进入 iframe，页面引用 GIS 时由 bridge 按需激活
+// （避免不用地图的页面每次都解析执行 147KB JS）
 
 export const ECHARTS_SOURCE = echartsSource;
 export const ECHARTS_GL_SOURCE = echartsGLSource;

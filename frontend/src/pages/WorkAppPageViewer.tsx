@@ -7,7 +7,7 @@ import { getApplication } from '@/api/application';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
-import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE } from '@/luban-ui';
+import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE, LEAFLET_SOURCE } from '@/luban-ui';
 import './AppEntry/AppUserPage.css';
 
 export function WorkAppPageViewer() {
@@ -97,6 +97,7 @@ export function WorkAppPageViewer() {
   <div id="__app_root__"></div>
   <script id="__luban_ui_js__">${LUBAN_UI_JS}</script>
   <script id="__echarts__">${ECHARTS_SOURCE}</script>
+  <script id="__leaflet_src__" type="text/plain">${LEAFLET_SOURCE}</script>
   <script id="__echarts_gl__">${ECHARTS_GL_SOURCE}</script>
   <script>
     let __page_ready__ = false;
@@ -106,6 +107,14 @@ export function WorkAppPageViewer() {
         if (style) style.textContent = e.data.css || '';
         var root = document.getElementById('__app_root__');
         if (root) root.innerHTML = e.data.html || '';
+        if (/LubanUI\.gis|leaflet/i.test((e.data.html || '') + (e.data.js || '')) && typeof window.L === 'undefined') {
+          var lazyEl = document.getElementById('__leaflet_src__');
+          if (lazyEl && lazyEl.textContent) {
+            var lazyScript = document.createElement('script');
+            lazyScript.textContent = lazyEl.textContent;
+            document.body.appendChild(lazyScript);
+          }
+        }
         if (e.data.libraries) {
           e.data.libraries.forEach(function(lib) {
             if (lib) {
