@@ -1582,18 +1582,31 @@ window.LubanUI = window.LubanUI || {};
     el.style.width = w + 'px';
     el.style.height = h + 'px';
     el.style.minHeight = h + 'px';
-    el.style.transformOrigin = 'left top';
     el.style.position = 'absolute';
     el.style.left = '50%';
     el.style.top = '50%';
+    // 注意保持默认 transform-origin(center)：
+    // translate(-50%,-50%) 负责把元素中心对到视口中心，scale 围绕中心缩放——两者复合才能始终居中；
+    // 若把 origin 设为 left top，缩放会锚定左上角，画布缩放后偏在一侧露出大片空白
+    var timers = [];
     function resize() {
-      var scale = Math.min(window.innerWidth / w, window.innerHeight / h);
+      var vw = window.innerWidth || document.documentElement.clientWidth || 0;
+      var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+      // iframe 初始化时尺寸可能尚未就绪（0×0），此时跳过，靠下方延时校准兜底
+      if (!vw || !vh) return;
+      var scale = Math.min(vw / w, vh / h);
       el.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
     }
     resize();
     window.addEventListener('resize', resize);
+    // 布局就绪时序兜底：首帧与 200ms 后各校准一次（iframe 尺寸晚于脚本就绪的场景）
+    timers.push(setTimeout(resize, 0));
+    timers.push(setTimeout(resize, 200));
     if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
-      window.__LUBAN__.onPageUnload(function() { window.removeEventListener('resize', resize); });
+      window.__LUBAN__.onPageUnload(function() {
+        window.removeEventListener('resize', resize);
+        timers.forEach(clearTimeout);
+      });
     }
     return { el: el, resize: resize };
   };
