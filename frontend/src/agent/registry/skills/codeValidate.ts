@@ -230,6 +230,7 @@ function validateJs(code: string, errors: string[], warnings: string[], _fixable
   // 检查 __LUBAN__ API 调用：只允许文档中列出的方法
   const VALID_LUBAN_METHODS = new Set([
     'navigateToPage', 'navigateToPageByName', 'getPageParams', 'getAllPages', 'callApi', 'startWorkflow',
+    'onPageUnload', // 页面卸载钩子：定时器/监听清理（与 useQueryBridge 注入的 __LUBAN__ 保持同步）
   ]);
   const lubanApiPattern = /window\.__LUBAN__\.(\w+)\s*\(/g;
   let lubanMatch: RegExpExecArray | null;
@@ -1830,6 +1831,21 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fi
     }
   } catch {
     // XSS 检查失败时静默跳过
+  }
+
+  // 12c. 使用了大屏背景类但未显式设置主题 → 告警
+  // 主题默认浅色；"深色背景"需求必须 LubanUI.setTheme('dark')，否则图表/地图/背景全部按浅色渲染
+  try {
+    const usesScreenBg = /luban-screen-bg|luban-bg-circuit|luban-bg-hex/.test(html || '');
+    const callsSetTheme = /LubanUI\.setTheme\s*\(/.test(js);
+    if (usesScreenBg && !callsSetTheme) {
+      warnings.push(
+        '[主题] 页面使用了大屏背景类（luban-screen-bg 等）但未调用 LubanUI.setTheme。' +
+        '平台默认浅色主题，图表/地图/组件配色均跟随主题——请按用户需求显式调用 LubanUI.setTheme(\'dark\')（深色大屏）或 LubanUI.setTheme(\'light\')（浅色）'
+      );
+    }
+  } catch {
+    // 主题检查失败时静默跳过
   }
 
   // 11. 检测 toast 假成功：保存/删除函数中只有 toast.success 没有 DataQuery/callApi 调用

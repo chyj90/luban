@@ -496,6 +496,7 @@ export const codeSkills: Record<string, SkillFactory> = {
       properties: {
         name: { type: 'string', description: '【必填】页面名称' },
         type: { type: 'string', enum: ['crud', 'dashboard', 'detail', 'custom'], description: '页面类型：crud=表格+表单+增删改查, dashboard=统计卡+图表, detail=详情展示, custom=空白模板' },
+        theme: { type: 'string', enum: ['dark', 'light'], description: 'dashboard 页面主题：dark=深色大屏，light=浅色大屏。必须按用户需求选择（用户要浅色就必须传 light），模板会自动调用 LubanUI.setTheme' },
         readQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' } } }, description: '读查询列表（SELECT），如 [{name:"GetList", id:1}]' },
         writeQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' }, operation: { type: 'string', enum: ['insert', 'update', 'delete'] } } }, description: '写查询列表（INSERT/UPDATE/DELETE），如 [{name:"InsertData", id:2, operation:"insert"}]' },
         toolIds: { type: 'array', items: { type: 'number' }, description: '关联的 API 工具 ID 列表' },
@@ -685,6 +686,7 @@ if (document.readyState === 'loading') {
 
         } else if (pageType === 'dashboard') {
           const readName = primaryRead?.name || 'GetStats';
+          const theme = args.theme === 'light' ? 'light' : 'dark';
 
           // 深色大屏骨架：默认即深色科技风，模型在其上填充业务模块，
           // 而不是像旧模板那样生成浅色通用统计页再被全量重写
@@ -734,8 +736,8 @@ if (document.readyState === 'loading') {
 .screen-time { font-family: Consolas, 'Courier New', monospace; color: #7ee0ff; }`;
 
           js = `function initPage() {
-  // 深色大屏：必须先切主题，图表/地图/组件才会按深色渲染
-  LubanUI.setTheme('dark');
+  // 按需求设置主题（dark=深色大屏 / light=浅色），图表/地图/组件配色跟随主题
+  LubanUI.setTheme('${theme}');
   startClock();
   loadStats();
 }
