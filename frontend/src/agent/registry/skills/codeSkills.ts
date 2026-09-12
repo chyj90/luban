@@ -686,49 +686,81 @@ if (document.readyState === 'loading') {
         } else if (pageType === 'dashboard') {
           const readName = primaryRead?.name || 'GetStats';
 
-          html = `<div class="page-container">
-  <div id="pageHeader"></div>
+          // 深色大屏骨架：默认即深色科技风，模型在其上填充业务模块，
+          // 而不是像旧模板那样生成浅色通用统计页再被全量重写
+          html = `<div class="screen-wrap luban-screen-bg luban-bg-dots">
+  <div class="screen-header">
+    <div class="screen-title luban-glow-text">${name}</div>
+    <div class="screen-time" id="currentTime">--</div>
+  </div>
+
   <div class="luban-stats-grid">
-    <div class="luban-stat-card luban-stat-card-primary">
-      <div class="luban-stat-label">总数</div>
-      <div class="luban-stat-value" id="statTotal">-</div>
+    <div class="luban-stat-card luban-glow-card">
+      <div class="luban-stat-label">指标一</div>
+      <div class="luban-stat-value" id="kpi1">-</div>
     </div>
-    <div class="luban-stat-card luban-stat-card-success">
-      <div class="luban-stat-label">完成</div>
-      <div class="luban-stat-value" id="statDone">-</div>
+    <div class="luban-stat-card luban-glow-card">
+      <div class="luban-stat-label">指标二</div>
+      <div class="luban-stat-value" id="kpi2">-</div>
     </div>
-    <div class="luban-stat-card luban-stat-card-warning">
-      <div class="luban-stat-label">进行中</div>
-      <div class="luban-stat-value" id="statPending">-</div>
+    <div class="luban-stat-card luban-glow-card">
+      <div class="luban-stat-label">指标三</div>
+      <div class="luban-stat-value" id="kpi3">-</div>
+    </div>
+    <div class="luban-stat-card luban-glow-card">
+      <div class="luban-stat-label">指标四</div>
+      <div class="luban-stat-value" id="kpi4">-</div>
     </div>
   </div>
-  <div class="content-container" style="margin-top:20px;">
-    <div class="luban-chart-item">
-      <div class="luban-chart-title">趋势图</div>
-      <div class="luban-chart" id="trendChart"></div>
+
+  <div class="luban-chart-screen-grid luban-chart-style-glow" style="margin-top:14px;">
+    <div class="luban-chart-item luban-corner-tech-full">
+      <div class="luban-chart-title">图表一</div>
+      <div class="luban-divider-glow"></div>
+      <div id="chart1" style="height:280px;"></div>
+    </div>
+    <div class="luban-chart-item luban-corner-tech-full">
+      <div class="luban-chart-title">图表二</div>
+      <div class="luban-divider-glow"></div>
+      <div id="chart2" style="height:280px;"></div>
     </div>
   </div>
 </div>`;
 
-          css = `.page-container { padding: 20px; max-width: 1400px; margin: 0 auto; }
-.content-container { background: #fff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); padding: 20px; }`;
+          css = `body { margin: 0; }
+.screen-wrap { min-height: 100vh; padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; }
+.screen-header { display: flex; justify-content: space-between; align-items: center; }
+.screen-title { font-size: 26px; font-weight: 700; letter-spacing: 6px; }
+.screen-time { font-family: Consolas, 'Courier New', monospace; color: #7ee0ff; }`;
 
           js = `function initPage() {
-  LubanUI.pageHeader('pageHeader', {
-    title: '${name}',
-    description: '数据概览与趋势分析'
-  });
+  // 深色大屏：必须先切主题，图表/地图/组件才会按深色渲染
+  LubanUI.setTheme('dark');
+  startClock();
   loadStats();
+}
+
+function startClock() {
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function tick() {
+    var d = new Date();
+    var el = document.getElementById('currentTime');
+    if (el) el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  }
+  tick();
+  var timer = setInterval(tick, 1000);
+  // 定时器/监听必须注册清理，页面切换和热更新时平台会自动调用
+  window.__LUBAN__.onPageUnload(function() { clearInterval(timer); });
 }
 
 function loadStats() {
   DataQuery.${readName}({}).then(function(result) {
-    var rows = result.rows;
-    if (rows && rows.length > 0) {
-      document.getElementById('statTotal').textContent = rows[0].total || '-';
-      document.getElementById('statDone').textContent = rows[0].done_count || '-';
-      document.getElementById('statPending').textContent = rows[0].pending_count || '-';
-    }
+    var rows = result.rows || [];
+    if (rows.length === 0) return;
+    // TODO: 用 result.columns 中的真实列名填充 kpi1-kpi4（LubanUI.countUp 数字滚动），
+    // 并用 LubanUI.chartPresets.*（大屏推荐 barGlow/lineGlow/pieGlow/combo）初始化 chart1/chart2
+  }).catch(function() {
+    LubanUI.toast.error('数据加载失败');
   });
 }
 

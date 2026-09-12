@@ -53,6 +53,21 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
       };
     },
 
+    toolEffect(_state, call) {
+      // 聊天文本确认路径：模型自行调用 confirm_plan 时不会走 onResume（按钮路径），
+      // 必须在此完成执行阶段 system prompt 切换，否则执行规则/代码页面规范/设计规范全部缺席
+      if (call.name !== 'confirm_plan' || !call.result.success) return null;
+      const { action, plan_id } = call.args as { action?: string; plan_id?: string };
+      if (action !== 'confirm' || !plan_id) return null;
+      const confirmed = store.getPlans().find((p) => p.id === plan_id);
+      if (!confirmed) return null;
+      const execPrompt = options?.buildExecutionPrompt?.(confirmed.id);
+      return {
+        ...(execPrompt ? { replaceSystemPrompt: execPrompt } : {}),
+        systemMessage: '计划已确认，已切换到执行阶段。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
+      };
+    },
+
     onResume(state, command) {
       if (state.pendingInput?.kind !== 'plan-confirm') return null;
       const planId = state.pendingInput.planId;

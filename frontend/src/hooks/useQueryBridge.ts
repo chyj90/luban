@@ -391,6 +391,15 @@ export function useQueryBridge(
         // 页面热更新前先执行旧页面的清理函数（清定时器/解绑监听），避免泄漏和重复初始化
         _runPageCleanup();
 
+        // 深色大屏自动适配：页面声明了 luban-screen-bg（深色科技风背景）时自动切深色主题。
+        // 必须在页面脚本执行前完成——图表/地图初始化时读取主题决定深浅配色
+        if ((d.html || '').indexOf('luban-screen-bg') !== -1 && document.documentElement.getAttribute('data-theme') !== 'dark') {
+          try {
+            if (window.LubanUI && window.LubanUI.setTheme) { window.LubanUI.setTheme('dark'); }
+            else { document.documentElement.setAttribute('data-theme', 'dark'); }
+          } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+        }
+
         var bodyScripts = document.body.querySelectorAll('script');
         for (var i = 0; i < bodyScripts.length; i++) {
           if (bodyScripts[i].id !== '__luban_ui_js__' && bodyScripts[i].id !== '__echarts__') {

@@ -22,6 +22,13 @@ export const LIBRARY_RULES: Record<string, string> = {
     '   示例：LubanUI.chart(\'mapChart\', { series: [{ type: \'map\', map: \'china\', ... }] })',
     '2. 禁止在任何 HTML/JS/CSS 中引用 leaflet、L.map、tileLayer 等 Leaflet API',
   ].join('\n'),
+  'geojson': [
+    '❌ 禁止通过 libraries 引入地图 GeoJSON 数据（.json 文件、geo.datav.aliyun.com 等）！',
+    '原因：libraries 会把 URL 当 <script> 注入，.json 无法作为脚本执行，必然加载失败；',
+    '且中国地图已由平台内置注册（/luban/china.json），无需任何外部数据源。',
+    '替代方案：直接使用 map: \'china\' 或 LubanUI.loadChinaMap() / LubanUI.map 组件；',
+    '省级地图用 LubanUI.loadProvinceMap(adcode)。',
+  ].join('\n'),
   'echarts': [
     '❌ 禁止通过 CDN 引入 ECharts 相关资源（echarts.min.js、echarts-gl、china.js 等地图 JS）！',
     '原因：平台已内置 ECharts 与 echarts-gl 并注入页面，重复引入会造成版本冲突和加载竞态',

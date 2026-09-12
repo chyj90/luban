@@ -284,6 +284,16 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
           }
         }
 
+        // 策略级工具副作用：聊天文本确认路径的执行阶段 system prompt 切换等
+        // （模型自己调 confirm_plan 时不会走 onResume 的按钮恢复路径）
+        if (result.success && policy?.toolEffect) {
+          const effect = policy.toolEffect(session, { name: tc.name, args, result });
+          if (effect) {
+            applySystemPromptReplace(effect);
+            if (effect.systemMessage) pushSystemMessage(effect.systemMessage);
+          }
+        }
+
         // 策略级挂起优先（如 submit_analysis 后等待计划确认——其结果可能同时携带
         // 旧机制的 _pause 标记，必须由策略给出语义正确的挂起类型）
         const policyRequest = policy?.afterToolResult?.(session, { name: tc.name, result });

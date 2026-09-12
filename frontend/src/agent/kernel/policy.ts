@@ -24,6 +24,13 @@ export interface KernelPolicy {
   filterTools?(state: SessionState, tools: ToolDefinition[]): ToolDefinition[];
   /** 工具执行完成后；返回挂起请求则挂起回合（_pause 的通用处理之外的额外挂起源） */
   afterToolResult?(state: SessionState, call: { name: string; result: ToolExecuteResult }): InputRequest | null;
+  /**
+   * 工具执行成功后的系统级副作用（不挂起回合）：替换 system prompt / 注入 system 消息。
+   * 用于聊天文本确认路径——模型自己调用 confirm_plan 时 onResume（按钮路径）不会触发，
+   * 需要在此完成执行阶段 system prompt 的切换。
+   */
+  toolEffect?(state: SessionState, call: { name: string; args: Record<string, unknown>; result: ToolExecuteResult }):
+    { replaceSystemPrompt?: string; systemMessage?: string } | null;
   /** 模型未调用工具、回合将完成前；返回注入指令则继续循环（迁移自旧 onShouldComplete） */
   beforeComplete?(state: SessionState, turn: { content: string }): { systemMessage: string } | null;
   /**

@@ -7,6 +7,7 @@ export default {
 基于中国地图的站点分布与光缆路由可视化，支持散点/涟漪散点/热力图/光缆线路。
 **v3 新增：多图层架构 — LLM 自由组合任意图层，支持动态增删。**
 **支持图层类型：scatter / effectScatter / breathingScatter / heatmap / lines / custom。**
+⚠️ 深色大屏必须先调用 LubanUI.setTheme('dark')，地图区域颜色按主题自动适配（默认浅色主题下是浅色地图）。
 
 #### 基础用法（推荐 layers[] 多图层）
 \`\`\`html

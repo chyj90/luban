@@ -2141,6 +2141,11 @@ function validateLibraries(libraries: string[], warnings: string[]) {
         `[libraries] "${url}" — ${LIBRARY_RULES['echarts']}`
       );
     }
+    if (/\.json($|\?)/i.test(url) || /geo\.datav\.aliyun\.com/i.test(url)) {
+      warnings.push(
+        `[libraries] "${url}" — ${LIBRARY_RULES['geojson']}`
+      );
+    }
     if (url.endsWith('.css')) {
       warnings.push(
         `[libraries] "${url}" 是 CSS 文件。系统会自动以 <link rel="stylesheet"> 加载，` +

@@ -340,6 +340,39 @@ async function testPlanConfirmFreeTextResuspend(): Promise<RuntimeTestResult> {
   return result('K18-挂起期自由文本重新挂起', checks);
 }
 
+/** K19: 聊天文本确认路径——模型自行调用 confirm_plan 时，必须通过 toolEffect 切换执行阶段 system prompt
+ *  （按钮路径走 onResume，此路径此前完全丢失执行规则/设计规范） */
+async function testChatConfirmPromptSwitch(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const plan = makePlan({ steps: [{ id: 's1', description: '创建查询 orders', status: 'pending', order: 0 }] });
+  const store = makeStore([plan]);
+  const rt = createKernelRuntime({
+    model: 'test-model', systemPrompt: 'ANALYSIS-PROMPT',
+    tools: [
+      plainTool('submit_analysis', async () => ({ success: true, message: '分析已提交' })),
+      plainTool('confirm_plan', async () => ({ success: true, message: '计划已确认，开始执行' })),
+    ],
+    policy: createPlanPolicy(store, { buildExecutionPrompt: (id) => 'EXEC-PROMPT-' + id }),
+    llmStream: scriptedLLM([
+      { toolCalls: [{ name: 'submit_analysis', arguments: {} }] },
+      { toolCalls: [{ name: 'confirm_plan', arguments: { plan_id: 'plan-1', action: 'confirm' } }] },
+      { content: '开始执行步骤 1。' },
+    ]),
+  });
+
+  await rt.runTurn({ kind: 'user-message', text: '做一个订单页' });
+  const r2 = await rt.runTurn({ kind: 'user-message', text: '开始' });
+
+  const sys = r2.conversationMessages.find((m) => m.role === 'system');
+  if (!sys || !sys.content.includes('EXEC-PROMPT-plan-1')) {
+    checks.push('confirm_plan 工具成功后应切换为执行阶段 system prompt（toolEffect）');
+  }
+  if (!r2.conversationMessages.some((m) => m.role === 'system' && m.content.includes('计划已确认'))) {
+    checks.push('应注入"计划已确认，已切换到执行阶段"的 system 指令');
+  }
+  return result('K19-聊天确认切换执行prompt', checks);
+}
+
 /** K14: beforeComplete —— 计划有未完成步骤时拦截退出；达到上限后放行 */
 async function testCompletionInterception(): Promise<RuntimeTestResult> {
   const checks: string[] = [];
@@ -500,6 +533,7 @@ export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
     testPlanConfirmToolFilter(),
     await testPlanConfirmFlow(),
     await testPlanConfirmFreeTextResuspend(),
+    await testChatConfirmPromptSwitch(),
     await testCompletionInterception(),
     await testDelegationCompleted(),
     await testDelegationSuspended(),
