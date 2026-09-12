@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 public enum OntologyOperationType {
 
     ADD_CONCEPT(1, true, "CONCEPT", "concept",
-            "{\"name\":\"概念名\",\"description\":\"描述\",\"industryId\":1,\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\">0触发CRITICAL告警\",\"groupName\":\"所属领域\",\"parentConceptName\":\"父概念名\"}",
+            "{\"name\":\"概念名\",\"description\":\"描述\",\"industryId\":1,\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\">0触发CRITICAL告警\",\"groupName\":\"所属领域\",\"parentConceptName\":\"父概念名\",\"conceptType\":\"DIMENSION|METRIC|ENTITY\",\"defaultAggregation\":\"SUM|COUNT|AVG|MAX|MIN|NONE(仅METRIC需要)\",\"unit\":\"单位如元/%(仅METRIC需要)\",\"timestampColumn\":\"时间列如stat_date(仅METRIC需要)\"}",
             "新增概念"),
     ADD_MAPPING(2, true, "MAPPING", "mapping",
             "{\"conceptName\":\"概念名\",\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct|computed\",\"computedExpr\":\"计算表达式(仅computed需要)\",\"dataSourceId\":1}",
@@ -27,7 +27,7 @@ public enum OntologyOperationType {
             "新增概念关系"),
 
     UPDATE_CONCEPT(5, true, "CONCEPT", "concept",
-            "{\"id\":1,\"name\":\"概念名\",\"description\":\"更新描述\",\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\"异常阈值说明\"}",
+            "{\"id\":1,\"name\":\"概念名\",\"description\":\"更新描述\",\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\"异常阈值说明\",\"conceptType\":\"DIMENSION|METRIC|ENTITY\",\"defaultAggregation\":\"SUM|COUNT|AVG|MAX|MIN|NONE(仅METRIC需要)\",\"unit\":\"单位(仅METRIC需要)\",\"timestampColumn\":\"时间列(仅METRIC需要)\"}",
             "更新概念"),
     UPDATE_MAPPING(6, true, "MAPPING", "mapping",
             "{\"mappingId\":1,\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct|computed\",\"computedExpr\":\"计算表达式(仅computed需要)\",\"dataSourceId\":1}",

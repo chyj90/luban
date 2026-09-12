@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.luban.util.JsonSanitizer;
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -38,6 +39,8 @@ public class ConceptImportService {
     private final AgentConfigService agentConfigService;
     private final OntologyGroupRepository groupRepository;
     private final OntologyService ontologyService;
+    private final ConceptEmbeddingService conceptEmbeddingService;
+    private final LlmChatClient llmChatClient;
     private final IndustryService industryService;
     private final AsyncTaskService asyncTaskService;
 
@@ -696,6 +699,8 @@ public class ConceptImportService {
             }
 
             ontologyService.reloadAfterCommit();
+            // 与 CRUD/LLM 变更入口对齐：导入事务提交后为新概念自动生成向量并入 FAISS
+            conceptEmbeddingService.scheduleEmbeddingAfterCommit(createdConcepts.keySet(), false);
 
             result.put("created", created);
             result.put("skipped", skipped);
@@ -740,9 +745,6 @@ public class ConceptImportService {
                 return rawConcepts;
             }
 
-            String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
-            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
-
             StringBuilder sb = new StringBuilder();
             for (Map<String, Object> c : rawConcepts) {
                 sb.append("- name: ").append(c.get("name")).append("\n");
@@ -775,46 +777,12 @@ public class ConceptImportService {
 
             log.info("[import] → 规范化LLM请求: promptLength={}", prompt.length());
 
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", config.getModelName());
-            body.put("messages", List.of(
-                    Map.of("role", "system", "content", "你是一个数据规范化工具。只输出JSON数组，不要任何解释、提问或澄清。"),
-                    Map.of("role", "user", "content", prompt)
-            ));
-            body.put("temperature", 0.3);
-            body.put("max_tokens", 32768);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(chatUrl))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body)))
-                    .timeout(Duration.ofSeconds(60))
-                    .build();
-
             long start = System.currentTimeMillis();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            long elapsed = System.currentTimeMillis() - start;
-            log.info("[import] → 规范化LLM响应: HTTP {} ({}ms)", response.statusCode(), elapsed);
-
-            if (response.statusCode() != 200) {
-                log.warn("[import] → LLM调用失败: HTTP {}, body={}", response.statusCode(), response.body());
-                return rawConcepts;
-            }
-
-            Map<String, Object> respBody = jsonMapper.readValue(response.body(), Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) respBody.get("choices");
-            if (choices == null || choices.isEmpty()) return rawConcepts;
-
-            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-            String llmContent = (String) message.get("content");
-            if (llmContent == null || llmContent.isEmpty()) {
-                llmContent = (String) message.get("reasoning_content");
-                if (llmContent != null) {
-                    log.info("[import] → 使用 reasoning_content 作为响应内容");
-                }
-            }
-            if (llmContent == null) return rawConcepts;
+            String llmContent = llmChatClient.chat(config, List.of(
+                            Map.of("role", "system", "content", "你是一个数据规范化工具。只输出JSON数组，不要任何解释、提问或澄清。"),
+                            Map.of("role", "user", "content", prompt)),
+                    new LlmChatClient.Options(0.3, 32768, false, Duration.ofSeconds(60)), true);
+            log.info("[import] → 规范化LLM响应 ({}ms)", System.currentTimeMillis() - start);
 
             log.info("[import] → 规范化LLM原始响应: {} chars", llmContent.length());
 
@@ -923,52 +891,14 @@ public class ConceptImportService {
     }
 
     private String sanitizeJson(String json) {
-        if (json == null) return null;
-        String s = json.trim();
-        if (s.startsWith("```")) {
-            s = s.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
-        }
-        int start = s.indexOf('{');
-        if (start < 0) start = s.indexOf('[');
-        if (start > 0) s = s.substring(start);
-        if (s.isEmpty()) return json;
-
-        int quoteCount = 0;
-        boolean escaped = false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (escaped) { escaped = false; continue; }
-            if (c == '\\') { escaped = true; continue; }
-            if (c == '"') quoteCount++;
-        }
-        if (quoteCount % 2 != 0) {
-            s = s + "\"";
-            log.warn("[sanitize-json] 修复未闭合的字符串引号");
-        }
-
-        int braceCount = 0;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '{' || c == '[') braceCount++;
-            else if (c == '}' || c == ']') braceCount--;
-        }
-        char firstChar = s.charAt(0);
-        char closingChar = firstChar == '{' ? '}' : ']';
-        for (int i = 0; i < braceCount; i++) {
-            s += closingChar;
-        }
-        if (braceCount > 0) {
-            log.warn("[sanitize-json] 修复 {} 个未闭合的花括号/方括号", braceCount);
-        }
-
-        return s;
+        return JsonSanitizer.sanitizeJson(json);
     }
 
     private static class ImportSession {
         String sourceType;
         Path filePath;
         String summary;
-        List<Map<String, String>> llmMessages;
+        List<Map<String, Object>> llmMessages;
         Long industryId;
         Long groupId;
         long createdAt;
@@ -999,9 +929,6 @@ public class ConceptImportService {
                 return result;
             }
 
-            String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
-            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
-
             String ext = sourceType.toLowerCase();
             String libHint = switch (ext) {
                 case "excel", "xlsx", "xls" -> "使用 openpyxl 库读取 Excel 文件";
@@ -1016,7 +943,7 @@ public class ConceptImportService {
                     + "根据文件摘要信息，推断最合理的解析方式并直接输出代码。"
                     + "即使信息不完整，也要选择最合理的推断生成代码，不要提问。";
 
-            List<Map<String, String>> messages = new ArrayList<>();
+            List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", systemMsg));
 
             if (session.llmMessages.isEmpty()) {
@@ -1084,38 +1011,9 @@ public class ConceptImportService {
                 messages.addAll(session.llmMessages);
             }
 
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", config.getModelName());
-            body.put("messages", messages);
-            body.put("temperature", 0.2);
-            body.put("max_tokens", 32768);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(chatUrl))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body)))
-                    .timeout(Duration.ofSeconds(120))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            log.info("[import-stream] LLM响应: HTTP {}", response.statusCode());
-
-            if (response.statusCode() != 200) {
-                log.warn("[import-stream] LLM响应体: {}", response.body());
-                return result;
-            }
-
-            Map<String, Object> respBody = jsonMapper.readValue(response.body(), Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) respBody.get("choices");
-            if (choices == null || choices.isEmpty()) return result;
-
-            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-            String content = (String) message.get("content");
-            if (content == null || content.isEmpty()) {
-                content = (String) message.get("reasoning_content");
-            }
-            if (content == null || content.isEmpty()) return result;
+            String content = llmChatClient.chat(config, new ArrayList<>(messages),
+                    new LlmChatClient.Options(0.2, 32768, false, Duration.ofSeconds(120)), true);
+            log.info("[import-stream] LLM响应: {} chars", content.length());
 
             result.rawResponse = content;
 

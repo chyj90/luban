@@ -7,10 +7,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,8 +47,52 @@ public class ConceptEmbeddingService {
         log.info("Embedding generated for concept {}: {}", conceptId, name);
     }
 
-    public List<Map<String, Object>> loadAllEmbeddings() {
-        List<Concept> concepts = conceptRepository.findAll();
+    /**
+     * 事务提交后异步补齐/刷新概念 embedding 并重建 FAISS 索引。
+     * 统一三个概念写入入口（Controller CRUD、文件导入、LLM ontology_action）的向量行为，
+     * 修复"概念创建后在问数里搜不到"的静默失效：此前只有部分入口会生成向量，
+     * 且有的入口在事务内同步调 HTTP、失败只留 log。
+     *
+     * @param force true 表示已有向量的概念也重新生成（用于 name/description 变更后刷新）
+     */
+    public void scheduleEmbeddingAfterCommit(Collection<Long> conceptIds, boolean force) {
+        if (conceptIds == null || conceptIds.isEmpty()) return;
+        List<Long> ids = List.copyOf(conceptIds);
+        Runnable task = () -> {
+            int generated = 0;
+            for (Long id : ids) {
+                try {
+                    Concept c = conceptRepository.findById(id).orElse(null);
+                    if (c == null) continue;
+                    boolean missing = c.getEmbedding() == null || c.getEmbedding().length == 0;
+                    if (!missing && !force) continue;
+                    generateAndSave(id, c.getName(), c.getDescription());
+                    generated++;
+                } catch (Exception e) {
+                    log.error("Failed to generate embedding for concept {}: {}", id, e.getMessage());
+                }
+            }
+            if (generated > 0) {
+                try {
+                    rebuildIndex();
+                } catch (Exception e) {
+                    log.error("Failed to rebuild FAISS index after embedding generation: {}", e.getMessage());
+                }
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    Thread.startVirtualThread(task);
+                }
+            });
+        } else {
+            Thread.startVirtualThread(task);
+        }
+    }
+
+    public List<Map<String, Object>> loadAllEmbeddings() {        List<Concept> concepts = conceptRepository.findAll();
         List<Map<String, Object>> result = new ArrayList<>();
         for (Concept c : concepts) {
             if (c.getEmbedding() != null && c.getEmbedding().length > 0) {
@@ -66,6 +113,12 @@ public class ConceptEmbeddingService {
         faissService.buildIndex(all);
         log.info("FAISS index rebuilt with {} concepts", all.size());
         return all.size();
+    }
+
+    /** 从 FAISS 索引移除已删除概念（概念删除后调用，避免死 ID 留在索引里） */
+    public void removeFromIndex(List<String> conceptIds) {
+        if (conceptIds == null || conceptIds.isEmpty()) return;
+        faissService.removeConcepts(conceptIds);
     }
 
     public int regenerateAll() {

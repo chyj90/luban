@@ -22,6 +22,9 @@ public class FaissService {
 
     private final ObjectMapper objectMapper;
 
+    /** 本进程最近一次成功重建索引的时间（Python 端 health 接口不返回该信息） */
+    private volatile java.time.LocalDateTime lastRebuildTime;
+
     @Value("${embedding.service.url:http://localhost:8765}")
     private String embeddingServiceUrl;
 
@@ -59,6 +62,7 @@ public class FaissService {
             if (resp.statusCode() != 200) {
                 throw new RuntimeException("FAISS build failed: " + resp.body());
             }
+            lastRebuildTime = java.time.LocalDateTime.now();
             log.info("FAISS index built with {} concepts", concepts.size());
         } catch (Exception e) {
             log.error("FAISS build error", e);
@@ -141,6 +145,7 @@ public class FaissService {
                 stats.put("index_built", health.getOrDefault("index_built", false));
                 stats.put("column_index_built", health.getOrDefault("column_index_built", false));
                 stats.put("faiss_available", health.getOrDefault("faiss_available", false));
+                stats.put("last_rebuild", lastRebuildTime != null ? lastRebuildTime.toString() : null);
                 stats.put("status", "ok");
                 return stats;
             }

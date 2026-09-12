@@ -15,6 +15,10 @@ public class ConceptDetailResponse {
     private String name;
     private Long groupId;
     private String description;
+    private String conceptType;
+    private String defaultAggregation;
+    private String unit;
+    private String timestampColumn;
     private String createdAt;
     private String updatedAt;
     private List<RelationInfo> relations = new ArrayList<>();
@@ -51,6 +55,10 @@ public class ConceptDetailResponse {
         resp.setName(concept.getName());
         resp.setGroupId(concept.getGroupId());
         resp.setDescription(concept.getDescription());
+        resp.setConceptType(concept.getConceptType());
+        resp.setDefaultAggregation(concept.getDefaultAggregation());
+        resp.setUnit(concept.getUnit());
+        resp.setTimestampColumn(concept.getTimestampColumn());
         resp.setCreatedAt(concept.getCreatedAt() != null ? concept.getCreatedAt().toString() : null);
         resp.setUpdatedAt(concept.getUpdatedAt() != null ? concept.getUpdatedAt().toString() : null);
 

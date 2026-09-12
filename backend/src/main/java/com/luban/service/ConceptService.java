@@ -38,6 +38,7 @@ public class ConceptService {
     private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final OntologyService ontologyService;
+    private final ConceptEmbeddingService conceptEmbeddingService;
 
     @Transactional(readOnly = true)
     public List<Concept> list(Long groupId, String keyword) {
@@ -90,8 +91,15 @@ public class ConceptService {
 
         List<ConceptToolBinding> toolBindings = conceptToolBindingRepository.findByConceptId(id);
 
-        Map<Long, Concept> conceptMap = conceptRepository.findAll().stream()
-                .collect(Collectors.toMap(Concept::getId, c -> c));
+        // 只加载关系两端涉及的概念，替代全表 findAll
+        Set<Long> relatedIds = new HashSet<>();
+        for (ConceptRelation r : relations) {
+            relatedIds.add(r.getSourceConceptId());
+            relatedIds.add(r.getTargetConceptId());
+        }
+        Map<Long, Concept> conceptMap = relatedIds.isEmpty() ? Map.of()
+                : conceptRepository.findAllById(relatedIds).stream()
+                        .collect(Collectors.toMap(Concept::getId, c -> c));
 
         Map<Long, String> toolNameMap = new HashMap<>();
         for (ConceptToolBinding ctb : toolBindings) {
@@ -109,8 +117,12 @@ public class ConceptService {
         concept.setDescription(request.getDescription());
         concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
         concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
+        applySemanticFields(concept, request.getConceptType(), request.getDefaultAggregation(),
+                request.getUnit(), request.getTimestampColumn());
         Concept saved = conceptRepository.save(concept);
         ontologyService.reloadAfterCommit();
+        // 与导入/LLM 变更入口对齐：事务提交后自动生成向量并入 FAISS，避免"建完搜不到"
+        conceptEmbeddingService.scheduleEmbeddingAfterCommit(List.of(saved.getId()), false);
         return saved;
     }
 
@@ -123,15 +135,41 @@ public class ConceptService {
         concept.setDescription(request.getDescription());
         concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
         concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
+        applySemanticFields(concept, request.getConceptType(), request.getDefaultAggregation(),
+                request.getUnit(), request.getTimestampColumn());
         concept.setUpdatedAt(java.time.LocalDateTime.now());
         Concept saved = conceptRepository.save(concept);
         ontologyService.reloadAfterCommit();
+        // 名称/描述变了，旧向量已过期，强制重生成
+        conceptEmbeddingService.scheduleEmbeddingAfterCommit(List.of(saved.getId()), true);
         return saved;
+    }
+
+    /**
+     * 语义字段归一化：conceptType 只接受 DIMENSION/METRIC/ENTITY（未知值置空），
+     * 聚合方式只接受 SUM/COUNT/AVG/MAX/MIN/NONE；非 METRIC 概念的指标元数据清空，
+     * 避免维度/实体上挂着无意义的聚合配置。
+     */
+    private void applySemanticFields(Concept concept, String conceptType,
+            String defaultAggregation, String unit, String timestampColumn) {
+        com.luban.constant.ConceptType type = com.luban.constant.ConceptType.fromNullable(conceptType);
+        concept.setConceptType(type != null ? type.name() : null);
+        if (type == com.luban.constant.ConceptType.METRIC) {
+            String agg = defaultAggregation != null ? defaultAggregation.trim().toUpperCase() : null;
+            concept.setDefaultAggregation(Set.of("SUM", "COUNT", "AVG", "MAX", "MIN", "NONE").contains(agg) ? agg : null);
+            concept.setUnit(unit);
+            concept.setTimestampColumn(timestampColumn);
+        } else {
+            concept.setDefaultAggregation(null);
+            concept.setUnit(null);
+            concept.setTimestampColumn(null);
+        }
     }
 
     @Transactional
     public void delete(Long id) {
         deleteCore(Collections.singletonList(id));
+        scheduleFaissCleanupAfterCommit(Collections.singletonList(id));
         ontologyService.reloadAfterCommit();
     }
 
@@ -139,7 +177,35 @@ public class ConceptService {
     public void deleteBatch(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
         deleteCore(ids);
+        scheduleFaissCleanupAfterCommit(ids);
         ontologyService.reloadAfterCommit();
+    }
+
+    /**
+     * 事务提交后从 FAISS 索引移除已删除概念，避免死 ID 永久留在索引里
+     * （此前 removeConcepts 全工程无调用，索引只增不减）。
+     * 失败仅告警：索引可在下次 rebuildIndex 时自愈。
+     */
+    private void scheduleFaissCleanupAfterCommit(List<Long> ids) {
+        List<String> idStrings = ids.stream().map(String::valueOf).toList();
+        Runnable task = () -> {
+            try {
+                conceptEmbeddingService.removeFromIndex(idStrings);
+            } catch (Exception e) {
+                log.warn("Failed to remove deleted concepts from FAISS index {}: {}", ids, e.getMessage());
+            }
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            Thread.startVirtualThread(task);
+                        }
+                    });
+        } else {
+            Thread.startVirtualThread(task);
+        }
     }
 
     private void deleteCore(List<Long> ids) {

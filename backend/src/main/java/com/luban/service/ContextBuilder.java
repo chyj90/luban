@@ -717,21 +717,29 @@ public class ContextBuilder {
         }
 
         if (conceptTrace != null && !conceptTrace.isEmpty()) {
-            sb.append("## 语义层匹配的概念\n| ID | 概念名 | 域 | 描述 | 映射 |\n|-----|--------|-----|------|------|\n");
+            sb.append("## 语义层匹配的概念\n| ID | 概念名 | 域 | 类型 | 描述 | 映射 |\n|-----|--------|-----|------|------|------|\n");
             Set<Long> mappedConceptIds = tableMappings != null ? tableMappings.stream()
                     .map(ConceptMapping::getConceptId).collect(Collectors.toSet()) : Set.of();
+            Map<Long, Concept> semantics = loadConceptSemantics(conceptTrace);
             for (Map<String, Object> c : conceptTrace) {
                 if ("pipeline".equals(c.get("type")) || "reuse".equals(c.get("type"))) continue;
                 Object cid = c.get("conceptId");
                 Object gid = c.get("groupId");
                 String groupName = gid instanceof Number ? groupNameMap.getOrDefault(((Number) gid).longValue(), "-") : "-";
                 boolean hasMapping = cid instanceof Number && mappedConceptIds.contains(((Number) cid).longValue());
+                String conceptType = "-";
+                if (cid instanceof Number) {
+                    Concept sc = semantics.get(((Number) cid).longValue());
+                    if (sc != null && sc.getConceptType() != null) conceptType = sc.getConceptType();
+                }
                 sb.append("| ").append(c.get("conceptId")).append(" | ").append(c.get("conceptName"))
                         .append(" | ").append(groupName)
+                        .append(" | ").append(conceptType)
                         .append(" | ").append(c.getOrDefault("description", "-"))
                         .append(" | ").append(hasMapping ? "已映射" : "无映射").append(" |\n");
             }
             sb.append("\n");
+            appendMetricSemantics(sb, semantics);
             // 标记无映射的概念
             List<String> unmappedConcepts = conceptTrace.stream()
                     .filter(c -> !"pipeline".equals(c.get("type")) && !"reuse".equals(c.get("type")))
@@ -1055,6 +1063,51 @@ public class ContextBuilder {
         sb.append("- root_cause.items 中每个受影响实体独立描述，item 之间不得推断依赖关系\n");
         sb.append("- 跨实体的因果推断必须有 evidence 中明确的数据支撑，否则视为独立故障\n");
         sb.append("- 即使所有维度都未发现异常，也必须输出此格式，此时 root_cause.summary 写明\"未发现异常\"\n");
+    }
+
+    /** 加载概念 trace 中各概念的语义元数据（类型/聚合/单位/时间列） */
+    private Map<Long, Concept> loadConceptSemantics(List<Map<String, Object>> conceptTrace) {
+        List<Long> ids = conceptTrace == null ? List.of() : conceptTrace.stream()
+                .filter(c -> !"pipeline".equals(c.get("type")) && !"reuse".equals(c.get("type")))
+                .filter(c -> c.get("conceptId") instanceof Number)
+                .map(c -> ((Number) c.get("conceptId")).longValue())
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) return Map.of();
+        return conceptRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Concept::getId, c -> c, (a, b) -> a));
+    }
+
+    /**
+     * 概念语义元数据驱动的查询规则。替代硬编码规则文本中对"指标/维度"的隐含假设：
+     * 默认聚合、单位、时间列由本体配置给出，LLM 不必猜测。
+     */
+    private void appendMetricSemantics(StringBuilder sb, Map<Long, Concept> semantics) {
+        if (semantics == null || semantics.isEmpty()) return;
+        List<String> lines = new ArrayList<>();
+        for (Concept c : semantics.values()) {
+            if (c.getConceptType() == null) continue;
+            StringBuilder line = new StringBuilder("- **").append(c.getName()).append("**（").append(c.getConceptType()).append("）");
+            if ("METRIC".equals(c.getConceptType())) {
+                List<String> parts = new ArrayList<>();
+                if (c.getDefaultAggregation() != null) parts.add("默认聚合 " + c.getDefaultAggregation());
+                if (c.getUnit() != null) parts.add("单位 " + c.getUnit());
+                if (c.getTimestampColumn() != null) parts.add("时间列 `" + c.getTimestampColumn() + "`");
+                if (!parts.isEmpty()) line.append("：").append(String.join("，", parts));
+                if (c.getTimestampColumn() != null) {
+                    line.append("。涉及该概念的日期过滤/趋势分析以该时间列为准");
+                }
+            }
+            lines.add(line.toString());
+        }
+        if (lines.isEmpty()) return;
+        sb.append("## 指标语义（本体元数据）\n");
+        sb.append("用户未指明聚合方式时，METRIC 概念**必须**使用其默认聚合，不要自行猜测；\n");
+        sb.append("配置了时间列的指标，日期过滤与趋势分析以该列为准（执行正式查询前仍须先查该列的 MIN/MAX 范围）。\n\n");
+        for (String line : lines) {
+            sb.append(line).append("\n");
+        }
+        sb.append("\n");
     }
 
     private void appendTableMappings(StringBuilder sb, List<ConceptMapping> mappings) {

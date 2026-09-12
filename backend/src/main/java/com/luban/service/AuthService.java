@@ -30,6 +30,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final RsaKeyProvider rsaKeyProvider;
+    private final RoleConceptPermissionService roleConceptPermissionService;
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
@@ -37,7 +38,8 @@ public class AuthService {
                        RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
                        JwtTokenProvider jwtTokenProvider,
-                       RsaKeyProvider rsaKeyProvider) {
+                       RsaKeyProvider rsaKeyProvider,
+                       RoleConceptPermissionService roleConceptPermissionService) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
         this.roleUserRepository = roleUserRepository;
@@ -45,6 +47,7 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.rsaKeyProvider = rsaKeyProvider;
+        this.roleConceptPermissionService = roleConceptPermissionService;
     }
 
     /** 解密 rsa: 前缀密文，非密文原样返回 */
@@ -117,11 +120,7 @@ public class AuthService {
     }
 
     private boolean isSuperAdmin(Long userId) {
-        List<Long> roleIds = roleUserRepository.findByUserId(userId).stream()
-                .map(RoleUser::getRoleId)
-                .toList();
-        return roleRepository.findAllById(roleIds).stream()
-                .anyMatch(r -> "super_admin".equals(r.getSlug()));
+        return roleConceptPermissionService.isSuperAdmin(userId);
     }
 
     private void saveSession(Long userId, String token) {

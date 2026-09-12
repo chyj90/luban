@@ -56,11 +56,10 @@ public class ConceptFeedbackService {
     private final AgentConfigService agentConfigService;
     private final OntologyService ontologyService;
     private final OntologyChangeService ontologyChangeService;
-    private final FaissService faissService;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final DatasourceRepository datasourceRepository;
+    private final LlmChatClient llmChatClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newHttpClient();
 
     public ConceptFeedbackService(ConceptFeedbackRepository feedbackRepository,
                                   ConceptRepository conceptRepository,
@@ -72,9 +71,9 @@ public class ConceptFeedbackService {
                                   AgentConfigService agentConfigService,
                                   OntologyService ontologyService,
                                   OntologyChangeService ontologyChangeService,
-                                  FaissService faissService,
                                   OntologyGroupRepository ontologyGroupRepository,
-                                  DatasourceRepository datasourceRepository) {
+                                  DatasourceRepository datasourceRepository,
+                                  LlmChatClient llmChatClient) {
         this.feedbackRepository = feedbackRepository;
         this.conceptRepository = conceptRepository;
         this.conceptMappingRepository = conceptMappingRepository;
@@ -85,9 +84,9 @@ public class ConceptFeedbackService {
         this.agentConfigService = agentConfigService;
         this.ontologyService = ontologyService;
         this.ontologyChangeService = ontologyChangeService;
-        this.faissService = faissService;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.datasourceRepository = datasourceRepository;
+        this.llmChatClient = llmChatClient;
     }
 
     @Transactional(readOnly = true)
@@ -259,10 +258,64 @@ public class ConceptFeedbackService {
         }
     }
 
+    private static final Pattern RESOLVED_CONCEPT_ID = Pattern.compile("\"conceptId\"\\s*:\\s*(\\d+)");
+
+    /**
+     * 反馈统计过滤。此前 stats/dashboard 的 conceptId/industryId 参数完全没被使用
+     * （接口契约欺骗调用方），这里统一实现：
+     * - conceptId：命中 correctConceptId 或 resolvedConcepts 中出现过的概念；
+     * - industryId：命中的概念属于该行业下的任一域。
+     */
+    private List<ConceptFeedback> filterFeedback(Long conceptId, Long industryId) {
+        List<ConceptFeedback> allFeedback = feedbackRepository.findAll();
+        if (conceptId == null && industryId == null) return allFeedback;
+
+        Set<Long> industryConceptIds = null;
+        if (industryId != null) {
+            Set<Long> industryGroupIds = ontologyGroupRepository.findAll().stream()
+                    .filter(g -> industryId.equals(g.getIndustryId()))
+                    .map(OntologyGroup::getId)
+                    .collect(Collectors.toSet());
+            industryConceptIds = conceptRepository.findAll().stream()
+                    .filter(c -> c.getGroupId() != null && industryGroupIds.contains(c.getGroupId()))
+                    .map(Concept::getId)
+                    .collect(Collectors.toSet());
+        }
+        Set<Long> industryConceptIdsFinal = industryConceptIds;
+
+        return allFeedback.stream()
+                .filter(fb -> conceptId == null
+                        || conceptId.equals(fb.getCorrectConceptId())
+                        || resolvedConceptIds(fb).contains(conceptId))
+                .filter(fb -> industryConceptIdsFinal == null
+                        || intersects(industryConceptIdsFinal, fb))
+                .toList();
+    }
+
+    private boolean intersects(Set<Long> industryConceptIds, ConceptFeedback fb) {
+        if (fb.getCorrectConceptId() != null && industryConceptIds.contains(fb.getCorrectConceptId())) {
+            return true;
+        }
+        Set<Long> resolved = resolvedConceptIds(fb);
+        return resolved.stream().anyMatch(industryConceptIds::contains);
+    }
+
+    private Set<Long> resolvedConceptIds(ConceptFeedback fb) {
+        if (fb.getResolvedConcepts() == null || fb.getResolvedConcepts().isBlank()) return Set.of();
+        Set<Long> ids = new HashSet<>();
+        Matcher m = RESOLVED_CONCEPT_ID.matcher(fb.getResolvedConcepts());
+        while (m.find()) {
+            try {
+                ids.add(Long.parseLong(m.group(1)));
+            } catch (NumberFormatException ignored) {}
+        }
+        return ids;
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> stats(Long conceptId, Long industryId) {
-        List<ConceptFeedback> allFeedback = feedbackRepository.findAll();
-        long totalFeedback = allFeedback.size();
+        List<ConceptFeedback> filtered = filterFeedback(conceptId, industryId);
+        long totalFeedback = filtered.size();
 
         Map<Integer, Integer> stageBreakdown = new LinkedHashMap<>();
         for (int i = 1; i <= 6; i++) {
@@ -270,7 +323,7 @@ public class ConceptFeedbackService {
         }
 
         int conceptFeedbackCount = 0;
-        for (ConceptFeedback fb : allFeedback) {
+        for (ConceptFeedback fb : filtered) {
             if (fb.getLlmAnalysis() != null && !fb.getLlmAnalysis().isBlank()) {
                 try {
                     Map<String, Object> analysis = objectMapper.readValue(fb.getLlmAnalysis(),
@@ -291,6 +344,7 @@ public class ConceptFeedbackService {
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("conceptId", conceptId);
+        result.put("industryId", industryId);
         result.put("totalFeedback", totalFeedback);
         result.put("stageBreakdown", stageBreakdown);
         return result;
@@ -298,7 +352,7 @@ public class ConceptFeedbackService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard(Long industryId) {
-        List<ConceptFeedback> allFeedback = feedbackRepository.findAll();
+        List<ConceptFeedback> allFeedback = filterFeedback(null, industryId);
         long totalFeedback = allFeedback.size();
         long pendingCount = allFeedback.stream().filter(f -> "pending".equals(f.getStatus())).count();
 
@@ -611,27 +665,8 @@ public class ConceptFeedbackService {
             feedback.setReviewedBy(reviewedBy);
             feedback.setReviewedAt(LocalDateTime.now());
             feedbackRepository.save(feedback);
-
-            if (opType == OntologyOperationType.ADD_CONCEPT) {
-                try {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> conceptData = (Map<String, Object>) data.get("concept");
-                    String conceptName = conceptData != null ? (String) conceptData.get("name") : null;
-                    String description = conceptData != null ? (String) conceptData.get("description") : "";
-                    if (conceptName != null) {
-                        List<Concept> saved = conceptRepository.findByName(conceptName);
-                        if (!saved.isEmpty()) {
-                            faissService.addConcepts(List.of(Map.of(
-                                    "id", saved.get(0).getId().toString(),
-                                    "name", conceptName,
-                                    "description", description != null ? description : ""
-                            )));
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("FAISS 索引更新失败: {}", e.getMessage());
-                }
-            }
+            // ADD_CONCEPT 的向量生成/FAISS 入库由 OntologyChangeService.executeAddConcept
+            // 统一调度（事务提交后带向量重建），此处不再手工塞无向量的索引条目
         }
 
         return result;
@@ -1101,43 +1136,11 @@ public class ConceptFeedbackService {
     }
 
     private String callLlm(AgentConfig config, String prompt) {
-        try {
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", config.getModelName());
-            body.put("messages", List.of(
-                    Map.of("role", "system", "content", "你是问数系统的问题定位专家，只输出 JSON 格式的分析结果。"),
-                    Map.of("role", "user", "content", prompt)
-            ));
-            body.put("temperature", 0.3);
-            body.put("max_tokens", 2048);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(agentConfigService.normalizeChatUrl(config.getModelEndpoint())))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + agentConfigService.decrypt(config.getSecretKeyEnc()))
-                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
-                    .timeout(LLM_TIMEOUT)
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                Map<String, Object> responseBody = objectMapper.readValue(response.body(),
-                        new TypeReference<Map<String, Object>>() {});
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> choices = (List<Map<String, Object>>) responseBody.get("choices");
-                if (choices != null && !choices.isEmpty()) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-                    return (String) message.get("content");
-                }
-            }
-            log.error("LLM API error: status={}, url={}, model={}, body={}",
-                    response.statusCode(), config.getModelEndpoint(), config.getModelName(), response.body());
-            throw new RuntimeException("LLM API 返回状态码: " + response.statusCode());
-        } catch (Exception e) {
-            log.error("LLM call failed", e);
-            throw new RuntimeException("LLM 调用失败: " + e.getMessage());
-        }
+        List<Map<String, Object>> messages = List.of(
+                Map.of("role", "system", "content", "你是问数系统的问题定位专家，只输出 JSON 格式的分析结果。"),
+                Map.of("role", "user", "content", prompt));
+        return llmChatClient.chat(config, messages,
+                new LlmChatClient.Options(0.3, 2048, false, LLM_TIMEOUT));
     }
 
     @SuppressWarnings("unchecked")

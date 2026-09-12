@@ -34,6 +34,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
+import com.luban.util.JsonSanitizer;
 
 @Slf4j
 @Service
@@ -51,12 +52,11 @@ public class ConceptMappingService {
     private final AsyncTaskService asyncTaskService;
     private final FaissService faissService;
     private final OntologyService ontologyService;
+    private final ConceptSnapshotService conceptSnapshotService;
+    private final LlmChatClient llmChatClient;
     private final TransactionTemplate transactionTemplate;
 
     private final ObjectMapper jsonMapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
 
     @Transactional(readOnly = true)
     public List<ConceptMapping> listByConcept(Long conceptId) {
@@ -566,21 +566,11 @@ public class ConceptMappingService {
             }
             prompt.append("\n## 输出格式\n返回 JSON，每个 mapping 和 joinMapping 都要包含 conceptName 字段：\n{\"mappings\":[{\"conceptName\":\"...\",\"datasourceId\":1,\"tableName\":\"...\",\"columnName\":\"...\",\"attributeName\":\"...\",\"mappingType\":\"direct\",\"computedExpr\":null,\"confidence\":0.8}],\"joinMappings\":[{\"conceptName\":\"...\",\"datasourceId\":1,\"joinTable\":\"...\",\"joinCondition\":\"...\",\"joinType\":\"LEFT\"}]}\n\n规则：\n1. 只映射规则未覆盖的概念和属性\n2. 只使用数据源中实际存在的表和列，禁止捏造\n3. confidence >= 0.6\n4. computed 类型映射：mappingType=\"computed\"，必须同时填写 tableName（结果所在表）、columnName（结果列名）和 computedExpr（计算公式，引用其他表的列用 表名.列名 格式）\n5. 只输出 JSON\n");
             if (errorHint != null) prompt.append("\n").append(errorHint);
-            List<Map<String, String>> messages = new ArrayList<>();
+            List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", "你是数据库映射专家。只输出 JSON，禁止捏造不存在的表或列。"));
             messages.add(Map.of("role", "user", "content", prompt.toString()));
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", config.getModelName()); body.put("messages", messages);
-            body.put("temperature", 0.2); body.put("max_tokens", 8192); body.put("response_format", Map.of("type", "json_object"));
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(chatUrl)).header("Content-Type", "application/json").header("Authorization", "Bearer " + apiKey).POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body))).timeout(Duration.ofSeconds(180)).build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() != 200) { log.warn("[v2] LLM响应异常: HTTP {}", response.statusCode()); return null; }
-            Map<String, Object> respBody = jsonMapper.readValue(response.body(), Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) respBody.get("choices");
-            if (choices == null || choices.isEmpty()) return null;
-            String content = (String) ((Map<String, Object>) choices.get(0).get("message")).get("content");
-            if (content == null || content.isEmpty()) return null;
-            content = content.trim(); if (content.startsWith("```")) content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "");
+            String content = llmChatClient.chat(config, new ArrayList<>(messages),
+                    new LlmChatClient.Options(0.2, 8192, true, Duration.ofSeconds(180)));
             log.info("[v2] LLM批量响应: {} chars", content.length());
             return content;
         } catch (Exception e) { log.error("[v2] LLM批量调用异常: {}", e.getMessage(), e); return null; }
@@ -646,6 +636,27 @@ public class ConceptMappingService {
      */
     private Map<String, Object> applyInTransaction(List<Long> allConceptIds,
             List<Map<String, Object>> allRawMappings, List<Map<String, Object>> allRawJoinMappings) {
+        // 应用前自动打快照：本操作会覆盖这些概念的全部旧自动映射，快照是唯一的回滚保障。
+        // 必须在删除动作之前读取（同一事务内），失败不阻断应用
+        try {
+            Map<Long, List<Concept>> byGroup = new LinkedHashMap<>();
+            for (Concept c : conceptRepository.findAllById(allConceptIds)) {
+                if (c.getGroupId() != null) {
+                    byGroup.computeIfAbsent(c.getGroupId(), k -> new ArrayList<>()).add(c);
+                }
+            }
+            if (!byGroup.isEmpty()) {
+                String version = "pre-automatch-" + System.currentTimeMillis()
+                        + "-" + UUID.randomUUID().toString().substring(0, 8);
+                for (Long groupId : byGroup.keySet()) {
+                    conceptSnapshotService.createSnapshot(groupId, version,
+                            "自动映射应用前自动快照", "system");
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[apply-auto-match] 应用前快照失败（不阻断应用）: {}", ex.getMessage());
+        }
+
         List<ConceptMapping> existingMappings = mappingRepository.findByConceptIdIn(allConceptIds);
         Set<String> manualKeys = existingMappings.stream()
                 .filter(m -> !Boolean.TRUE.equals(m.getIsAuto()))
@@ -1170,9 +1181,6 @@ public class ConceptMappingService {
                 return null;
             }
 
-            String apiKey = agentConfigService.decrypt(config.getSecretKeyEnc());
-            String chatUrl = agentConfigService.normalizeChatUrl(config.getModelEndpoint());
-
             StringBuilder dsDesc = new StringBuilder();
             for (Map<String, Object> ds : dsStructures) {
                 dsDesc.append("数据源: ").append(ds.get("name"))
@@ -1264,45 +1272,12 @@ public class ConceptMappingService {
                     + "11. 【严格约束】tableName 和 columnName 必须从上方数据源结构中选取，禁止使用数据源中不存在的表名或列名，即使你认为该表/列在SAP/ERP中存在也不允许"
                     + (errorHint != null ? "\n\n" + errorHint : "");
 
-            List<Map<String, String>> messages = new ArrayList<>();
+            List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", "你是一个数据库映射专家。只输出 JSON，不要任何解释。严格只使用数据源中实际存在的表和列，禁止捏造不存在的表名或列名。"));
             messages.add(Map.of("role", "user", "content", prompt));
 
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("model", config.getModelName());
-            body.put("messages", messages);
-            body.put("temperature", 0.2);
-            body.put("max_tokens", 8192);
-            body.put("response_format", Map.of("type", "json_object"));
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(chatUrl))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonMapper.writeValueAsString(body)))
-                    .timeout(Duration.ofSeconds(120))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
-            if (response.statusCode() != 200) {
-                log.warn("[auto-match] LLM响应异常: HTTP {}, body={}", response.statusCode(), response.body());
-                return null;
-            }
-
-            Map<String, Object> respBody = jsonMapper.readValue(response.body(), Map.class);
-            List<Map<String, Object>> choices = (List<Map<String, Object>>) respBody.get("choices");
-            if (choices == null || choices.isEmpty()) return null;
-
-            Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-            String content = (String) message.get("content");
-            if (content == null || content.isEmpty()) return null;
-
-            content = content.trim();
-            if (content.startsWith("```")) {
-                content = content.replaceAll("```json\\s*", "").replaceAll("```\\s*", "");
-            }
-
+            String content = llmChatClient.chat(config, new ArrayList<>(messages),
+                    new LlmChatClient.Options(0.2, 8192, true, Duration.ofSeconds(120)));
             log.info("[auto-match] LLM响应: {} chars", content.length());
             return content;
         } catch (Exception e) {
@@ -1312,45 +1287,7 @@ public class ConceptMappingService {
     }
 
     private String sanitizeJson(String json) {
-        if (json == null) return null;
-        String s = json.trim();
-        if (s.startsWith("```")) {
-            s = s.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
-        }
-        int start = s.indexOf('{');
-        if (start < 0) start = s.indexOf('[');
-        if (start > 0) s = s.substring(start);
-        if (s.isEmpty()) return json;
-
-        int quoteCount = 0;
-        boolean escaped = false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (escaped) { escaped = false; continue; }
-            if (c == '\\') { escaped = true; continue; }
-            if (c == '"') quoteCount++;
-        }
-        if (quoteCount % 2 != 0) {
-            s = s + "\"";
-            log.warn("[sanitize-json] 修复未闭合的字符串引号");
-        }
-
-        int braceCount = 0;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '{' || c == '[') braceCount++;
-            else if (c == '}' || c == ']') braceCount--;
-        }
-        char firstChar = s.charAt(0);
-        char closingChar = firstChar == '{' ? '}' : ']';
-        for (int i = 0; i < braceCount; i++) {
-            s += closingChar;
-        }
-        if (braceCount > 0) {
-            log.warn("[sanitize-json] 修复 {} 个未闭合的花括号/方括号", braceCount);
-        }
-
-        return s;
+        return JsonSanitizer.sanitizeJson(json);
     }
 
     // ===== 沿本体关系展开概念（通过 Jena OWL 推理） =====
@@ -1555,22 +1492,33 @@ public class ConceptMappingService {
 
     // ===== 构建列注释 embedding 索引（如未构建） =====
 
+    /**
+     * 列向量索引按数据源逐一检查/构建。此前只检查 datasources[0] 的索引状态，
+     * ds[0] 已建过时直接 return——多数据源场景其余数据源的列索引永远不会构建，
+     * 检索静默降级为注释关键词匹配。
+     */
     @SuppressWarnings("unchecked")
     private void buildColumnIndexIfNeeded(List<Map<String, Object>> dsStructures, List<Datasource> datasources) {
         if (datasources.isEmpty()) return;
-        String dsId = String.valueOf(datasources.get(0).getId());
+        Set<Long> requestedDsIds = datasources.stream().map(Datasource::getId).collect(Collectors.toSet());
 
-        try {
-            if (faissService.isColumnIndexBuiltFor(dsId)) {
-                log.info("[column-index] 数据源 {} 列索引已构建，跳过", dsId);
-                return;
-            }
-        } catch (Exception e) {
-            log.warn("[column-index] 检查列索引状态失败，将尝试构建: {}", e.getMessage());
-        }
-
-        List<Map<String, Object>> columnEntries = new ArrayList<>();
         for (Map<String, Object> ds : dsStructures) {
+            Object idObj = ds.get("id");
+            if (!(idObj instanceof Number n)) continue;
+            long dsId = n.longValue();
+            if (!requestedDsIds.contains(dsId)) continue;
+
+            String dsKey = String.valueOf(dsId);
+            try {
+                if (faissService.isColumnIndexBuiltFor(dsKey)) {
+                    log.info("[column-index] 数据源 {} 列索引已构建，跳过", dsKey);
+                    continue;
+                }
+            } catch (Exception e) {
+                log.warn("[column-index] 检查数据源 {} 列索引状态失败，将尝试构建: {}", dsKey, e.getMessage());
+            }
+
+            List<Map<String, Object>> columnEntries = new ArrayList<>();
             Map<String, Object> structure = (Map<String, Object>) ds.get("structure");
             List<Map<String, Object>> tables = (List<Map<String, Object>>) structure.get("tables");
             if (tables == null) continue;
@@ -1581,13 +1529,7 @@ public class ConceptMappingService {
                 for (Map<String, Object> col : cols) {
                     String colName = (String) col.get("name");
                     String colComment = (String) col.getOrDefault("comment", "");
-
-                    String text;
-                    if (!colComment.isBlank()) {
-                        text = colComment;
-                    } else {
-                        text = colName;
-                    }
+                    String text = !colComment.isBlank() ? colComment : colName;
 
                     try {
                         List<Float> embedding = faissService.getEmbedding(text);
@@ -1601,14 +1543,14 @@ public class ConceptMappingService {
                     }
                 }
             }
-        }
 
-        if (!columnEntries.isEmpty()) {
-            try {
-                faissService.buildColumnIndex(dsId, columnEntries);
-                log.info("[column-index] 列索引构建完成: {} 条", columnEntries.size());
-            } catch (Exception e) {
-                log.warn("[column-index] 列索引构建失败: {}", e.getMessage());
+            if (!columnEntries.isEmpty()) {
+                try {
+                    faissService.buildColumnIndex(dsKey, columnEntries);
+                    log.info("[column-index] 数据源 {} 列索引构建完成: {} 条", dsKey, columnEntries.size());
+                } catch (Exception e) {
+                    log.warn("[column-index] 数据源 {} 列索引构建失败: {}", dsKey, e.getMessage());
+                }
             }
         }
     }

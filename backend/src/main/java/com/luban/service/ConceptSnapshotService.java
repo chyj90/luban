@@ -49,8 +49,13 @@ public class ConceptSnapshotService {
         List<Concept> concepts = conceptRepository.findByGroupId(groupId);
 
         if (version == null || version.isBlank()) {
+            // count+1 在并发下会撞 (group_id, version) 唯一键，冲突时追加序号重试
             long count = snapshotRepository.countByGroupId(groupId);
             version = "v" + (count + 1);
+            int suffix = 1;
+            while (snapshotRepository.findByGroupIdAndVersion(groupId, version).isPresent()) {
+                version = "v" + (count + 1) + "-" + suffix++;
+            }
         }
 
         List<Long> conceptIds = concepts.stream().map(Concept::getId).toList();
@@ -65,6 +70,10 @@ public class ConceptSnapshotService {
                 m.put("name", c.getName());
                 m.put("description", c.getDescription());
                 m.put("groupId", c.getGroupId());
+                m.put("conceptType", c.getConceptType());
+                m.put("defaultAggregation", c.getDefaultAggregation());
+                m.put("unit", c.getUnit());
+                m.put("timestampColumn", c.getTimestampColumn());
                 m.put("anomalyThresholdExpr", c.getAnomalyThresholdExpr());
                 m.put("anomalyThresholdDesc", c.getAnomalyThresholdDesc());
                 return m;
@@ -322,6 +331,10 @@ public class ConceptSnapshotService {
                 c.setName((String) sc.get("name"));
                 c.setDescription((String) sc.get("description"));
                 c.setGroupId(snapshot.getGroupId());
+                c.setConceptType((String) sc.get("conceptType"));
+                c.setDefaultAggregation((String) sc.get("defaultAggregation"));
+                c.setUnit((String) sc.get("unit"));
+                c.setTimestampColumn((String) sc.get("timestampColumn"));
                 c.setAnomalyThresholdExpr((String) sc.get("anomalyThresholdExpr"));
                 c.setAnomalyThresholdDesc((String) sc.get("anomalyThresholdDesc"));
                 restored.add(c);

@@ -41,6 +41,8 @@ class AppAccessServiceTest {
     @Mock private RoleRepository roleRepository;
     @Mock private RoleUserRepository roleUserRepository;
     @Mock private RolePermissionRepository rolePermissionRepository;
+    @Mock private com.luban.repository.RoleConceptPermissionRepository roleConceptPermissionRepository;
+    @Mock private com.luban.repository.ConceptRepository conceptRepository;
 
     private AppAccessService service;
 
@@ -50,7 +52,12 @@ class AppAccessServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AppAccessService(applicationRepository, roleRepository, roleUserRepository, rolePermissionRepository);
+        // RoleConceptPermissionService 在 JDK25 下无法被 Mockito mock（具体类），用真实实例配 mock 仓库；
+        // roleUserRepository 默认返回空列表 → isSuperAdmin=false，与原测试行为一致
+        com.luban.service.RoleConceptPermissionService roleConceptPermissionService =
+                new com.luban.service.RoleConceptPermissionService(
+                        roleConceptPermissionRepository, conceptRepository, roleUserRepository, roleRepository);
+        service = new AppAccessService(applicationRepository, roleRepository, roleUserRepository, rolePermissionRepository, roleConceptPermissionService);
 
         Application app = new Application();
         app.setCreatedBy(OWNER_ID);

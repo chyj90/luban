@@ -37,10 +37,8 @@ public class RoleController {
     private static final Set<String> RESERVED_SLUGS = Set.of(SUPER_ADMIN_SLUG, USER_SLUG);
 
     private boolean isSuperAdmin(User user) {
-        List<RoleUser> roleUsers = roleUserRepository.findByUserId(user.getId());
-        List<Long> roleIds = roleUsers.stream().map(RoleUser::getRoleId).toList();
-        return roleRepository.findAllById(roleIds).stream()
-                .anyMatch(r -> SUPER_ADMIN_SLUG.equals(r.getSlug()));
+        // 统一走 RoleConceptPermissionService，避免 super_admin 判定逻辑多处漂移
+        return roleConceptPermissionService.isSuperAdmin(user.getId());
     }
 
     @GetMapping

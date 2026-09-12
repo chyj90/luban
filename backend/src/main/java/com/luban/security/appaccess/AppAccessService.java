@@ -2,6 +2,7 @@ package com.luban.security.appaccess;
 
 import com.luban.entity.Application;
 import com.luban.repository.ApplicationRepository;
+import com.luban.service.RoleConceptPermissionService;
 import com.luban.workflow.entity.Role;
 import com.luban.workflow.repository.RolePermissionRepository;
 import com.luban.workflow.repository.RoleRepository;
@@ -36,15 +37,18 @@ public class AppAccessService {
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final RolePermissionRepository rolePermissionRepository;
+    private final RoleConceptPermissionService roleConceptPermissionService;
 
     public AppAccessService(ApplicationRepository applicationRepository,
                             RoleRepository roleRepository,
                             RoleUserRepository roleUserRepository,
-                            RolePermissionRepository rolePermissionRepository) {
+                            RolePermissionRepository rolePermissionRepository,
+                            RoleConceptPermissionService roleConceptPermissionService) {
         this.applicationRepository = applicationRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
         this.rolePermissionRepository = rolePermissionRepository;
+        this.roleConceptPermissionService = roleConceptPermissionService;
     }
 
     /** 判定入口：不满足时抛 AppAccessDeniedException（由全局异常处理转 403） */
@@ -90,11 +94,7 @@ public class AppAccessService {
     }
 
     public boolean isSuperAdmin(Long userId) {
-        List<Long> roleIds = roleUserRepository.findByUserId(userId).stream()
-                .map(com.luban.workflow.entity.RoleUser::getRoleId)
-                .toList();
-        return roleRepository.findAllById(roleIds).stream()
-                .anyMatch(r -> "super_admin".equals(r.getSlug()));
+        return roleConceptPermissionService.isSuperAdmin(userId);
     }
 
     /** 平台级权限判定（不限应用，角色任意 scope），供创建 PLATFORM 资源等场景使用 */

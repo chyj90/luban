@@ -45,6 +45,8 @@ public class OntologyChangeService {
     private final IndustryRelationRepository industryRelationRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final OntologyService ontologyService;
+    private final ConceptEmbeddingService conceptEmbeddingService;
+    private final ConceptSnapshotService conceptSnapshotService;
     private final DatasourceRepository datasourceRepository;
     private final ObjectMapper objectMapper;
 
@@ -58,6 +60,8 @@ public class OntologyChangeService {
                                   IndustryRelationRepository industryRelationRepository,
                                   OntologyGroupRepository ontologyGroupRepository,
                                   OntologyService ontologyService,
+                                  ConceptEmbeddingService conceptEmbeddingService,
+                                  ConceptSnapshotService conceptSnapshotService,
                                   DatasourceRepository datasourceRepository,
                                   ObjectMapper objectMapper) {
         this.changeLogRepository = changeLogRepository;
@@ -70,8 +74,137 @@ public class OntologyChangeService {
         this.industryRelationRepository = industryRelationRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.ontologyService = ontologyService;
+        this.conceptEmbeddingService = conceptEmbeddingService;
+        this.conceptSnapshotService = conceptSnapshotService;
         this.datasourceRepository = datasourceRepository;
         this.objectMapper = objectMapper;
+    }
+
+    /**
+     * 变更应用前对受影响的概念域自动打快照。
+     * 此前快照纯手动，反馈 apply / LLM 变更审批都会无提示地覆盖人工配置且难以回滚；
+     * 现在所有经过 approveChange 的应用路径（含反馈闭环自动审批）都有回滚保障。
+     * 快照失败不阻断变更应用（只告警）。
+     */
+    private void autoSnapshotForChanges(List<OntologyChangeLog> logs) {
+        try {
+            Set<Long> groupIds = new LinkedHashSet<>();
+            for (OntologyChangeLog changeLog : logs) {
+                Map<String, Object> data = parseSnapshot(changeLog.getAfterSnapshot());
+                if (data != null) {
+                    collectAffectedGroupIds(changeLog.getOperation(), data, groupIds);
+                }
+            }
+            if (groupIds.isEmpty()) return;
+            String version = "pre-apply-" + System.currentTimeMillis()
+                    + "-" + UUID.randomUUID().toString().substring(0, 8);
+            for (Long groupId : groupIds) {
+                conceptSnapshotService.createSnapshot(groupId, version,
+                        "本体变更应用前自动快照", "system");
+            }
+            log.info("Auto snapshot created for {} group(s) before applying {} change(s)",
+                    groupIds.size(), logs.size());
+        } catch (Exception e) {
+            log.warn("Auto snapshot before applying changes failed (changes will still be applied): {}", e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectAffectedGroupIds(String operation, Map<String, Object> data, Set<Long> groupIds) {
+        switch (operation) {
+            case "ADD_CONCEPT", "UPDATE_CONCEPT" -> {
+                Map<String, Object> c = (Map<String, Object>) data.get("concept");
+                if (c == null) return;
+                Long gid = conceptGroupIdFromRef(
+                        c.get("groupId") instanceof Number n ? n.longValue() : null,
+                        c.get("id") instanceof Number n ? n.longValue() : null,
+                        (String) c.get("name"));
+                if (gid != null) groupIds.add(gid);
+            }
+            case "ADD_MAPPING", "UPDATE_MAPPING",
+                 "ADD_JOIN_MAPPING", "UPDATE_JOIN_MAPPING" -> {
+                Map<String, Object> m = data.containsKey("mapping") ? (Map<String, Object>) data.get("mapping")
+                        : data.containsKey("joinMapping") ? (Map<String, Object>) data.get("joinMapping") : data;
+                Long gid = conceptGroupIdFromRef(
+                        m.get("conceptId") instanceof Number n ? n.longValue() : null,
+                        null,
+                        (String) m.get("conceptName"));
+                if (gid != null) groupIds.add(gid);
+            }
+            case "ADD_RELATION", "UPDATE_RELATION" -> {
+                Map<String, Object> r = (Map<String, Object>) data.get("relation");
+                if (r == null) return;
+                Long gid = conceptGroupIdFromRef(
+                        r.get("sourceConceptId") instanceof Number n ? n.longValue() : null,
+                        null, (String) r.get("sourceConceptName"));
+                if (gid != null) groupIds.add(gid);
+                Long gid2 = conceptGroupIdFromRef(
+                        r.get("targetConceptId") instanceof Number n ? n.longValue() : null,
+                        null, (String) r.get("targetConceptName"));
+                if (gid2 != null) groupIds.add(gid2);
+            }
+            case "DELETE_CONCEPT" -> {
+                Long gid = conceptGroupIdFromRef(
+                        data.get("conceptId") instanceof Number n ? n.longValue() : null,
+                        null, (String) data.get("conceptName"));
+                if (gid != null) groupIds.add(gid);
+            }
+            default -> { }
+        }
+    }
+
+    /** 按 groupId / conceptId / conceptName 任一引用反查概念所属域 */
+    private Long conceptGroupIdFromRef(Long groupId, Long conceptId, String conceptName) {
+        if (groupId != null) return groupId;
+        Concept concept = null;
+        if (conceptId != null) {
+            concept = conceptRepository.findById(conceptId).orElse(null);
+        }
+        if (concept == null && conceptName != null && !conceptName.isBlank()) {
+            List<Concept> found = conceptRepository.findByName(conceptName);
+            concept = found.isEmpty() ? null : found.get(0);
+        }
+        return concept != null ? concept.getGroupId() : null;
+    }
+
+    /**
+     * LLM 变更快照中的语义字段归一化（与 ConceptService.applySemanticFields 同一规则）：
+     * conceptType 未知值置空；仅 METRIC 接受聚合/单位/时间列。
+     *
+     * @param partial true=patch 语义（UPDATE：缺省键保留原值）；false=全量语义（ADD：缺省即空）
+     */
+    @SuppressWarnings("unchecked")
+    private void applySemanticFields(Concept concept, Map<String, Object> conceptData, boolean partial) {
+        com.luban.constant.ConceptType type;
+        if (conceptData.containsKey("conceptType")) {
+            type = com.luban.constant.ConceptType.fromNullable((String) conceptData.get("conceptType"));
+        } else {
+            type = partial ? com.luban.constant.ConceptType.fromNullable(concept.getConceptType()) : null;
+        }
+        concept.setConceptType(type != null ? type.name() : null);
+        if (type == com.luban.constant.ConceptType.METRIC) {
+            if (conceptData.containsKey("defaultAggregation")) {
+                String agg = conceptData.get("defaultAggregation") instanceof String s
+                        ? s.trim().toUpperCase() : null;
+                concept.setDefaultAggregation(Set.of("SUM", "COUNT", "AVG", "MAX", "MIN", "NONE").contains(agg) ? agg : null);
+            } else if (!partial) {
+                concept.setDefaultAggregation(null);
+            }
+            if (conceptData.containsKey("unit")) {
+                concept.setUnit((String) conceptData.get("unit"));
+            } else if (!partial) {
+                concept.setUnit(null);
+            }
+            if (conceptData.containsKey("timestampColumn")) {
+                concept.setTimestampColumn((String) conceptData.get("timestampColumn"));
+            } else if (!partial) {
+                concept.setTimestampColumn(null);
+            }
+        } else {
+            concept.setDefaultAggregation(null);
+            concept.setUnit(null);
+            concept.setTimestampColumn(null);
+        }
     }
 
     @Transactional
@@ -99,6 +232,7 @@ public class OntologyChangeService {
     public void approveChange(Long changeId) {
         OntologyChangeLog changeLog = changeLogRepository.findById(changeId)
                 .orElseThrow(() -> new NoSuchElementException("变更记录不存在: " + changeId));
+        autoSnapshotForChanges(List.of(changeLog));
         try {
             executeChange(changeLog);
             changeLog.setStatus("APPROVED");
@@ -134,6 +268,8 @@ public class OntologyChangeService {
                 logs.size(),
                 logs.stream().map(l -> l.getOperation() + "(id=" + l.getId() + ")")
                         .collect(Collectors.joining(", ")));
+
+        autoSnapshotForChanges(logs);
 
         for (OntologyChangeLog changeLog : logs) {
             try {
@@ -335,6 +471,7 @@ public class OntologyChangeService {
         Concept concept = new Concept();
         concept.setName(name);
         concept.setDescription(description);
+        applySemanticFields(concept, conceptData, false);
 
         if (conceptData.containsKey("anomalyThresholdExpr")) {
             concept.setAnomalyThresholdExpr((String) conceptData.get("anomalyThresholdExpr"));
@@ -393,6 +530,8 @@ public class OntologyChangeService {
 
         Concept saved = conceptRepository.save(concept);
         log.info("ADD_CONCEPT executed: id={}, name={}, groupId={}", saved.getId(), saved.getName(), saved.getGroupId());
+        // 与 CRUD/导入入口对齐：审批事务提交后自动生成向量并入 FAISS
+        conceptEmbeddingService.scheduleEmbeddingAfterCommit(List.of(saved.getId()), false);
     }
 
     @SuppressWarnings("unchecked")
@@ -433,9 +572,12 @@ public class OntologyChangeService {
         if (conceptData.containsKey("anomalyThresholdDesc")) {
             concept.setAnomalyThresholdDesc((String) conceptData.get("anomalyThresholdDesc"));
         }
+        applySemanticFields(concept, conceptData, true);
         concept.setUpdatedAt(LocalDateTime.now());
         conceptRepository.save(concept);
         log.info("UPDATE_CONCEPT executed: id={}, name={}", concept.getId(), concept.getName());
+        // 概念名/描述可能已变，旧向量过期，提交后强制重生成
+        conceptEmbeddingService.scheduleEmbeddingAfterCommit(List.of(concept.getId()), true);
     }
 
     private void executeDeleteConcept(Map<String, Object> data) {
