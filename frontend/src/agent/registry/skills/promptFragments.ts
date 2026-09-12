@@ -14,6 +14,15 @@ export function getPageSkillSummary(): string {
 - 不确定目标页面时主动向用户确认`;
 }
 
+/** 外部库与内置能力规则：分析阶段（填 libraries 时）与执行阶段都必须可见 */
+export function getLibraryRulesSummary(): string {
+  return `## 外部库与内置能力（声明 libraries 前必读）
+- **ECharts 与 echarts-gl 已内置**，libraries 禁止引入 echarts 相关 CDN（echarts.min.js、echarts-gl、china.js 等地图 JS）
+- **中国地图已内置注册**：map: 'china' 可直接使用；省级地图下钻用 LubanUI.loadProvinceMap(adcode)；geoJSON 属于内置能力，禁止引入 china.js / geo.datav.aliyun.com / .json 数据 URL——提交分析时会被自动剥离
+- **Leaflet 已禁用**：地图可视化一律用 ECharts map 系列
+- 绝大多数页面 libraries 应为空数组`;
+}
+
 export function getCodePageSkillSummary(): string {
   return `## 代码页面
 - HTML/CSS/JS 纯原生，CSS Grid/Flexbox 响应式布局
@@ -233,6 +242,7 @@ export function getAnalysisPromptFragment(): string {
 - L3 页面改造（需新查询）：pages 中 action=update，queries 填写新增查询 → 系统自动生成 delegate_query + update_code_page
 - L3 页面改造（无需新查询）：pages 中 action=update，queries 为空 → 系统只生成 update_code_page
 - 审批流程：workflows 中 hasForm=true, hasWorkflow=true → 系统自动生成 design_form + design_workflow
+- **已有查询直接绑定**：探查发现查询已存在时，在 pages[].queries 中填 queryId（同时保留 queryName/purpose）——系统只绑定页面、不生成创建步骤。禁止把已有查询留空 queries 或塞进 apis（apis 仅用于平台 API/工具，查询不是 API）
 建表 ≠ 创建查询：建表是 DDL，创建查询是 SQL SELECT。needsNewTable=true 仅表示需要新表，实际建表需人工操作，Agent 只负责创建查询。
 
 ⚠️ **完整示例（客户管理/监控大屏/审批流程）请调用 get_analysis_examples 工具获取**。L4 新建页面时建议先查看示例再写分析报告。`;

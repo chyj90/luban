@@ -14,7 +14,7 @@ function generateItemId(): string {
 interface AnalysisPage {
   name: string;
   action: 'create' | 'update';
-  queries: Array<{ queryName: string; purpose: string; needsNewTable?: boolean; fields?: string; filterParams?: string }>;
+  queries: Array<{ queryName: string; purpose: string; needsNewTable?: boolean; fields?: string; filterParams?: string; queryId?: number }>;
   apis: Array<{ apiName: string; purpose: string }>;
   orchestrations: Array<{ orchName: string; purpose: string }>;
   noDataNeeded?: boolean;
@@ -105,14 +105,16 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
   const pageQueryStep = new Map<string, string>();
 
   for (const page of analysis.pages) {
-    if (page.noDataNeeded || page.queries.length === 0) continue;
+    // 已有查询（queryId 已填）只做页面绑定，不生成创建步骤——避免 DBA 重复创建的空转委派
+    const creatableQueries = page.queries.filter((q) => !q.queryId);
+    if (page.noDataNeeded || creatableQueries.length === 0) continue;
     const stepId = nextId();
     pageQueryStep.set(page.name, stepId);
 
     const parts: string[] = [];
     const queryNames: string[] = [];
     let primaryFilterParams: string | undefined;
-    for (const q of page.queries) {
+    for (const q of creatableQueries) {
       queryNames.push(q.queryName);
       let part = `创建查询 ${q.queryName}（用途：${q.purpose}）`;
       if (q.needsNewTable && q.fields) {
@@ -180,6 +182,7 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     if (ownOrchStep) deps.push(ownOrchStep);
 
     const queryNames = page.queries.map(q => q.queryName);
+    const existingQueryIds = page.queries.map(q => q.queryId).filter((id): id is number => typeof id === 'number');
     const apiNames = (page.apis || []).map(a => a.apiName);
     let desc = isCreate ? `创建页面「${page.name}」` : `更新页面「${page.name}」`;
     if (queryNames.length > 0) {
@@ -191,13 +194,19 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     if (page.libraries && page.libraries.length > 0) {
       desc += `，引入外部库 ${page.libraries.join('、')}`;
     }
+    if (isCreate) {
+      desc += `（大屏/多模块页面推荐用 create_page_scaffold + update_code_page 完成本步骤）`;
+    }
 
     items.push({
       id: stepId,
       category: 'code_page',
       description: desc,
       toolName,
-      toolInput: { name: page.name },
+      toolInput: {
+        name: page.name,
+        ...(existingQueryIds.length > 0 ? { queryIds: existingQueryIds } : {}),
+      },
       dependencies: deps,
     });
   }
@@ -378,6 +387,7 @@ export const planSkills: Record<string, SkillFactory> = {
                   type: 'object',
                   properties: {
                     queryName: { type: 'string', description: '查询名称（英文驼峰，如 GetAlertsWide / InsertCustomer / UpdateCustomer / DeleteCustomer）' },
+                    queryId: { type: 'number', description: '查询已存在时填写其 ID——系统只绑定到页面、不会生成创建步骤。探查发现同名查询已存在时必须填写，禁止把已有查询放到 apis（apis 仅用于平台 API/工具）' },
                     purpose: { type: 'string', description: '用途描述（如：查询客户列表 / 新增客户 / 编辑客户 / 删除客户）' },
                     needsNewTable: { type: 'boolean', description: '是否需要新表（Agent 禁止 DDL，建表需人工操作）' },
                     fields: { type: 'string', description: '宽表字段（needsNewTable=true 时必填，逗号分隔，如 id,name,status）' },
@@ -499,6 +509,19 @@ export const planSkills: Record<string, SkillFactory> = {
         deductions: (llmScore.deductions || []).map(d => ({ rule: d.rule || 'unknown', points: d.points, reason: d.reason })),
       };
 
+      // 平台已内置 ECharts/中国地图，libraries 里的相关 CDN（china.js/geoJSON 等）
+      // 会被当 <script> 注入且必然失败——直接剥离并在返回消息中说明，免去模型自我纠偏
+      const BUILTIN_LIB_PATTERN = /echarts|china\.js|geo\.datav\.aliyun\.com|\.json(\?|$)/i;
+      const removedLibs: string[] = [];
+      analysis.pages = analysis.pages.map((p) => {
+        if (!p.libraries || p.libraries.length === 0) return p;
+        const kept = p.libraries.filter((u) => {
+          if (BUILTIN_LIB_PATTERN.test(u)) { removedLibs.push(u); return false; }
+          return true;
+        });
+        return { ...p, libraries: kept };
+      });
+
       const items = derivePlanFromAnalysis(analysis);
 
       if (items.length === 0) {
@@ -516,6 +539,9 @@ export const planSkills: Record<string, SkillFactory> = {
       }
       if (score.total < 70) {
         scoreMsg += '\n\n⚠️ 评分低于 70 分阈值，建议补充以上内容后重新分析，或回复"继续"跳过评分直接执行。';
+      }
+      if (removedLibs.length > 0) {
+        scoreMsg += `\n\nℹ️ 已自动移除 libraries 中的内置能力 CDN（平台已内置 ECharts 与中国地图，无需也不应引入）：${[...new Set(removedLibs)].join('、')}`;
       }
 
       return {

@@ -1,4 +1,4 @@
-import { getCodePageSkillSummary } from '../registry/skills/promptFragments';
+import { getCodePageSkillSummary, getLibraryRulesSummary } from '../registry/skills/promptFragments';
 import { getPageSkillSummary } from '../registry/skills/promptFragments';
 import { getDelegateQuerySkillSummary } from '../registry/skills/promptFragments';
 import { getFindWorkflowSkillSummary } from '../registry/skills/promptFragments';
@@ -70,6 +70,8 @@ ${getPlanPromptFragment()}
 3. **展示计划**：等待用户确认后调用 confirm_plan（系统会校验调用来源）
 
 ⚠️ 第 6 章「待确认问题」有内容时，逐条让用户回答后再展示计划。
+
+${getLibraryRulesSummary()}
 
 ${getAnalysisPromptFragment()}`;
   }
