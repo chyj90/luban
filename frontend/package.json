@@ -20,6 +20,7 @@
     "dagre": "^0.8.5",
     "echarts": "^6.1.0",
     "echarts-gl": "^2.1.0",
+    "leaflet": "^1.9.4",
     "lucide-react": "^1.31.0",
     "pinyin-match": "^1.2.10",
     "react": "^19.2.8",

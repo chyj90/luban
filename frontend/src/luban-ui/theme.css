@@ -583,3 +583,22 @@ a:hover {
   background-size: 12px 4px;
   background-repeat: repeat-x;
 }
+/* —— GIS 地图（LubanUI.gis，Leaflet 底座 + 高德瓦片）—— */
+.luban-gis { background: #0a1020; position: relative; }
+.luban-gis .leaflet-container { background: #0a1020; font-family: inherit; }
+/* 深色观感：反色+色相旋转滤镜把标准瓦片转成暗色调（国内无需付费深色瓦片源） */
+.luban-gis-dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(190deg) brightness(0.95) contrast(0.92) saturate(1.15);
+}
+.luban-gis .leaflet-control-attribution { display: none; }
+/* 呼吸打点 */
+.luban-gis-marker { position: relative; width: 14px; height: 14px; }
+.luban-gis-marker .gis-dot { position: absolute; inset: 4px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+.luban-gis-marker .gis-pulse { position: absolute; inset: 0; border-radius: 50%; border: 2px solid currentColor; animation: lubanGisPulse 1.8s ease-out infinite; }
+@keyframes lubanGisPulse { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
+/* 标注标签 */
+.luban-gis-label { background: rgba(6,20,38,0.88); border: 1px solid rgba(0,212,255,0.45); color: #cfe8ff; font-size: 12px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.luban-gis-label::before { display: none; }
+/* 飞线：流动虚线 */
+.luban-gis-flyline { stroke-dasharray: 8 10; animation: lubanGisDash 1.5s linear infinite; }
+@keyframes lubanGisDash { to { stroke-dashoffset: -72; } }

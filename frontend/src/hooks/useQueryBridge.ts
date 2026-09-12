@@ -392,8 +392,9 @@ export function useQueryBridge(
         _runPageCleanup();
 
         var bodyScripts = document.body.querySelectorAll('script');
+        var keepIds = ['__luban_ui_js__', '__echarts__', '__echarts_gl__'];
         for (var i = 0; i < bodyScripts.length; i++) {
-          if (bodyScripts[i].id !== '__luban_ui_js__' && bodyScripts[i].id !== '__echarts__') {
+          if (keepIds.indexOf(bodyScripts[i].id) === -1) {
             bodyScripts[i].remove();
           }
         }

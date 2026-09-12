@@ -15,12 +15,11 @@ export const LIBRARY_RULES: Record<string, string> = {
     '4. 然后再 new Chart(ctx, { ... })，否则会报 "Canvas is already in use" 错误',
   ].join('\n'),
   'leaflet': [
-    '❌ Leaflet 已被禁用，禁止在任何页面中使用！',
-    '原因：Leaflet 依赖国外 CDN，国内网络无法访问，会导致页面加载失败。',
-    '替代方案：',
-    '1. 地图可视化 → 使用 ECharts 的 map 系列（已内置，无需加载 CDN）',
-    '   示例：LubanUI.chart(\'mapChart\', { series: [{ type: \'map\', map: \'china\', ... }] })',
-    '2. 禁止在任何 HTML/JS/CSS 中引用 leaflet、L.map、tileLayer 等 Leaflet API',
+    '⚠️ 禁止通过 libraries 引入 Leaflet CDN！Leaflet 已由平台内置（LubanUI.gis 底座），重复引入会冲突。',
+    '地图用法：',
+    '1. 真实地理（城区/园区/街道级）→ LubanUI.gis（真实瓦片底图，优先级高于逻辑地图）',
+    '2. 全国/省份大区域态势 → LubanUI.map（逻辑地图 map: \'china\'）',
+    '3. 页面代码无需 import/require Leaflet，直接调 LubanUI.gis 即可',
   ].join('\n'),
   'geojson': [
     '❌ 禁止通过 libraries 引入地图 GeoJSON 数据（.json 文件、geo.datav.aliyun.com 等）！',

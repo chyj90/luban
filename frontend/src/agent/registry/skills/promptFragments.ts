@@ -19,7 +19,8 @@ export function getLibraryRulesSummary(): string {
   return `## 外部库与内置能力（声明 libraries 前必读）
 - **ECharts 与 echarts-gl 已内置**，libraries 禁止引入 echarts 相关 CDN（echarts.min.js、echarts-gl、china.js 等地图 JS）
 - **中国地图已内置注册**：map: 'china' 可直接使用；省级地图下钻用 LubanUI.loadProvinceMap(adcode)；geoJSON 属于内置能力，禁止引入 china.js / geo.datav.aliyun.com / .json 数据 URL——提交分析时会被自动剥离
-- **Leaflet 已禁用**：地图可视化一律用 ECharts map 系列
+- **Leaflet 已内置**（GIS 底座）：真实地理（城区/园区/街道级）场景必须用 LubanUI.gis，优先级高于逻辑地图；libraries 中禁止引入 Leaflet/地图瓦片 CDN
+- **逻辑地图**（LubanUI.map / map: 'china'）仅用于全国/省份大区域态势聚合
 - 绝大多数页面 libraries 应为空数组`;
 }
 

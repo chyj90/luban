@@ -36,6 +36,8 @@ import lubanUIJS from './LubanUI.js?raw';
 
 import echartsSource from 'echarts/dist/echarts.min.js?raw';
 import echartsGLSource from 'echarts-gl/dist/echarts-gl.min.js?raw';
+import leafletSource from 'leaflet/dist/leaflet.js?raw';
+import leafletCSSRaw from 'leaflet/dist/leaflet.css?raw';
 
 export const LUBAN_UI_CSS = [
   themeCSS,
@@ -65,6 +67,7 @@ export const LUBAN_UI_CSS = [
   loadingCSS,
   pageHeaderCSS,
   showcaseCSS,
+  leafletCSSRaw,
 ].join('\n');
 
 export const LUBAN_UI_JS = [
@@ -74,7 +77,11 @@ export const LUBAN_UI_JS = [
   selectJS,
   pageHeaderJS,
   lubanUIJS,
+  // GIS 地图底座（LubanUI.gis 依赖全局 L；打包内置，禁止 CDN 引入）
+  leafletSource,
 ].join('\n');
 
 export const ECHARTS_SOURCE = echartsSource;
 export const ECHARTS_GL_SOURCE = echartsGLSource;
+export const LEAFLET_SOURCE = leafletSource;
+export const LEAFLET_CSS = leafletCSSRaw;

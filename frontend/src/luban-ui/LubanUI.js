@@ -1904,6 +1904,107 @@ window.LubanUI = window.LubanUI || {};
   };
 
 // ==========================================
+  // GIS — 真实地理底图（Leaflet 内置 + 高德瓦片，国内可达、无需 key）
+  // 用法：LubanUI.gis('gisMap', {
+  //   center: [113.26, 23.13], zoom: 11, style: 'dark'|'satellite'|'street',
+  //   markers: [{ lng: 113.3, lat: 23.1, name: '站点A', color: '#00d4ff', pulse: true, onClick: 'onSiteClick' }],
+  //   lines: [{ from: [113.3, 23.1], to: [114.3, 22.5], color: '#ffd54f', width: 2 }]
+  // })
+  // 优先级：涉及真实地理（城区/园区/街道级）用 gis；大区域省份态势用 LubanUI.map（逻辑地图）
+  // ==========================================
+  UI.gis = function(containerId, config) {
+    var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!el) return null;
+    if (typeof L === 'undefined') { console.warn('LubanUI: Leaflet 未加载，GIS 地图不可用'); return null; }
+    config = config || {};
+    var isDark = true;
+    if (config.theme === 'light') isDark = false;
+    else if (UI.getTheme() === 'light') isDark = false;
+
+    el.classList.add('luban-gis');
+    if (config.style !== 'satellite' && config.style !== 'street') el.classList.add('luban-gis-dark');
+
+    var map = L.map(el, { zoomControl: !!config.zoomControl, attributionControl: false })
+      .setView(config.center || [104.07, 30.67], config.zoom || 10);
+
+    var gaodeVec = 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}';
+    var gaodeSat = 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}';
+    var gaodeRoad = 'https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}';
+    if (config.style === 'satellite') {
+      L.tileLayer(gaodeSat, { subdomains: '1234', maxZoom: 18 }).addTo(map);
+      L.tileLayer(gaodeRoad, { subdomains: '1234', maxZoom: 18, opacity: 0.55 }).addTo(map);
+    } else {
+      L.tileLayer(gaodeVec, { subdomains: '1234', maxZoom: 18 }).addTo(map);
+    }
+
+    var api = {
+      map: map,
+      markers: [],
+      lines: [],
+      addMarker: function(m) { return _addMarker(m); },
+      addLine: function(l) { return _addLine(l); },
+      flyTo: function(lngLat, z) { map.flyTo(lngLat, z || map.getZoom() + 1, { duration: 0.8 }); },
+      remove: function() { map.remove(); }
+    };
+
+    function _addMarker(m) {
+      var color = m.color || '#00d4ff';
+      var icon = L.divIcon({
+        className: '',
+        html: '<div class="luban-gis-marker" style="color:' + color + ';">' +
+              (m.pulse !== false ? '<span class="gis-pulse"></span>' : '') +
+              '<span class="gis-dot"></span></div>',
+        iconSize: [14, 14], iconAnchor: [7, 7]
+      });
+      var marker = L.marker([m.lat, m.lng], { icon: icon }).addTo(map);
+      if (m.name) {
+        marker.bindTooltip(m.name, { permanent: !!config.showLabels || !!m.showLabel, direction: 'top', offset: [0, -10], className: 'luban-gis-label' });
+      }
+      if (m.onClick) {
+        var fn = typeof m.onClick === 'function' ? m.onClick : (window[m.onClick] || null);
+        if (fn) marker.on('click', function() { fn(m); });
+      }
+      api.markers.push(marker);
+      return marker;
+    }
+
+    function _addLine(l) {
+      var from = l.from, to = l.to;
+      // 二次贝塞尔飞线：控制点取中点法向偏移，弧线更接近真实航迹观感
+      var mx = (from[0] + to[0]) / 2, my = (from[1] + to[1]) / 2;
+      var dx = to[0] - from[0], dy = to[1] - from[1];
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var bow = (l.bow != null ? l.bow : 0.22) * dist;
+      var cx = mx - (dy / dist) * bow, cy = my + (dx / dist) * bow;
+      var pts = [];
+      for (var t = 0; t <= 1.001; t += 0.025) {
+        var u = 1 - t;
+        pts.push([
+          u * u * from[0] + 2 * u * t * cx + t * t * to[0],
+          u * u * from[1] + 2 * u * t * cy + t * t * to[1]
+        ]);
+      }
+      var line = L.polyline(pts, {
+        color: l.color || '#ffd54f',
+        weight: l.width || 2,
+        opacity: l.opacity != null ? l.opacity : 0.85,
+        className: l.effect === false ? '' : 'luban-gis-flyline'
+      }).addTo(map);
+      if (l.name) line.bindTooltip(l.name, { className: 'luban-gis-label', sticky: true });
+      api.lines.push(line);
+      return line;
+    }
+
+    (config.markers || []).forEach(_addMarker);
+    (config.lines || []).forEach(_addLine);
+
+    if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
+      window.__LUBAN__.onPageUnload(function() { map.remove(); });
+    }
+    return api;
+  };
+
+// ==========================================
   // CountUp — 数字滚动动画（大屏必备）
   // 用法：LubanUI.countUp('elementId', 9999, 2000)
   // ==========================================
