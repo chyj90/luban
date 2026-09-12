@@ -18,6 +18,8 @@ export function getCodePageSkillSummary(): string {
   return `## 代码页面
 - HTML/CSS/JS 纯原生，CSS Grid/Flexbox 响应式布局
 - 外部库通过 libraries 参数引入 CDN URL，系统按后缀自动以 <script> 或 <link> 加载
+- **ECharts 与 echarts-gl 已内置**，图表直接使用全局 echarts 或 LubanUI.chart()，libraries 中禁止再引入 echarts 相关 CDN
+- **中国地图已内置注册**：map: 'china' 可直接使用；省级地图下钻用 LubanUI.loadProvinceMap(adcode)；中国地图 geoJSON 属于内置能力，禁止引入 china.js 等 CDN 地图 JS
 
 ### ⭐ 推荐工作流：脚手架 + 逐步完善
 1. **create_page_scaffold** → 生成正确的初始模板（初始化模式、DataQuery 调用、LubanUI 组件）
@@ -34,6 +36,7 @@ export function getCodePageSkillSummary(): string {
 
 ### 其他规则
 - API 调用：window.__LUBAN__.callApi(apiName, params)
+- **定时器/监听必须注册清理**：页面内使用 setInterval/setTimeout/addEventListener 时，用 window.__LUBAN__.onPageUnload(function(){ clearInterval(t); window.removeEventListener(...); }) 注册清理函数，页面切换和热更新时平台会自动调用，否则会泄漏并重复执行
 - **禁止 fetch() 获取平台内部数据**（/api/... 会被 CORS 拦截）。fetch() 仅允许第三方公开数据源
 - 字段名必须与查询 columns 完全一致，禁止编造
 - queryIds / toolIds 必须填写实际 ID，不能留空数组
@@ -212,6 +215,7 @@ export function getAnalysisPromptFragment(): string {
 - 每个页面独立声明查询/API 需求
 - 查询名称用英文驼峰（如 GetAlertsWide），对应代码中 QueryName.run() 调用
 - 需要新建宽表时，标注"新建宽表"并列出字段（⚠️ Agent 禁止 DDL，建表需人工在数据源面板操作）
+- **建模注意——快照指标与明细分离**：全网汇总类指标（在线设备数、今日告警数、总销售额等"一天/一时点一行"的快照）必须声明为独立表，禁止混进站点/订单等明细表的每一行，否则行数增长导致指标重复、查询只能靠"取第一行"出数
 - 无数据页面标注"无需数据加载"
 - 自查：每个模块的数据来源是否在第 7 章有对应查询？每个字段是否被查询覆盖？
 

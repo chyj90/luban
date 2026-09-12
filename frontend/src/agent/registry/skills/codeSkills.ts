@@ -106,7 +106,8 @@ export const codeSkills: Record<string, SkillFactory> = {
 ## queryIds 必须填写实际查询 ID，不能留空数组，否则页面无法加载数据
 ## toolIds 必须填写实际 API 工具 ID，不能留空数组，否则页面无法调用 API
 ## 页面已存在时用 update_code_page，新建用 create_code_page
-## 组件库用法通过 get_component_spec 工具按需获取`,
+## 组件库用法通过 get_component_spec 工具按需获取
+## ⚠️ 大屏/多模块页面（预计 HTML+JS 超过 150 行）：建议改用 create_page_scaffold 生成骨架后 update_code_page 分步完善——一次性生成大段代码容易引入多个待修问题且修复往返耗时成倍增加`,
     parameters: {
       type: 'object',
       properties: {
