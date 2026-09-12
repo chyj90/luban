@@ -1773,6 +1773,137 @@ window.LubanUI = window.LubanUI || {};
   };
 
 // ==========================================
+  // Ring — 环形占比图（环心总计 + 右侧分项数值列表）
+  // 用法1（分项环，参照社区平台人口数据环）：
+  //   LubanUI.ring('ring1', { data: [{ name:'租赁房屋', value:3627 }, ...], centerLabel: '人口总数', unit: '人' })
+  // 用法2（单值进度环，参照楼栋占比 25%/30% 小环组）：
+  //   LubanUI.ring('ring2', { progress: 73.2, size: 90, centerUnit: '%' })
+  // 说明：强调"占比构成+玫瑰/立体"用 pieGlow；"总计+分项列表/单值进度"用本组件
+  // ==========================================
+  UI.ring = function(containerId, opts) {
+    var container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!container || typeof echarts === 'undefined') return null;
+    opts = opts || {};
+    var isDark = true;
+    if (opts.theme === 'light') isDark = false;
+    else if (UI.getTheme() === 'dark') isDark = true;
+    if (opts.theme === 'light') isDark = false;
+
+    var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
+      ? ['#00d4ff', '#00e676', '#ff9100', '#ff3d9a', '#7b61ff', '#00e5ff']
+      : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#06b6d4']));
+    var fg = isDark ? '#e2e8f0' : '#1e293b';
+    var sub = isDark ? '#8aa3c8' : '#64748b';
+    var gap = isDark ? '#0a1020' : '#ffffff';
+
+    var size = opts.size || 150;
+    var isProgress = opts.progress != null;
+    var data = isProgress
+      ? [{ name: opts.name || '占比', value: opts.progress }]
+      : (opts.data || []);
+
+    // —— 布局：左环 + 右列表（showList=false 时仅环）——
+    var showList = !isProgress && opts.showList !== false && data.length > 0;
+    container.style.display = 'flex';
+    container.style.alignItems = 'center';
+    container.style.justifyContent = showList ? 'flex-start' : 'center';
+    container.style.gap = '14px';
+    container.style.height = container.style.height || '100%';
+    var chartSize = isProgress ? size : Math.max(size, opts.ringSize || size);
+    container.innerHTML =
+      '<div data-ring-chart style="width:' + chartSize + 'px;height:' + chartSize + 'px;flex:none;"></div>' +
+      (showList ? '<div data-ring-list style="flex:1;min-width:0;overflow:hidden;"></div>' : '');
+
+    var chartEl = container.querySelector('[data-ring-chart]');
+    var chart = echarts.init(chartEl);
+
+    var series = [];
+    if (isProgress) {
+      var pct = Math.max(0, Math.min(100, Number(opts.progress)));
+      var pc = colors[0];
+      series.push({
+        type: 'pie', radius: ['72%', '88%'], center: ['50%', '50%'],
+        startAngle: 90, silent: true, label: { show: false },
+        data: [
+          { value: pct, itemStyle: {
+              color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+                { offset: 0, color: lighten(pc, 0.3) }, { offset: 1, color: pc }]),
+              borderRadius: 30, shadowBlur: 10, shadowColor: pc } },
+          { value: 100 - pct, itemStyle: { color: isDark ? 'rgba(120,160,220,0.12)' : 'rgba(30,80,150,0.08)' } }
+        ]
+      });
+    } else {
+      series.push({
+        type: 'pie',
+        radius: opts.radius || ['58%', '80%'],
+        center: ['50%', '50%'],
+        itemStyle: {
+          borderRadius: opts.borderRadius != null ? opts.borderRadius : 5,
+          borderColor: gap, borderWidth: 2,
+          shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)'
+        },
+        label: { show: false },
+        emphasis: { scale: true, scaleSize: 6 },
+        data: data.map(function(d, i) {
+          return { name: d.name, value: d.value, itemStyle: { color: d.color || colors[i % colors.length] } };
+        })
+      });
+      if (opts.decorRing !== false) {
+        series.push({
+          type: 'pie', radius: ['88%', '88.7%'], center: ['50%', '50%'],
+          silent: true, label: { show: false },
+          data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.3)' : 'rgba(22,119,255,0.25)' } }]
+        });
+      }
+    }
+
+    // —— 环心文字 ——
+    var centerValue = isProgress
+      ? (opts.centerText || opts.progress + (opts.centerUnit || '%'))
+      : (opts.centerText || String(data.reduce(function(a, d) { return a + (Number(d.value) || 0); }, 0)));
+    var centerLabel = opts.centerLabel || '';
+    var cValColor = opts.centerColor || (isDark ? '#ffffff' : '#1e293b');
+    chart.setOption({
+      tooltip: isProgress ? { show: false } : { trigger: 'item', formatter: '{b}: {c}' + (opts.unit ? ' ' + opts.unit : '') },
+      graphic: [
+        { type: 'text', left: 'center', top: centerLabel ? '42%' : '50%',
+          style: { text: centerValue, fill: cValColor,
+            font: 'bold ' + (isProgress ? Math.round(size / 5.5) : Math.round(chartSize / 7.5)) + 'px sans-serif',
+            align: 'center', verticalAlign: 'middle' } },
+        (centerLabel ? { type: 'text', left: 'center', top: '58%',
+          style: { text: centerLabel, fill: sub, font: '12px sans-serif', align: 'center' } } : null)
+      ].filter(Boolean),
+      series: series
+    });
+
+    // —— 右侧分项列表（色点 + 名称 + 数值），hover 联动高亮 ——
+    if (showList) {
+      var total = data.reduce(function(a, d) { return a + (Number(d.value) || 0); }, 0) || 1;
+      var listEl = container.querySelector('[data-ring-list]');
+      listEl.innerHTML = data.map(function(d, i) {
+        var c = d.color || colors[i % colors.length];
+        return '<div data-ring-row="' + i + '" style="display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:default;' +
+          'border-bottom:1px dashed ' + (isDark ? 'rgba(120,160,220,0.15)' : 'rgba(30,80,150,0.1)') + ';">' +
+          '<span style="width:8px;height:8px;border-radius:50%;flex:none;background:' + c + ';box-shadow:0 0 6px ' + c + ';"></span>' +
+          '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + sub + ';font-size:13px;">' + d.name + '</span>' +
+          '<span style="color:' + fg + ';font-size:14px;font-weight:600;">' + (Number(d.value) || 0).toLocaleString() + (opts.unit || '') + '</span>' +
+          '</div>';
+      }).join('');
+      Array.prototype.forEach.call(listEl.querySelectorAll('[data-ring-row]'), function(row) {
+        var idx = Number(row.getAttribute('data-ring-row'));
+        row.addEventListener('mouseenter', function() {
+          chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: idx });
+        });
+        row.addEventListener('mouseleave', function() {
+          chart.dispatchAction({ type: 'downplay', seriesIndex: 0, dataIndex: idx });
+        });
+      });
+    }
+
+    return chart;
+  };
+
+// ==========================================
   // CountUp — 数字滚动动画（大屏必备）
   // 用法：LubanUI.countUp('elementId', 9999, 2000)
   // ==========================================
