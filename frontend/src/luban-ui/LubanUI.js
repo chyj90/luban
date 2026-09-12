@@ -1521,6 +1521,148 @@ window.LubanUI = window.LubanUI || {};
   };
 
 // ==========================================
+  // Map3D — geo3D 立体挤出地图（指挥中心类大屏主视图）
+  // 用法：LubanUI.loadChinaMap(function() {
+  //   LubanUI.map3d('map3d', { mapType: 'china', regionHeight: 3, markers: [{ name:'杭州', lng:120.15, lat:30.28 }] })
+  // })
+  // 依赖 echarts-gl（已内置）与已注册的地图 geoJSON
+  // ==========================================
+  UI.map3d = function(containerId, config) {
+    var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!el || typeof echarts === 'undefined' || !echarts.registerMap) return null;
+    config = config || {};
+    var isDark = UI.getTheme() === 'dark';
+    if (config.theme === 'light') isDark = false;
+    var glow = config.glowColor || (isDark ? 'rgba(0,212,255,0.9)' : 'rgba(22,119,255,0.8)');
+    var area = config.areaColor || (isDark ? '#0d1b33' : '#dbe8f7');
+
+    function init() {
+      var chart = echarts.init(el);
+      var series = [];
+      (config.markers || []).forEach(function(m) {
+        series.push({
+          type: 'scatter3D',
+          coordinateSystem: 'geo3D',
+          symbolSize: m.size || 10,
+          itemStyle: { color: m.color || '#ffd54f', shadowBlur: 12, shadowColor: m.color || '#ffd54f' },
+          label: { show: m.name ? true : false, formatter: m.name, position: 'top', textStyle: { color: isDark ? '#e2e8f0' : '#1e293b', fontSize: 12, fontWeight: 'bold' } },
+          data: [[m.lng, m.lat, (config.regionHeight || 3) + 1]]
+        });
+      });
+      chart.setOption({
+        geo3D: {
+          map: config.mapType || 'china',
+          regionHeight: config.regionHeight || 3,
+          shading: 'realistic',
+          realisticMaterial: { roughness: 0.55, metalness: 0.25 },
+          postEffect: { enable: true, bloom: { enable: true, intensity: config.bloom != null ? config.bloom : 0.3 } },
+          light: {
+            main: { intensity: 1.2, shadow: true, alpha: config.lightAlpha || 40, beta: -30 },
+            ambient: { intensity: 0.45 }
+          },
+          itemStyle: { color: area, borderColor: glow, borderWidth: 1.2 },
+          emphasis: {
+            itemStyle: { color: isDark ? '#1a3a5c' : '#b3d4f5' },
+            label: { show: true, textStyle: { color: isDark ? '#ffffff' : '#1e293b', fontSize: 13 } }
+          },
+          label: { show: !!config.showLabels, textStyle: { color: isDark ? '#cfe8ff' : '#334155', fontSize: 11 } },
+          viewControl: {
+            alpha: config.alpha || 42, beta: 0,
+            distance: config.distance || 95,
+            autoRotate: !!config.autoRotate, autoRotateSpeed: 2,
+            minDistance: 40, maxDistance: 200
+          }
+        },
+        series: series
+      });
+      return chart;
+    }
+
+    // geo3D 的 map 需要先 registerMap；未注册时自动加载后再初始化
+    if (echarts.getMap && echarts.getMap(config.mapType || 'china')) {
+      return init();
+    }
+    UI.loadChinaMap(function() { init(); });
+    return null;
+  };
+
+  // ==========================================
+  // CityBlocks — 程序化城市/园区体块（3D 白模，bar3D 实现，echarts-gl）
+  // 用法：LubanUI.cityBlocks('city3d', { rows: 10, cols: 14, centerTower: true })
+  // 注意：程序化体块为风格化近似；照片级实景园区需要自备 3D 模型/实拍底图资产
+  // ==========================================
+  UI.cityBlocks = function(containerId, config) {
+    var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
+    if (!el || typeof echarts === 'undefined' || !echarts.init) return null;
+    config = config || {};
+    var isDark = UI.getTheme() === 'dark';
+    if (config.theme === 'light') isDark = false;
+    var rows = config.rows || 10, cols = config.cols || 14;
+
+    // 稳定伪随机（同一页面每次渲染体块布局一致）
+    var seed = config.seed || 42;
+    function rnd() {
+      seed = (seed * 9301 + 49297) % 233280;
+      return seed / 233280;
+    }
+
+    var data = [];
+    var base = isDark ? '#155a8a' : '#7fb3e8';
+    var hi = config.highlight || '#00d4ff';
+    var midR = Math.floor(rows / 2), midC = Math.floor(cols / 2);
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        if (rnd() < 0.18) continue; // 留出街道空隙
+        var dist = Math.abs(r - midR) + Math.abs(c - midC);
+        var isCenter = config.centerTower && r === midR && c === midC;
+        var h = isCenter ? (config.centerHeight || 55) : Math.max(3, Math.round((1 - dist / (rows + cols)) * 30 * (0.5 + rnd())));
+        data.push({
+          value: [c, r, h],
+          itemStyle: { color: isCenter ? hi : (rnd() < 0.3 ? rgbaMix(base, hi, 0.3 + rnd() * 0.4) : base) }
+        });
+      }
+    }
+    function rgbaMix(hexA, hexB, t) {
+      function pa(h) { h = h.replace('#', ''); if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2]; return parseInt(h, 16); }
+      var a = pa(hexA), b = pa(hexB);
+      var r = Math.round((((a>>16)&255)*(1-t)) + ((b>>16)&255)*t);
+      var g = Math.round((((a>>8)&255)*(1-t)) + ((b>>8)&255)*t);
+      var bl = Math.round(((a&255)*(1-t)) + (b&255)*t);
+      return 'rgb(' + r + ',' + g + ',' + bl + ')';
+    }
+
+    var chart = echarts.init(el);
+    chart.setOption({
+      backgroundColor: 'transparent',
+      grid3D: {
+        show: false, boxWidth: config.boxWidth || 200, boxDepth: config.boxDepth || 130,
+        viewControl: {
+          alpha: config.alpha || 32, beta: config.beta || 18,
+          distance: config.distance || 240, autoRotate: !!config.autoRotate, autoRotateSpeed: 2
+        },
+        light: {
+          main: { intensity: 1.1, shadow: true, alpha: 40, beta: -30 },
+          ambient: { intensity: 0.5 }
+        },
+        postEffect: { enable: true, bloom: { enable: true, intensity: config.bloom != null ? config.bloom : 0.25 } }
+      },
+      xAxis3D: { type: 'value', show: false, max: cols },
+      yAxis3D: { type: 'value', show: false, max: rows },
+      zAxis3D: { type: 'value', show: false, max: 60 },
+      series: [{
+        type: 'bar3D',
+        data: data,
+        barSize: config.barSize || 4,
+        bevelSize: 0.3,
+        shading: 'realistic',
+        realisticMaterial: { roughness: 0.4, metalness: 0.35 },
+        itemStyle: isDark ? { borderColor: 'rgba(0,212,255,0.35)', borderWidth: 1 } : {}
+      }]
+    });
+    return chart;
+  };
+
+// ==========================================
   // CountUp — 数字滚动动画（大屏必备）
   // 用法：LubanUI.countUp('elementId', 9999, 2000)
   // ==========================================
@@ -1599,6 +1741,27 @@ window.LubanUI = window.LubanUI || {};
         alarm: { fill: '#ff1744', stroke: '#d50000' },
         offline: { fill: '#37474f', stroke: '#263238' },
         linkNormal: '#1a3050', linkWarning: '#ff9100', linkAlarm: '#ff1744'
+      },
+      containerClass: 'luban-glow-card'
+    },
+    // 鎏金风格 — 金色+深蓝（社区/园区综合管理类大屏）
+    golden: {
+      map: {
+        areaColor: '#0d1420', borderColor: 'rgba(212,175,55,0.35)',
+        emphasisColor: '#243040'
+      },
+      chart: {
+        barColors: ['#d4af37', '#4dabf7', '#00e676', '#ff7043'],
+        lineColors: ['#d4af37', '#4dabf7', '#00e676'],
+        pieColors: ['#d4af37', '#4dabf7', '#00e676', '#ff7043', '#ab47bc', '#ffd54f'],
+        dark: true
+      },
+      topo: {
+        normal: { fill: '#d4af37', stroke: '#b8960c' },
+        warning: { fill: '#ff9100', stroke: '#cc7400' },
+        alarm: { fill: '#ff1744', stroke: '#d50000' },
+        offline: { fill: '#37474f', stroke: '#263238' },
+        linkNormal: '#3a3320', linkWarning: '#ff9100', linkAlarm: '#ff1744'
       },
       containerClass: 'luban-glow-card'
     },

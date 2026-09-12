@@ -88,7 +88,36 @@ LubanUI.loadChinaMap(function() {
 \`\`\`
 LubanUI.topology（含 layered）用法见 Topology 组件规范。
 
-#### 8. 装饰素材速查
+#### 8. 3D 场景类（指挥中心 / 园区类大屏的主视觉）
+中央立体地图（geo3D 挤出 + 发光边界 + 标注点）：
+\`\`\`js
+LubanUI.loadChinaMap(function() {
+  LubanUI.map3d('map3d', {
+    mapType: 'china', regionHeight: 3,          // 挤出高度
+    glowColor: 'rgba(0,212,255,0.9)', markers: [
+      { name: '杭州', lng: 120.15, lat: 30.28 }
+    ],
+    autoRotate: true, showLabels: true
+  });
+});
+\`\`\`
+程序化城市/园区体块（3D 白模，可作楼栋点选类大屏的主视觉）：
+\`\`\`js
+LubanUI.cityBlocks('city3d', { rows: 10, cols: 14, centerTower: true, highlight: '#00d4ff' });
+\`\`\`
+⚠️ 资产边界：程序化体块是风格化近似；照片级实景园区（无人机实拍/人工建模）需要自备 3D 模型或实拍底图资产，组件库无法凭空生成。
+
+#### 9. 风格 token（visualStyle）——整屏配色统一的关键
+\`\`\`js
+var style = LubanUI.visualStyle.neon;        // 青紫粉赛博朋克
+var style = LubanUI.visualStyle.golden;      // 金色+深蓝（社区/园区综合管理类）
+var style = LubanUI.visualStyle.holographic; // 全息蓝
+var style = LubanUI.visualStyle.minimal;     // 极简商务
+// 应用：图表取 style.chart.*，地图取 style.map，拓扑取 style.topo，容器加 style.containerClass
+\`\`\`
+⚠️ 同屏所有图表配色必须来自同一 style token，禁止逐图随意配色。
+
+#### 10. 装饰素材速查
 luban-screen-bg（整体深底）luban-bg-dots/hex/circuit（纹理）luban-corner-tech-full（四角标）
 luban-divider-glow（发光分隔线）luban-data-flow（底部流光）luban-glow-card / luban-glow-text / luban-border-flow
 ⚠️ 深浅主题：LubanUI.setTheme('dark'|'light') 必须在任何图表初始化前调用。`,
