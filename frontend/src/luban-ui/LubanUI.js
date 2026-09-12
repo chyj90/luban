@@ -603,9 +603,9 @@ window.LubanUI = window.LubanUI || {};
 
   F.barGlow = function(containerId, opts) {
     opts = opts || {};
-    var isDark = true;
-    if (opts.theme === 'light') isDark = false;
-    else if (UI.getTheme() === 'dark') isDark = true;
+    var isDark = UI.getTheme() === 'dark';
+    if (opts.theme === 'dark') isDark = true;
+    else if (opts.theme === 'light') isDark = false;
 
     var data = opts.data || [];
     var categories = opts.categories || data.map(function(_, i) { return '项' + (i + 1); });
@@ -695,9 +695,9 @@ window.LubanUI = window.LubanUI || {};
 
   F.lineGlow = function(containerId, opts) {
     opts = opts || {};
-    var isDark = true;
-    if (opts.theme === 'light') isDark = false;
-    else if (UI.getTheme() === 'dark') isDark = true;
+    var isDark = UI.getTheme() === 'dark';
+    if (opts.theme === 'dark') isDark = true;
+    else if (opts.theme === 'light') isDark = false;
 
     var categories = opts.categories || [];
     var seriesData = opts.series || [{ name: '数据', data: opts.data || [] }];
@@ -746,9 +746,9 @@ window.LubanUI = window.LubanUI || {};
 
   F.pieGlow = function(containerId, opts) {
     opts = opts || {};
-    var isDark = true;
-    if (opts.theme === 'light') isDark = false;
-    else if (UI.getTheme() === 'dark') isDark = true;
+    var isDark = UI.getTheme() === 'dark';
+    if (opts.theme === 'dark') isDark = true;
+    else if (opts.theme === 'light') isDark = false;
 
     var data = opts.data || [];
     var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
@@ -1784,10 +1784,9 @@ window.LubanUI = window.LubanUI || {};
     var container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
     if (!container || typeof echarts === 'undefined') return null;
     opts = opts || {};
-    var isDark = true;
-    if (opts.theme === 'light') isDark = false;
-    else if (UI.getTheme() === 'dark') isDark = true;
-    if (opts.theme === 'light') isDark = false;
+    var isDark = UI.getTheme() === 'dark';
+    if (opts.theme === 'dark') isDark = true;
+    else if (opts.theme === 'light') isDark = false;
 
     var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
       ? ['#00d4ff', '#00e676', '#ff9100', '#ff3d9a', '#7b61ff', '#00e5ff']
@@ -1917,9 +1916,9 @@ window.LubanUI = window.LubanUI || {};
     if (!el) return null;
     if (typeof L === 'undefined') { console.warn('LubanUI: Leaflet 未加载，GIS 地图不可用'); return null; }
     config = config || {};
-    var isDark = true;
-    if (config.theme === 'light') isDark = false;
-    else if (UI.getTheme() === 'light') isDark = false;
+    var isDark = UI.getTheme() === 'dark';
+    if (config.theme === 'dark') isDark = true;
+    else if (config.theme === 'light') isDark = false;
 
     el.classList.add('luban-gis');
     if (config.style !== 'satellite' && config.style !== 'street') el.classList.add('luban-gis-dark');
