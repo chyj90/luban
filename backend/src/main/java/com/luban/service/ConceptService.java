@@ -110,7 +110,7 @@ public class ConceptService {
         concept.setAnomalyThresholdExpr(request.getAnomalyThresholdExpr());
         concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
         Concept saved = conceptRepository.save(concept);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
         return saved;
     }
 
@@ -125,21 +125,21 @@ public class ConceptService {
         concept.setAnomalyThresholdDesc(request.getAnomalyThresholdDesc());
         concept.setUpdatedAt(java.time.LocalDateTime.now());
         Concept saved = conceptRepository.save(concept);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
         return saved;
     }
 
     @Transactional
     public void delete(Long id) {
         deleteCore(Collections.singletonList(id));
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     @Transactional
     public void deleteBatch(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
         deleteCore(ids);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     private void deleteCore(List<Long> ids) {
@@ -281,7 +281,7 @@ public class ConceptService {
         relation.setExpression(request.getExpression());
         relation.setDescription(request.getDescription());
         ConceptRelation saved = conceptRelationRepository.save(relation);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
         return saved;
     }
 
@@ -295,7 +295,7 @@ public class ConceptService {
         relation.setExpression(request.getExpression());
         relation.setDescription(request.getDescription());
         ConceptRelation saved = conceptRelationRepository.save(relation);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
         return saved;
     }
 
@@ -322,7 +322,7 @@ public class ConceptService {
     @Transactional
     public void deleteRelation(Long relationId) {
         conceptRelationRepository.deleteById(relationId);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     @Transactional(readOnly = true)
@@ -339,14 +339,14 @@ public class ConceptService {
         binding.setIsDefault(request.getIsDefault() != null ? request.getIsDefault() : false);
         binding.setConfig(request.getConfig());
         ConceptToolBinding saved = conceptToolBindingRepository.save(binding);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
         return saved;
     }
 
     @Transactional
     public void unbindToolConcept(Long bindId) {
         conceptToolBindingRepository.deleteById(bindId);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     @Transactional(readOnly = true)

@@ -1665,33 +1665,25 @@ public class AgentService {
     }
 
     private boolean hasDateFilter(String sql) {
-        if (sql == null) return false;
-        String lower = sql.toLowerCase();
-        if (!lower.contains("where")) return false;
-        return java.util.regex.Pattern.compile("'\\d{4}-\\d{2}-\\d{2}'").matcher(lower).find();
+        SqlStructureAnalyzer.Analysis a = SqlStructureAnalyzer.analyze(sql);
+        return a != null && a.dateLiteralFilter();
     }
 
     private boolean isDateRangeQuery(String sql) {
-        if (sql == null) return false;
-        String lower = sql.toLowerCase();
-        return (lower.contains("min(") || lower.contains("max("))
-                && java.util.regex.Pattern.compile("\\b(date|time|dt|day|month|year)\\b", java.util.regex.Pattern.CASE_INSENSITIVE)
-                        .matcher(lower).find();
+        SqlStructureAnalyzer.Analysis a = SqlStructureAnalyzer.analyze(sql);
+        return a != null && a.dateRangeQuery();
     }
 
     private String validateEnumCheckRequired(String sql, Map<String, Object> data) {
         if (sql == null) return null;
 
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                "(?i)\\b(\\w+)\\s*(!?=)\\s*'([^']+)'");
-        java.util.regex.Matcher matcher = pattern.matcher(sql);
-        List<String> stringValues = new ArrayList<>();
-        while (matcher.find()) {
-            String value = matcher.group(3);
-            if (!value.matches("\\d+")) {
-                stringValues.add(value);
-            }
-        }
+        SqlStructureAnalyzer.Analysis analysis = SqlStructureAnalyzer.analyze(sql);
+        if (analysis == null) return null;
+        List<String> stringValues = analysis.stringFilters().stream()
+                .map(SqlStructureAnalyzer.StringFilter::value)
+                .filter(v -> !v.matches("\\d+"))
+                .distinct()
+                .toList();
         if (stringValues.isEmpty()) return null;
 
         @SuppressWarnings("unchecked")
@@ -1714,15 +1706,23 @@ public class AgentService {
         List<String> emptyColumns = (List<String>) data.get("_enum_empty_columns");
         if (emptyColumns == null || emptyColumns.isEmpty()) return null;
 
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                "(\\w+)\\.(\\w+)\\s*=\\s*'[^']*'", java.util.regex.Pattern.CASE_INSENSITIVE);
-        java.util.regex.Matcher matcher = pattern.matcher(sql);
+        SqlStructureAnalyzer.Analysis analysis = SqlStructureAnalyzer.analyze(sql);
+        if (analysis == null) return null;
+
+        Set<String> emptyKeys = new HashSet<>(emptyColumns);
         List<String> violations = new ArrayList<>();
-        while (matcher.find()) {
-            String table = matcher.group(1);
-            String column = matcher.group(2);
-            String key = table + "." + column;
-            if (emptyColumns.contains(key)) {
+        for (SqlStructureAnalyzer.StringFilter filter : analysis.stringFilters()) {
+            String key;
+            if (filter.table() != null) {
+                key = filter.table() + "." + filter.column();
+            } else {
+                // 未限定列名：恰好只命中一个空列才可判定，多于一个时不误判
+                List<String> matched = emptyColumns.stream()
+                        .filter(k -> k.endsWith("." + filter.column()))
+                        .toList();
+                key = matched.size() == 1 ? matched.get(0) : null;
+            }
+            if (key != null && emptyKeys.contains(key) && !violations.contains(key)) {
                 violations.add(key);
             }
         }
@@ -1770,17 +1770,8 @@ public class AgentService {
         List<Map<String, Object>> tableMappings = (List<Map<String, Object>>) data.get("_tableMappings");
         if (joinMappings == null || joinMappings.isEmpty()) return null;
 
-        java.util.regex.Matcher joinMatcher = java.util.regex.Pattern.compile(
-                "\\bJOIN\\s+(\\w+)\\s+(\\w+)\\s+ON", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(sql);
-        java.util.regex.Matcher fromMatcher = java.util.regex.Pattern.compile(
-                "\\bFROM\\s+(\\w+)\\s+(\\w+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(sql);
-
-        String fromTable = null;
-        String fromAlias = null;
-        if (fromMatcher.find()) {
-            fromTable = fromMatcher.group(1).toLowerCase();
-            fromAlias = fromMatcher.group(2).toLowerCase();
-        }
+        SqlStructureAnalyzer.Analysis analysis = SqlStructureAnalyzer.analyze(sql);
+        if (analysis == null || analysis.joinEdges().isEmpty()) return null;
 
         Set<String> domainTables = new HashSet<>();
         if (tableMappings != null) {
@@ -1814,15 +1805,16 @@ public class AgentService {
             }
         }
 
-        while (joinMatcher.find()) {
-            String joinTable = joinMatcher.group(1).toLowerCase();
-            if (domainTables.contains(joinTable) && fromTable != null) {
-                String pair = fromTable + "|" + joinTable;
-                if (!allowedPairs.contains(pair)) {
-                    return "SQL 中的 JOIN 表 `" + joinTable + "` 与主表 `" + fromTable
-                            + "` 的关联不在预定义 JOIN 列表中。请使用上方「表 JOIN 条件」中预定义的 JOIN 路径，"
-                            + "通过预定义 JOIN 链间接到达目标表，禁止自行构造 JOIN 条件。";
-                }
+        // 相邻表对校验：FROM t1 JOIN t2 JOIN t3 产生 (t1,t2) 与 (t2,t3)，
+        // 支持预定义 JOIN 链的多跳路径；派生表左侧与域外 JOIN 表无法校验，跳过
+        for (String[] edge : analysis.joinEdges()) {
+            String left = edge[0].toLowerCase();
+            String joined = edge[1].toLowerCase();
+            if (left.equals("(derived)") || !domainTables.contains(joined)) continue;
+            if (!allowedPairs.contains(left + "|" + joined)) {
+                return "SQL 中的 JOIN 表 `" + joined + "` 与 `" + left
+                        + "` 的关联不在预定义 JOIN 列表中。请使用上方「表 JOIN 条件」中预定义的 JOIN 路径，"
+                        + "通过预定义 JOIN 链间接到达目标表，禁止自行构造 JOIN 条件。";
             }
         }
         return null;

@@ -627,149 +627,185 @@ public class ConceptMappingService {
                     .filter(Objects::nonNull).distinct().toList();
 
             if (!allConceptIds.isEmpty()) {
-                transactionTemplate.executeWithoutResult(status -> {
-                    long deletedMappings = mappingRepository.findByConceptIdIn(allConceptIds).size();
-                    long deletedJoins = joinMappingRepository.findByConceptIdIn(allConceptIds).size();
-                    mappingRepository.deleteByConceptIdIn(allConceptIds);
-                    joinMappingRepository.deleteByConceptIdIn(allConceptIds);
-                    log.info("[apply-auto-match] 清理旧映射: conceptIds={}, 删除 {} 条映射, {} 条 JOIN", allConceptIds, deletedMappings, deletedJoins);
-                });
+                return transactionTemplate.execute(status -> applyInTransaction(allConceptIds, allRawMappings, allRawJoinMappings));
             }
-
-            List<ConceptMapping> allMappings = new ArrayList<>();
-            Set<String> mappingKeys = new HashSet<>();
-            for (Map<String, Object> item : allRawMappings) {
-                String mappingType = (String) item.getOrDefault("mappingType", "direct");
-                String tbl = (String) item.get("tableName");
-                String col = (String) item.get("columnName");
-                String expr = (String) item.get("computedExpr");
-
-                if ("computed".equals(mappingType)) {
-                    if (expr == null || expr.isBlank()) {
-                        log.warn("[apply-auto-match] 跳过 computed 映射: 缺少 computedExpr, conceptId={}", item.get("conceptId"));
-                        continue;
-                    }
-                    String attrName = (String) item.get("attributeName");
-                    if (col == null || col.isBlank()) col = attrName != null ? attrName : "computed";
-                    if (tbl == null || tbl.isBlank()) tbl = "COMPUTED";
-                } else {
-                    if (tbl == null || col == null) {
-                        log.warn("[apply-auto-match] 跳过 direct 映射: 缺少 tableName 或 columnName, conceptId={}", item.get("conceptId"));
-                        continue;
-                    }
-                }
-
-                ConceptMapping m = new ConceptMapping();
-                m.setConceptId(item.get("conceptId") instanceof Number n ? n.longValue() : null);
-                m.setDatasourceId(item.get("datasourceId") instanceof Number n ? n.longValue() : null);
-                m.setTableName(tbl);
-                m.setColumnName(col);
-                m.setAttributeName((String) item.get("attributeName"));
-                m.setMappingType(mappingType);
-                m.setComputedExpr(expr);
-                Object confidence = item.get("confidence");
-                m.setConfidence(confidence instanceof Number n ? BigDecimal.valueOf(n.doubleValue()) : BigDecimal.valueOf(0.8));
-                m.setIsAuto(true);
-                m.setIsRequired(item.get("isRequired") instanceof Boolean b ? b : false);
-                String key = m.getConceptId() + "-" + m.getTableName() + "-" + m.getColumnName() + "-" + m.getDatasourceId();
-                if (mappingKeys.add(key)) {
-                    allMappings.add(m);
-                } else {
-                    log.warn("[apply-auto-match] 跳过重复映射: conceptId={}, tableName={}, columnName={}, datasourceId={}", m.getConceptId(), m.getTableName(), m.getColumnName(), m.getDatasourceId());
-                }
-            }
-
-            if (allMappings.isEmpty() && allRawJoinMappings.isEmpty()) {
-                return Map.of("error", "没有可应用的映射");
-            }
-
-            List<Map<String, Object>> savedDetails = new ArrayList<>();
-            List<Map<String, Object>> skippedDetails = new ArrayList<>();
-
-            int createdMappings = 0;
-            int skippedMappings = 0;
-            if (!allMappings.isEmpty()) {
-                for (ConceptMapping m : allMappings) {
-                    try {
-                        mappingRepository.save(m);
-                        createdMappings++;
-                        savedDetails.add(Map.of(
-                                "conceptId", m.getConceptId() != null ? m.getConceptId() : 0,
-                                "tableName", m.getTableName() != null ? m.getTableName() : "",
-                                "columnName", m.getColumnName() != null ? m.getColumnName() : "",
-                                "mappingType", m.getMappingType() != null ? m.getMappingType() : "direct"
-                        ));
-                    } catch (Exception e) {
-                        log.warn("[apply-auto-match] 保存映射失败，跳过: conceptId={}, table={}, col={}, error={}",
-                                m.getConceptId(), m.getTableName(), m.getColumnName(), e.getMessage());
-                        skippedMappings++;
-                        skippedDetails.add(Map.of(
-                                "conceptId", m.getConceptId() != null ? m.getConceptId() : 0,
-                                "tableName", m.getTableName() != null ? m.getTableName() : "",
-                                "columnName", m.getColumnName() != null ? m.getColumnName() : "",
-                                "reason", e.getMessage() != null ? e.getMessage() : "保存失败"
-                        ));
-                    }
-                }
-            }
-
-            int createdJoins = 0;
-            int skippedJoins = 0;
-            if (!allRawJoinMappings.isEmpty()) {
-                List<ConceptJoinMapping> joinMappings = new ArrayList<>();
-                for (Map<String, Object> item : allRawJoinMappings) {
-                    Long cid = item.get("conceptId") instanceof Number n ? n.longValue() : null;
-                    Long dsid = item.get("datasourceId") instanceof Number n ? n.longValue() : null;
-                    String targetConcept = (String) item.get("targetConcept");
-                    String relationType = (String) item.getOrDefault("relationType", "JOIN");
-                    ConceptJoinMapping jm = new ConceptJoinMapping();
-                    jm.setConceptId(cid);
-                    jm.setDatasourceId(dsid);
-                    jm.setTargetConcept(targetConcept);
-                    jm.setRelationType(relationType);
-                    jm.setJoinTable((String) item.get("joinTable"));
-                    jm.setJoinCondition((String) item.get("joinCondition"));
-                    jm.setJoinType((String) item.getOrDefault("joinType", "LEFT"));
-                    joinMappings.add(jm);
-                }
-                for (ConceptJoinMapping jm : joinMappings) {
-                    try {
-                        joinMappingRepository.save(jm);
-                        createdJoins++;
-                        savedDetails.add(Map.of(
-                                "conceptId", jm.getConceptId() != null ? jm.getConceptId() : 0,
-                                "joinTable", jm.getJoinTable() != null ? jm.getJoinTable() : "",
-                                "joinType", jm.getJoinType() != null ? jm.getJoinType() : "LEFT",
-                                "mappingType", "join"
-                        ));
-                    } catch (Exception e) {
-                        log.warn("[apply-auto-match] 保存JOIN映射失败，跳过: conceptId={}, joinTable={}, error={}",
-                                jm.getConceptId(), jm.getJoinTable(), e.getMessage());
-                        skippedJoins++;
-                        skippedDetails.add(Map.of(
-                                "conceptId", jm.getConceptId() != null ? jm.getConceptId() : 0,
-                                "joinTable", jm.getJoinTable() != null ? jm.getJoinTable() : "",
-                                "reason", e.getMessage() != null ? e.getMessage() : "保存失败"
-                        ));
-                    }
-                }
-            }
-
-            return Map.of(
-                    "created", createdMappings,
-                    "skipped", skippedMappings,
-                    "createdJoins", createdJoins,
-                    "skippedJoins", skippedJoins,
-                    "savedDetails", savedDetails,
-                    "skippedDetails", skippedDetails,
-                    "message", "已应用 " + createdMappings + " 条映射、" + createdJoins + " 条 JOIN"
-                            + (skippedMappings > 0 ? "，跳过 " + skippedMappings + " 条映射" : "")
-                            + (skippedJoins > 0 ? "，跳过 " + skippedJoins + " 条 JOIN" : "")
-            );
+            return Map.of("error", "没有可应用的映射");
         } catch (Exception e) {
             log.error("[auto-match] 应用映射失败: {}", e.getMessage(), e);
             return Map.of("error", "应用映射失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 应用自动匹配结果。原子性与保护性要求：
+     * 1. 删除与重插必须在同一事务内（此前先删后逐条独立插入，中途失败会丢旧映射）；
+     * 2. 只删除 isAuto=true 的旧映射，人工确认过的映射一律保留；
+     * 3. LLM 自报置信度低于阈值（0.6）的候选不入库；
+     * 4. JOIN 映射按唯一约束键 (concept, target, relation, datasource) 做 upsert，不整表清空，
+     *    避免抹掉通过本体变更人工添加的 JOIN。
+     */
+    private Map<String, Object> applyInTransaction(List<Long> allConceptIds,
+            List<Map<String, Object>> allRawMappings, List<Map<String, Object>> allRawJoinMappings) {
+        List<ConceptMapping> existingMappings = mappingRepository.findByConceptIdIn(allConceptIds);
+        Set<String> manualKeys = existingMappings.stream()
+                .filter(m -> !Boolean.TRUE.equals(m.getIsAuto()))
+                .map(this::mappingKey).collect(Collectors.toSet());
+        List<ConceptMapping> autoToDelete = existingMappings.stream()
+                .filter(m -> Boolean.TRUE.equals(m.getIsAuto())).toList();
+        mappingRepository.deleteAll(autoToDelete);
+
+        final double MIN_APPLY_CONFIDENCE = 0.6;
+        List<ConceptMapping> allMappings = new ArrayList<>();
+        Set<String> mappingKeys = new HashSet<>();
+        int lowConfidenceSkipped = 0;
+        for (Map<String, Object> item : allRawMappings) {
+            String mappingType = (String) item.getOrDefault("mappingType", "direct");
+            String tbl = (String) item.get("tableName");
+            String col = (String) item.get("columnName");
+            String expr = (String) item.get("computedExpr");
+
+            if ("computed".equals(mappingType)) {
+                if (expr == null || expr.isBlank()) {
+                    log.warn("[apply-auto-match] 跳过 computed 映射: 缺少 computedExpr, conceptId={}", item.get("conceptId"));
+                    continue;
+                }
+                String attrName = (String) item.get("attributeName");
+                if (col == null || col.isBlank()) col = attrName != null ? attrName : "computed";
+                if (tbl == null || tbl.isBlank()) tbl = "COMPUTED";
+            } else {
+                if (tbl == null || col == null) {
+                    log.warn("[apply-auto-match] 跳过 direct 映射: 缺少 tableName 或 columnName, conceptId={}", item.get("conceptId"));
+                    continue;
+                }
+            }
+
+            double confidence = item.get("confidence") instanceof Number n ? n.doubleValue() : 0.8;
+            if (confidence < MIN_APPLY_CONFIDENCE) {
+                lowConfidenceSkipped++;
+                log.info("[apply-auto-match] 跳过低置信度映射: conceptId={}, {}.{}={}",
+                        item.get("conceptId"), tbl, col, confidence);
+                continue;
+            }
+
+            ConceptMapping m = new ConceptMapping();
+            m.setConceptId(item.get("conceptId") instanceof Number n ? n.longValue() : null);
+            m.setDatasourceId(item.get("datasourceId") instanceof Number n ? n.longValue() : null);
+            m.setTableName(tbl);
+            m.setColumnName(col);
+            m.setAttributeName((String) item.get("attributeName"));
+            m.setMappingType(mappingType);
+            m.setComputedExpr(expr);
+            m.setConfidence(BigDecimal.valueOf(confidence));
+            m.setIsAuto(true);
+            m.setIsRequired(item.get("isRequired") instanceof Boolean b ? b : false);
+            String key = mappingKey(m);
+            if (!mappingKeys.add(key)) {
+                log.warn("[apply-auto-match] 跳过重复映射: conceptId={}, tableName={}, columnName={}, datasourceId={}", m.getConceptId(), m.getTableName(), m.getColumnName(), m.getDatasourceId());
+                continue;
+            }
+            if (manualKeys.contains(key)) {
+                log.info("[apply-auto-match] 跳过与人工映射冲突的候选: conceptId={}, tableName={}, columnName={}, datasourceId={}",
+                        m.getConceptId(), m.getTableName(), m.getColumnName(), m.getDatasourceId());
+                continue;
+            }
+            allMappings.add(m);
+        }
+
+        List<Map<String, Object>> savedDetails = new ArrayList<>();
+        List<Map<String, Object>> skippedDetails = new ArrayList<>();
+
+        if (!allMappings.isEmpty()) {
+            // 预去重后统一保存；任何约束冲突都让整个事务回滚，避免半应用状态
+            mappingRepository.saveAll(allMappings);
+            for (ConceptMapping m : allMappings) {
+                savedDetails.add(Map.of(
+                        "conceptId", m.getConceptId() != null ? m.getConceptId() : 0,
+                        "tableName", m.getTableName() != null ? m.getTableName() : "",
+                        "columnName", m.getColumnName() != null ? m.getColumnName() : "",
+                        "mappingType", m.getMappingType() != null ? m.getMappingType() : "direct"
+                ));
+            }
+        }
+
+        int createdJoins = 0;
+        int skippedJoins = 0;
+        List<ConceptJoinMapping> existingJoins = joinMappingRepository.findByConceptIdIn(allConceptIds);
+        // upsert 键与 concept_join_mapping 的唯一约束 (concept, target, relation, datasource) 对齐，
+        // 保证同键候选更新旧行而不是触发约束冲突回滚整批
+        Map<String, ConceptJoinMapping> existingJoinByKey = new HashMap<>();
+        for (ConceptJoinMapping ej : existingJoins) {
+            existingJoinByKey.put(joinKey(ej), ej);
+        }
+        Set<String> appliedJoinKeys = new HashSet<>();
+        for (Map<String, Object> item : allRawJoinMappings) {
+            Long cid = item.get("conceptId") instanceof Number n ? n.longValue() : null;
+            Long dsid = item.get("datasourceId") instanceof Number n ? n.longValue() : null;
+            String targetConcept = (String) item.get("targetConcept");
+            String relationType = (String) item.getOrDefault("relationType", "JOIN");
+            String joinTable = (String) item.get("joinTable");
+            String joinCondition = (String) item.get("joinCondition");
+            if (cid == null || joinTable == null || joinCondition == null) {
+                skippedJoins++;
+                skippedDetails.add(Map.of(
+                        "conceptId", cid != null ? cid : 0,
+                        "joinTable", joinTable != null ? joinTable : "",
+                        "reason", "缺少 conceptId/joinTable/joinCondition"
+                ));
+                continue;
+            }
+            String key = joinKey(cid, dsid, targetConcept, relationType);
+            if (!appliedJoinKeys.add(key)) {
+                skippedJoins++;
+                continue;
+            }
+            ConceptJoinMapping jm = existingJoinByKey.get(key);
+            if (jm == null) {
+                jm = new ConceptJoinMapping();
+                jm.setConceptId(cid);
+                jm.setDatasourceId(dsid);
+                jm.setTargetConcept(targetConcept);
+                jm.setRelationType(relationType);
+                jm.setJoinTable(joinTable);
+                jm.setJoinCondition(joinCondition);
+            } else {
+                jm.setJoinTable(joinTable);
+                jm.setJoinCondition(joinCondition);
+            }
+            jm.setJoinType((String) item.getOrDefault("joinType", "LEFT"));
+            joinMappingRepository.save(jm);
+            createdJoins++;
+            savedDetails.add(Map.of(
+                    "conceptId", cid,
+                    "joinTable", joinTable,
+                    "joinType", jm.getJoinType() != null ? jm.getJoinType() : "LEFT",
+                    "mappingType", "join"
+            ));
+        }
+
+        int createdMappings = allMappings.size();
+        return Map.of(
+                "created", createdMappings,
+                "skipped", lowConfidenceSkipped,
+                "createdJoins", createdJoins,
+                "skippedJoins", skippedJoins,
+                "savedDetails", savedDetails,
+                "skippedDetails", skippedDetails,
+                "message", "已应用 " + createdMappings + " 条映射、" + createdJoins + " 条 JOIN"
+                        + (lowConfidenceSkipped > 0 ? "，跳过低置信度 " + lowConfidenceSkipped + " 条映射" : "")
+                        + (skippedJoins > 0 ? "，跳过 " + skippedJoins + " 条 JOIN" : "")
+        );
+    }
+
+    private String mappingKey(ConceptMapping m) {
+        return m.getConceptId() + "-" + m.getTableName() + "-" + m.getColumnName() + "-" + m.getDatasourceId();
+    }
+
+    private String joinKey(ConceptJoinMapping j) {
+        return joinKey(j.getConceptId(), j.getDatasourceId(), j.getTargetConcept(), j.getRelationType());
+    }
+
+    private String joinKey(Long conceptId, Long datasourceId, String targetConcept, String relationType) {
+        return conceptId + "-" + datasourceId + "-" + targetConcept + "-" + relationType;
     }
 
     @SuppressWarnings("unchecked")

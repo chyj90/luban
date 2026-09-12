@@ -7,6 +7,7 @@ import java.util.List;
 public interface RoleConceptPermissionRepository extends JpaRepository<RoleConceptPermission, Long> {
     List<RoleConceptPermission> findByRoleId(Long roleId);
     List<RoleConceptPermission> findByGroupId(Long groupId);
+    List<RoleConceptPermission> findByRoleIdIn(List<Long> roleIds);
     boolean existsByRoleIdAndGroupId(Long roleId, Long groupId);
     void deleteByRoleId(Long roleId);
     boolean existsByRoleIdInAndGroupId(List<Long> roleIds, Long groupId);

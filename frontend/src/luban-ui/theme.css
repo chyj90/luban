@@ -103,3 +103,483 @@ a {
 a:hover {
   color: var(--luban-primary-hover);
 }
+
+/* ============================================
+   深色主题 — data-theme="dark"
+   用于监控大屏等深色场景
+   使用方式：
+   1. html 标签上加 data-theme="dark" 全局切换
+   2. 页面容器上加 data-theme="dark" 局部切换
+   3. LubanUI.setTheme('dark') 动态切换
+   ============================================ */
+[data-theme="dark"] {
+  --luban-primary: #4dabf7;
+  --luban-primary-hover: #74c0fc;
+  --luban-primary-active: #339af0;
+  --luban-primary-light: rgba(77, 171, 247, 0.15);
+  --luban-primary-bg: rgba(77, 171, 247, 0.12);
+
+  --luban-text: #e2e8f0;
+  --luban-text-secondary: #94a3b8;
+  --luban-text-muted: #64748b;
+  --luban-text-placeholder: #475569;
+
+  --luban-bg: #0f172a;
+  --luban-bg-card: #1e293b;
+  --luban-bg-hover: rgba(255, 255, 255, 0.05);
+  --luban-bg-header: #1e293b;
+
+  --luban-border: #334155;
+  --luban-border-light: #1e293b;
+
+  --luban-success: #4ade80;
+  --luban-success-bg: rgba(74, 222, 128, 0.1);
+  --luban-warning: #fbbf24;
+  --luban-warning-bg: rgba(251, 191, 36, 0.1);
+  --luban-danger: #f87171;
+  --luban-danger-bg: rgba(248, 113, 113, 0.1);
+  --luban-info: #4dabf7;
+  --luban-info-bg: rgba(77, 171, 247, 0.1);
+
+  --luban-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --luban-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --luban-shadow: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --luban-shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] body {
+  background: var(--luban-bg);
+  color: var(--luban-text);
+}
+
+[data-theme="dark"] .luban-table {
+  background: var(--luban-bg-card);
+}
+
+[data-theme="dark"] .luban-table th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--luban-text-muted);
+}
+
+[data-theme="dark"] .luban-table td {
+  border-bottom-color: var(--luban-border);
+}
+
+[data-theme="dark"] .luban-table tr:hover td {
+  background: var(--luban-bg-hover);
+}
+
+[data-theme="dark"] .luban-input,
+[data-theme="dark"] .luban-textarea,
+[data-theme="dark"] .luban-select,
+[data-theme="dark"] .luban-datepicker,
+[data-theme="dark"] .luban-input-number {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-border);
+  color: var(--luban-text);
+}
+
+[data-theme="dark"] .luban-input::placeholder,
+[data-theme="dark"] .luban-textarea::placeholder {
+  color: var(--luban-text-placeholder);
+}
+
+[data-theme="dark"] .luban-input:focus,
+[data-theme="dark"] .luban-textarea:focus,
+[data-theme="dark"] .luban-select:focus {
+  border-color: var(--luban-primary);
+  box-shadow: 0 0 0 2px var(--luban-primary-light);
+}
+
+[data-theme="dark"] .luban-card {
+  background: var(--luban-bg-card);
+}
+
+[data-theme="dark"] .luban-modal-overlay {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="dark"] .luban-modal {
+  background: var(--luban-bg-card);
+}
+
+[data-theme="dark"] .luban-tabs-nav {
+  border-bottom-color: var(--luban-border);
+}
+
+[data-theme="dark"] .luban-tab-item {
+  color: var(--luban-text-muted);
+}
+
+[data-theme="dark"] .luban-tab-item.active {
+  color: var(--luban-primary);
+}
+
+[data-theme="dark"] .luban-pagination button {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-border);
+  color: var(--luban-text);
+}
+
+[data-theme="dark"] .luban-page-header-title {
+  color: var(--luban-text);
+}
+
+[data-theme="dark"] .luban-filter-bar {
+  background: var(--luban-bg-card);
+  border-color: var(--luban-border);
+}
+
+[data-theme="dark"] .luban-toast {
+  background: var(--luban-bg-card);
+  color: var(--luban-text);
+  box-shadow: var(--luban-shadow-lg);
+}
+
+/* 深色大屏专用：全屏无留白背景 */
+[data-theme="dark"].luban-screen {
+  min-height: 100vh;
+  padding: 20px 24px;
+}
+
+/* 深色大屏网格背景纹理 */
+[data-theme="dark"].luban-screen-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(77, 171, 247, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(77, 171, 247, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================
+   视觉特效预设 — 大屏高端效果
+   全部可选，Agent 按需加 class 即可
+   ============================================ */
+
+/* —— 霓虹光晕卡片 glow-card —— */
+.luban-glow-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--luban-radius-lg);
+  background: var(--luban-bg-card);
+  box-shadow: var(--luban-shadow);
+  transition: box-shadow 0.3s ease;
+}
+.luban-glow-card::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg,
+    rgba(77, 171, 247, 0.4),
+    rgba(139, 92, 246, 0.4),
+    rgba(77, 171, 247, 0.15),
+    rgba(139, 92, 246, 0.4));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+.luban-glow-card:hover {
+  box-shadow:
+    0 0 20px rgba(77, 171, 247, 0.15),
+    0 0 40px rgba(139, 92, 246, 0.1),
+    0 8px 32px rgba(0, 0, 0, 0.12);
+}
+[data-theme="dark"] .luban-glow-card::before {
+  background: linear-gradient(135deg,
+    rgba(77, 171, 247, 0.5),
+    rgba(139, 92, 246, 0.5),
+    rgba(77, 171, 247, 0.2),
+    rgba(139, 92, 246, 0.5));
+}
+[data-theme="dark"] .luban-glow-card:hover {
+  box-shadow:
+    0 0 30px rgba(77, 171, 247, 0.25),
+    0 0 60px rgba(139, 92, 246, 0.15),
+    0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* —— 毛玻璃卡片 glass-card —— */
+.luban-glass-card {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--luban-radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+}
+[data-theme="dark"] .luban-glass-card {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* —— 流动边框 animated-border —— */
+.luban-border-flow {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--luban-radius-lg);
+}
+.luban-border-flow::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(
+    transparent,
+    rgba(77, 171, 247, 0.4),
+    transparent,
+    rgba(139, 92, 246, 0.4),
+    transparent
+  );
+  animation: luban-border-spin 4s linear infinite;
+  z-index: 0;
+  pointer-events: none;
+}
+.luban-border-flow::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: calc(var(--luban-radius-lg) - 2px);
+  background: var(--luban-bg-card);
+  z-index: 1;
+  pointer-events: none;
+}
+.luban-border-flow > * {
+  position: relative;
+  z-index: 2;
+}
+
+@keyframes luban-border-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* —— 数字滚动容器 count-up —— */
+.luban-count-up {
+  font-family: 'DIN', 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-weight: 700;
+  font-size: 36px;
+  line-height: 1.2;
+  color: var(--luban-primary);
+  transition: color 0.3s ease;
+}
+[data-theme="dark"] .luban-count-up {
+  color: #4dabf7;
+}
+
+/* —— 发光文字 glow-text —— */
+.luban-glow-text {
+  color: var(--luban-primary);
+  text-shadow: 0 0 10px rgba(77, 171, 247, 0.4), 0 0 30px rgba(77, 171, 247, 0.15);
+}
+[data-theme="dark"] .luban-glow-text {
+  text-shadow:
+    0 0 10px rgba(77, 171, 247, 0.5),
+    0 0 30px rgba(77, 171, 247, 0.2),
+    0 0 60px rgba(77, 171, 247, 0.1);
+}
+
+/* —— 脉冲指示点 pulse-dot —— */
+.luban-pulse-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--luban-success);
+  position: relative;
+}
+.luban-pulse-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: inherit;
+  opacity: 0.4;
+  animation: luban-pulse 2s ease-in-out infinite;
+}
+.luban-pulse-dot.warning { background: var(--luban-warning); }
+.luban-pulse-dot.warning::after { background: var(--luban-warning); }
+.luban-pulse-dot.danger { background: var(--luban-danger); }
+.luban-pulse-dot.danger::after { background: var(--luban-danger); }
+
+@keyframes luban-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(2.5); opacity: 0; }
+}
+
+/* —— 图表容器标题装饰条 —— */
+.luban-chart-title::before {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 16px;
+  background: linear-gradient(180deg, var(--luban-primary), rgba(77, 171, 247, 0.3));
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  margin-top: -2px;
+}
+.luban-chart-title.glow::before {
+  box-shadow: 0 0 8px rgba(77, 171, 247, 0.5);
+}
+
+/* ============================================
+   大屏装饰素材 — 纯 CSS，无需图片/CDN
+   运营商大屏常用：科技角标、网格背景、环形装饰、流动光线
+   ============================================ */
+
+/* —— 科技角标（四角 bracket） —— */
+.luban-corner-tech {
+  position: relative;
+}
+.luban-corner-tech::before,
+.luban-corner-tech::after {
+  content: '';
+  position: absolute;
+  width: 24px; height: 24px;
+  border-color: var(--luban-primary);
+  border-style: solid;
+  pointer-events: none;
+  z-index: 1;
+}
+.luban-corner-tech::before  { top: 0;   left: 0;   border-width: 2px 0 0 2px; border-radius: 2px 0 0 0; }
+.luban-corner-tech::after   { top: 0;   right: 0;  border-width: 2px 2px 0 0; border-radius: 0 2px 0 0; }
+
+/* 四角全包 variant */
+.luban-corner-tech-full {
+  position: relative;
+}
+.luban-corner-tech-full::before,
+.luban-corner-tech-full::after {
+  content: '';
+  position: absolute;
+  width: 36px; height: 36px;
+  pointer-events: none;
+}
+.luban-corner-tech-full::before { top: -1px; left: -1px; border-top: 2px solid var(--luban-primary); border-left: 2px solid var(--luban-primary); }
+.luban-corner-tech-full::after  { top: -1px; right: -1px; border-top: 2px solid var(--luban-primary); border-right: 2px solid var(--luban-primary); }
+
+/* —— 圆点网格背景 —— */
+.luban-bg-dots {
+  background-image: radial-gradient(circle, var(--luban-primary-light) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* —— 六边形网格背景（科技感） —— */
+.luban-bg-hex {
+  background-image:
+    linear-gradient(60deg,  var(--luban-border-light) 1px, transparent 1px),
+    linear-gradient(-60deg, var(--luban-border-light) 1px, transparent 1px),
+    linear-gradient(0deg,    transparent 23px, var(--luban-border) 24px);
+  background-size: 40px 70px, 40px 70px, 100% 24px;
+}
+[data-theme="dark"] .luban-bg-hex {
+  background-image:
+    linear-gradient(60deg,  rgba(77,171,247,0.08) 1px, transparent 1px),
+    linear-gradient(-60deg, rgba(77,171,247,0.08) 1px, transparent 1px),
+    linear-gradient(0deg,    transparent 23px, rgba(77,171,247,0.06) 24px);
+}
+
+/* —— 斜线科技纹理（电路板风格） —— */
+.luban-bg-circuit {
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 2px, var(--luban-border-light) 2px, var(--luban-border-light) 3px),
+    repeating-linear-gradient(90deg, transparent, transparent 60px, var(--luban-border-light) 60px, var(--luban-border-light) 61px);
+}
+[data-theme="dark"] .luban-bg-circuit {
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(77,171,247,0.05) 2px, rgba(77,171,247,0.05) 3px),
+    repeating-linear-gradient(90deg, transparent, transparent 60px, rgba(77,171,247,0.06) 60px, rgba(77,171,247,0.06) 61px);
+}
+
+/* —— 大屏整体背景（深色科技风） —— */
+.luban-screen-bg {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(77,171,247,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(139,92,246,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(59,201,219,0.04) 0%, transparent 50%),
+    var(--luban-bg);
+}
+[data-theme="dark"] .luban-screen-bg {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(0,212,255,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(123,97,255,0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 80%, rgba(0,230,118,0.03) 0%, transparent 50%),
+    #0a0f1e;
+}
+
+/* —— 标题下方发光分隔线 —— */
+.luban-divider-glow {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--luban-primary), transparent);
+  margin: 12px 0 16px 0;
+}
+.luban-divider-glow.thick {
+  height: 2px;
+}
+
+/* —— 数据流动线条（大屏底部或侧边装饰） —— */
+.luban-data-flow {
+  position: relative;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--luban-primary), transparent);
+  overflow: hidden;
+}
+.luban-data-flow::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 30%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+  animation: luban-flow-slide 2s ease-in-out infinite;
+}
+@keyframes luban-flow-slide {
+  0%   { left: -30%; }
+  100% { left: 130%; }
+}
+
+/* —— 旋转科技光环（装饰用圆环） —— */
+.luban-ring {
+  position: absolute;
+  border: 1px solid var(--luban-border);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.luban-ring.glow {
+  border-color: rgba(77,171,247,0.2);
+  box-shadow: 0 0 20px rgba(77,171,247,0.1), inset 0 0 20px rgba(77,171,247,0.05);
+}
+.luban-ring.spin {
+  animation: luban-ring-spin 20s linear infinite;
+}
+.luban-ring.spin-reverse {
+  animation: luban-ring-spin-reverse 25s linear infinite;
+}
+@keyframes luban-ring-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes luban-ring-spin-reverse {
+  from { transform: rotate(360deg); }
+  to   { transform: rotate(0deg); }
+}
+
+/* —— 科技感装饰点阵 —— */
+.luban-dot-matrix {
+  width: 100%;
+  height: 4px;
+  background-image: radial-gradient(circle, var(--luban-primary) 1.5px, transparent 1.5px);
+  background-size: 12px 4px;
+  background-repeat: repeat-x;
+}

@@ -7,7 +7,7 @@ import type { Application } from '@/types/application';
 import type { Page, CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
-import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE } from '@/luban-ui';
+import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE } from '@/luban-ui';
 import './AppUserPage.css';
 
 interface AppUserPageProps {
@@ -118,6 +118,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
   <div id="__app_root__"></div>
   <script id="__luban_ui_js__">${LUBAN_UI_JS}</script>
   <script id="__echarts__">${ECHARTS_SOURCE}</script>
+  <script id="__echarts_gl__">${ECHARTS_GL_SOURCE}</script>
   <script>
     let __page_ready__ = false;
     window.addEventListener('message', function(e) {

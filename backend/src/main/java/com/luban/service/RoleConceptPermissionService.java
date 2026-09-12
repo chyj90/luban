@@ -76,6 +76,12 @@ public class RoleConceptPermissionService {
         log.info("batchCheckQueryPermission: userId={}, roleIds={}, conceptCount={}",
                 userId, roleIds, concepts.size());
 
+        // 一次性加载该用户全部角色的域授权集合，消除逐概念 exists 查询的 N+1
+        Set<Long> authorizedGroupIds = roleIds.isEmpty() ? Set.of()
+                : permissionRepository.findByRoleIdIn(roleIds).stream()
+                        .map(RoleConceptPermission::getGroupId)
+                        .collect(Collectors.toSet());
+
         Map<Long, Boolean> result = new HashMap<>();
         for (Concept concept : concepts) {
             Long groupId = concept.getGroupId();
@@ -86,10 +92,7 @@ public class RoleConceptPermissionService {
                         concept.getName(), concept.getId(), groupId);
                 result.put(concept.getId(), false);
             } else {
-                boolean hasPerm = permissionRepository.existsByRoleIdInAndGroupId(roleIds, groupId);
-                log.info("batchCheckQueryPermission: concept={}(id={}) groupId={} roleIds={} hasPerm={}",
-                        concept.getName(), concept.getId(), groupId, roleIds, hasPerm);
-                result.put(concept.getId(), hasPerm);
+                result.put(concept.getId(), authorizedGroupIds.contains(groupId));
             }
         }
         return result;

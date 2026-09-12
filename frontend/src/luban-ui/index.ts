@@ -18,6 +18,8 @@ import paginationCSS from './components/pagination.css?raw';
 import tabsCSS from './components/tabs.css?raw';
 import badgeCSS from './components/badge.css?raw';
 import chartCSS from './components/chart.css?raw';
+import topologyCSS from './components/topology.css?raw';
+import mapCSS from './components/map.css?raw';
 import filterBarCSS from './components/filter-bar.css?raw';
 import toastCSS from './components/toast.css?raw';
 import emptyCSS from './components/empty.css?raw';
@@ -33,6 +35,7 @@ import pageHeaderJS from './components/page-header.js?raw';
 import lubanUIJS from './LubanUI.js?raw';
 
 import echartsSource from 'echarts/dist/echarts.min.js?raw';
+import echartsGLSource from 'echarts-gl/dist/echarts-gl.min.js?raw';
 
 export const LUBAN_UI_CSS = [
   themeCSS,
@@ -54,6 +57,8 @@ export const LUBAN_UI_CSS = [
   tabsCSS,
   badgeCSS,
   chartCSS,
+  topologyCSS,
+  mapCSS,
   filterBarCSS,
   toastCSS,
   emptyCSS,
@@ -72,3 +77,4 @@ export const LUBAN_UI_JS = [
 ].join('\n');
 
 export const ECHARTS_SOURCE = echartsSource;
+export const ECHARTS_GL_SOURCE = echartsGLSource;

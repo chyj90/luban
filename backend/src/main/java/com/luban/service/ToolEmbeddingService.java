@@ -101,7 +101,10 @@ public class ToolEmbeddingService {
     }
 
     public List<ToolDefinition> search(Long groupId, String query, int topK) {
-        List<ToolDefinition> tools = toolDefinitionRepository.findByGroupIdAndScope(groupId, "PLATFORM");
+        // groupId 为 null 表示不限定域，检索全部平台级工具（此前 null 走等值查询导致该链路恒为空）
+        List<ToolDefinition> tools = groupId != null
+                ? toolDefinitionRepository.findByGroupIdAndScope(groupId, "PLATFORM")
+                : toolDefinitionRepository.findByScope("PLATFORM");
         if (tools.isEmpty()) {
             return Collections.emptyList();
         }

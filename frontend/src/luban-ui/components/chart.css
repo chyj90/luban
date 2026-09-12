@@ -27,3 +27,73 @@
   border-radius: var(--luban-radius-md);
   padding: 20px;
 }
+
+/* 3D 图表容器（需要更高空间） */
+.luban-chart-3d {
+  min-height: 360px;
+}
+
+.luban-chart-3d .luban-chart {
+  min-height: 340px;
+}
+
+/* 图表风格变体 — style 参数预设 */
+/* style: 'gradient' — 渐变色图表 */
+.luban-chart-style-gradient .luban-chart-item {
+  border: none;
+  box-shadow: var(--luban-shadow);
+}
+
+/* style: 'card' — 卡片风格（大屏常用） */
+.luban-chart-style-card .luban-chart-item {
+  border: none;
+  box-shadow: var(--luban-shadow);
+  border-radius: var(--luban-radius-lg);
+}
+
+[data-theme="dark"] .luban-chart-style-card .luban-chart-item {
+  background: linear-gradient(135deg, rgba(30,41,59,0.9) 0%, rgba(30,41,59,0.6) 100%);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* style: 'glow' — 发光边框（大屏炫酷风格） */
+.luban-chart-style-glow .luban-chart-item {
+  border: 1px solid rgba(77, 171, 247, 0.3);
+  box-shadow: 0 0 20px rgba(77, 171, 247, 0.08), var(--luban-shadow);
+  border-radius: var(--luban-radius-lg);
+}
+
+[data-theme="dark"] .luban-chart-style-glow .luban-chart-item {
+  border: 1px solid rgba(77, 171, 247, 0.2);
+  box-shadow: 0 0 30px rgba(77, 171, 247, 0.1), 0 4px 12px rgba(0,0,0,0.4);
+}
+
+/* 大屏图表网格 — 2x2 或 3x2 布局 */
+.luban-chart-screen-grid {
+  display: grid;
+  gap: var(--luban-space-md);
+}
+
+.luban-chart-screen-grid-2x2 {
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+}
+
+.luban-chart-screen-grid-3x2 {
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(2, 1fr);
+}
+
+@media (max-width: 1200px) {
+  .luban-chart-screen-grid-3x2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .luban-chart-screen-grid-2x2,
+  .luban-chart-screen-grid-3x2 {
+    grid-template-columns: 1fr;
+  }
+}

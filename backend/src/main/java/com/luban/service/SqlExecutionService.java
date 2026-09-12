@@ -28,28 +28,45 @@ public class SqlExecutionService {
     private final SqlSecurityValidator sqlSecurityValidator;
     private final DatasourceService datasourceService;
     private final DatasourceRepository datasourceRepository;
+    private final RoleConceptPermissionService roleConceptPermissionService;
 
     private static final int MAX_RESULT_ROWS = 200;
     private static final Logger sqlDebug = LoggerFactory.getLogger("sql-debug");
     private static final int MAX_STRING_LENGTH = 500;
+
+    /** 标识符（表名/列名）白名单字符集，用于 value_origins 溯源查询的拼接防注入 */
+    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("^[A-Za-z_][A-Za-z0-9_$]*$");
 
     public Map<String, Object> execute(String sql, List<Long> conceptIds, Long userId,
             Map<String, Map<String, Object>> valueOrigins, AgentStateData state) {
         long t0 = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
 
+        // 先解析数据源，安全校验需要按数据源类型与状态判定
+        List<ConceptMapping> mappings = conceptMappingRepository.findByConceptIdIn(conceptIds);
+        List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptIdIn(conceptIds);
+        Long datasourceId = resolveDatasourceId(mappings, joins, conceptIds);
+
+        String permError = checkConceptPermission(userId, conceptIds);
+        if (permError != null) {
+            result.put("error", permError);
+            result.put("rows", 0);
+            return result;
+        }
+
+        // 校验参数是 datasourceId（此前误传 userId，导致按数据源类型的规则随机失效）
         try {
-            sqlSecurityValidator.validate(sql, userId);
+            var validation = sqlSecurityValidator.validate(sql, datasourceId);
+            if (!validation.isValid()) {
+                result.put("error", "SQL 安全校验失败: " + String.join("; ", validation.getErrors()));
+                result.put("rows", 0);
+                return result;
+            }
         } catch (Exception e) {
             result.put("error", "SQL 安全校验失败: " + e.getMessage());
             result.put("rows", 0);
             return result;
         }
-
-        List<ConceptMapping> mappings = conceptMappingRepository.findByConceptIdIn(conceptIds);
-        List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptIdIn(conceptIds);
-
-        Long datasourceId = resolveDatasourceId(mappings, joins, conceptIds);
 
         String error = validateStringEqualityFilters(sql, valueOrigins, mappings, joins, datasourceId);
         if (error != null) {
@@ -62,50 +79,7 @@ public class SqlExecutionService {
              Statement stmt = conn.createStatement()) {
             stmt.setQueryTimeout(30);
 
-            sqlDebug.info("========== SQL DEBUG START ==========");
-            sqlDebug.info("FULL SQL: {}", sql);
-            sqlDebug.info("datasourceId: {}, conceptIds: {}", datasourceId, conceptIds);
-
-            try (Statement diagStmt = conn.createStatement()) {
-                diagStmt.setQueryTimeout(10);
-                try (ResultSet rs = diagStmt.executeQuery("SELECT DATABASE() AS db")) {
-                    if (rs.next()) sqlDebug.info("CURRENT DATABASE: {}", rs.getString("db"));
-                }
-                try (ResultSet rs = diagStmt.executeQuery("SELECT COUNT(*) AS cnt FROM dedicated_lines")) {
-                    if (rs.next()) sqlDebug.info("dedicated_lines COUNT: {}", rs.getInt("cnt"));
-                }
-                try (ResultSet rs = diagStmt.executeQuery("SELECT * FROM dedicated_lines")) {
-                    int diagRow = 0;
-                    while (rs.next()) {
-                        diagRow++;
-                        ResultSetMetaData m = rs.getMetaData();
-                        StringBuilder sb = new StringBuilder();
-                        for (int i = 1; i <= m.getColumnCount(); i++) {
-                            if (i > 1) sb.append(" | ");
-                            sb.append(m.getColumnName(i)).append("=").append(rs.getString(i));
-                        }
-                        sqlDebug.info("dedicated_lines row#{}: {}", diagRow, sb);
-                    }
-                }
-                try (ResultSet rs = diagStmt.executeQuery("SELECT COUNT(*) AS cnt FROM stations")) {
-                    if (rs.next()) sqlDebug.info("stations COUNT: {}", rs.getInt("cnt"));
-                }
-                try (ResultSet rs = diagStmt.executeQuery("SELECT * FROM stations")) {
-                    int diagRow = 0;
-                    while (rs.next()) {
-                        diagRow++;
-                        ResultSetMetaData m = rs.getMetaData();
-                        StringBuilder sb = new StringBuilder();
-                        for (int i = 1; i <= m.getColumnCount(); i++) {
-                            if (i > 1) sb.append(" | ");
-                            sb.append(m.getColumnName(i)).append("=").append(rs.getString(i));
-                        }
-                        sqlDebug.info("stations row#{}: {}", diagRow, sb);
-                    }
-                }
-            } catch (SQLException diagErr) {
-                sqlDebug.info("DIAG QUERY FAILED: {}", diagErr.getMessage());
-            }
+            sqlDebug.info("SQL EXEC: datasourceId={}, conceptIds={}, sql={}", datasourceId, conceptIds, sql);
 
             try (ResultSet rs = stmt.executeQuery(sql)) {
                 ResultSetMetaData meta = rs.getMetaData();
@@ -129,15 +103,10 @@ public class SqlExecutionService {
                 result.put("rowCount", rowCount);
                 result.put("truncated", rowCount >= MAX_RESULT_ROWS);
 
-                sqlDebug.info("MAIN QUERY RESULT: columns={}, rowCount={}", columns, rowCount);
-                if (rowCount > 0 && !rows.isEmpty()) {
-                    sqlDebug.info("FIRST ROW: {}", rows.get(0));
-                }
-                sqlDebug.info("========== SQL DEBUG END ==========");
+                sqlDebug.info("SQL RESULT: rowCount={}, truncated={}", rowCount, rowCount >= MAX_RESULT_ROWS);
             }
         } catch (SQLException e) {
-            sqlDebug.info("MAIN QUERY ERROR: {}", e.getMessage());
-            sqlDebug.info("========== SQL DEBUG END ==========");
+            sqlDebug.info("SQL ERROR: {}", e.getMessage());
             result.put("error", "SQL 执行失败: " + e.getMessage());
             result.put("rows", 0);
         }
@@ -154,17 +123,16 @@ public class SqlExecutionService {
             List<ConceptMapping> mappings, List<ConceptJoinMapping> joins, Long datasourceId) {
         if (sql == null) return null;
 
-        Pattern pattern = Pattern.compile("(?i)\\b(\\w+)\\s*(!?=)\\s*'([^']+)'");
-        Matcher matcher = pattern.matcher(sql);
+        // AST 提取字符串等值与 IN 右值（原正则会漏掉 IN 列表和 ON 条件里的值）
+        SqlStructureAnalyzer.Analysis analysis = SqlStructureAnalyzer.analyze(sql);
+        if (analysis == null) return null;
+
         boolean hasStringFilter = false;
         List<String[]> filters = new ArrayList<>();
-
-        while (matcher.find()) {
-            String column = matcher.group(1);
-            String value = matcher.group(3);
-            if (value.matches("\\d+")) continue;
+        for (SqlStructureAnalyzer.StringFilter f : analysis.stringFilters()) {
+            if (f.value().matches("\\d+")) continue;
             hasStringFilter = true;
-            filters.add(new String[]{column, value});
+            filters.add(new String[]{f.qualifiedRef(), f.value()});
         }
 
         if (!hasStringFilter) return null;
@@ -211,7 +179,35 @@ public class SqlExecutionService {
         return null;
     }
 
+    /**
+     * 执行期概念权限硬校验。语义与 ContextBuilder 一致（无分组/未配置的域放行，
+     * 显式无权限拒绝），但校验异常时 fail-closed 拒绝执行，而不是像 prompt 层那样放行。
+     * 返回的错误信息以"未授权"开头，AgentService 据此跳过 SQL 重试、直接引导用户申请权限。
+     */
+    private String checkConceptPermission(Long userId, List<Long> conceptIds) {
+        if (userId == null || conceptIds == null || conceptIds.isEmpty()) return null;
+        try {
+            Map<Long, Boolean> perms = roleConceptPermissionService.batchCheckQueryPermission(userId, conceptIds);
+            List<Long> denied = conceptIds.stream()
+                    .filter(id -> !perms.getOrDefault(id, false))
+                    .toList();
+            if (!denied.isEmpty()) {
+                log.warn("SQL execution denied: userId={}, unauthorizedConceptIds={}", userId, denied);
+                return "未授权: 概念 " + denied + " 不在当前用户的可查询域内，请申请对应域的概念查询权限后再试";
+            }
+        } catch (Exception e) {
+            log.warn("Concept permission check failed, rejecting execution: userId={}, error={}", userId, e.getMessage());
+            return "未授权: 概念权限校验服务异常，为安全起见本次查询已拒绝，请稍后重试或联系管理员";
+        }
+        return null;
+    }
+
     private boolean verifyValueExists(String table, String column, String value, String originalSql, Long datasourceId) {
+        // 表名/列名来自 LLM 声明，先过标识符白名单再拼接，防止标识符注入
+        if (!isSafeQualifiedName(table) || !isSafeIdentifier(column)) {
+            log.warn("Right-value verification rejected unsafe identifier: table={}, column={}", table, column);
+            return false;
+        }
         try (Connection conn = getConnection(datasourceId);
              Statement stmt = conn.createStatement()) {
             stmt.setQueryTimeout(10);
@@ -220,9 +216,23 @@ public class SqlExecutionService {
                 return rs.next();
             }
         } catch (SQLException e) {
+            // 校验失败按"值不存在"处理（fail-closed），原实现放行会导致溯源校验形同虚设
             log.warn("Right-value verification failed for {}.{}='{}': {}", table, column, value, e.getMessage());
-            return true;
+            return false;
         }
+    }
+
+    /** 支持 schema.table 形式，每段都必须是安全标识符 */
+    private boolean isSafeQualifiedName(String name) {
+        if (name == null || name.isBlank()) return false;
+        for (String part : name.split("\\.")) {
+            if (!SAFE_IDENTIFIER.matcher(part).matches()) return false;
+        }
+        return true;
+    }
+
+    private boolean isSafeIdentifier(String name) {
+        return name != null && SAFE_IDENTIFIER.matcher(name).matches();
     }
 
     private Long resolveDatasourceId(List<ConceptMapping> mappings, List<ConceptJoinMapping> joins, List<Long> conceptIds) {

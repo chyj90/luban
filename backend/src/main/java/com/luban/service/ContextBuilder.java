@@ -71,18 +71,20 @@ public class ContextBuilder {
                 faissResults.stream().map(r -> r.get("conceptId") + "(" + r.get("confidence") + ")")
                         .collect(Collectors.joining(", ")));
 
-        Set<Long> authorizedConceptIds = new HashSet<>(matchedConceptIds);
+        Set<Long> checkedConceptIds = new HashSet<>(matchedConceptIds);
         if (userId != null && !matchedConceptIds.isEmpty()) {
             try {
                 Map<Long, Boolean> perms = roleConceptPermissionService.batchCheckQueryPermission(
                         userId, new ArrayList<>(matchedConceptIds));
-                authorizedConceptIds = matchedConceptIds.stream()
+                checkedConceptIds = matchedConceptIds.stream()
                         .filter(id -> perms.getOrDefault(id, true))
                         .collect(Collectors.toSet());
             } catch (Exception e) {
                 log.warn("ContextBuilder FAISS: failed to check permissions: {}", e.getMessage());
             }
         }
+        // 后续权限过滤 lambda 需要捕获，保持 effectively final
+        final Set<Long> authorizedConceptIds = checkedConceptIds;
 
         Map<String, Object> reuseContext = analyzeMultiTurnReuse(messages, matchedConceptIds);
         if (!reuseContext.isEmpty()) {
@@ -254,6 +256,21 @@ public class ContextBuilder {
             if (!dims.isEmpty()) correlatedDimensions.put(cid, dims);
         }
 
+        // 权限过滤（prompt 侧不再展示未授权表结构）：权限校验已执行时（userId 非空且有召回命中），
+        // 未授权概念的映射/JOIN/下钻/关联/计算关系一律不进入 prompt 与 SQL 校验白名单，
+        // 防止 🔒 展示 + 执行期校验缺失导致的旁路。authorizedConceptIds 为空集表示全部命中被拒。
+        boolean permissionApplied = userId != null && !matchedConceptIds.isEmpty();
+        if (permissionApplied) {
+            tableMappings.removeIf(m -> !authorizedConceptIds.contains(m.getConceptId()));
+            joinMappings.removeIf(j -> !authorizedConceptIds.contains(j.getConceptId()));
+            drillDimensions.values().forEach(list ->
+                    list.removeIf(d -> !authorizedConceptIds.contains(d.get("conceptId"))));
+            correlatedDimensions.values().forEach(list ->
+                    list.removeIf(d -> !authorizedConceptIds.contains(d.get("conceptId"))));
+            ontologyRelations.values().forEach(list ->
+                    list.removeIf(r -> !authorizedConceptIds.contains(r.get("conceptId"))));
+        }
+
         List<Map<String, Object>> availableDatasources = datasourceService.getAvailableDatasources();
         String availableRelations = buildAvailableRelationsPrompt(conceptTrace);
         boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
@@ -261,7 +278,7 @@ public class ContextBuilder {
                 tableMappings, joinMappings, authorizedConceptIds, groupNameMap,
                 drillDimensions, correlatedDimensions, ontologyRelations,
                 messages, availableDatasources,
-                availableRelations, isAdmin, intent);
+                availableRelations, isAdmin, intent, permissionApplied);
 
         // ===== 构建概念追踪管道 =====
         Map<String, Object> pipeline = new LinkedHashMap<>();
@@ -583,7 +600,7 @@ public class ContextBuilder {
             Map<Long, List<Map<String, Object>>> ontologyRelations,
             List<Map<String, Object>> messages,
             List<Map<String, Object>> availableDatasources, String availableRelations,
-            boolean isAdmin, String intent) {
+            boolean isAdmin, String intent, boolean permissionApplied) {
 
         StringBuilder sb = new StringBuilder();
         sb.append("## 用户问题\n").append(userQuery).append("\n\n");
@@ -803,32 +820,42 @@ public class ContextBuilder {
         }
 
         if (tableMappings != null && !tableMappings.isEmpty()) {
-            Map<Boolean, List<ConceptMapping>> partitioned = tableMappings.stream()
-                    .collect(Collectors.partitioningBy(m -> authorizedConceptIds == null || authorizedConceptIds.isEmpty()
-                            || authorizedConceptIds.contains(m.getConceptId())));
-            List<ConceptMapping> authMappings = partitioned.getOrDefault(true, List.of());
-            if (!authMappings.isEmpty()) {
-                sb.append("## 可用的数据库表结构（✅ 已授权）\n");
-                appendTableMappings(sb, authMappings);
-            }
-            List<ConceptMapping> unauthMappings = partitioned.getOrDefault(false, List.of());
-            if (!unauthMappings.isEmpty()) {
-                sb.append("## 数据库表结构（🔒 未授权，仅供分析参考）\n");
-                sb.append("以下表结构存在但当前用户暂无查询权限，你不能对其生成 SQL，但可以在 final_answer 中告知用户需要申请权限。\n\n");
-                appendTableMappings(sb, unauthMappings);
-            }
+            // 进入这里的映射已按权限过滤（见 build()），全部为已授权概念
+            sb.append("## 可用的数据库表结构（✅ 已授权）\n");
+            appendTableMappings(sb, tableMappings);
         } else {
             sb.append("## 可用的数据库表结构\n（未找到与问题相关的表结构）\n\n");
+        }
+
+        // 未授权概念只展示概念名，表结构/列名/JOIN 一律不进 prompt，避免提示注入绕过
+        if (permissionApplied) {
+            List<String> unauthConceptNames = conceptTrace == null ? List.of() : conceptTrace.stream()
+                    .filter(c -> !"pipeline".equals(c.get("type")) && !"reuse".equals(c.get("type")))
+                    .filter(c -> c.get("conceptId") instanceof Number)
+                    .map(c -> ((Number) c.get("conceptId")).longValue())
+                    .filter(cid -> !authorizedConceptIds.contains(cid))
+                    .map(cid -> conceptTrace.stream()
+                            .filter(c -> c.get("conceptId") instanceof Number
+                                    && ((Number) c.get("conceptId")).longValue() == cid)
+                            .map(c -> String.valueOf(c.get("conceptName")))
+                            .findFirst().orElse("概念" + cid))
+                    .distinct()
+                    .collect(Collectors.toList());
+            if (!unauthConceptNames.isEmpty()) {
+                sb.append("## 🔒 无权限数据\n");
+                sb.append("以下概念存在但当前用户没有查询权限，其表结构、列名与 JOIN 信息已按权限策略隐藏：")
+                        .append(String.join("、", unauthConceptNames)).append("\n");
+                sb.append("你不能对这些概念生成 SQL，也不能引用任何未在上方「可用的数据库表结构」中出现的表或列。");
+                sb.append("如需查询，请在 final_answer 中告知用户申请对应域的概念查询权限。\n\n");
+            }
         }
 
         if (joinMappings != null && !joinMappings.isEmpty()) {
             sb.append("## 表 JOIN 条件（禁止自行构造，只能用下列预定义 JOIN）\n");
             sb.append("**【强制】生成 SQL 时，只能使用下方列出的 JOIN 条件。如果预定义 JOIN 中没有你需要的表关联，必须通过预定义 JOIN 链间接到达目标表，禁止自行凭空构造任何 JOIN 路径或 ON 条件。**\n\n");
+            // 列表已按权限过滤，未授权概念的 JOIN 不再展示
             for (ConceptJoinMapping join : joinMappings) {
-                boolean authorized = authorizedConceptIds == null || authorizedConceptIds.isEmpty()
-                        || authorizedConceptIds.contains(join.getConceptId());
                 sb.append("- **").append(join.getRelationType() != null ? join.getRelationType() : "LEFT JOIN").append("**");
-                if (!authorized) sb.append(" 🔒");
                 sb.append("\n  - **JOIN 表**: `").append(join.getJoinTable()).append("`\n");
                 sb.append("  - **JOIN 条件**: `").append(join.getJoinCondition()).append("`\n\n");
             }

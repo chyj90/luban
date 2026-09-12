@@ -1,0 +1,55 @@
+/* ============================================
+   Map — 地图组件（运营商站点分布、光缆路由）
+   LubanUI.map(containerId, config)
+   基于 ECharts Map / Scatter / Lines
+   ============================================ */
+
+.luban-map {
+  width: 100%;
+  min-height: 400px;
+  position: relative;
+  border-radius: var(--luban-radius-md);
+  overflow: hidden;
+}
+
+.luban-map-tooltip {
+  position: absolute;
+  padding: 6px 12px;
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  font-size: var(--luban-text-xs);
+  color: var(--luban-text);
+  box-shadow: var(--luban-shadow);
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+
+.luban-map-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--luban-bg-card);
+  border: 1px solid var(--luban-border);
+  border-radius: var(--luban-radius);
+  font-size: var(--luban-text-xs);
+}
+
+.luban-map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.luban-map-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

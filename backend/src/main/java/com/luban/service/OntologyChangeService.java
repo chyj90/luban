@@ -109,7 +109,7 @@ public class OntologyChangeService {
             log.error("Failed to execute ontology change {}: {}", changeId, e.getMessage(), e);
             throw new RuntimeException("变更执行失败: " + e.getMessage(), e);
         }
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     @Transactional
@@ -148,7 +148,7 @@ public class OntologyChangeService {
         }
         changeLogRepository.saveAll(logs);
         validateConceptMappings(logs);
-        ontologyService.reload();
+        ontologyService.reloadAfterCommit();
     }
 
     private void validateConceptMappings(List<OntologyChangeLog> logs) {
@@ -303,7 +303,8 @@ public class OntologyChangeService {
             case "DELETE_JOIN_MAPPING" -> executeDeleteJoinMapping(data);
             default -> throw new RuntimeException("不支持的操作类型: " + operation);
         }
-        ontologyService.reload();
+        // reload 由 approveChange/batchApproveChanges 在事务提交后统一执行，
+        // 避免批量变更逐条全量重建（N+1）以及回滚后缓存与库不一致
     }
 
     @SuppressWarnings("unchecked")

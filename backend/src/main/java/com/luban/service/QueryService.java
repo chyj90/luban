@@ -64,16 +64,57 @@ import com.luban.util.AgentLogger;
 @Service
 public class QueryService {
 
-    @SuppressWarnings("rawtypes")
-    private static final MemberAccess ALLOW_ALL = new MemberAccess() {
+    /**
+     * 模板表达式求值的沙箱。原 ALLOW_ALL 实现允许 @java.lang.Runtime@getRuntime().exec()
+     * 这类静态调用，模板又可经 create/update API 写入，构成认证后 RCE。
+     * 防线一：assertSafeOgnlExpression 在解析前拒绝 OGNL 的类引用（@...@）、
+     * 构造调用（new X）、上下文变量（#var）语法。
+     * 防线二：MemberAccess 方法白名单——属性 getter 之外仅放行模板常用的无副作用方法，
+     * 显式封死 getClass/getRuntime/exec/forName/invoke 等反射与运行时入口。
+     */
+    private static final MemberAccess RESTRICTED = new MemberAccess() {
+        private static final Set<String> ALLOWED_METHODS = Set.of(
+                "size", "isEmpty", "contains", "containsKey", "containsValue", "length", "trim",
+                "toString", "equals", "equalsIgnoreCase", "startsWith", "endsWith",
+                "toUpperCase", "toLowerCase", "intValue", "longValue", "doubleValue",
+                "floatValue", "booleanValue", "getKey", "getValue");
+
+        private boolean isSafe(Member member) {
+            if (member instanceof java.lang.reflect.Constructor) return false;
+            if (member instanceof java.lang.reflect.Method m) {
+                String name = m.getName();
+                switch (name) {
+                    case "getClass", "getClassLoader", "forName", "newInstance",
+                         "getRuntime", "exec", "loadClass", "invoke",
+                         "wait", "notify", "notifyAll", "getMethod", "getMethods",
+                         "getDeclaredMethod", "getConstructor", "getConstructors":
+                        return false;
+                    default:
+                }
+                if (ALLOWED_METHODS.contains(name)) return true;
+                return (name.startsWith("get") || name.startsWith("is")) && m.getParameterCount() == 0;
+            }
+            return true;
+        }
+
         public Object setup(Map context, Object target, Member member, String propertyName) {
             return null;
         }
         public void restore(Map context, Object target, Member member, String propertyName, Object state) {}
         public boolean isAccessible(Map context, Object target, Member member, String propertyName) {
-            return true;
+            return isSafe(member);
         }
     };
+
+    private static final Pattern FORBIDDEN_OGNL_SYNTAX = Pattern.compile(
+            "@[A-Za-z_]|\\bnew\\s+[A-Za-z_]|#[A-Za-z_]");
+
+    private static void assertSafeOgnlExpression(String expr) {
+        if (FORBIDDEN_OGNL_SYNTAX.matcher(expr).find()) {
+            throw new IllegalArgumentException(
+                    "模板表达式包含被禁止的 OGNL 语法（类引用/构造调用/上下文变量）: " + expr);
+        }
+    }
 
     private final QueryRepository queryRepository;
     private final DatasourceRepository datasourceRepository;
@@ -699,9 +740,10 @@ public class QueryService {
     private boolean evaluateCondition(String condition, Map<String, Object> params) {
         try {
             condition = condition.replaceAll("\\bthis\\.", "");
+            assertSafeOgnlExpression(condition);
             Map<String, Object> wrapper = new HashMap<>();
             wrapper.put("params", params);
-            OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
+            OgnlContext ctx = new OgnlContext(null, null, RESTRICTED);
             ctx.setRoot(wrapper);
             Object result = Ognl.getValue(Ognl.parseExpression(condition), ctx, wrapper);
             boolean boolResult = result instanceof Boolean ? (Boolean) result : false;
@@ -826,9 +868,10 @@ public class QueryService {
     private String evaluateOgnlExpression(String expr, Map<String, Object> params) {
         try {
             expr = expr.replaceAll("\\bthis\\.", "");
+            assertSafeOgnlExpression(expr);
             Map<String, Object> wrapper = new HashMap<>();
             wrapper.put("params", params);
-            OgnlContext ctx = new OgnlContext(null, null, ALLOW_ALL);
+            OgnlContext ctx = new OgnlContext(null, null, RESTRICTED);
             ctx.setRoot(wrapper);
             Object result = Ognl.getValue(Ognl.parseExpression(expr), ctx, wrapper);
             String formatted = result != null ? formatSqlValue(result) : "NULL";

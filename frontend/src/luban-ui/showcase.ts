@@ -370,6 +370,50 @@ export const SHOWCASE_PAGE = {
         </div>
       </div>
     </section>
+
+    <!-- 图表预设 -->
+    <section class="showcase-section">
+      <h2 class="showcase-section-title">图表预设 ChartPresets</h2>
+      <div class="showcase-row" style="gap:16px;">
+        <button class="luban-btn luban-btn-sm" onclick="LubanUI.setTheme('light')">浅色</button>
+        <button class="luban-btn luban-btn-sm" onclick="LubanUI.setTheme('dark')">深色</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px;">
+        <div class="luban-chart-item">
+          <div class="luban-chart-title">柱状图（渐变圆角）</div>
+          <div id="presetBar" style="height:260px;"></div>
+        </div>
+        <div class="luban-chart-item">
+          <div class="luban-chart-title">折线图（平滑面积）</div>
+          <div id="presetLine" style="height:260px;"></div>
+        </div>
+        <div class="luban-chart-item">
+          <div class="luban-chart-title">饼图（环形玫瑰）</div>
+          <div id="presetPie" style="height:260px;"></div>
+        </div>
+        <div class="luban-chart-item">
+          <div class="luban-chart-title">仪表盘</div>
+          <div id="presetGauge" style="height:260px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 拓扑图 -->
+    <section class="showcase-section">
+      <h2 class="showcase-section-title">拓扑图 Topology（运营商网络拓扑）</h2>
+      <div class="luban-chart-item">
+        <div id="demoTopology" style="height:450px;"></div>
+      </div>
+    </section>
+
+    <!-- 地图 -->
+    <section class="showcase-section">
+      <h2 class="showcase-section-title">地图 Map（站点分布）</h2>
+      <div class="luban-chart-item">
+        <div class="luban-chart-title">中国地图 — 需联网加载 GeoJSON</div>
+        <div id="demoMap" style="height:450px;"></div>
+      </div>
+    </section>
   </div>
 
   <!-- 弹窗示例 -->
@@ -471,6 +515,84 @@ export const SHOWCASE_PAGE = {
         { name: '销售额', type: 'bar', data: [120, 200, 150, 80, 250, 180], itemStyle: { color: '#1677ff' } },
         { name: '利润', type: 'line', data: [30, 50, 35, 20, 60, 45], itemStyle: { color: '#52c41a' }, smooth: true }
       ]
+    });
+  }
+
+  // 图表预设
+  LubanUI.chartPresets.bar('presetBar', {
+    categories: ['1月','2月','3月','4月','5月','6月'],
+    data: [120, 200, 150, 80, 250, 180],
+    showLabel: true
+  });
+
+  LubanUI.chartPresets.line('presetLine', {
+    categories: ['周一','周二','周三','周四','周五','周六','周日'],
+    series: [
+      { name: '流量(Gbps)', data: [8.2, 9.3, 9.0, 9.3, 12.9, 11.5, 10.2] },
+      { name: '预测', data: [8.0, 9.1, 9.2, 9.5, 11.0, 11.2, 10.5] }
+    ],
+    area: true
+  });
+
+  LubanUI.chartPresets.pie('presetPie', {
+    data: [
+      { name: '移动', value: 435 },
+      { name: '联通', value: 310 },
+      { name: '电信', value: 274 },
+      { name: '广电', value: 128 }
+    ],
+    rose: true
+  });
+
+  LubanUI.chartPresets.gauge('presetGauge', {
+    name: '覆盖率',
+    value: 87.5,
+    unit: '%',
+    thresholds: [60, 85]
+  });
+
+  // 拓扑图
+  LubanUI.topology('demoTopology', {
+    nodes: [
+      { id: 'nj-core', name: '南京核心', type: 'router', status: 'normal', fixed: true, x: 400, y: 250, tooltip: '南京核心路由器<br/>负载: 65%<br/>吞吐: 8.2Tbps' },
+      { id: 'nj-sw1', name: '鼓楼交换机', type: 'switch', status: 'normal', tooltip: '端口: 24/48<br/>流量: 2.3Gbps' },
+      { id: 'jx-bs1', name: '江宁基站', type: 'baseStation', status: 'warning', tooltip: '信号强度: -75dBm<br/>在线用户: 128' },
+      { id: 'jx-bs2', name: '百家湖基站', type: 'baseStation', status: 'alarm', alarming: true, tooltip: '⚠️ 信号中断<br/>最后上报: 3分钟前' },
+      { id: 'srv-web', name: 'Web服务器', type: 'server', status: 'normal', tooltip: 'CPU: 45%<br/>内存: 62%' },
+      { id: 'nj-ep1', name: '汇聚节点1', type: 'router', status: 'normal' },
+      { id: 'nj-ep2', name: '汇聚节点2', type: 'router', status: 'offline' }
+    ],
+    links: [
+      { source: 'nj-core', target: 'jx-bs1', type: 'fiber', status: 'normal', label: '万兆光缆' },
+      { source: 'nj-core', target: 'jx-bs2', type: 'fiber', status: 'alarm', label: '光缆中断' },
+      { source: 'nj-core', target: 'srv-web', type: 'fiber', status: 'normal' },
+      { source: 'jx-bs1', target: 'nj-ep1', type: 'wireless', status: 'warning' },
+      { source: 'nj-ep1', target: 'nj-ep2', type: 'fiber', status: 'normal' }
+    ],
+    repulsion: 350,
+    gravity: 0.08
+  });
+
+  // 地图（异步加载）
+  if (document.getElementById('demoMap')) {
+    LubanUI.loadChinaMap(function() {
+      LubanUI.map('demoMap', {
+        roam: true,
+        zoom: 1.2,
+        scatter: [
+          { name: '南京总部', lng: 118.78, lat: 32.04, size: 8, color: '#1677ff', tooltip: '南京核心机房<br/>设备: 128台' },
+          { name: '北京', lng: 116.40, lat: 39.90, size: 6, color: '#22c55e', tooltip: '北京容灾中心' },
+          { name: '广州', lng: 113.26, lat: 23.13, size: 5, color: '#22c55e' },
+          { name: '成都', lng: 104.06, lat: 30.67, size: 4, color: '#f59e0b', tooltip: '⚠️ 负载过高' }
+        ],
+        effectScatter: [
+          { name: '告警', lng: 121.47, lat: 31.23, color: '#ef4444', tooltip: '⚠️ 设备离线' }
+        ],
+        lines: [
+          { fromLng: 118.78, fromLat: 32.04, toLng: 116.40, toLat: 39.90, color: '#4dabf7', width: 2, effect: true, tooltip: '南京→北京 骨干光缆' },
+          { fromLng: 118.78, fromLat: 32.04, toLng: 113.26, toLat: 23.13, color: '#4ade80', width: 1.5, effect: true, tooltip: '南京→广州 备用路由' }
+        ]
+      });
     });
   }
 })();`,

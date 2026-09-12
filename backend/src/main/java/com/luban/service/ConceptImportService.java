@@ -695,7 +695,7 @@ public class ConceptImportService {
                 }
             }
 
-            ontologyService.reload();
+            ontologyService.reloadAfterCommit();
 
             result.put("created", created);
             result.put("skipped", skipped);

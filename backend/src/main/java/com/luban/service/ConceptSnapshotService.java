@@ -19,6 +19,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -445,24 +448,44 @@ public class ConceptSnapshotService {
             createSnapshot(snapshot.getGroupId(), autoVersion,
                     "回滚至版本 " + snapshot.getVersion() + "，操作人: " + reviewedBy, reviewedBy);
 
-            try {
-                for (Concept c : savedConcepts) {
-                    conceptEmbeddingService.generateAndSave(c.getId(), c.getName(), c.getDescription());
-                }
-                conceptEmbeddingService.rebuildIndex();
-                log.info("FAISS index rebuilt after rollback to snapshot {} with {} concepts",
-                        snapshotId, savedConcepts.size());
-            } catch (Exception e) {
-                log.error("Failed to rebuild FAISS index after rollback: {}", e.getMessage());
-                result.put("faissWarning", "FAISS 索引重建失败，请手动重建");
+            // FAISS/embedding 是 HTTP 调用，不能在 DB 事务内执行（会拉长事务且失败不影响已提交的回滚）：
+            // 注册 afterCommit，提交后异步重建；不放入 result 作为成功/失败依据
+            List<Long> restoredIds = savedConcepts.stream().map(Concept::getId).toList();
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        Thread.startVirtualThread(() -> rebuildFaissQuietly(snapshotId, restoredIds));
+                    }
+                });
+            } else {
+                rebuildFaissQuietly(snapshotId, restoredIds);
             }
+            result.put("faissRebuildScheduled", true);
         } catch (Exception e) {
             log.error("Rollback snapshot failed", e);
+            // 关键：不标记回滚的话，"删除旧概念"已执行、恢复可能只完成一半，事务会提交出半删除状态
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
             result.put("success", false);
-            result.put("error", "回滚失败: " + e.getMessage());
+            result.put("error", "回滚失败（已回滚全部变更）: " + e.getMessage());
         }
 
         return result;
+    }
+
+    private void rebuildFaissQuietly(Long snapshotId, List<Long> conceptIds) {
+        try {
+            for (Long conceptId : conceptIds) {
+                Concept c = conceptRepository.findById(conceptId).orElse(null);
+                if (c != null) {
+                    conceptEmbeddingService.generateAndSave(c.getId(), c.getName(), c.getDescription());
+                }
+            }
+            conceptEmbeddingService.rebuildIndex();
+            log.info("FAISS index rebuilt after rollback to snapshot {} with {} concepts", snapshotId, conceptIds.size());
+        } catch (Exception e) {
+            log.error("Failed to rebuild FAISS index after rollback to snapshot {}: {}", snapshotId, e.getMessage());
+        }
     }
 
     private Long toLong(Object val) {
