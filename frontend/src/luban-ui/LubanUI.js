@@ -119,15 +119,46 @@ window.LubanUI = window.LubanUI || {};
     return option;
   }
 
+  // ===== 整屏配色 token：setVisualStyle 后所有预设默认从风格取色，保证整屏配色统一 =====
+  UI.setVisualStyle = function(name) {
+    if (!UI.visualStyle[name]) {
+      console.warn('LubanUI: 未知视觉风格 "' + name + '"，可选：' + Object.keys(UI.visualStyle).join('、'));
+      return;
+    }
+    UI._activeStyle = name;
+  };
+  UI.getVisualStyle = function() { return UI._activeStyle || null; };
+  function styleToken() { return (UI._activeStyle && UI.visualStyle[UI._activeStyle]) || null; }
+  function tokenColors(kind, isDark, fallback) {
+    var st = styleToken();
+    if (st && st.chart && st.chart[kind] && st.chart[kind].length) return st.chart[kind];
+    return fallback;
+  }
+  function lighten(hex, t) {
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var n = parseInt(h, 16);
+    var r = (n>>16)&255, g = (n>>8)&255, b = n&255;
+    r = Math.round(r+(255-r)*t); g = Math.round(g+(255-g)*t); b = Math.round(b+(255-b)*t);
+    return 'rgb('+r+','+g+','+b+')';
+  }
+  function darken(hex, t) {
+    var h = String(hex).replace('#', '');
+    if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var n = parseInt(h, 16);
+    var r = Math.round(((n>>16)&255)*(1-t)), g = Math.round(((n>>8)&255)*(1-t)), b = Math.round((n&255)*(1-t));
+    return 'rgb('+r+','+g+','+b+')';
+  }
+
   F.bar = function(containerId, opts) {
     opts = opts || {};
     var isDark = UI.getTheme() === 'dark';
     if (opts.theme === 'light') isDark = false;
     var data = opts.data || [];
     var categories = opts.categories || data.map(function(_, i) { return '项' + (i + 1); });
-    var colors = opts.colors || (isDark
+    var colors = opts.colors || tokenColors('barColors', isDark, (isDark
       ? ['#4dabf7', '#74c0fc', '#3bc9db', '#63e6be']
-      : ['#1677ff', '#4096ff', '#69b1ff', '#91caff']);
+      : ['#1677ff', '#4096ff', '#69b1ff', '#91caff']));
 
     var option = {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
@@ -164,7 +195,7 @@ window.LubanUI = window.LubanUI || {};
     if (opts.theme === 'light') isDark = false;
     var categories = opts.categories || [];
     var seriesData = opts.series || [{ name: '数据', data: opts.data || [] }];
-    var lineColors = opts.colors || (isDark
+    var lineColors = opts.colors || tokenColors('lineColors', isDark, isDark
       ? ['#4dabf7', '#4ade80', '#fbbf24', '#f87171']
       : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444']);
 
@@ -205,7 +236,7 @@ window.LubanUI = window.LubanUI || {};
     var isDark = UI.getTheme() === 'dark';
     if (opts.theme === 'light') isDark = false;
     var data = opts.data || [];
-    var pieColors = opts.colors || (isDark
+    var pieColors = opts.colors || tokenColors('pieColors', isDark, isDark
       ? ['#4dabf7', '#4ade80', '#fbbf24', '#f87171', '#c084fc', '#3bc9db', '#f472b6', '#a78bfa']
       : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#6366f1']);
 
@@ -444,9 +475,9 @@ window.LubanUI = window.LubanUI || {};
     var isDark = UI.getTheme() === 'dark';
     if (opts.theme === 'light') isDark = false;
     var categories = opts.categories || [];
-    var colors = opts.colors || (isDark
+    var colors = opts.colors || tokenColors('barColors', isDark, (isDark
       ? ['#4dabf7', '#4ade80', '#fbbf24']
-      : ['#1677ff', '#22c55e', '#f59e0b']);
+      : ['#1677ff', '#22c55e', '#f59e0b']));
 
     var bars = opts.bars || [];
     var lines = opts.lines || [];
@@ -578,9 +609,9 @@ window.LubanUI = window.LubanUI || {};
 
     var data = opts.data || [];
     var categories = opts.categories || data.map(function(_, i) { return '项' + (i + 1); });
-    var colors = opts.colors || (isDark
+    var colors = opts.colors || tokenColors('barColors', isDark, (isDark
       ? ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676']
-      : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e']);
+      : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e']));
 
     var series = (opts.series || [{ name: '数据', data: data }]).map(function(s, si) {
       var c = s.color || colors[si % colors.length];
@@ -590,13 +621,27 @@ window.LubanUI = window.LubanUI || {};
         data: s.data,
         barGap: opts.barGap || '20%',
         barWidth: opts.barWidth || '40%',
+        // 背景柱槽：主柱后面衬一层半透明底柱（大屏柱图质感的关键之一）
+        showBackground: opts.background !== false,
+        backgroundStyle: {
+          color: isDark ? 'rgba(120,160,220,0.08)' : 'rgba(30,80,150,0.06)',
+          borderRadius: [opts.radius || 8, opts.radius || 8, 0, 0]
+        },
         itemStyle: {
           borderRadius: [opts.radius || 8, opts.radius || 8, 0, 0],
+          // 三段渐变：亮顶 → 基色 → 深底
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: c },
-            { offset: 1, color: (isDark ? 'rgba(15,23,42,0.3)' : 'rgba(255,255,255,0.5)') }
+            { offset: 0, color: lighten(c, 0.35) },
+            { offset: 0.35, color: c },
+            { offset: 1, color: darken(c, isDark ? 0.55 : 0.25) }
           ]),
-          shadowBlur: opts.shadowBlur || 15,
+          // 柱内横向刻度纹理（可选）
+          decal: opts.texture ? {
+            symbol: 'rect', symbolSize: [12, 2], rotation: 0,
+            color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.25)',
+            dashArrayX: [12, 0]
+          } : null,
+          shadowBlur: opts.shadowBlur || 14,
           shadowColor: c,
           shadowOffsetY: 2
         },
@@ -606,18 +651,33 @@ window.LubanUI = window.LubanUI || {};
         label: opts.showLabel ? {
           show: true, position: 'top',
           color: isDark ? '#e2e8f0' : '#1e293b',
-          fontSize: 12, fontWeight: 'bold'
+          fontSize: 12, fontWeight: 'bold',
+          textBorderColor: 'transparent',
+          textShadowColor: c, textShadowBlur: 8
         } : undefined
       };
     });
 
+    // 顶部发光帽：一条只显示圆点的折线叠在柱顶（参考图柱顶亮点的实现手法）
+    if (opts.topCap !== false && (opts.series || data.length)) {
+      var capColor = colors[0];
+      series.push({
+        name: '__cap__', type: 'line',
+        data: (opts.series ? opts.series[0].data : data),
+        tooltip: { show: false }, silent: true,
+        lineStyle: { opacity: 0 }, z: 5,
+        symbol: 'circle', symbolSize: 7,
+        itemStyle: { color: lighten(capColor, 0.5), shadowBlur: 12, shadowColor: capColor }
+      });
+    }
+
     return UI.chart(containerId, {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: series.length > 1 ? {
-        data: series.map(function(s) { return s.name; }),
+      legend: series.filter(function(x){ return x.name !== '__cap__'; }).length > 1 ? {
+        data: series.filter(function(x){ return x.name !== '__cap__'; }).map(function(s) { return s.name; }),
         textStyle: { color: isDark ? '#94a3b8' : '#64748b' }, bottom: 0
       } : undefined,
-      grid: { left: '3%', right: '4%', bottom: series.length > 1 ? '12%' : '3%', top: '8%', containLabel: true },
+      grid: { left: '3%', right: '4%', bottom: series.length > 2 ? '12%' : '3%', top: '8%', containLabel: true },
       xAxis: {
         type: 'category', data: categories,
         axisLabel: { color: isDark ? '#94a3b8' : '#64748b' },
@@ -626,7 +686,7 @@ window.LubanUI = window.LubanUI || {};
       },
       yAxis: {
         type: 'value',
-        splitLine: { lineStyle: { color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' } },
+        splitLine: { lineStyle: { color: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', type: 'dashed' } },
         axisLabel: { color: isDark ? '#94a3b8' : '#64748b' }
       },
       series: series
@@ -641,9 +701,9 @@ window.LubanUI = window.LubanUI || {};
 
     var categories = opts.categories || [];
     var seriesData = opts.series || [{ name: '数据', data: opts.data || [] }];
-    var colors = opts.colors || (isDark
+    var colors = opts.colors || tokenColors('lineColors', isDark, (isDark
       ? ['#00d4ff', '#00e676', '#ff9100', '#ff3d9a']
-      : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444']);
+      : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444']));
 
     return UI.chart(containerId, {
       tooltip: { trigger: 'axis' },
@@ -691,9 +751,78 @@ window.LubanUI = window.LubanUI || {};
     else if (UI.getTheme() === 'dark') isDark = true;
 
     var data = opts.data || [];
-    var colors = opts.colors || (isDark
+    var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
       ? ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676', '#ff9100', '#00e5ff', '#b388ff', '#ff80ab']
-      : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e', '#f59e0b', '#06b6d4', '#8b5cf6', '#f472b6']);
+      : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e', '#f59e0b', '#06b6d4', '#8b5cf6', '#f472b6']));
+    var gapColor = isDark ? '#0a1020' : '#ffffff';
+    var centerPos = ['50%', opts.legend !== false ? '45%' : '50%'];
+
+    // 扇区径向渐变：内缘亮 → 外缘深，间隙随主题
+    var pieData = data.map(function(d, i) {
+      var c = colors[i % colors.length];
+      return {
+        name: d.name, value: d.value,
+        itemStyle: {
+          color: new echarts.graphic.RadialGradient(0.5, 0.5, 0.1, 0.5, 0.5, 1, [
+            { offset: 0, color: lighten(c, 0.3) },
+            { offset: 0.7, color: c },
+            { offset: 1, color: darken(c, 0.25) }
+          ]),
+          shadowBlur: 12, shadowColor: 'rgba(0,0,0,0.35)', shadowOffsetY: 2
+        }
+      };
+    });
+
+    var series = [{
+      type: 'pie',
+      radius: opts.radius || ['48%', '75%'],
+      center: centerPos,
+      roseType: opts.rose ? 'area' : undefined,
+      itemStyle: {
+        borderRadius: opts.borderRadius != null ? opts.borderRadius : 6,
+        borderColor: gapColor,
+        borderWidth: opts.gap != null ? opts.gap : 3,
+        shadowBlur: 15, shadowColor: 'rgba(0,0,0,0.3)', shadowOffsetY: 2
+      },
+      emphasis: {
+        scale: true, scaleSize: 8,
+        itemStyle: { shadowBlur: 30, shadowColor: 'rgba(0,0,0,0.4)' }
+      },
+      label: {
+        show: opts.showLabel !== false,
+        color: isDark ? '#94a3b8' : '#64748b',
+        formatter: '{b}\n{d}%'
+      },
+      data: pieData, color: colors
+    }];
+
+    // 外圈装饰环：细线 + 刻度纹理（参考图的多层环效果）
+    if (opts.decorRing !== false) {
+      series.push({
+        type: 'pie', radius: ['79%', '79.8%'], center: centerPos,
+        silent: true, label: { show: false }, z: 1,
+        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.25)' : 'rgba(22,119,255,0.2)' } }]
+      });
+      series.push({
+        type: 'pie', radius: ['82%', '84%'], center: centerPos,
+        silent: true, label: { show: false }, z: 1,
+        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.5)' : 'rgba(22,119,255,0.35)' },
+          decal: { symbol: 'rect', symbolSize: [4, 8], rotation: Math.PI / 2, dashArrayX: [4, 4] } }]
+      });
+    }
+
+    // 中心数字 + 单位
+    var graphics = [];
+    if (opts.centerText) {
+      graphics.push({ type: 'text', left: 'center', top: 'calc(' + centerPos[1] + ' - 20px)',
+        style: { text: opts.centerText, fill: isDark ? '#ffffff' : '#1e293b', font: 'bold 26px sans-serif',
+          textAlign: 'center' } });
+      if (opts.centerSub) {
+        graphics.push({ type: 'text', left: 'center', top: 'calc(' + centerPos[1] + ' + 12px)',
+          style: { text: opts.centerSub, fill: isDark ? '#7ee0ff' : '#64748b', font: '12px sans-serif',
+            textAlign: 'center' } });
+      }
+    }
 
     return UI.chart(containerId, {
       tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
@@ -701,28 +830,8 @@ window.LubanUI = window.LubanUI || {};
         orient: opts.legendOrient || 'horizontal', bottom: 0,
         textStyle: { color: isDark ? '#94a3b8' : '#64748b' }
       } : undefined,
-      series: [{
-        type: 'pie',
-        radius: opts.radius || ['48%', '75%'],
-        center: ['50%', opts.legend !== false ? '45%' : '50%'],
-        roseType: opts.rose ? 'area' : undefined,
-        itemStyle: {
-          borderRadius: 6,
-          borderColor: isDark ? '#0f172a' : '#fff',
-          borderWidth: 3,
-          shadowBlur: 15, shadowColor: 'rgba(0,0,0,0.3)', shadowOffsetY: 2
-        },
-        emphasis: {
-          scale: true, scaleSize: 8,
-          itemStyle: { shadowBlur: 30, shadowColor: 'rgba(0,0,0,0.4)' }
-        },
-        label: {
-          show: opts.showLabel !== false,
-          color: isDark ? '#94a3b8' : '#64748b',
-          formatter: '{b}\n{d}%'
-        },
-        data: data, color: colors
-      }]
+      graphic: graphics.length > 0 ? graphics : undefined,
+      series: series
     });
   };
 

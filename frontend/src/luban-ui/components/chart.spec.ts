@@ -13,6 +13,12 @@ LubanUI.setTheme('dark');   // 等价于 html 根元素加 data-theme="dark"
 \`\`\`
 否则图表/地图/组件全部按浅色渲染（白底图表配深色页面会非常突兀）。预设配色的"自动适配深浅主题"读取的就是这个主题开关。
 
+#### 整屏配色统一：setVisualStyle（大屏必用）
+\`\`\`js
+LubanUI.setVisualStyle('golden');   // neon / golden / holographic / minimal
+\`\`\`
+设置后 bar/barGlow/line/lineGlow/pie/pieGlow/combo 等**所有预设默认从该风格取色**，整屏配色自动统一——禁止逐图随意传 colors。图表配色 token（style.chart.barColors/lineColors/pieColors）详见 Chart 组件的 visualStyle 表。
+
 #### 方式一：图表预设（推荐，开箱即用）
 内置多种美观预设，Agent 只需选择预设类型，自动适配深浅主题。
 \`\`\`js
@@ -23,12 +29,15 @@ LubanUI.chartPresets.bar('chart1', {
   showLabel: true            // 显示数值标签
 });
 
-// 光晕柱状图 — 霓虹发光 + 深阴影（大屏推荐）
+// 光晕柱状图 — 三段渐变+发光顶帽+背景柱槽（大屏推荐，对标指挥中心级）
 LubanUI.chartPresets.barGlow('chart1g', {
   categories: ['1月','2月','3月','4月','5月'],
   data: [120, 200, 150, 80, 250],
-  showLabel: true,
-  colors: ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676']  // 不传则自动适配主题
+  showLabel: true,             // 顶部数值（带主题色发光）
+  texture: true,               // 柱内横向刻度纹理
+  topCap: true,                // 柱顶发光亮点（默认开）
+  background: true,            // 背景柱槽（默认开）
+  colors: ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676']  // 不传则取 setVisualStyle 的风格色
 });
 
 // 折线图 — 平滑曲线、多系列、面积填充
@@ -65,7 +74,7 @@ LubanUI.chartPresets.pie('chart3', {
   radius: ['40%', '75%']
 });
 
-// 光晕饼图 — 立体阴影 + 深色边框（大屏推荐）
+// 光晕饼图 — 径向渐变扇区+外圈装饰环+中心数字（大屏推荐，对标指挥中心级）
 LubanUI.chartPresets.pieGlow('chart3g', {
   data: [
     { name: '移动', value: 435 },
@@ -73,7 +82,10 @@ LubanUI.chartPresets.pieGlow('chart3g', {
     { name: '电信', value: 274 }
   ],
   rose: true,
-  colors: ['#00d4ff', '#7b61ff', '#ff3d9a']
+  centerText: '9,467',         // 环心大数字
+  centerSub: '总数',            // 环心副文字
+  decorRing: true,             // 外圈装饰环+刻度（默认开）
+  colors: ['#00d4ff', '#7b61ff', '#ff3d9a']  // 不传则取 setVisualStyle 的风格色
 });
 
 // 仪表盘 — 适用于 KPI 指标
