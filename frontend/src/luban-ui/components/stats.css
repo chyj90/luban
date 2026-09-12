@@ -50,11 +50,26 @@
   color: var(--luban-danger);
 }
 
-/* 颜色变体 */
-.luban-stat-card-primary { border-left: 3px solid var(--luban-primary); }
-.luban-stat-card-success { border-left: 3px solid var(--luban-success); }
-.luban-stat-card-warning { border-left: 3px solid var(--luban-warning); }
-.luban-stat-card-danger { border-left: 3px solid var(--luban-danger); }
+/* 颜色变体（--luban-stat-accent 供角标/装饰引用，随变体自动变色） */
+.luban-stat-card-primary { --luban-stat-accent: var(--luban-primary); border-left: 3px solid var(--luban-stat-accent); }
+.luban-stat-card-success { --luban-stat-accent: var(--luban-success); border-left: 3px solid var(--luban-stat-accent); }
+.luban-stat-card-warning { --luban-stat-accent: var(--luban-warning); border-left: 3px solid var(--luban-stat-accent); }
+.luban-stat-card-danger { --luban-stat-accent: var(--luban-danger); border-left: 3px solid var(--luban-stat-accent); }
+
+/* 内置左上角标装饰：需要角标时直接加 luban-stat-corner 类，禁止手写 currentColor 装饰
+   （currentColor 继承文字色，浅色主题下会变成灰色实线，观感如样式缺失） */
+.luban-stat-corner { position: relative; overflow: hidden; }
+.luban-stat-corner::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 40px; height: 40px;
+  border-top: 3px solid var(--luban-stat-accent, var(--luban-primary));
+  border-left: 3px solid var(--luban-stat-accent, var(--luban-primary));
+  border-radius: var(--luban-radius-md) 0 0 0;
+  opacity: 0.85;
+}
+[data-theme="dark"] .luban-stat-corner::before { opacity: 0.55; }
 
 /* 骨架占位 */
 .luban-stat-loading .luban-stat-value,
