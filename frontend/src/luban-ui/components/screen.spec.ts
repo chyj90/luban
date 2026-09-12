@@ -70,7 +70,25 @@ LubanUI.loadChinaMap(function() {
 });
 \`\`\`
 
-#### 6. 装饰素材速查
+#### 6. 布局启发式：按需求域选范式（不要所有大屏都套地图模板）
+| 需求域 | 主视图范式 | 典型布局 |
+|--------|-----------|---------|
+| 地理态势/站点分布 | 中央大地图（map layers + 下钻） | KPI行 + 左右面板 + 中央地图 |
+| 端到端链路/调用链/分层架构 | 中央 layered 拓扑（topology layout:'layered'） | 左侧分组KPI列 + 中央拓扑 + 右侧资源/巡检列 |
+| 指标趋势网格 | sparkline KPI 阵列 + 小图网格 | luban-chart-screen-grid-3x2 |
+| 混合型 | 中央主视图 + 四周面板 | 面板自由拼装 |
+
+#### 7. 面板自由拼装（非模板布局用这个，不要硬套脚手架）
+任意布局用 12 列 CSS Grid 按 grid-area 拼装，每个面板都是"标题 + divider-glow + 图表"三件套：
+\`\`\`css
+.screen-grid { display: grid; grid-template-columns: repeat(12, 1fr); grid-auto-rows: 90px; gap: 12px; }
+.panel-kpi { grid-column: span 3; }      /* 小卡 */
+.panel-chart { grid-column: span 4; }    /* 中图 */
+.panel-topo { grid-column: span 6; grid-row: span 4; }  /* 主视图大块 */
+\`\`\`
+LubanUI.topology（含 layered）用法见 Topology 组件规范。
+
+#### 8. 装饰素材速查
 luban-screen-bg（整体深底）luban-bg-dots/hex/circuit（纹理）luban-corner-tech-full（四角标）
 luban-divider-glow（发光分隔线）luban-data-flow（底部流光）luban-glow-card / luban-glow-text / luban-border-flow
 ⚠️ 深浅主题：LubanUI.setTheme('dark'|'light') 必须在任何图表初始化前调用。`,

@@ -796,6 +796,26 @@ window.LubanUI = window.LubanUI || {};
       default: 24
     };
 
+    // layered 分层泳道布局：节点带 layer（0 基泳道索引），按泳道均分坐标，泳道标题由 layers 提供，
+    // 适配"端到端链路/调用链/分层架构"类监控视图（SaaS→MaaS→Daas→PaaS→Iaas 等）
+    if (config.layout === 'layered') {
+      var __layers = config.layers || [];
+      var __layerCount = Math.max(1, __layers.length);
+      var __buckets = {};
+      (config.nodes || []).forEach(function(n) {
+        var L = Math.min(Math.max(n.layer || 0, 0), __layerCount - 1);
+        (__buckets[L] = __buckets[L] || []).push(n);
+      });
+      Object.keys(__buckets).forEach(function(L) {
+        var arr = __buckets[L];
+        arr.forEach(function(n, i) {
+          n.x = Math.round(((i + 1) / (arr.length + 1)) * (config.layoutWidth || 1000));
+          n.y = Math.round(((Number(L) + 0.5) / __layerCount) * (config.layoutHeight || 620));
+          n.fixed = true;
+        });
+      });
+    }
+
     function buildNodes(nodesArr) {
       return (nodesArr || []).map(function(n) {
         var status = n.status || 'normal';
@@ -863,10 +883,10 @@ window.LubanUI = window.LubanUI || {};
         } : undefined,
         series: [{
           type: 'graph',
-          layout: config.layout || 'force',
+          layout: config.layout === 'layered' ? 'none' : (config.layout || 'force'),
           roam: config.roam !== false,
           draggable: config.draggable !== false,
-          force: {
+          force: config.layout === 'layered' ? undefined : {
             repulsion: config.repulsion || 300,
             gravity: config.gravity || 0.1,
             edgeLength: config.edgeLength || [150, 350],
@@ -893,6 +913,21 @@ window.LubanUI = window.LubanUI || {};
           : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6']);
         cats.forEach(function(cat, i) {
           cat.itemStyle = cat.itemStyle || { color: catColors[i % catColors.length] };
+        });
+      }
+
+      if (config.layout === 'layered' && __layers.length > 0) {
+        option.graphic = __layers.map(function(title, i) {
+          return {
+            type: 'text',
+            left: 10,
+            top: (((i + 0.5) / __layers.length) * 100) + '%',
+            style: {
+              text: title,
+              fill: isDark ? '#7ee0ff' : '#1677ff',
+              font: 'bold 14px sans-serif'
+            }
+          };
         });
       }
       return option;

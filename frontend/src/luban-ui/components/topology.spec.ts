@@ -122,6 +122,23 @@ LubanUI.topology('netTopology', {
 | label | string | 链路标签 |
 | color | string | 自定义颜色 |
 
+#### 分层泳道布局（layout: 'layered'）—— 端到端链路/调用链/分层架构视图必备
+节点带 layer 字段（0 基泳道索引，泳道内按出现顺序排列），泳道标题由 layers 提供：
+\`\`\`js
+LubanUI.topology('topo', {
+  layout: 'layered',
+  layers: ['SaaS', 'MaaS', 'Daas', 'Paas', 'Iaas'],
+  layoutWidth: 1000, layoutHeight: 620,
+  nodes: [
+    { id: 'app', name: '中国电信APP', layer: 0, type: 'server' },
+    { id: 'gw', name: 'AI网关', layer: 1, type: 'switch' },
+    { id: 'ecs', name: '上海15', layer: 4, type: 'server', status: 'warning' }
+  ],
+  links: [{ source: 'app', target: 'gw' }]
+});
+\`\`\`
+⚠️ 端到端链路监控、调用链、分层架构类需求**必须用 layered**，不要用力导向（force 布局分层关系不可控）。
+
 #### 布局参数
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
