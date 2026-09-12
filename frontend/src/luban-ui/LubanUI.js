@@ -763,7 +763,8 @@ window.LubanUI = window.LubanUI || {};
       return {
         name: d.name, value: d.value,
         itemStyle: {
-          color: new echarts.graphic.RadialGradient(0.5, 0.5, 0.1, 0.5, 0.5, 1, [
+          // RadialGradient 签名是 (x, y, r, colorStops)——4 参，色标数组是第 4 参
+          color: new echarts.graphic.RadialGradient(0.5, 0.5, 1, [
             { offset: 0, color: lighten(c, 0.3) },
             { offset: 0.7, color: c },
             { offset: 1, color: darken(c, 0.25) }
