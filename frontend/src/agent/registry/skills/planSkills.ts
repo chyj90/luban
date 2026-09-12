@@ -133,6 +133,12 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
       toolName: 'delegate_query',
       toolInput: {
         requirement: `为页面「${page.name}」创建以下查询，请在本轮对话中连续完成全部查询（仅在最开始做一次重名探查和表结构确认）：${desc}`,
+        // 结构化多查询声明：校验器按查询逐一校验筛选参数覆盖。
+        // 保留 query_name/filter_params（主查询）以兼容旧校验逻辑
+        queries: page.queries.map((q) => ({
+          query_name: q.queryName,
+          ...(q.filterParams ? { filter_params: q.filterParams } : {}),
+        })),
         query_name: queryNames[0],
         filter_params: primaryFilterParams,
       },

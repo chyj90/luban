@@ -360,7 +360,7 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         : undefined;
       emit({ type: 'turn.started', turnId, input: { kind: 'resume', command: input }, at: Date.now() });
       if (pending?.kind === 'user-action') {
-        pushSystemMessage(`用户已完成手动操作（${pending.reason}）${input.note ? `，补充信息：${input.note}` : ''}，请继续执行后续步骤。`);
+        pushSystemMessage(`【挂起事项已解除】用户已完成所需的手动操作。挂起原因：${pending.reason}。${input.note ? `用户补充：${input.note}。` : ''}请继续执行后续步骤。`);
       } else {
         pushSystemMessage(completeEffect?.systemMessage || `用户已确认挂起事项已完成${input.note ? `：${input.note}` : ''}，请继续执行后续步骤。`);
       }

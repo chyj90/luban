@@ -477,6 +477,16 @@ function evalPlanQueryBatching(): EvalResult {
     }
     if (batch.toolInput.query_name !== 'GetCustomers') checks.push(`query_name 应为主查询 GetCustomers，实际 ${batch.toolInput.query_name}`);
     if (!String(batch.toolInput.filter_params || '').includes('keyword')) checks.push('filter_params 应携带主查询的筛选参数');
+    // 多查询必须以结构化 queries 数组声明（校验器按查询逐一校验筛选参数覆盖）
+    const queriesArr = batch.toolInput.queries as Array<{ query_name: string; filter_params?: string }> | undefined;
+    if (!Array.isArray(queriesArr) || queriesArr.length !== 4) {
+      checks.push(`toolInput.queries 应为 4 元素数组，实际 ${Array.isArray(queriesArr) ? queriesArr.length : '缺失'}`);
+    } else {
+      const byName = new Map(queriesArr.map((q) => [q.query_name, q]));
+      if (!String(byName.get('GetCustomers')?.filter_params || '').includes('keyword')) {
+        checks.push('queries 数组中 GetCustomers 应携带自己的筛选参数');
+      }
+    }
   }
   if (pageSteps.length !== 1) checks.push(`应有 1 个 create_code_page 步骤，实际 ${pageSteps.length}`);
   if (batch && pageSteps[0] && JSON.stringify(pageSteps[0].dependencies) !== JSON.stringify([batch.id])) {

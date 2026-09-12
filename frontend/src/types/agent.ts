@@ -76,11 +76,18 @@ export interface ToolExecuteResult {
   _noRetry?: boolean;
 }
 
+export interface DelegateQueryFilterItem {
+  query_name: string;
+  filter_params?: string;
+}
+
 export interface DelegateQueryArgs {
   requirement: string;
   target_page: string;
   query_name: string;
   filter_params?: string;
+  /** 一次委派多个查询时的结构化声明（每个查询各自的筛选参数），优先于 filter_params */
+  queries?: DelegateQueryFilterItem[];
 }
 
 export interface DelegateQueryResult {

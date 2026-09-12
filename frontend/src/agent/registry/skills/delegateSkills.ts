@@ -6,7 +6,7 @@ import { listQueries } from '@/api';
 import { getCallerIdentity } from '../../prompts/callerContext';
 import { toolArgsKey } from '../../kernel/runtime';
 import { approvePendingApproval } from '../../core/confirmationGuard';
-import type { DelegateQueryArgs, DelegateQueryResult, Message } from '@/types/agent';
+import type { DelegateQueryArgs, DelegateQueryFilterItem, DelegateQueryResult, Message } from '@/types/agent';
 
 const activeDelegations = new Set<string>();
 
@@ -405,46 +405,85 @@ export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>)
 
   console.log(`[validateDDLExecution] DDL 降级校验通过：${blockedDDL.length} 条 DDL 被拦截，已提供降级 SQL`);
 
+  // 注意：reason 会被内核在恢复时拼进「用户已完成手动操作（reason）」消息，
+  // 因此这里只描述事实，不要包含「请等待…」之类会与「已完成」矛盾的操作指令；
+  // DDL 全文不截断（建表语句很短，截断会让用户转达出无法执行的残缺 SQL）
+  const ddlFull = blockedDDL.map(d => d.sql).join('；').slice(0, 2000);
   return {
     warnings,
     interventionRequired: true,
-    interventionReason: `DDL 操作被后端拦截（${blockedDDL.map(d => d.sql.slice(0, 40)).join('、')}），已降级生成手动 SQL。请等待用户在数据源管理面板完成操作后再继续。`,
+    interventionReason: `DDL 操作被后端拦截（${ddlFull}），已降级生成手动 SQL`,
   };
+}
+
+/** delegate_query 返回给主智能体的 details 上限：DBA 的中间推理过程不应整段灌入主上下文 */
+const DBA_DETAILS_MAX_CHARS = 3000;
+
+/**
+ * 瘦身 DBA 回复：完整 assistant 消息拼接动辄数万字符（DBA 的中间推理占了绝大部分），
+ * 是主智能体上下文超预算的最大来源。只保留最后一条 assistant 消息（最终汇报，
+ * 含查询名/字段名等产物信息）并截断；中间过程留存在 data.messages / 委派记忆中。
+ */
+function buildDbaDetails(messages: unknown[], dbaResponse: string): string {
+  if (!dbaResponse) return '任务完成';
+  if (dbaResponse.length <= DBA_DETAILS_MAX_CHARS) return dbaResponse;
+
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((m) => (m as Message).role === 'assistant') as Message | undefined;
+  const finalReport = typeof lastAssistant?.content === 'string' ? lastAssistant.content : '';
+  const body = (finalReport || dbaResponse).slice(0, DBA_DETAILS_MAX_CHARS);
+  const omitted = dbaResponse.length - body.length;
+  return `（DBA 中间推理已省略 ${omitted} 字符，仅保留最终汇报；完整内容见委派记忆）\n${body}`;
 }
 
 async function validateFilterParamsCoverage(
   filterParams: string | undefined,
   queryName: string | undefined,
-  applicationId: number
+  applicationId: number,
+  queries?: DelegateQueryFilterItem[]
 ): Promise<string[]> {
+  // 归一化：queries 数组（多查询结构化声明）优先，兼容旧的单 query_name/filter_params 入参
+  const queriesToValidate = (queries ?? [])
+    .filter((q) => q && q.query_name);
+  if (queriesToValidate.length === 0 && filterParams && queryName) {
+    queriesToValidate.push({ query_name: queryName, filter_params: filterParams });
+  }
   const warnings: string[] = [];
-  if (!filterParams || !queryName) return warnings;
+  if (queriesToValidate.length === 0) return warnings;
 
-  const declaredParams = filterParams
-    .split(',')
-    .map(p => p.trim().split('(')[0].trim())
-    .filter(p => p.length > 0);
-
-  if (declaredParams.length === 0) return warnings;
+  const declaredByQuery = new Map<string, string[]>();
+  for (const item of queriesToValidate) {
+    const params = (item.filter_params || '')
+      .split(',')
+      .map(p => p.trim().split('(')[0].trim())
+      .filter(p => p.length > 0);
+    if (params.length > 0 && !declaredByQuery.has(item.query_name)) {
+      declaredByQuery.set(item.query_name, params);
+    }
+  }
+  if (declaredByQuery.size === 0) return warnings;
 
   try {
     const res = await listQueries(applicationId);
-    const query = res.data.find((q: { name: string }) => q.name === queryName);
-    if (!query) {
-      warnings.push(`未找到查询 ${queryName}，无法校验筛选参数覆盖`);
-      return warnings;
-    }
+    for (const [name, params] of declaredByQuery) {
+      const query = res.data.find((q: { name: string }) => q.name === name);
+      if (!query) {
+        warnings.push(`未找到查询 ${name}，无法校验筛选参数覆盖`);
+        continue;
+      }
 
-    const sql: string = query.body || query.sqlBody || '';
-    if (!sql) {
-      warnings.push(`查询 ${queryName} 无 SQL 内容，无法校验筛选参数覆盖`);
-      return warnings;
-    }
+      const sql: string = query.body || query.sqlBody || '';
+      if (!sql) {
+        warnings.push(`查询 ${name} 无 SQL 内容，无法校验筛选参数覆盖`);
+        continue;
+      }
 
-    for (const param of declaredParams) {
-      const paramPattern = `this.params.${param}`;
-      if (!sql.includes(paramPattern)) {
-        warnings.push(`筛选参数 "${param}" 未在 SQL 中出现（缺少 this.params.${param}），DBA 可能遗漏了此筛选条件`);
+      for (const param of params) {
+        const paramPattern = `this.params.${param}`;
+        if (!sql.includes(paramPattern)) {
+          warnings.push(`查询 ${name} 的筛选参数 "${param}" 未在 SQL 中出现（缺少 this.params.${param}），DBA 可能遗漏了此筛选条件`);
+        }
       }
     }
   } catch (e) {
@@ -481,8 +520,20 @@ export const delegateSkills: Record<string, SkillFactory> = {
         properties: {
           requirement: { type: 'string', description: '自然语言描述的需求，如"列出所有数据源"、"为订单页创建查询，需要 id、订单号、金额、状态字段"、"删除查询 xxx"' },
           target_page: { type: 'string', description: '目标页面名称（可选）' },
-          query_name: { type: 'string', description: '查询名称（可选，创建/修改时建议提供）' },
-          filter_params: { type: 'string', description: '声明的筛选参数（可选），格式：paramName(类型,匹配方式)，逗号分隔。DBA 完成后会校验 SQL 是否覆盖所有参数' },
+          query_name: { type: 'string', description: '查询名称（可选，创建/修改时建议提供；单查询时使用）' },
+          filter_params: { type: 'string', description: '声明的筛选参数（可选，单查询时使用），格式：paramName(类型,匹配方式)，逗号分隔。DBA 完成后会校验 SQL 是否覆盖所有参数' },
+          queries: {
+            type: 'array',
+            description: '一次委派多个查询时使用（可选）。每个元素声明一个查询及其筛选参数，禁止把多个查询的筛选参数拼进 filter_params',
+            items: {
+              type: 'object',
+              properties: {
+                query_name: { type: 'string', description: '查询名称' },
+                filter_params: { type: 'string', description: '该查询的筛选参数，格式：paramName(类型,匹配方式)，逗号分隔' },
+              },
+              required: ['query_name'],
+            },
+          },
         },
         required: ['requirement'],
       },
@@ -575,15 +626,17 @@ export const delegateSkills: Record<string, SkillFactory> = {
           const result: DelegateQueryResult = {
             success: true,
             message: `数据辅助智能体完成任务`,
-            details: dbaResponse || '任务完成',
+            details: buildDbaDetails(messages, dbaResponse),
             data: { messages },
           };
 
           // 校验筛选参数覆盖：检查 DBA 生成的 SQL 是否包含所有声明的筛选参数
+          // （queries 多查询结构化声明优先，兼容旧的单 query_name/filter_params）
           const filterWarnings = await validateFilterParamsCoverage(
             typedArgs.filter_params,
             typedArgs.query_name,
-            ctx.applicationId
+            ctx.applicationId,
+            typedArgs.queries
           );
           if (filterWarnings.length > 0) {
             const warningMsg = filterWarnings.join('\n');

@@ -11,6 +11,8 @@
  *    保证 tool_call 配对不变，不产生孤儿 tool 消息）；system 消息与最近 N 条永不丢弃；
  * 4. 仍超 → 第三层：保护窗口内的大工具结果也裁剪（从最旧开始，最近 TAIL 条原样保留，
  *    裁剪上限放宽到 RECENT_TRIM_MAX——执行阶段大体积来源是整页代码/分析示例等工具结果）。
+ * 5. 仍超 → 第四层：硬截断兜底（assistant/user 长内容与 tool_call arguments，system 永不裁剪），
+ *    保证发送内容有硬上限。
  */
 import type { LLMMessage } from './llmClient';
 
@@ -137,8 +139,56 @@ export function compactForApi(
     }
   }
 
+  // 第四层：硬截断兜底。前三层只裁 tool 消息，而大体积也可能来自 assistant 的长文本
+  // （如整页分析报告）和 tool_call arguments；system 含行为规则，永不裁剪。
+  // 从最旧开始强制截断，保证最终发出去的内容有硬上限，而不是超预算照发。
   if (estimate > budgetChars) {
-    console.warn(`[ContextWindow] 三层压缩后仍超预算（约 ${estimate} 字符），按原样发送`);
+    const HARD_CONTENT_MAX = 1500;
+    const HARD_ARG_MAX = 400;
+    // 第二遍放宽：尾窗消息也参与截断，但始终保留最后 KEEP 条原样（模型正在使用的活跃工作集）
+    const HARD_TAIL_KEEP = 2;
+    const TAIL_CONTENT_MAX = 4000;
+    const TAIL_ARG_MAX = 1000;
+
+    const hardTrim = (start: number, end: number, contentMax: number, argMax: number) => {
+      for (let i = start; i < end && estimate > budgetChars; i++) {
+        const m = working[i];
+        if (m.role === 'system') continue;
+        let changed = false;
+        let content = m.content || '';
+        if (content.length > contentMax) {
+          content = `${content.slice(0, contentMax)}…[已硬截断，原 ${m.content.length} 字符]`;
+          changed = true;
+        }
+        let toolCalls = m.tool_calls;
+        if (toolCalls?.some((tc) => (tc.function.arguments?.length || 0) > argMax)) {
+          toolCalls = toolCalls.map((tc) => {
+            const args = tc.function.arguments || '';
+            if (args.length <= argMax) return tc;
+            return { ...tc, function: { ...tc.function, arguments: `${args.slice(0, argMax)}…[已硬截断]` } };
+          });
+          changed = true;
+        }
+        if (changed) {
+          working[i] = { ...m, content, tool_calls: toolCalls };
+          estimate = estimateChars(working);
+        }
+      }
+    };
+
+    // 第一遍：尾窗之外，从最旧开始紧截断
+    hardTrim(0, Math.max(0, working.length - RECENT_TAIL_UNTOUCHED), HARD_CONTENT_MAX, HARD_ARG_MAX);
+    // 第二遍：仍超预算时，尾窗也截断（仅保留最后 KEEP 条活跃消息）
+    if (estimate > budgetChars) {
+      hardTrim(0, Math.max(0, working.length - HARD_TAIL_KEEP), TAIL_CONTENT_MAX, TAIL_ARG_MAX);
+    }
+
+    if (estimate > budgetChars) {
+      console.warn(`[ContextWindow] 硬截断后仍超预算（约 ${estimate} 字符），按原样发送`);
+    } else {
+      console.log(`[ContextWindow] 第四层硬截断生效，当前约 ${estimate} 字符`);
+    }
   }
+
   return working;
 }
