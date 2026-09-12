@@ -151,7 +151,12 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
     }
 
     case 'turn.suspended': {
-      if (state.activeTurnId !== event.turnId || state.status !== 'running') {
+      // running：工具执行路径的正常挂起；
+      // idle + 刚结束的回合：自由文本回合未处理挂起事项，Runtime 在 turn.completed 后
+      // 补发挂起（重新拉起确认横幅）——这是 session.ts:72"若仍在等待会重新挂起"假设的落地
+      const lastTurn = state.turns[state.turns.length - 1];
+      const isJustFinishedTurn = state.status === 'idle' && lastTurn?.turnId === event.turnId;
+      if (!(state.activeTurnId === event.turnId && state.status === 'running') && !isJustFinishedTurn) {
         warnIgnored(event, '只能在 running 回合上挂起');
         return state;
       }

@@ -14,8 +14,10 @@
 import type { InputRequest } from './events';
 import type { KernelPolicy, PlanStorePort } from './policy';
 
-/** plan-confirm 挂起期间禁止调用的工具（迁移自 TOOLS_BLOCKED_WHILE_AWAITING_CONFIRM） */
-const BLOCKED_WHILE_PLAN_CONFIRM = new Set(['submit_analysis', 'validate_plan', 'report_user_action_done']);
+/** plan-confirm 挂起期间禁止调用的工具（迁移自 TOOLS_BLOCKED_WHILE_AWAITING_CONFIRM）
+ *  ⚠️ submit_analysis 不在屏蔽列表：挂起期间用户修改需求时，模型必须能重新提交分析
+ *  生成新计划并重新等待确认——屏蔽它会导致需求变更后只能退化成聊天文字确认 */
+const BLOCKED_WHILE_PLAN_CONFIRM = new Set(['validate_plan', 'report_user_action_done']);
 
 /** 触发计划确认挂起的工具（提交分析/创建计划成功即视为"计划待确认"） */
 const PLAN_SUBMITTING_TOOLS = new Set(['submit_analysis', 'create_plan']);
@@ -39,7 +41,10 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
 
     afterToolResult(_state, call): InputRequest | null {
       if (!PLAN_SUBMITTING_TOOLS.has(call.name) || !call.result.success) return null;
-      const draft = store.getPlans().find((p) => p.status === 'draft');
+      // 取最新的 draft：挂起期间用户修改需求会再次 submit_analysis，旧 draft 计划
+      // 不会被自动作废，find 第一个可能选中过期的那个
+      const drafts = store.getPlans().filter((p) => p.status === 'draft');
+      const draft = drafts.length > 0 ? drafts[drafts.length - 1] : null;
       if (!draft) return null;
       return {
         kind: 'plan-confirm',

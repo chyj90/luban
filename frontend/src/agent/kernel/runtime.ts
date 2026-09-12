@@ -15,6 +15,19 @@ import { callLLMAPIStream, parseToolArguments } from '../core/llmClient';
 import { compactForApi } from '../core/contextWindow';
 import type { SessionEvent, ResumeCommand } from './events';
 import { describeInputRequest } from './events';
+
+/** 挂起中收到自由文本时，按挂起类型给模型的判断指引 */
+function describePendingForModel(pending: import('./events').InputRequest): string {
+  if (pending.kind === 'plan-confirm') {
+    return (
+      `注意：此前有一个等待确认的计划——${describeInputRequest(pending)}。请结合用户这条消息判断：\n` +
+      `- 若用户明确表示同意执行（如"确认""开始"）→ 调用 confirm_plan 开始执行\n` +
+      `- 若用户补充或修改了需求 → 先输出更新后的分析，再调用 submit_analysis 重新提交（系统会生成新计划并重新等待确认，不要只用文字回应）\n` +
+      `- 若用户在说别的事 → 先回应用户，计划保持等待确认状态`
+    );
+  }
+  return `注意：此前有一个未处理完的等待项——${describeInputRequest(pending)}。请结合用户这条消息判断：若用户表示同意/已完成，按对应工具的说明继续；若用户在说别的事，请先回应用户。`;
+}
 import { applyEvent, createSessionState, type SessionState } from './session';
 import type { KernelPolicy } from './policy';
 
@@ -316,12 +329,25 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
 
       if (input.kind === 'user-message') {
         conversation.push({ id: `u-${turnSeq}`, role: 'user', content: input.text, timestamp: Date.now() });
-        // 挂起中收到自由文本：不猜意图，把待处理请求转述给模型，由模型判断
-        if (session.status === 'suspended' && session.pendingInput) {
-          pushSystemMessage(`注意：此前有一个未处理完的等待项——${describeInputRequest(session.pendingInput)}。请结合用户这条消息判断：若用户表示同意/已完成，按对应工具的说明继续；若用户在说别的事，请先回应用户。`);
+        // 挂起中收到自由文本：不猜意图，把待处理请求转述给模型，由模型判断。
+        // turn.started 会清空 session.pendingInput（session.ts 账本语义），先捕获
+        const suspendedPending = session.status === 'suspended' ? session.pendingInput : null;
+        if (suspendedPending) {
+          pushSystemMessage(describePendingForModel(suspendedPending));
         }
         emit({ type: 'turn.started', turnId, input: { kind: 'user-message', text: input.text }, at: Date.now() });
-        return runLlmLoop(turnId);
+        const result = await runLlmLoop(turnId);
+        // session.ts 的设计假设："若恢复后仍在等待，Runtime 会重新挂起"。
+        // 模型本轮若是纯文本回复（没有任何工具调用），挂起事项不可能被处理——
+        // 必须重新挂起，否则确认横幅在 turn.started 时被清掉后永久消失，
+        // 用户只能退化成聊天文字确认。
+        const lastTurn = session.turns[session.turns.length - 1];
+        const hadToolCalls = !!lastTurn && lastTurn.turnId === turnId && lastTurn.toolCalls.length > 0;
+        if (suspendedPending && !hadToolCalls && !result.suspended && !result.cancelled) {
+          emit({ type: 'turn.suspended', turnId, request: suspendedPending });
+          return makeResult(true);
+        }
+        return result;
       }
 
       const pending = session.pendingInput;

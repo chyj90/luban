@@ -275,7 +275,8 @@ async function testPlanConfirmFlow(): Promise<RuntimeTestResult> {
   return result('K12-计划确认流', checks);
 }
 
-/** K13: planPolicy.filterTools —— plan-confirm 挂起期间屏蔽提交/校验类工具 */
+/** K13: planPolicy.filterTools —— plan-confirm 挂起期间屏蔽校验类工具；
+ *  submit_analysis 必须放行（挂起期间用户修改需求时，模型要能重新提交分析生成新计划） */
 function testPlanConfirmToolFilter(): RuntimeTestResult {
   const checks: string[] = [];
   const policy = createPlanPolicy(makeStore([]));
@@ -290,8 +291,11 @@ function testPlanConfirmToolFilter(): RuntimeTestResult {
   const tools = ['submit_analysis', 'validate_plan', 'report_user_action_done', 'list_queries', 'update_plan_item']
     .map((name) => plainTool(name, async () => ({ success: true, message: 'ok' })));
   const filtered = policy.filterTools!(state, tools).map((t) => t.name);
-  if (filtered.includes('submit_analysis') || filtered.includes('validate_plan') || filtered.includes('report_user_action_done')) {
-    checks.push(`挂起期间应屏蔽提交/校验工具，实际 ${filtered.join(',')}`);
+  if (filtered.includes('validate_plan') || filtered.includes('report_user_action_done')) {
+    checks.push(`挂起期间应屏蔽校验类工具，实际 ${filtered.join(',')}`);
+  }
+  if (!filtered.includes('submit_analysis')) {
+    checks.push('submit_analysis 不应被屏蔽——挂起期间需求变更需重新提交分析生成新计划');
   }
   if (!filtered.includes('list_queries') || !filtered.includes('update_plan_item')) {
     checks.push('不应误伤正常工具');
@@ -300,6 +304,40 @@ function testPlanConfirmToolFilter(): RuntimeTestResult {
     checks.push('非挂起状态不应过滤工具');
   }
   return result('K13-计划确认工具过滤', checks);
+}
+
+/** K18: plan-confirm 挂起期间收到自由文本（需求修改/闲聊）且模型纯文本回复 → 必须重新挂起，
+ *  保证确认横幅不消失（否则用户只能退化成聊天文字确认） */
+async function testPlanConfirmFreeTextResuspend(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const plan = makePlan({ steps: [{ id: 's1', description: '创建查询 orders', status: 'pending', order: 0 }] });
+  const store = makeStore([plan]);
+  const rt = createKernelRuntime({
+    model: 'test-model', systemPrompt: 'sys',
+    tools: [plainTool('submit_analysis', async () => ({ success: true, message: '分析已提交' }))],
+    policy: createPlanPolicy(store),
+    llmStream: scriptedLLM([
+      { toolCalls: [{ name: 'submit_analysis', arguments: {} }] },
+      { content: '好的，我理解您想把地图放到中间，请确认调整后的计划。' },
+    ]),
+  });
+
+  const r1 = await rt.runTurn({ kind: 'user-message', text: '做一个订单页' });
+  if (!r1.suspended || r1.state.pendingInput?.kind !== 'plan-confirm') {
+    checks.push('前置条件：submit_analysis 后应挂起 plan-confirm');
+    return result('K18-挂起期自由文本重新挂起', checks);
+  }
+
+  // 用户没点按钮，而是发了需求修改；模型纯文本回复（无工具调用）
+  const r2 = await rt.runTurn({ kind: 'user-message', text: '地图放在屏幕中间' });
+  if (!r2.suspended) checks.push('纯文本回复未处理挂起事项，应重新挂起（保留确认横幅）');
+  if (r2.state.pendingInput?.kind !== 'plan-confirm' || r2.state.pendingInput.planId !== 'plan-1') {
+    checks.push(`重新挂起应保留原 plan-confirm 请求，实际 ${JSON.stringify(r2.state.pendingInput)}`);
+  }
+  if (!r2.conversationMessages.some((m) => m.role === 'system' && m.content.includes('submit_analysis'))) {
+    checks.push('plan-confirm 挂起期的自由文本应注入需求修改的处理指引（重新 submit_analysis）');
+  }
+  return result('K18-挂起期自由文本重新挂起', checks);
 }
 
 /** K14: beforeComplete —— 计划有未完成步骤时拦截退出；达到上限后放行 */
@@ -461,6 +499,7 @@ export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
     await testParseFailureFeedbackReplay(),
     testPlanConfirmToolFilter(),
     await testPlanConfirmFlow(),
+    await testPlanConfirmFreeTextResuspend(),
     await testCompletionInterception(),
     await testDelegationCompleted(),
     await testDelegationSuspended(),
