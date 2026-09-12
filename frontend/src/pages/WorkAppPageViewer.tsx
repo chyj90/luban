@@ -137,6 +137,12 @@ export function WorkAppPageViewer() {
           bridgeScript.textContent = e.data.bridgeScript;
           document.head.appendChild(bridgeScript);
         }
+        // 主题/配色是页面级状态：页面切换/热更新时重置为默认浅色，由页面脚本自行覆盖
+        try {
+          if (window.LubanUI) window.LubanUI._currentTheme = null;
+          if (window.LubanUI) window.LubanUI._activeStyle = null;
+          document.documentElement.removeAttribute('data-theme');
+        } catch (e) {}
         if (e.data.js) {
           try {
             var fn = new Function(e.data.js);

@@ -391,6 +391,14 @@ export function useQueryBridge(
         // 页面热更新前先执行旧页面的清理函数（清定时器/解绑监听），避免泄漏和重复初始化
         _runPageCleanup();
 
+        // 主题/配色是页面级状态：同一个 iframe 承载多个页面，切页/热更新时必须重置为默认浅色，
+        // 由页面脚本自行 setTheme/setVisualStyle 覆盖——否则深色大屏的 data-theme 会泄漏到后续所有页面
+        try {
+          if (window.LubanUI) window.LubanUI._currentTheme = null;
+          if (window.LubanUI) window.LubanUI._activeStyle = null;
+          document.documentElement.removeAttribute('data-theme');
+        } catch (e) {}
+
         var bodyScripts = document.body.querySelectorAll('script');
         var keepIds = ['__luban_ui_js__', '__echarts__', '__echarts_gl__'];
         for (var i = 0; i < bodyScripts.length; i++) {
