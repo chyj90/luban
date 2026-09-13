@@ -7,7 +7,7 @@ import type { Application } from '@/types/application';
 import type { Page, CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
 import { useQueryBridge } from '@/hooks/useQueryBridge';
-import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE } from '@/luban-ui';
+import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE, LEAFLET_SOURCE } from '@/luban-ui';
 import './AppUserPage.css';
 
 interface AppUserPageProps {
@@ -119,6 +119,7 @@ export function AppUserPage({ app }: AppUserPageProps) {
   <script id="__luban_ui_js__">${LUBAN_UI_JS}</script>
   <script id="__echarts__">${ECHARTS_SOURCE}</script>
   <script id="__echarts_gl__">${ECHARTS_GL_SOURCE}</script>
+  <script id="__leaflet_src__" type="text/plain">${LEAFLET_SOURCE}</script>
   <script>
     let __page_ready__ = false;
     window.addEventListener('message', function(e) {
@@ -127,6 +128,16 @@ export function AppUserPage({ app }: AppUserPageProps) {
         if (style) style.textContent = e.data.css || '';
         var root = document.getElementById('__app_root__');
         if (root) root.innerHTML = e.data.html || '';
+        // GIS 按需激活：页面引用 LubanUI.gis/leaflet 时，从惰性标签同步执行 Leaflet 源码
+        // （必须在页面 JS 之前，否则 UI.gis 执行时 L 未定义；与其他 viewer 的激活逻辑保持一致）
+        if (/LubanUI\\.gis|leaflet/i.test((e.data.html || '') + (e.data.js || '')) && typeof window.L === 'undefined') {
+          var lazyEl = document.getElementById('__leaflet_src__');
+          if (lazyEl && lazyEl.textContent) {
+            var lazyScript = document.createElement('script');
+            lazyScript.textContent = lazyEl.textContent;
+            document.body.appendChild(lazyScript);
+          }
+        }
         if (e.data.libraries) {
           e.data.libraries.forEach(function(lib) {
             if (lib) {
@@ -149,6 +160,13 @@ export function AppUserPage({ app }: AppUserPageProps) {
           bridgeScript.textContent = e.data.bridgeScript;
           document.head.appendChild(bridgeScript);
         }
+        // 主题/配色是页面级状态：页面切换/热更新时重置为默认浅色，由页面脚本自行覆盖
+        // （与 WorkAppPageViewer 的 UPDATE_PAGE 逻辑保持一致，防深色 data-theme 跨页面泄漏）
+        try {
+          if (window.LubanUI) window.LubanUI._currentTheme = null;
+          if (window.LubanUI) window.LubanUI._activeStyle = null;
+          document.documentElement.removeAttribute('data-theme');
+        } catch (err) {}
         if (e.data.js) {
           try {
             var fn = new Function(e.data.js);
