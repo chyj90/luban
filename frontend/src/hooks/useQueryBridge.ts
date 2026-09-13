@@ -400,7 +400,7 @@ export function useQueryBridge(
         } catch (e) {}
 
         var bodyScripts = document.body.querySelectorAll('script');
-        var keepIds = ['__luban_ui_js__', '__echarts__', '__echarts_gl__'];
+        var keepIds = ['__luban_ui_js__', '__echarts__', '__echarts_gl__', '__leaflet_src__'];
         for (var i = 0; i < bodyScripts.length; i++) {
           if (keepIds.indexOf(bodyScripts[i].id) === -1) {
             bodyScripts[i].remove();
