@@ -87,6 +87,7 @@ export async function validateCode(
   try { if (html && js) validateFormContainer(html, js, errors); } catch (e: any) { errors.push(`[表单容器] 校验异常: ${e?.message || e}`); }
   try { if (js) validateFetchCalls(js, errors, warnings); } catch (e: any) { errors.push(`[网络请求] 校验异常: ${e?.message || e}`); }
   try { if (validateOptions?.libraries) validateLibraries(validateOptions.libraries, warnings); } catch (e: any) { errors.push(`[libraries] 校验异常: ${e?.message || e}`); }
+  try { if (html && js) validateDashboardIntegrity(html, js, errors, fixable); } catch (e: any) { errors.push(`[大屏完整性] 校验异常: ${e?.message || e}`); }
 
   const blockingErrors = errors.filter(isBlockingError);
   const nonBlockingErrors = errors.filter(e => !isBlockingError(e));
@@ -1313,6 +1314,8 @@ function validateLubanUIHtml(html: string, warnings: string[]) {
     const cls = div.getAttribute('class') || '';
     if (cls.includes('luban-chart') || cls.includes('luban-chart-item')) continue;
     if (div.closest('.luban-chart-item')) continue;
+    // 大屏科技面板（luban-panel-tech）内的图表容器走 decor 体系，豁免
+    if (div.closest('.luban-panel-tech') || div.closest('.luban-kpi-tech')) continue;
     const hasChart = /chart|echart|graph|pie|bar|line/i.test(id);
     const hasCanvas = div.querySelector('canvas');
     if (hasChart || hasCanvas) {
@@ -1349,6 +1352,74 @@ function validateLubanUIHtml(html: string, warnings: string[]) {
       `[LubanUI] 以下元素未使用 LubanUI 组件库，建议替换以保持风格一致` +
       `（风格建议项，不阻断、不计入待修问题；深色大屏等特殊风格页面可保留自定义样式）：\n` +
       warningItems.map((w) => `  - ${w}`).join('\n')
+    );
+  }
+}
+
+/**
+ * 大屏完整性校验：图表容器/KPI 必须在 JS 中有初始化/赋值路径
+ * 针对"面板渲染为空白、KPI 恒为占位符"这类静态语法检查抓不到的缺陷
+ */
+function validateDashboardIntegrity(html: string, js: string, _errors: string[], fixable: string[]) {
+  const isDashboard =
+    html.includes('luban-screen-tech') ||
+    html.includes('luban-kpi-tech') ||
+    /LubanUI\.screenScaler\s*\(/.test(js);
+  if (!isDashboard) return;
+
+  const chartInitPatterns = [
+    /LubanUI\.chart\s*\(\s*['"]{ID}['"]/,
+    /LubanUI\.chartPresets\.\w+\s*\(\s*['"]{ID}['"]/,
+    /echarts\.init\s*\(\s*document\.getElementById\s*\(\s*['"]{ID}['"]/,
+    /getElementById\s*\(\s*['"]{ID}['"]\s*\)/,
+  ];
+
+  // 1. 图表容器：id 含 chart/map/graph 等关键词的 div 必须在 JS 中出现
+  const containerIds = new Set<string>();
+  const idRegex = /<div[^>]*\sid=["']([^"']+)["'][^>]*>/g;
+  let m: RegExpExecArray | null;
+  while ((m = idRegex.exec(html)) !== null) {
+    const id = m[1];
+    if (/chart|map|graph|pie|gauge|radar|spark|trend/i.test(id)) {
+      containerIds.add(id);
+    }
+  }
+  for (const id of containerIds) {
+    const hasInit = chartInitPatterns.some((p) => new RegExp(p.source.replaceAll('{ID}', id)).test(js));
+    if (!new RegExp(`['"]${id}['"]`).test(js)) {
+      fixable.push(
+        `大屏图表容器 #${id} 在 JS 中从未引用——该面板会渲染为空白。必须为它调用初始化（LubanUI.chartPresets.xxx('${id}', ...) 或 echarts.init(document.getElementById('${id}'))），数据为空时也要 init 空图或显示占位，不能留白`
+      );
+    } else if (!hasInit) {
+      fixable.push(
+        `大屏图表容器 #${id} 在 JS 中被引用但未见初始化调用（LubanUI.chart / chartPresets / echarts.init），确认该容器真的渲染了图表，否则面板空白`
+      );
+    }
+  }
+
+  // 2. KPI 数值：.luban-kpi-value 的 id 必须在 JS 中有赋值路径（countUp / textContent / innerHTML）
+  const kpiIds = new Set<string>();
+  const kpiRegex = /<div[^>]*class=["'][^"']*luban-kpi-value[^"']*["'][^>]*\sid=["']([^"']+)["']/g;
+  const kpiRegex2 = /<div[^>]*\sid=["']([^"']+)["'][^>]*class=["'][^"']*luban-kpi-value/g;
+  while ((m = kpiRegex.exec(html)) !== null) kpiIds.add(m[1]);
+  while ((m = kpiRegex2.exec(html)) !== null) kpiIds.add(m[1]);
+  for (const id of kpiIds) {
+    const assigned =
+      new RegExp(`LubanUI\\.countUp\\s*\\(\\s*['"]${id}['"]`).test(js) ||
+      new RegExp(`getElementById\\s*\\(\\s*['"]${id}['"]\\s*\\)`).test(js);
+    if (!assigned) {
+      fixable.push(
+        `KPI 指标 #${id} 在 JS 中没有赋值路径——会一直显示占位符。请用 LubanUI.countUp('${id}', 值, { separator: true }) 填充真实数据；确无数据时也要显式写成 '--' 说明原因`
+      );
+    }
+  }
+
+  // 3. 中央地图：大屏页面应有地图/3D 视觉锚点（gis 或 map3d 或 map）
+  const hasMap = /LubanUI\.(gis|map3d|map)\s*\(/.test(js);
+  const hasMapContainer = /map/i.test([...containerIds].join(',')) || /luban-halo/.test(html);
+  if (!hasMap && hasMapContainer) {
+    fixable.push(
+      `大屏页面有中央地图容器但 JS 中未初始化地图。有外网时用 LubanUI.gis('id', { style: 'satellite', ... })（卫星影像质感最佳），无外网或省份填色统计用 LubanUI.map3d / LubanUI.map`
     );
   }
 }

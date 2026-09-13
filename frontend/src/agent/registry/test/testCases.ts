@@ -198,6 +198,47 @@ export const testCases = {
   // ============================================================
   // 十、综合场景
   // ============================================================
+  // 十、大屏质感与样式体系（decor/setPalette/setDensity/画布）
+  // ============================================================
+  bigscreen: [
+    {
+      desc: '配色意图派生',
+      input: '做一个"园区能耗监测"大屏，绿色系',
+      expect: 'scaffold 传 primaryColor（绿色系主色）→ 页面 init 调用 LubanUI.setPalette，整套配色（背景/发光/图表）程序化派生，不出现用户手选色值',
+    },
+    {
+      desc: '命名风格预设',
+      input: '做一个社区安防大屏，要鎏金风格',
+      expect: '调用 LubanUI.setPalette(\'golden\')（或等价主色派生），金色系全套联动，点睛橙保留',
+    },
+    {
+      desc: '浅色主题 + 自定主色',
+      input: '做一个浅色的党建数据大屏，红色为主',
+      expect: 'scaffold 传 theme=light + primaryColor（红色主色）→ setTheme(\'light\') + setPalette，浅色红系全套联动',
+    },
+    {
+      desc: '信息密度档位',
+      input: '做一个运营指挥大屏，一屏要放 8 个面板，信息密度高一些',
+      expect: '布局按 8 模块原创组织（不套 4 面板骨架）+ LubanUI.setDensity(\'compact\')，禁止手写覆盖组件尺寸',
+    },
+    {
+      desc: '超宽条屏画布',
+      input: '给指挥中心的 2560×720 LED 条屏做一个监控大屏',
+      expect: '分析第 4 章记录画布尺寸 → scaffold 传 canvasWidth=2560/canvasHeight=720 → 布局按超宽比例多列横排（不套 16:9 三栏）',
+    },
+    {
+      desc: '大字展示屏',
+      input: '给展厅做一块大字数据展示屏，数字要醒目',
+      expect: 'LubanUI.setDensity(\'large\') + luban-num 数码字，KPI 数值放大',
+    },
+    {
+      desc: '默认画布不传尺寸参数',
+      input: '做一个全国销售态势大屏',
+      expect: 'scaffold 不传 canvasWidth/canvasHeight，默认 1920×1080，screenScaler 正常',
+    },
+  ],
+
+  // ============================================================
   integration: [
     {
       desc: '完整应用搭建',

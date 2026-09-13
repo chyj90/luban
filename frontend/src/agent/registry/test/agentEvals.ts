@@ -29,6 +29,8 @@ import * as contextWindowModule from '../../core/contextWindow';
 import * as agentMemoryModule from '../agentMemory';
 import { resolveSkills } from '../skillRegistry';
 import { consumeApproval, onUserMessage, resetConfirmationGuard, hasPending } from '../../core/confirmationGuard';
+import { buildInteliSystemPrompt } from '../../prompts/systemPrompt';
+import { getComponentCatalog, getComponentSpecByName } from '@/luban-ui/componentSpecs';
 
 export interface EvalResult {
   name: string;
@@ -753,6 +755,50 @@ function evalParseToolArgumentsStrictness(): EvalResult {
   return evalResult('E19-参数解析严格化', checks.length === 0, checks.length === 0 ? '解析失败不再静默降级' : checks.join('；'));
 }
 
+/** E20: 大屏能力知识可达性 —— setPalette/setDensity/画布参数必须被 agent 实际看到（常驻提示词 + 工具 schema + 按需 spec 三层） */
+async function evalScreenCapabilityReachability(): Promise<EvalResult> {
+  const problems: string[] = [];
+  const execution = buildInteliSystemPrompt(1, 1, 'demo', [{ id: 1, name: 'demo' }], 'execution');
+  for (const kw of ['setPalette', 'setDensity', 'decor.', '禁止手写覆盖']) {
+    if (!execution.includes(kw)) problems.push(`执行阶段系统提示词缺少 "${kw}"`);
+  }
+  const analysis = buildInteliSystemPrompt(1, 1, 'demo', [{ id: 1, name: 'demo' }], 'analysis');
+  for (const kw of ['画布尺寸', 'canvasWidth', '超宽', 'setDensity']) {
+    if (!analysis.includes(kw)) problems.push(`分析阶段系统提示词缺少 "${kw}"`);
+  }
+  const scaffoldSkills = resolveSkills(['code:scaffold'], STUB_CTX);
+  const scaffoldParams = ((scaffoldSkills[0]?.parameters as { properties?: Record<string, unknown> })?.properties) || {};
+  for (const kw of ['primaryColor', 'density', 'canvasWidth', 'canvasHeight']) {
+    if (!scaffoldParams[kw]) problems.push(`create_page_scaffold 参数 schema 缺少 "${kw}"`);
+  }
+  const catalog = getComponentCatalog();
+  if (catalog.includes('ScreenDecor')) {
+    const decorSpec = getComponentSpecByName(['ScreenDecor']);
+    for (const kw of ['setPalette', 'setDensity', 'screenScaler', 'decor.panel']) {
+      if (!decorSpec.includes(kw)) problems.push(`ScreenDecor spec 缺少 "${kw}" 用法说明`);
+    }
+  } else {
+    // node 环境 import.meta.glob 不可用（浏览器打包正常），回退读源文件校验按需层
+    try {
+      // 动态 import 规避应用包对 node 内置模块的解析（本评测仅 agent:check node 环境执行到此处）
+      const fs = (await import('node:fs' as unknown as string)) as unknown as { readFileSync: (p: URL) => string };
+      const specPath = new URL('../../../luban-ui/components/screen-decor.spec.ts', import.meta.url);
+      const specSrc = fs.readFileSync(specPath);
+      for (const kw of ['setPalette', 'setDensity', 'screenScaler', 'decor.panel']) {
+        if (!specSrc.includes(kw)) problems.push(`ScreenDecor spec 缺少 "${kw}" 用法说明`);
+      }
+    } catch {
+      problems.push('组件目录中不可见 ScreenDecor 且无法回退源文件校验（按需层入口断了）');
+    }
+  }
+
+  return evalResult(
+    'E20-大屏能力知识可达性',
+    problems.length === 0,
+    problems.length === 0 ? '常驻提示词/工具 schema/按需 spec 三层全部在位' : problems.join('；'),
+  );
+}
+
 /** 运行全部 eval */
 export async function runAgentEvals(): Promise<EvalResult[]> {
   const results: EvalResult[] = [
@@ -777,6 +823,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
   results.push(await evalDelegatePausePropagationWorkflow());
   results.push(await evalDDLInterventionPause());
   results.push(await evalDelegationMemorySlice());
+  results.push(await evalScreenCapabilityReachability());
   return results;
 }
 

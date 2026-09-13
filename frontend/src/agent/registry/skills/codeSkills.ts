@@ -490,6 +490,11 @@ export const codeSkills: Record<string, SkillFactory> = {
 2. 调用 update_code_page 补充表格列、表单字段等业务逻辑
 3. 如有待修问题，每次修 1-2 个，逐步完善
 
+## ⚠️ dashboard 骨架只是质感基线的示例排布，不是固定模板
+骨架演示的是大屏质感基线（screen-tech 底座 + decor.frame 边框 + 科技面板 + screenPalette 配色 + luban-num 数码字）。
+区块构成和布局必须按需求分析第 4 章 UI 分析自由组织——面板数量、栅格比例、有无地图、KPI 行数随需求变化；
+需求结构与骨架差异大时，用 decor.panel 等组件按分析结果重新排布（面板可任意数量），禁止硬套骨架。
+
 ## 参数必须使用纯 JSON 格式，禁止使用 XML 标签`,
     parameters: {
       type: 'object',
@@ -497,6 +502,10 @@ export const codeSkills: Record<string, SkillFactory> = {
         name: { type: 'string', description: '【必填】页面名称' },
         type: { type: 'string', enum: ['crud', 'dashboard', 'detail', 'custom'], description: '页面类型：crud=表格+表单+增删改查, dashboard=统计卡+图表, detail=详情展示, custom=空白模板' },
         theme: { type: 'string', enum: ['dark', 'light'], description: 'dashboard 页面主题：dark=深色大屏，light=浅色大屏。必须按用户需求选择（用户要浅色就必须传 light），模板会自动调用 LubanUI.setTheme' },
+        primaryColor: { type: 'string', description: 'dashboard 主色（#RRGGBB，可选）。用户提出配色/风格需求时传入（如"绿色系"传 #22C55E），页面会通过 LubanUI.setPalette 程序化派生整套配色' },
+        density: { type: 'string', enum: ['compact', 'normal', 'large'], description: 'dashboard 信息密度（可选）。用户要求"高密度/一屏多个面板"传 compact，"大字展示屏"传 large，默认 normal。通过 LubanUI.setDensity 生效' },
+        canvasWidth: { type: 'number', description: '画布宽度 px（可选，默认 1920）。用户给出明确显示尺寸/分辨率时传入，如 LED 屏 2560、拼接屏 3840、超宽条屏 4864、竖屏 1080。非 16:9 比例时布局必须按画布比例重新组织' },
+        canvasHeight: { type: 'number', description: '画布高度 px（可选，默认 1080）。与 canvasWidth 成对传入' },
         readQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' } } }, description: '读查询列表（SELECT），如 [{name:"GetList", id:1}]' },
         writeQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' }, operation: { type: 'string', enum: ['insert', 'update', 'delete'] } } }, description: '写查询列表（INSERT/UPDATE/DELETE），如 [{name:"InsertData", id:2, operation:"insert"}]' },
         toolIds: { type: 'array', items: { type: 'number' }, description: '关联的 API 工具 ID 列表' },
@@ -687,102 +696,107 @@ if (document.readyState === 'loading') {
         } else if (pageType === 'dashboard') {
           const readName = primaryRead?.name || 'GetStats';
           const theme = args.theme === 'light' ? 'light' : 'dark';
+          // 画布：默认 1920×1080；用户给出明确尺寸时按用户的来（640-7680 合法范围）
+          const clampCanvas = (v: unknown, fallback: number) => {
+            const n = Number(v);
+            return Number.isFinite(n) && n >= 640 && n <= 7680 ? Math.round(n) : fallback;
+          };
+          const cw = clampCanvas(args.canvasWidth, 1920);
+          const chh = clampCanvas(args.canvasHeight, 1080);
 
-          // 指挥中心级密集骨架：1920×1080 设计稿 + 等比缩放，标题栏/多时区时钟/
-          // 4 张 sparkline KPI 卡/左右面板堆叠/中央地图/底部装饰，10+ 数据区块。
-          // 模型在其上填数据和联动，而不是从空白页拼布局
-          html = `<div class="screen-wrap luban-screen-bg luban-bg-dots">
-  <div class="screen-header luban-corner-tech">
-    <div class="screen-title luban-glow-text">${name}</div>
-    <div id="worldClock" class="screen-clock"></div>
-  </div>
+          // 指挥中心级大屏骨架：统一蓝青色相（色板取样自高端指挥中心设计稿）
+          // screen-tech 底座 + 全屏科技边框 + 梯形标题栏 + 科技面板 + KPI 数码字 + 中央3D地图 + 底部图标导航
+          // 模型在其上填数据和图表，不自己写容器样式
+          html = `<div class="luban-screen-tech luban-hex-bg">
+  <div id="screenHeader"></div>
 
-  <div class="kpi-row">
-    <div class="kpi-card luban-glow-card">
-      <div class="kpi-label">指标一</div>
-      <div class="kpi-value" id="kpi1">-</div>
-      <div class="kpi-spark" id="kpi1Spark"></div>
+  <div class="my-kpi-row">
+    <div class="luban-kpi-tech">
+      <div class="luban-kpi-label">指标一</div>
+      <div class="luban-kpi-value luban-num" id="kpi1">--</div>
+      <div class="luban-kpi-spark" id="kpi1Spark"></div>
     </div>
-    <div class="kpi-card luban-glow-card">
-      <div class="kpi-label">指标二</div>
-      <div class="kpi-value" id="kpi2">-</div>
-      <div class="kpi-spark" id="kpi2Spark"></div>
+    <div class="luban-kpi-tech">
+      <div class="luban-kpi-label">指标二</div>
+      <div class="luban-kpi-value luban-num" id="kpi2">--</div>
+      <div class="luban-kpi-spark" id="kpi2Spark"></div>
     </div>
-    <div class="kpi-card luban-glow-card">
-      <div class="kpi-label">指标三</div>
-      <div class="kpi-value" id="kpi3">-</div>
-      <div class="kpi-spark" id="kpi3Spark"></div>
+    <div class="luban-kpi-tech">
+      <div class="luban-kpi-label">指标三</div>
+      <div class="luban-kpi-value luban-num" id="kpi3">--</div>
+      <div class="luban-kpi-spark" id="kpi3Spark"></div>
     </div>
-    <div class="kpi-card luban-glow-card">
-      <div class="kpi-label">指标四</div>
-      <div class="kpi-value" id="kpi4">-</div>
-      <div class="kpi-spark" id="kpi4Spark"></div>
-    </div>
-  </div>
-
-  <div class="screen-grid">
-    <div class="panel-col">
-      <div class="panel luban-chart-item luban-corner-tech-full">
-        <div class="panel-title">面板标题一</div>
-        <div class="luban-divider-glow"></div>
-        <div id="chart1" class="chart-fill"></div>
-      </div>
-      <div class="panel luban-chart-item luban-corner-tech-full">
-        <div class="panel-title">面板标题二</div>
-        <div class="luban-divider-glow"></div>
-        <div id="chart2" class="chart-fill"></div>
-      </div>
-    </div>
-
-    <div class="panel luban-chart-item luban-corner-tech-full panel-center">
-      <div class="panel-title">全国站点分布</div>
-      <div class="luban-divider-glow"></div>
-      <div id="mapChart" class="chart-fill"></div>
-    </div>
-
-    <div class="panel-col">
-      <div class="panel luban-chart-item luban-corner-tech-full">
-        <div class="panel-title">面板标题三</div>
-        <div class="luban-divider-glow"></div>
-        <div id="chart3" class="chart-fill"></div>
-      </div>
-      <div class="panel luban-chart-item luban-corner-tech-full">
-        <div class="panel-title">面板标题四</div>
-        <div class="luban-divider-glow"></div>
-        <div id="chart4" class="chart-fill"></div>
-      </div>
+    <div class="luban-kpi-tech">
+      <div class="luban-kpi-label">指标四</div>
+      <div class="luban-kpi-value luban-num" id="kpi4">--</div>
+      <div class="luban-kpi-spark" id="kpi4Spark"></div>
     </div>
   </div>
 
-  <div class="luban-data-flow"></div>
+  <div class="my-screen-grid">
+    <div class="my-panel-col">
+      <div class="my-panel-flex" id="chart1Panel"></div>
+      <div class="my-panel-flex" id="chart2Panel"></div>
+    </div>
+
+    <div class="my-map-wrap">
+      <div class="luban-halo" style="width:62%;height:62%;"></div>
+      <div id="mapChart" class="my-map-fill"></div>
+    </div>
+
+    <div class="my-panel-col">
+      <div class="my-panel-flex" id="chart3Panel"></div>
+      <div class="my-panel-flex" id="chart4Panel"></div>
+    </div>
+  </div>
+
+  <div id="bottomNav"></div>
 </div>`;
 
           css = `body { margin: 0; overflow: hidden; }
-.screen-wrap { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
-.screen-header { display: flex; justify-content: space-between; align-items: center; height: 56px; padding: 0 10px; border-bottom: 1px solid rgba(0,212,255,0.25); }
-.screen-title { font-size: 28px; font-weight: 700; letter-spacing: 8px; }
-.screen-clock { font-size: 13px; }
-.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.kpi-card { padding: 12px 16px; border-radius: 10px; }
-.kpi-label { font-size: 13px; letter-spacing: 2px; opacity: 0.75; }
-.kpi-value { font-size: 34px; font-weight: 700; line-height: 1.3; }
-.kpi-spark { height: 36px; }
-.screen-grid { flex: 1; display: grid; grid-template-columns: 3fr 5fr 3fr; gap: 12px; min-height: 0; }
-.panel-col { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.panel { padding: 10px 12px; border-radius: 10px; display: flex; flex-direction: column; min-height: 0; }
-.panel-col .panel { flex: 1; min-height: 0; }
-.panel-title { font-size: 15px; letter-spacing: 2px; padding-bottom: 6px; }
-.chart-fill { flex: 1; min-height: 0; }`;
+/* KPI 行：4 等分，间距跟随密度档位（--scr-gap 由 LubanUI.setDensity 控制） */
+.my-kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--scr-gap, 12px); margin-bottom: var(--scr-gap, 12px); }
+/* 三栏主体：左右面板列 3fr，中央地图 5fr */
+.my-screen-grid { flex: 1; display: grid; grid-template-columns: 3fr 5fr 3fr; gap: var(--scr-gap, 12px); min-height: 0; }
+.my-panel-col { display: flex; flex-direction: column; gap: var(--scr-gap, 12px); min-height: 0; }
+.my-panel-flex { flex: 1; min-height: 0; display: flex; }
+.my-panel-flex .luban-panel-body { flex: 1; }
+/* 中央地图区：相对定位承载光环装饰 */
+.my-map-wrap { position: relative; min-height: 0; display: flex; }
+.my-map-fill { flex: 1; min-height: 0; }`;
 
           js = `function initPage() {
-  // 按需求设置主题（dark=深色大屏 / light=浅色），图表/地图/组件配色跟随主题
-  LubanUI.setTheme('${theme}');
-  // 固定 1920×1080 设计稿，等比缩放适配任意分辨率（指挥中心大屏底座）
-  LubanUI.screenScaler({ width: 1920, height: 1080, target: '.screen-wrap' });
-  // 多时区时钟条（内部自动注册定时器清理）
+  // 主题（大屏质感按 dark 设计；用户明确要浅色时传 light，面板自动切浅色底）
+  LubanUI.setTheme('${theme}');${args.primaryColor ? `\n  // 用户指定主色：整套配色（背景/发光/图表序列）由 LubanUI 程序化派生\n  LubanUI.setPalette({ primary: '${args.primaryColor}' });` : ''}${args.density && args.density !== 'normal' ? `\n  // 用户指定信息密度：组件尺寸（面板头/KPI 数值/导航等）按档位缩放\n  LubanUI.setDensity('${args.density}');` : ''}
+  // 画布设计稿：${cw}×${chh}${cw === 1920 && chh === 1080 ? '（默认，等比缩放适配任意分辨率）' : '（按用户要求的尺寸）'}，预览/大屏投放自动等比缩放居中
+  LubanUI.screenScaler({ width: ${cw}, height: ${chh}, target: '.luban-screen-tech' });
+  // 全屏科技边框（四角装饰 + 边线扫光）
+  LubanUI.decor.frame('.luban-screen-tech');
+  // 大屏标题栏（clock 传时钟容器 id，右侧自动出现时区槽位）
+  LubanUI.decor.header('screenHeader', { title: '${name}', clock: 'worldClock' });
+  // 图表面板（icon 可选值: LubanUI.iconList()，如 radar/alert/chart-bar/chart-pie/database/gauge）
+  LubanUI.decor.panel('chart1Panel', { title: '面板标题一', icon: 'chart-bar' });
+  LubanUI.decor.panel('chart2Panel', { title: '面板标题二', icon: 'chart-pie' });
+  LubanUI.decor.panel('chart3Panel', { title: '面板标题三', icon: 'radar' });
+  LubanUI.decor.panel('chart4Panel', { title: '面板标题四', icon: 'gauge' });
+  // 多时区时钟（数码字体）
   LubanUI.worldClock('worldClock', { zones: [
     { label: '北京', offset: 8 }, { label: '伦敦', offset: 1 }, { label: '纽约', offset: -4 }
   ]});
+  // 底部图标导航
+  LubanUI.decor.iconNav('bottomNav', [
+    { icon: 'dashboard', label: '数据名称', active: true },
+    { icon: 'shield', label: '数据名称' },
+    { icon: 'database', label: '数据名称' },
+    { icon: 'alert', label: '数据名称' }
+  ]);
+  // 中央 3D 地图（echarts-gl 已内置；真实卫星影像改用 LubanUI.gis('mapChart', { style:'satellite', ... })）
+  LubanUI.loadChinaMap(function() {
+    LubanUI.map3d('mapChart', {
+      mapType: 'china', regionHeight: 3, showLabels: true,
+      markers: [{ name: '北京', lng: 116.4, lat: 39.9, color: LubanUI.screenPalette.orange }]
+    });
+  });
   loadStats();
 }
 
@@ -790,10 +804,11 @@ function loadStats() {
   DataQuery.${readName}({}).then(function(result) {
     var rows = result.rows || [];
     if (rows.length === 0) return;
-    // TODO: 按 result.columns 中的真实列名填充本骨架：
+    // TODO: 按 result.columns 中的真实列名填充本骨架，配色统一取 LubanUI.screenPalette：
     // 1) KPI：LubanUI.countUp('kpi1', 值, { separator: true }) + LubanUI.chartPresets.spark('kpi1Spark', { data: 趋势数组, type: 'bar' })
-    // 2) 左右面板：LubanUI.chartPresets.combo / barGlow / lineGlow / pieGlow / gauge / radar 初始化 chart1-chart4
-    // 3) 中央地图：LubanUI.loadChinaMap(function() { LubanUI.map('mapChart', { mapType: 'china', layers: [...], drillDown: true }) })
+    // 2) 左右面板：LubanUI.chartPresets.combo / barGlow / lineGlow / pieGlow / gauge / radar 初始化
+    //    柱状渐变 color 用 LubanUI.screenPalette.barGradient()，面积图 areaStyle 用 areaGradient()
+    // 3) 中央地图：GIS 卫星影像 LubanUI.gis('mapChart', { style: 'satellite', center: [lng,lat], zoom: 7, markers: [...], lines: [...] })
   }).catch(function() {
     LubanUI.toast.error('数据加载失败');
   });
@@ -937,9 +952,12 @@ if (document.readyState === 'loading') {
           msg += `3. 完善 openEdit 从表格行获取数据回填表单\n`;
           msg += `4. 调整 saveData 传递完整表单数据\n`;
         } else if (pageType === 'dashboard') {
-          msg += `1. 补充统计卡片（添加更多 luban-stat-card）\n`;
-          msg += `2. 添加图表初始化代码\n`;
-          msg += `3. 完善 loadStats 数据映射\n`;
+          msg += `1. 按需求分析第 4 章核对区块构成：骨架的 4KPI+三栏+中央地图只是示例排布，模块不同就用 decor.panel 重新组织布局\n`;
+          msg += `2. 画布比例不是 16:9 时（超宽/竖屏/拼接屏），栅格必须按画布比例重新设计（超宽多列横排、竖屏纵向堆叠），并按画布大小配 setDensity（4K+ 优先 large，高密度小画布优先 compact）\n`;
+          msg += `3. 用 LubanUI.countUp 填充 KPI，配 chartPresets.spark 迷你趋势\n`;
+          msg += `4. 初始化各面板图表（chartPresets 或 LubanUI.chart + LubanUI.screenPalette 配色）\n`;
+          msg += `5. 中央地图：默认已有 3D 中国地图，需要真实地理时改用 LubanUI.gis\n`;
+          msg += `6. 完善 loadStats 数据映射，禁止留空面板（校验会拦截未初始化的图表容器）\n`;
         } else if (pageType === 'detail') {
           msg += `1. 补充详情字段（添加更多 detail-row）\n`;
           msg += `2. 完善数据映射逻辑\n`;

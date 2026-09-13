@@ -559,14 +559,14 @@ window.LubanUI = window.LubanUI || {};
   };
 
   // Spark — 迷你趋势线（KPI 卡内嵌 sparkline，无坐标轴）
-  // 用法：LubanUI.chartPresets.spark('spark1', { data: [3,8,5,9,4,7], color: '#00d4ff', type: 'line'|'bar' })
+  // 用法：LubanUI.chartPresets.spark('spark1', { data: [3,8,5,9,4,7], color: '#3CE4FC', type: 'line'|'bar' })
   F.spark = function(containerId, opts) {
     opts = opts || {};
     var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
     if (!el || typeof echarts === 'undefined') return null;
     var isDark = UI.getTheme() === 'dark';
     if (opts.theme === 'light') isDark = false;
-    var color = opts.color || (isDark ? '#00d4ff' : '#1677ff');
+    var color = opts.color || (isDark ? (UI.screenPalette && UI.screenPalette.cyan) || '#3CE4FC' : (UI.screenPalette && UI.screenPalette.blue) || '#1677ff');
     var data = opts.data || [];
     function rgba(hex, a) {
       var h = String(hex).replace('#', '');
@@ -610,7 +610,7 @@ window.LubanUI = window.LubanUI || {};
     var data = opts.data || [];
     var categories = opts.categories || data.map(function(_, i) { return '项' + (i + 1); });
     var colors = opts.colors || tokenColors('barColors', isDark, (isDark
-      ? ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676']
+      ? ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0']
       : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e']));
 
     var series = (opts.series || [{ name: '数据', data: data }]).map(function(s, si) {
@@ -702,7 +702,7 @@ window.LubanUI = window.LubanUI || {};
     var categories = opts.categories || [];
     var seriesData = opts.series || [{ name: '数据', data: opts.data || [] }];
     var colors = opts.colors || tokenColors('lineColors', isDark, (isDark
-      ? ['#00d4ff', '#00e676', '#ff9100', '#ff3d9a']
+      ? ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0']
       : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444']));
 
     return UI.chart(containerId, {
@@ -752,7 +752,7 @@ window.LubanUI = window.LubanUI || {};
 
     var data = opts.data || [];
     var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
-      ? ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676', '#ff9100', '#00e5ff', '#b388ff', '#ff80ab']
+      ? ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0', '#30A8D8', '#9E86E0', '#1890D8', '#A8CDEB']
       : ['#1677ff', '#7c3aed', '#ec4899', '#22c55e', '#f59e0b', '#06b6d4', '#8b5cf6', '#f472b6']));
     var gapColor = isDark ? '#0a1020' : '#ffffff';
     var centerPos = ['50%', opts.legend !== false ? '45%' : '50%'];
@@ -802,12 +802,12 @@ window.LubanUI = window.LubanUI || {};
       series.push({
         type: 'pie', radius: ['79%', '79.8%'], center: centerPos,
         silent: true, label: { show: false }, z: 1,
-        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.25)' : 'rgba(22,119,255,0.2)' } }]
+        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(60,228,252,0.25)' : 'rgba(22,119,255,0.2)' } }]
       });
       series.push({
         type: 'pie', radius: ['82%', '84%'], center: centerPos,
         silent: true, label: { show: false }, z: 1,
-        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.5)' : 'rgba(22,119,255,0.35)' },
+        data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(60,228,252,0.5)' : 'rgba(22,119,255,0.35)' },
           decal: { symbol: 'rect', symbolSize: [4, 8], rotation: Math.PI / 2, dashArrayX: [4, 4] } }]
       });
     }
@@ -1656,7 +1656,7 @@ window.LubanUI = window.LubanUI || {};
     config = config || {};
     var isDark = UI.getTheme() === 'dark';
     if (config.theme === 'light') isDark = false;
-    var glow = config.glowColor || (isDark ? 'rgba(0,212,255,0.9)' : 'rgba(22,119,255,0.8)');
+    var glow = config.glowColor || (isDark ? (UI.screenPalette && UI.screenPalette.cyan) || 'rgba(60,228,252,0.9)' : (UI.screenPalette && UI.screenPalette.blue) || 'rgba(22,119,255,0.8)');
     var area = config.areaColor || (isDark ? '#0d1b33' : '#dbe8f7');
 
     function init() {
@@ -1667,7 +1667,7 @@ window.LubanUI = window.LubanUI || {};
           type: 'scatter3D',
           coordinateSystem: 'geo3D',
           symbolSize: m.size || 10,
-          itemStyle: { color: m.color || '#ffd54f', shadowBlur: 12, shadowColor: m.color || '#ffd54f' },
+          itemStyle: { color: m.color || '#F08818', shadowBlur: 12, shadowColor: m.color || '#F08818' },
           label: { show: m.name ? true : false, formatter: m.name, position: 'top', textStyle: { color: isDark ? '#e2e8f0' : '#1e293b', fontSize: 12, fontWeight: 'bold' } },
           data: [[m.lng, m.lat, (config.regionHeight || 3) + 1]]
         });
@@ -1731,7 +1731,7 @@ window.LubanUI = window.LubanUI || {};
 
     var data = [];
     var base = isDark ? '#155a8a' : '#7fb3e8';
-    var hi = config.highlight || '#00d4ff';
+    var hi = config.highlight || '#3CE4FC';
     var midR = Math.floor(rows / 2), midC = Math.floor(cols / 2);
     for (var r = 0; r < rows; r++) {
       for (var c = 0; c < cols; c++) {
@@ -1779,7 +1779,7 @@ window.LubanUI = window.LubanUI || {};
         bevelSize: 0.3,
         shading: 'realistic',
         realisticMaterial: { roughness: 0.4, metalness: 0.35 },
-        itemStyle: isDark ? { borderColor: 'rgba(0,212,255,0.35)', borderWidth: 1 } : {}
+        itemStyle: isDark ? { borderColor: 'rgba(60,228,252,0.35)', borderWidth: 1 } : {}
       }]
     });
     return chart;
@@ -1802,7 +1802,7 @@ window.LubanUI = window.LubanUI || {};
     else if (opts.theme === 'light') isDark = false;
 
     var colors = opts.colors || tokenColors('pieColors', isDark, (isDark
-      ? ['#00d4ff', '#00e676', '#ff9100', '#ff3d9a', '#7b61ff', '#00e5ff']
+      ? ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0', '#30A8D8', '#9E86E0']
       : ['#1677ff', '#22c55e', '#f59e0b', '#ef4444', '#7c3aed', '#06b6d4']));
     var fg = isDark ? '#e2e8f0' : '#1e293b';
     var sub = isDark ? '#8aa3c8' : '#64748b';
@@ -1864,7 +1864,7 @@ window.LubanUI = window.LubanUI || {};
         series.push({
           type: 'pie', radius: ['88%', '88.7%'], center: ['50%', '50%'],
           silent: true, label: { show: false },
-          data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(0,212,255,0.3)' : 'rgba(22,119,255,0.25)' } }]
+          data: [{ value: 1, itemStyle: { color: isDark ? 'rgba(60,228,252,0.3)' : 'rgba(22,119,255,0.25)' } }]
         });
       }
     }
@@ -1919,8 +1919,8 @@ window.LubanUI = window.LubanUI || {};
   // GIS — 真实地理底图（Leaflet 内置 + 高德瓦片，国内可达、无需 key）
   // 用法：LubanUI.gis('gisMap', {
   //   center: [113.26, 23.13], zoom: 11, style: 'dark'|'satellite'|'street',
-  //   markers: [{ lng: 113.3, lat: 23.1, name: '站点A', color: '#00d4ff', pulse: true, onClick: 'onSiteClick' }],
-  //   lines: [{ from: [113.3, 23.1], to: [114.3, 22.5], color: '#ffd54f', width: 2 }]
+  //   markers: [{ lng: 113.3, lat: 23.1, name: '站点A', color: '#3CE4FC', pulse: true, onClick: 'onSiteClick' }],
+  //   lines: [{ from: [113.3, 23.1], to: [114.3, 22.5], color: '#F08818', width: 2 }]
   // })
   // 优先级：涉及真实地理（城区/园区/街道级）用 gis；大区域省份态势用 LubanUI.map（逻辑地图）
   // ==========================================
@@ -1960,7 +1960,7 @@ window.LubanUI = window.LubanUI || {};
     };
 
     function _addMarker(m) {
-      var color = m.color || '#00d4ff';
+      var color = m.color || '#3CE4FC';
       var icon = L.divIcon({
         className: '',
         html: '<div class="luban-gis-marker" style="color:' + color + ';">' +
@@ -1997,7 +1997,7 @@ window.LubanUI = window.LubanUI || {};
         ]);
       }
       var line = L.polyline(pts, {
-        color: l.color || '#ffd54f',
+        color: l.color || '#F08818',
         weight: l.width || 2,
         opacity: l.opacity != null ? l.opacity : 0.85,
         className: l.effect === false ? '' : 'luban-gis-flyline'
@@ -2084,13 +2084,13 @@ window.LubanUI = window.LubanUI || {};
         emphasisColor: '#1a3050'
       },
       chart: {
-        barColors: ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676'],
-        lineColors: ['#00d4ff', '#ff3d9a', '#7b61ff', '#00e676'],
-        pieColors: ['#00d4ff', '#7b61ff', '#ff3d9a', '#00e676', '#ff9100', '#00e5ff'],
+        barColors: ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0'],
+        lineColors: ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0'],
+        pieColors: ['#3CE4FC', '#6C90E4', '#F08818', '#18A8C0', '#30A8D8', '#9E86E0'],
         dark: true
       },
       topo: {
-        normal: { fill: '#00d4ff', stroke: '#00a0cc' },
+        normal: { fill: '#3CE4FC', stroke: '#18A8C0' },
         warning: { fill: '#ff9100', stroke: '#cc7400' },
         alarm: { fill: '#ff1744', stroke: '#d50000' },
         offline: { fill: '#37474f', stroke: '#263238' },
@@ -2107,7 +2107,7 @@ window.LubanUI = window.LubanUI || {};
       chart: {
         barColors: ['#d4af37', '#4dabf7', '#00e676', '#ff7043'],
         lineColors: ['#d4af37', '#4dabf7', '#00e676'],
-        pieColors: ['#d4af37', '#4dabf7', '#00e676', '#ff7043', '#ab47bc', '#ffd54f'],
+        pieColors: ['#d4af37', '#4dabf7', '#00e676', '#ff7043', '#ab47bc', '#F08818'],
         dark: true
       },
       topo: {

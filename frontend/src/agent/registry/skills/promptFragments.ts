@@ -45,6 +45,10 @@ export function getCodePageSkillSummary(): string {
 - 写操作必须有对应 DataQuery 写查询，否则委派 DBA 创建
 
 ### 其他规则
+- **大屏/dashboard 页面质感基线**：LubanUI.decor.frame / header / panel / iconNav + LubanUI.screenPalette 图表配色 + luban-num 数码字体。禁止手写裸 div+border 面板和自配紫/粉/绿图表色
+- **质感是基线，布局是自由变量**：面板数量、栅格比例（左1右2/上下分区/无地图/表格图表混排皆可）必须跟随需求分析第 4 章的模块构成灵活排布，禁止所有大屏套同一个骨架；对比参考 components 的 ScreenDecor spec
+- **用户指定配色/风格时用 setPalette 派生**：LubanUI.setPalette({ primary: '#RRGGBB', mode: 'dark'|'light' }) 或命名预设（neon 霓虹青 / golden 鎏金 / holographic 全息蓝 / minimal 浅色极简）。禁止让用户手选全套色值，也禁止手写覆盖 --scr-* / --luban-* 变量
+- **用户指定信息密度/组件大小时用 setDensity**：紧凑屏（一屏 6-8 面板）用 LubanUI.setDensity('compact')，大字展示屏用 'large'，也可精细指定 { panelHeadH: 28, kpiValue: 26 }。面板数量增加时优先配 compact。禁止手写覆盖组件尺寸
 - API 调用：window.__LUBAN__.callApi(apiName, params)
 - **定时器/监听必须注册清理**：页面内使用 setInterval/setTimeout/addEventListener 时，用 window.__LUBAN__.onPageUnload(function(){ clearInterval(t); window.removeEventListener(...); }) 注册清理函数，页面切换和热更新时平台会自动调用，否则会泄漏并重复执行
 - **禁止 fetch() 获取平台内部数据**（/api/... 会被 CORS 拦截）。fetch() 仅允许第三方公开数据源
@@ -217,6 +221,10 @@ export function getAnalysisPromptFragment(): string {
 - **必须逐模块展开**，每个模块写明：展示内容、数据来源、交互方式
 - 禁止一句话概括（❌ "告警指标统计（总数/critical/warning/已恢复）"）
 - **领域组件推断**：根据需求领域主动推断组件类型（地理/位置/区域/线路/站点→ECharts地图、监控/运维→统计卡片、占比→饼图、排名/对比→柱状图、列表/明细→表格+筛选），不要只写显而易见的模块
+
+### 第 4 章「UI 分析」规则
+- 大屏/dashboard 需求：布局结构必须由本章按模块构成原创设计（分区方式、栅格比例、KPI 行数、有无地图随需求变化），禁止照搬固定模板；质感构件（边框/面板/色板/图标）统一用 LubanUI.decor 体系，实现层自由组合
+- **画布尺寸**：默认 1920×1080。用户给出明确显示尺寸/分辨率/比例（LED 屏、拼接屏、超宽条屏、竖屏）时，必须在第 4 章记录画布尺寸并透传 scaffold 的 canvasWidth/canvasHeight，且布局必须按画布比例重新组织——超宽屏多列横排、竖屏纵向堆叠、4K+ 可加大信息密度；组件尺寸按画布配 setDensity（4K+ 优先 large，高密度小画布优先 compact），禁止把 16:9 布局硬套到其他比例
 
 ### 第 7 章「数据需求」规则
 - 每个查询必须声明**筛选参数**（来自第5章的筛选字段），即使当前无筛选也要显式写"无筛选参数"

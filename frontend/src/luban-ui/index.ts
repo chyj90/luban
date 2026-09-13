@@ -26,12 +26,16 @@ import emptyCSS from './components/empty.css?raw';
 import loadingCSS from './components/loading.css?raw';
 import pageHeaderCSS from './components/page-header.css?raw';
 import showcaseCSS from './showcase.css?raw';
+import decorCSS from './decor/decor.css?raw';
+import decorFontCSS from './decor/font.css?raw';
 
 import tableJS from './components/table.js?raw';
 import modalJS from './components/modal.js?raw';
 import toastJS from './components/toast.js?raw';
 import selectJS from './components/select.js?raw';
 import pageHeaderJS from './components/page-header.js?raw';
+import decorIconsJS from './decor/icons.js?raw';
+import decorJS from './decor/decor.js?raw';
 import lubanUIJS from './LubanUI.js?raw';
 
 import echartsSource from 'echarts/dist/echarts.min.js?raw';
@@ -67,6 +71,8 @@ export const LUBAN_UI_CSS = [
   loadingCSS,
   pageHeaderCSS,
   showcaseCSS,
+  decorCSS,
+  decorFontCSS,
   leafletCSSRaw,
 ].join('\n');
 
@@ -77,6 +83,8 @@ export const LUBAN_UI_JS = [
   selectJS,
   pageHeaderJS,
   lubanUIJS,
+  decorIconsJS,
+  decorJS,
 ].join('\n');
 // Leaflet 不常驻：随 shell 以惰性文本进入 iframe，页面引用 GIS 时由 bridge 按需激活
 // （避免不用地图的页面每次都解析执行 147KB JS）

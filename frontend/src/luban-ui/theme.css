@@ -113,24 +113,25 @@ a:hover {
    3. LubanUI.setTheme('dark') 动态切换
    ============================================ */
 [data-theme="dark"] {
-  --luban-primary: #4dabf7;
-  --luban-primary-hover: #74c0fc;
-  --luban-primary-active: #339af0;
-  --luban-primary-light: rgba(77, 171, 247, 0.15);
-  --luban-primary-bg: rgba(77, 171, 247, 0.12);
+  /* 深色大屏统一蓝青色相（取样自指挥中心级设计稿，见 decor/decor.css） */
+  --luban-primary: #3ce4fc;
+  --luban-primary-hover: #6feefe;
+  --luban-primary-active: #18a8c0;
+  --luban-primary-light: rgba(60, 228, 252, 0.15);
+  --luban-primary-bg: rgba(60, 228, 252, 0.12);
 
-  --luban-text: #e2e8f0;
-  --luban-text-secondary: #94a3b8;
-  --luban-text-muted: #64748b;
-  --luban-text-placeholder: #475569;
+  --luban-text: #eaf6ff;
+  --luban-text-secondary: #a8cdeb;
+  --luban-text-muted: #5e82a8;
+  --luban-text-placeholder: #3d5a7d;
 
-  --luban-bg: #0f172a;
-  --luban-bg-card: #1e293b;
-  --luban-bg-hover: rgba(255, 255, 255, 0.05);
-  --luban-bg-header: #1e293b;
+  --luban-bg: #041022;
+  --luban-bg-card: #0a2240;
+  --luban-bg-hover: rgba(60, 228, 252, 0.06);
+  --luban-bg-header: #0b2b4e;
 
-  --luban-border: #334155;
-  --luban-border-light: #1e293b;
+  --luban-border: rgba(48, 168, 216, 0.32);
+  --luban-border-light: rgba(48, 168, 216, 0.14);
 
   --luban-success: #4ade80;
   --luban-success-bg: rgba(74, 222, 128, 0.1);
@@ -277,9 +278,9 @@ a:hover {
   padding: 1px;
   background: linear-gradient(135deg,
     rgba(77, 171, 247, 0.4),
-    rgba(139, 92, 246, 0.4),
+    rgba(60, 228, 252, 0.4),
     rgba(77, 171, 247, 0.15),
-    rgba(139, 92, 246, 0.4));
+    rgba(60, 228, 252, 0.4));
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -288,20 +289,20 @@ a:hover {
 .luban-glow-card:hover {
   box-shadow:
     0 0 20px rgba(77, 171, 247, 0.15),
-    0 0 40px rgba(139, 92, 246, 0.1),
+    0 0 40px rgba(60, 228, 252, 0.1),
     0 8px 32px rgba(0, 0, 0, 0.12);
 }
 [data-theme="dark"] .luban-glow-card::before {
   background: linear-gradient(135deg,
     rgba(77, 171, 247, 0.5),
-    rgba(139, 92, 246, 0.5),
+    rgba(60, 228, 252, 0.5),
     rgba(77, 171, 247, 0.2),
-    rgba(139, 92, 246, 0.5));
+    rgba(60, 228, 252, 0.5));
 }
 [data-theme="dark"] .luban-glow-card:hover {
   box-shadow:
     0 0 30px rgba(77, 171, 247, 0.25),
-    0 0 60px rgba(139, 92, 246, 0.15),
+    0 0 60px rgba(60, 228, 252, 0.15),
     0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
@@ -337,7 +338,7 @@ a:hover {
     transparent,
     rgba(77, 171, 247, 0.4),
     transparent,
-    rgba(139, 92, 246, 0.4),
+    rgba(60, 228, 252, 0.4),
     transparent
   );
   animation: luban-border-spin 4s linear infinite;
@@ -511,10 +512,9 @@ a:hover {
 }
 [data-theme="dark"] .luban-screen-bg {
   background:
-    radial-gradient(ellipse at 20% 50%, rgba(0,212,255,0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(123,97,255,0.05) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 80%, rgba(0,230,118,0.03) 0%, transparent 50%),
-    #0a0f1e;
+    radial-gradient(ellipse 62% 42% at 50% -6%, rgba(24, 144, 216, 0.18) 0%, transparent 62%),
+    radial-gradient(ellipse 46% 34% at 50% 56%, rgba(12, 72, 122, 0.3) 0%, transparent 70%),
+    linear-gradient(180deg, #072144 0%, #051a38 44%, #041022 100%);
 }
 
 /* —— 标题下方发光分隔线 —— */
@@ -597,7 +597,7 @@ a:hover {
 .luban-gis-marker .gis-pulse { position: absolute; inset: 0; border-radius: 50%; border: 2px solid currentColor; animation: lubanGisPulse 1.8s ease-out infinite; }
 @keyframes lubanGisPulse { 0% { transform: scale(0.6); opacity: 0.9; } 100% { transform: scale(2.6); opacity: 0; } }
 /* 标注标签 */
-.luban-gis-label { background: rgba(6,20,38,0.88); border: 1px solid rgba(0,212,255,0.45); color: #cfe8ff; font-size: 12px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.luban-gis-label { background: rgba(6,20,38,0.88); border: 1px solid rgba(60,228,252,0.45); color: #cfe8ff; font-size: 12px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
 .luban-gis-label::before { display: none; }
 /* 飞线：流动虚线 */
 .luban-gis-flyline { stroke-dasharray: 8 10; animation: lubanGisDash 1.5s linear infinite; }

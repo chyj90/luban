@@ -1,0 +1,506 @@
+/* ============================================
+   LubanUI 大屏装饰体系 (decor)
+   色板取样自指挥中心级大屏设计稿，统一蓝青色相：
+   - 背景分层海军蓝: #041022 → #061830(面板) → #072144(地图区) → #0C487A(光带)
+   - 主发光青: #3CE4FC   - 边框亮线蓝: #30A8D8 / #1890D8
+   - 图表第二序列蓝紫: #6C90E4   - 点睛橙(仅标记/告警): #F08818
+   本文件只含大屏类，不影响浅色后台组件
+   ============================================ */
+
+/* —— 大屏 CSS 变量：浅色兜底（dark 主题下被上方浙江色板覆盖） —— */
+:root {
+  --scr-bg-deep: #eef2f7;
+  --scr-bg-base: #ffffff;
+  --scr-bg-map: #e8eef6;
+  --scr-bg-raised: #dbe6f2;
+  --scr-band: #dbe6f2;
+  --scr-band-hi: #c3d6ea;
+  --scr-cyan: #0e7f96;
+  --scr-cyan-mid: #18a8c0;
+  --scr-blue: #1677ff;
+  --scr-blue-line: #4096ff;
+  --scr-royal: #5a7be0;
+  --scr-orange: #e07c08;
+  --scr-text: #1e293b;
+  --scr-text-dim: #475569;
+  --scr-text-faint: #94a3b8;
+  --scr-border: rgba(22, 119, 255, 0.28);
+  --scr-border-faint: rgba(22, 119, 255, 0.12);
+  --scr-glow: none;
+  /* 渐变与光效配方（浅色） */
+  --scr-panel-grad: linear-gradient(165deg, rgba(22, 119, 255, 0.05) 0%, rgba(255, 255, 255, 0.6) 34%, #ffffff 100%);
+  --scr-kpi-grad: linear-gradient(180deg, rgba(22, 119, 255, 0.07) 0%, #ffffff 100%);
+  --scr-panel-head-grad: linear-gradient(90deg, rgba(22, 119, 255, 0.13) 0%, rgba(22, 119, 255, 0.04) 62%, transparent 100%);
+  --scr-header-grad: linear-gradient(180deg, rgba(22, 119, 255, 0) 62%, rgba(22, 119, 255, 0.1) 100%);
+  --scr-navring-grad: radial-gradient(circle at 50% 32%, rgba(24, 144, 216, 0.14) 0%, rgba(24, 144, 216, 0.05) 58%, transparent 72%),
+    linear-gradient(180deg, #ffffff, #eaf1f8);
+  --scr-pill-active-grad: linear-gradient(180deg, rgba(24, 144, 216, 0.2), rgba(24, 144, 216, 0.08));
+  --scr-frame-line: rgba(22, 119, 255, 0.5);
+  --scr-frame-line-soft: rgba(22, 119, 255, 0.28);
+  --scr-title-glow: 0 1px 2px rgba(15, 40, 80, 0.15);
+  --scr-num-glow: none;
+  /* 密度度量（setDensity 通过内联样式覆盖；页面栅格间距也可引用 --scr-gap） */
+  --scr-gap: 12px;
+  --scr-header-h: 64px;
+  --scr-header-title-size: 30px;
+  --scr-panel-head-h: 34px;
+  --scr-panel-head-font: 15px;
+  --scr-kpi-pad-y: 12px;
+  --scr-kpi-pad-x: 16px;
+  --scr-kpi-label-size: 13px;
+  --scr-kpi-value-size: 32px;
+  --scr-kpi-spark-h: 34px;
+  --scr-nav-ring: 54px;
+  --scr-nav-icon: 26px;
+  --scr-nav-label: 13px;
+  --scr-nav-gap: 72px;
+  --scr-clock-size: 13px;
+}
+[data-theme="dark"] {
+  --scr-bg-deep: #041022;
+  --scr-bg-base: #061830;
+  --scr-bg-map: #072144;
+  --scr-bg-raised: #0B2B4E;
+  --scr-band: #0C487A;
+  --scr-band-hi: #1F4C85;
+  --scr-cyan: #3CE4FC;
+  --scr-cyan-mid: #18A8C0;
+  --scr-blue: #1890D8;
+  --scr-blue-line: #30A8D8;
+  --scr-royal: #6C90E4;
+  --scr-orange: #F08818;
+  --scr-text: #EAF6FF;
+  --scr-text-dim: #A8CDEB;
+  --scr-text-faint: #5E82A8;
+  --scr-border: rgba(48, 168, 216, 0.32);
+  --scr-border-faint: rgba(48, 168, 216, 0.14);
+  --scr-glow: 0 0 10px rgba(60, 228, 252, 0.45);
+  /* 渐变与光效配方（深色，取样自指挥中心级设计稿） */
+  --scr-panel-grad: linear-gradient(165deg, rgba(24, 84, 156, 0.22) 0%, rgba(6, 24, 48, 0.55) 34%, rgba(6, 24, 48, 0.88) 100%);
+  --scr-kpi-grad: linear-gradient(180deg, rgba(24, 84, 156, 0.28) 0%, rgba(6, 24, 48, 0.85) 100%);
+  --scr-panel-head-grad: linear-gradient(90deg, rgba(12, 72, 122, 0.85) 0%, rgba(12, 72, 122, 0.3) 62%, transparent 100%);
+  --scr-header-grad: linear-gradient(180deg, rgba(31, 76, 133, 0) 62%, rgba(31, 76, 133, 0.55) 100%);
+  --scr-navring-grad: radial-gradient(circle at 50% 32%, rgba(60, 228, 252, 0.22) 0%, rgba(12, 72, 122, 0.12) 58%, transparent 72%),
+    linear-gradient(180deg, rgba(18, 144, 216, 0.24), rgba(6, 24, 48, 0.6));
+  --scr-pill-active-grad: linear-gradient(180deg, rgba(24, 144, 216, 0.5), rgba(12, 72, 122, 0.4));
+  --scr-frame-line: rgba(48, 168, 216, 0.75);
+  --scr-frame-line-soft: rgba(48, 168, 216, 0.35);
+  --scr-title-glow: 0 0 18px rgba(60, 228, 252, 0.75), 0 2px 4px rgba(0, 0, 0, 0.6);
+  --scr-num-glow: 0 0 14px rgba(60, 228, 252, 0.55);
+}
+
+/* —— 数码字体（大数字/时钟/指标值专用） —— */
+.luban-num {
+  font-family: 'Orbitron', 'DIN Alternate', 'Bahnschrift', 'Segoe UI', sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+}
+
+/* ============================================
+   全屏科技边框（由 LubanUI.decor.frame 注入 SVG）
+   ============================================ */
+.luban-scr-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+  overflow: hidden;
+}
+.luban-scr-frame .scr-corner {
+  position: absolute;
+  width: 132px;
+  height: 132px;
+  color: var(--scr-cyan);
+  filter: drop-shadow(0 0 6px rgba(60, 228, 252, 0.5));
+}
+.luban-scr-frame .scr-corner.tl { top: 0; left: 0; }
+.luban-scr-frame .scr-corner.tr { top: 0; right: 0; transform: scaleX(-1); }
+.luban-scr-frame .scr-corner.bl { bottom: 0; left: 0; transform: scaleY(-1); }
+.luban-scr-frame .scr-corner.br { bottom: 0; right: 0; transform: scale(-1, -1); }
+.luban-scr-frame .scr-edge {
+  position: absolute;
+  background: linear-gradient(90deg, transparent, var(--scr-frame-line), transparent);
+  height: 2px;
+  left: 132px;
+  right: 132px;
+  overflow: hidden;
+}
+.luban-scr-frame .scr-edge.top    { top: 7px; }
+.luban-scr-frame .scr-edge.bottom { bottom: 7px; }
+.luban-scr-frame .scr-edge::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -30%;
+  width: 22%; height: 100%;
+  background: linear-gradient(90deg, transparent, var(--scr-cyan), transparent);
+  animation: luban-scr-sweep 5s linear infinite;
+}
+.luban-scr-frame .scr-edge-v {
+  position: absolute;
+  background: linear-gradient(180deg, transparent, var(--scr-frame-line-soft), transparent);
+  width: 2px;
+  top: 132px;
+  bottom: 132px;
+}
+.luban-scr-frame .scr-edge-v.left  { left: 7px; }
+.luban-scr-frame .scr-edge-v.right { right: 7px; }
+
+@keyframes luban-scr-sweep {
+  0%   { left: -30%; }
+  100% { left: 108%; }
+}
+
+/* ============================================
+   大屏标题栏（指挥中心头部）
+   用法: LubanUI.decor.header('headerId', { title: 'xx指挥中心' })
+   ============================================ */
+.luban-screen-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--scr-header-h);
+  margin-bottom: 6px;
+}
+.luban-screen-header-title {
+  position: relative;
+  padding: 0 56px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--scr-header-title-size);
+  font-weight: 700;
+  letter-spacing: 10px;
+  color: var(--scr-text);
+  text-shadow: var(--scr-title-glow);
+  background: var(--scr-header-grad);
+  clip-path: polygon(28px 0, calc(100% - 28px) 0, 100% 100%, 0 100%);
+  overflow: hidden;
+}
+.luban-screen-header-title::after {
+  content: '';
+  position: absolute;
+  top: 0; left: -60%;
+  width: 34%; height: 100%;
+  background: linear-gradient(105deg, transparent, rgba(234, 246, 255, 0.16), transparent);
+  animation: luban-scr-sweep 6s ease-in-out infinite;
+}
+.luban-screen-header-wing {
+  flex: 1;
+  max-width: 430px;
+  height: 10px;
+  position: relative;
+}
+.luban-screen-header-wing::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; top: 4px;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(48, 168, 216, 0.05), rgba(48, 168, 216, 0.8));
+}
+.luban-screen-header-wing.right::before {
+  background: linear-gradient(90deg, rgba(48, 168, 216, 0.8), rgba(48, 168, 216, 0.05));
+}
+.luban-screen-header-wing::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 56px; height: 10px;
+  background: linear-gradient(90deg, rgba(60, 228, 252, 0.9), rgba(60, 228, 252, 0.1));
+  clip-path: polygon(0 20%, 78% 20%, 100% 80%, 22% 80%);
+}
+.luban-screen-header-wing.left::after  { left: 6%; }
+.luban-screen-header-wing.right::after {
+  right: 6%;
+  background: linear-gradient(90deg, rgba(60, 228, 252, 0.1), rgba(60, 228, 252, 0.9));
+}
+/* 标题栏右侧时钟槽位（decor.header 传入 clock id 时生成） */
+.luban-screen-header-clock {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--scr-clock-size);
+  letter-spacing: 1px;
+  color: var(--scr-text-dim);
+  white-space: nowrap;
+}
+.luban-screen-header-clock b { font-weight: 600; color: var(--scr-text); }
+
+/* ============================================
+   科技面板（左右图表容器标准外壳）
+   用法: <div class="luban-panel-tech">
+           <div class="luban-panel-head"><span class="luban-panel-head-icon">..icon..</span>标题</div>
+           <div class="luban-panel-body">…</div>
+         </div>
+   或 JS: LubanUI.decor.panel('panelId', { title, icon })
+   ============================================ */
+.luban-panel-tech {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--scr-panel-grad), var(--scr-bg-base);
+  border: 1px solid var(--scr-border-faint);
+  box-shadow:
+    inset 0 0 24px rgba(12, 72, 122, 0.22),
+    0 4px 18px rgba(0, 0, 0, 0.35);
+}
+/* 面板四角短线 */
+.luban-panel-tech::before,
+.luban-panel-tech::after {
+  content: '';
+  position: absolute;
+  width: 10px; height: 10px;
+  border: 2px solid var(--scr-blue-line);
+  opacity: 0.9;
+  z-index: 1;
+}
+.luban-panel-tech::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+.luban-panel-tech::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+.luban-panel-head {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--scr-panel-head-h);
+  padding: 0 12px;
+  font-size: var(--scr-panel-head-font);
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  color: var(--scr-text);
+  background: var(--scr-panel-head-grad);
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 100%, 0 100%);
+}
+.luban-panel-head::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 16px; bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--scr-cyan), rgba(60, 228, 252, 0.08));
+  box-shadow: var(--scr-glow);
+}
+.luban-panel-head-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--scr-cyan);
+  filter: drop-shadow(0 0 4px rgba(60, 228, 252, 0.7));
+}
+.luban-panel-head-icon svg { width: 17px; height: 17px; }
+.luban-panel-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============================================
+   KPI 指标卡（大屏首行）
+   用法: <div class="luban-kpi-tech">
+           <div class="luban-kpi-label">在线基站数</div>
+           <div class="luban-kpi-value luban-num" id="kpi1">0</div>
+           <div class="luban-kpi-spark" id="kpi1Spark"></div>
+         </div>
+   ============================================ */
+.luban-kpi-tech {
+  position: relative;
+  padding: var(--scr-kpi-pad-y) var(--scr-kpi-pad-x) 10px;
+  background: var(--scr-kpi-grad), var(--scr-bg-base);
+  border: 1px solid var(--scr-border-faint);
+  overflow: hidden;
+}
+.luban-kpi-tech::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--scr-cyan), rgba(60, 228, 252, 0.05));
+  box-shadow: var(--scr-glow);
+}
+.luban-kpi-tech::after {
+  content: '';
+  position: absolute;
+  right: -18px; top: -18px;
+  width: 64px; height: 64px;
+  background: radial-gradient(circle, rgba(60, 228, 252, 0.14) 0%, transparent 70%);
+}
+.luban-kpi-label {
+  font-size: var(--scr-kpi-label-size);
+  letter-spacing: 2px;
+  color: var(--scr-text-dim);
+}
+.luban-kpi-value {
+  font-size: var(--scr-kpi-value-size);
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--scr-text);
+  text-shadow: var(--scr-num-glow);
+}
+.luban-kpi-value .luban-kpi-unit {
+  font-size: 13px;
+  margin-left: 4px;
+  letter-spacing: 1px;
+  color: var(--scr-text-dim);
+  text-shadow: none;
+}
+.luban-kpi-spark { height: var(--scr-kpi-spark-h); margin-top: 2px; }
+
+/* ============================================
+   底部图标导航条
+   用法: LubanUI.decor.iconNav('navId', [{ icon:'shield', label:'安防' }, …])
+   ============================================ */
+.luban-icon-nav {
+  display: flex;
+  justify-content: center;
+  gap: var(--scr-nav-gap);
+  padding: 4px 0 2px;
+}
+.luban-icon-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--scr-text-dim);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.luban-icon-nav-item .luban-icon-nav-ring {
+  width: var(--scr-nav-ring); height: var(--scr-nav-ring);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--scr-cyan);
+  background: var(--scr-navring-grad);
+  border: 1px solid var(--scr-border);
+  box-shadow: 0 0 14px rgba(60, 228, 252, 0.28), inset 0 0 12px rgba(60, 228, 252, 0.16);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+.luban-icon-nav-item .luban-icon-nav-ring svg { width: var(--scr-nav-icon); height: var(--scr-nav-icon); }
+.luban-icon-nav-item:hover .luban-icon-nav-ring,
+.luban-icon-nav-item.active .luban-icon-nav-ring {
+  box-shadow: 0 0 22px rgba(60, 228, 252, 0.6), inset 0 0 16px rgba(60, 228, 252, 0.3);
+  transform: translateY(-2px);
+}
+.luban-icon-nav-label {
+  font-size: var(--scr-nav-label);
+  letter-spacing: 2px;
+  text-shadow: 0 0 8px rgba(60, 228, 252, 0.4);
+}
+
+/* ============================================
+   地图中央装饰光环（旋转虚线环）
+   用法: 放在地图容器外层 position:relative 的包装里
+         <div class="luban-halo" style="width:420px;height:420px"></div>
+   ============================================ */
+.luban-halo {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 1px dashed rgba(60, 228, 252, 0.28);
+  pointer-events: none;
+  animation: luban-scr-spin 28s linear infinite;
+}
+.luban-halo::before {
+  content: '';
+  position: absolute;
+  inset: 9%;
+  border-radius: 50%;
+  border: 1px solid rgba(48, 168, 216, 0.2);
+  border-top-color: rgba(60, 228, 252, 0.65);
+  animation: luban-scr-spin-rev 20s linear infinite;
+}
+.luban-halo::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  border: 1px dotted rgba(60, 228, 252, 0.16);
+}
+@keyframes luban-scr-spin     { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes luban-scr-spin-rev { to { transform: rotate(-360deg); } }
+
+/* ============================================
+   六边形底纹（页面级氛围，叠在 screen-bg 之上）
+   ============================================ */
+.luban-hex-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cg fill='none' stroke='%2330A8D8' stroke-opacity='0.055'%3E%3Cpath d='M28 0l28 16v32L28 64 0 48V16z'/%3E%3Cpath d='M28 64l28 16v32L28 128 0 112V80z' transform='translate(0,-15)'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 56px 97px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ============================================
+   大屏页面底座（替代 luban-screen-bg 的升级版）
+   分层海军蓝背景 + 顶部青色光晕，单色相不混色
+   ============================================ */
+.luban-screen-tech {
+  position: relative;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 16px 22px 18px;
+  display: flex;
+  flex-direction: column;
+}
+[data-theme="dark"] .luban-screen-tech {
+  background:
+    radial-gradient(ellipse 62% 42% at 50% -6%, rgba(24, 144, 216, 0.2) 0%, transparent 62%),
+    radial-gradient(ellipse 46% 34% at 50% 56%, rgba(12, 72, 122, 0.32) 0%, transparent 70%),
+    linear-gradient(180deg, #072144 0%, #051A38 44%, #041022 100%);
+}
+.luban-screen-tech { background: var(--scr-bg-deep); }
+
+/* 面板内数值行（label + value 横排小指标） */
+.luban-stat-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 2px;
+}
+.luban-stat-line .luban-stat-label { font-size: 13px; color: var(--scr-text-dim); letter-spacing: 1px; }
+.luban-stat-line .luban-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--scr-cyan);
+  text-shadow: 0 0 10px rgba(60, 228, 252, 0.5);
+}
+.luban-stat-line .luban-stat-value.warn { color: var(--scr-orange); text-shadow: 0 0 10px rgba(240, 136, 24, 0.5); }
+
+/* 年/周/月 切换胶囊（大屏内轻量 tab） */
+.luban-pill-tabs { display: inline-flex; gap: 4px; }
+.luban-pill-tab {
+  padding: 3px 14px;
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--scr-text-dim);
+  cursor: pointer;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  background: rgba(12, 72, 122, 0.35);
+  border: 1px solid var(--scr-border-faint);
+  -webkit-user-select: none;
+  user-select: none;
+}
+.luban-pill-tab.active {
+  color: var(--scr-cyan);
+  background: var(--scr-pill-active-grad);
+  border-color: var(--scr-border);
+  text-shadow: 0 0 8px rgba(60, 228, 252, 0.6);
+}
+
+/* 减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .luban-scr-frame .scr-edge::after,
+  .luban-screen-header-title::after,
+  .luban-halo,
+  .luban-halo::before { animation: none; }
+}
