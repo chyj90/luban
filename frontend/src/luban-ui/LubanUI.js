@@ -1980,8 +1980,11 @@ window.LubanUI = window.LubanUI || {};
     el.classList.add('luban-gis');
     if (config.style !== 'satellite' && config.style !== 'street') el.classList.add('luban-gis-dark');
 
+    // center 约定为 [lng, lat]（与 markers/lines 一致），Leaflet setView 需要 [lat, lng]——
+    // 直传会把经度当纬度（>90 被折算到极区），地图中心飞到北冰洋、瓦片全空
+    var _c = config.center || [104.07, 30.67];
     var map = L.map(el, { zoomControl: !!config.zoomControl, attributionControl: false })
-      .setView(config.center || [104.07, 30.67], config.zoom || 10);
+      .setView([_c[1], _c[0]], config.zoom || 10);
 
     var gaodeVec = 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}';
     var gaodeSat = 'https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}';
@@ -1999,7 +2002,7 @@ window.LubanUI = window.LubanUI || {};
       lines: [],
       addMarker: function(m) { return _addMarker(m); },
       addLine: function(l) { return _addLine(l); },
-      flyTo: function(lngLat, z) { map.flyTo(lngLat, z || map.getZoom() + 1, { duration: 0.8 }); },
+      flyTo: function(lngLat, z) { map.flyTo([lngLat[1], lngLat[0]], z || map.getZoom() + 1, { duration: 0.8 }); },
       remove: function() { map.remove(); }
     };
 
