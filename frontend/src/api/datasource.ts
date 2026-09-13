@@ -24,3 +24,7 @@ export async function getDatasourceStructure(id: number) {
 export async function deleteDatasource(id: number) {
   return del<void>(`/datasources/${id}`);
 }
+
+export async function syncTestSource(applicationId: number) {
+  return post<Datasource>('/datasources/sync-test-source', null, { params: { applicationId } });
+}

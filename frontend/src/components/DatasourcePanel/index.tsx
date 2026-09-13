@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import Select from '@/components/Select';
 import Editor from '@monaco-editor/react';
 import type { languages, IDisposable, editor } from 'monaco-editor';
-import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from '@/api/datasource';
+import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource, syncTestSource } from '@/api/datasource';
 import { encryptConfigSecrets } from '@/utils/security';
 import { listDrivers, installDriver } from '@/api/driver';
 import { listApplicationDatasources } from '@/api/tool';
 import { executeSql } from '@/api/query';
+import { getDeployMode } from '@/api/config';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import type { Datasource, DatasourceStructure, DriverInfo, InstallProgress, ExtraField } from '@/types/datasource';
@@ -61,6 +62,8 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [keyDatasources, setKeyDatasources] = useState<Array<{ id: number; name: string; type?: string; config?: Record<string, unknown> }>>([]);
   const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [isAllInOne, setIsAllInOne] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [structure, setStructure] = useState<DatasourceStructure | null>(null);
   const [sqlStructureLoading, setSqlStructureLoading] = useState(false);
@@ -85,6 +88,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
     listApplicationDatasources(applicationId).then((res) => setKeyDatasources((res.data as Array<{ id: number; name: string; type?: string; config?: Record<string, unknown> }>) || [])).catch(() => setKeyDatasources([]));
     listDrivers().then((res) => setDrivers(res.data)).catch(() => {});
+    getDeployMode().then((mode) => setIsAllInOne(mode === 'allinone')).catch(() => {});
   }, [applicationId]);
 
   useEffect(() => {
@@ -507,13 +511,38 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     <div className="ds-panel">
       <div className="ds-panel-header">
         <span className="ds-panel-title">数据源</span>
-        <button className="ds-add-btn" onClick={() => { setShowForm(!showForm); setEditingId(null); setForm(EMPTY_FORM); }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          新建
-        </button>
+        <div className="ds-panel-header-actions">
+          {isAllInOne && (
+            <button
+              className="ds-add-btn ds-add-btn-secondary"
+              onClick={async () => {
+                setSyncing(true);
+                try {
+                  const res = await syncTestSource(applicationId);
+                  const exists = datasources.find((d) => d.id === res.data.id);
+                  if (!exists) {
+                    setDatasources([...datasources, res.data]);
+                  }
+                  toast('测试源已同步', 'success');
+                } catch (e) {
+                  toast((e as Error).message || '同步失败', 'error');
+                } finally {
+                  setSyncing(false);
+                }
+              }}
+              disabled={syncing}
+            >
+              {syncing ? '同步中...' : '同步测试源'}
+            </button>
+          )}
+          <button className="ds-add-btn" onClick={() => { setShowForm(!showForm); setEditingId(null); setForm(EMPTY_FORM); }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            新建
+          </button>
+        </div>
       </div>
 
       {showForm && (

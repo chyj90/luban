@@ -60,7 +60,8 @@ RUN python3 -m pip install --no-cache-dir torch==2.4.0 --index-url https://downl
 
 ENV HF_ENDPOINT=https://hf-mirror.com \
     EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \
-    SANDBOX_ENABLED=false
+    SANDBOX_ENABLED=false \
+    DEPLOY_MODE=allinone
 
 # ---------- 内置大模型配置（通过 --build-arg 传入，来源 .env 文件） ----------
 ARG LUBAN_LLM_API_KEY

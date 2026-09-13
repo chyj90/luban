@@ -70,6 +70,14 @@ public class DatasourceController {
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
+    @PostMapping("/sync-test-source")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> syncTestSource(
+            @AuthenticationPrincipal User user,
+            @RequestParam Long applicationId) {
+        appAccessService.assertAccess(user.getId(), applicationId, AppAction.DEVELOP);
+        return ResponseEntity.ok(ApiResponse.ok(datasourceService.syncLubanTestSource(applicationId)));
+    }
+
     @PutMapping("/{id}")
     @AppAccess(action = AppAction.DEVELOP, resource = "datasource", key = "id")
     public ResponseEntity<ApiResponse<Map<String, Object>>> update(

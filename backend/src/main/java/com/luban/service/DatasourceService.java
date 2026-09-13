@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.security.RsaKeyProvider;
 import com.luban.util.CryptoUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +40,15 @@ public class DatasourceService {
     private final JdbcDriverService jdbcDriverService;
     private final CryptoUtil cryptoUtil;
     private final RsaKeyProvider rsaKeyProvider;
+
+    @Value("${spring.datasource.url}")
+    private String systemDbUrl;
+
+    @Value("${spring.datasource.username}")
+    private String systemDbUser;
+
+    @Value("${spring.datasource.password}")
+    private String systemDbPassword;
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              ApplicationRepository applicationRepository,
@@ -102,6 +112,75 @@ public class DatasourceService {
         ds.setStatus("pending");
         ds = datasourceRepository.save(ds);
         return buildDatasourceMap(ds);
+    }
+
+    public Map<String, Object> syncLubanTestSource(Long applicationId) {
+        if (!"allinone".equalsIgnoreCase(System.getenv("DEPLOY_MODE"))) {
+            throw new RuntimeException("此功能仅在 All-in-One 版本中可用");
+        }
+        verifyApplicationOwnership(applicationId);
+
+        var hostPort = parseHostPort(systemDbUrl);
+        String host = hostPort[0];
+        String port = hostPort[1];
+        String adminUrl = String.format("jdbc:mysql://%s:%s?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC", host, port);
+
+        try (Connection conn = DriverManager.getConnection(adminUrl, systemDbUser, systemDbPassword);
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("CREATE DATABASE IF NOT EXISTS luban_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        } catch (Exception e) {
+            throw new RuntimeException("同步测试源失败: " + e.getMessage(), e);
+        }
+
+        Datasource existing = datasourceRepository.findBySlugAndOwnerId("APPLICATION", applicationId)
+                .stream()
+                .filter(d -> "luban_test".equals(d.getName()))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) {
+            return buildDatasourceMap(existing);
+        }
+
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("host", host);
+        config.put("port", Integer.parseInt(port));
+        config.put("database", "luban_test");
+        config.put("username", systemDbUser);
+        config.put("password", systemDbPassword);
+        encryptPasswordInConfig(config);
+
+        Datasource ds = new Datasource();
+        ds.setOwnerId(applicationId);
+        ds.setSlug("APPLICATION");
+        ds.setScope("APPLICATION");
+        ds.setName("luban_test");
+        ds.setType("MySQL");
+        ds.setConfig(toJson(config));
+        ds.setStatus("connected");
+        ds = datasourceRepository.save(ds);
+
+        return buildDatasourceMap(ds);
+    }
+
+    private String[] parseHostPort(String jdbcUrl) {
+        String host = "127.0.0.1";
+        String port = "3306";
+        try {
+            String body = jdbcUrl.replaceFirst("^jdbc:mysql://", "");
+            int slash = body.indexOf('/');
+            if (slash > 0) body = body.substring(0, slash);
+            int q = body.indexOf('?');
+            if (q > 0) body = body.substring(0, q);
+            int colon = body.lastIndexOf(':');
+            if (colon > 0) {
+                host = body.substring(0, colon);
+                port = body.substring(colon + 1);
+            } else {
+                host = body;
+            }
+        } catch (Exception ignored) {
+        }
+        return new String[]{host, port};
     }
 
     public TestDatasourceResponse test(Long id) {

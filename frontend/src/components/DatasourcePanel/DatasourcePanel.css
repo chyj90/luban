@@ -33,8 +33,27 @@
   transition: all 0.15s;
 }
 
-.ds-add-btn:hover {
-  background: #4096ff;
+.ds-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ds-add-btn-secondary {
+  background: #f0f5ff;
+  color: #1677ff;
+  border: 1px solid #91caff;
+}
+
+.ds-add-btn-secondary:hover {
+  background: #e6f0ff;
+  color: #4096ff;
+  border-color: #4096ff;
+}
+
+.ds-add-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Form */
@@ -197,13 +216,17 @@ textarea.ds-input {
   color: #ff4d4f;
 }
 
-.ds-btn {
-  padding: 6px 14px;
+button.ds-btn {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
   cursor: pointer;
-  font-weight: 500;
   transition: all 0.15s;
 }
 
