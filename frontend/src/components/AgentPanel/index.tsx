@@ -2,10 +2,6 @@ import { useState, useRef, useEffect, useMemo, memo } from 'react';
 import type { Message } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
 
-/** 平台埋点（bug_trace_log 由宿主页面注入，缺失时静默跳过） */
-const traceLog = (tag: string, data: Record<string, unknown>): void => {
-  (window as unknown as { bug_trace_log?: (tag: string, data: Record<string, unknown>) => void }).bug_trace_log?.(tag, data);
-};
 import { toast } from '@/stores/toastStore';
 import { ChatRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
@@ -343,10 +339,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     requestAnimationFrame(() => {
       setTimeout(() => {
         el.scrollTop = el.scrollHeight;
-        traceLog('scroll-init', {
-          scrollHeight: el.scrollHeight,
-          clientHeight: el.clientHeight,
-        });
       }, 0);
     });
   }, []);
@@ -361,13 +353,6 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
         const el = messagesContainerRef.current;
         if (!el) return;
         el.scrollTop = el.scrollHeight;
-        traceLog('scroll-auto', {
-          scrollTop: el.scrollTop,
-          scrollHeight: el.scrollHeight,
-          clientHeight: el.clientHeight,
-          messagesCount: messages.length,
-          isStreaming: isStreaming,
-        });
       });
     }
   }, [messages]);
