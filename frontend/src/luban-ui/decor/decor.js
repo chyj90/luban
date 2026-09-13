@@ -151,7 +151,10 @@
     axisLine: 'rgba(94, 130, 168, 0.4)',
     splitLine: 'rgba(94, 130, 168, 0.18)',
     barEnd: 'rgba(24,144,216,0.06)',
-    areaTop: 0.32
+    areaTop: 0.32,
+    success: '#4ADE80',
+    danger: '#FF6B5E',
+    warning: '#FBBF24'
   };
   var LIGHT_PALETTE = {
     cyan: '#1890D8',
@@ -167,7 +170,10 @@
     axisLine: 'rgba(100, 116, 139, 0.45)',
     splitLine: 'rgba(100, 116, 139, 0.18)',
     barEnd: 'rgba(24,144,216,0.18)',
-    areaTop: 0.22
+    areaTop: 0.22,
+    success: '#16A34A',
+    danger: '#DC2626',
+    warning: '#D97706'
   };
   var P = Object.assign({}, DARK_PALETTE);
   UI.screenPalette = P;
@@ -350,7 +356,18 @@
     for (var k in derived.vars) {
       document.documentElement.style.setProperty(k, derived.vars[k]);
     }
+    var SEMANTIC = mode === 'light'
+      ? { success: '#16A34A', danger: '#DC2626', warning: '#D97706' }
+      : { success: '#4ADE80', danger: '#FF6B5E', warning: '#FBBF24' };
+    Object.assign(derived.chart, SEMANTIC);
     Object.assign(P, derived.chart);
+    // 同步命名风格取色（setVisualStyle 后再 setPalette 时图表跟随新主色）
+    if (UI._activeStyle && UI.visualStyle && UI.visualStyle[UI._activeStyle] && UI.visualStyle[UI._activeStyle].chart) {
+      var stChart = UI.visualStyle[UI._activeStyle].chart;
+      stChart.barColors = derived.chart.series.slice();
+      stChart.lineColors = derived.chart.series.slice();
+      stChart.pieColors = derived.chart.series.concat(derived.chart.series).slice(0, 8);
+    }
     UI._customPalette = { primary: primary, mode: mode };
     return { primary: primary, mode: mode };
   };

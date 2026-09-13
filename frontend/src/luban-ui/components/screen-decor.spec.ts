@@ -39,6 +39,23 @@ LubanUI.decor.iconNav('bottomNav', [
 LubanUI.icon('alarm', { size: 20, strokeWidth: 1.8 })  // 返回 SVG 字符串，currentColor 跟随容器颜色
 \`\`\`
 
+#### 5.1 多时区时钟（worldClock 的正确/错误用法）
+\`\`\`js
+LubanUI.worldClock('worldClock', { zones: [{ label: '北京', offset: 8 }, { label: '伦敦', offset: 1 }] })  // ✅
+LubanUI.worldClock('worldClock', [{ label: '北京', offset: 8 }])  // ⚠️ 数组会被容错为单时区，但应传 { zones }
+\`\`\`
+标题栏 clock 槽位用 decor.header 的 clock 参数创建（见第 2 条）。
+
+#### 5.2 语义状态色（在线/离线/告警等状态着色，随主题与调色板联动）
+\`\`\`js
+var P = LubanUI.screenPalette;
+P.success   // 正常/在线（深色 #4ADE80 / 浅色 #16A34A）
+P.danger    // 异常/告警（深色 #FF6B5E / 浅色 #DC2626）
+P.warning   // 警告/离线（深色 #FBBF24 / 浅色 #D97706）
+// 设备状态环形图示例：colors: [P.success, P.danger, P.warning]
+// 禁止硬编码 '#4ade80'/'#ff4d4f' 等状态色
+\`\`\`
+
 #### 6. 图表配色（统一取色板，禁止自配紫/粉/绿）
 \`\`\`js
 var P = LubanUI.screenPalette;

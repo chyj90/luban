@@ -828,16 +828,29 @@ function findUnknownFieldNames(
   if (iterVars.size === 0) return unknownFields;
 
   const varPattern = [...iterVars].join('|');
+  // 后跟 "(" 的是方法调用（d.getTime() / s.slice(0,2)），不是查询字段读取，排除
   const fieldPattern = new RegExp(
-    `\\b(${varPattern})\\.([\\u4e00-\\u9fff\\w]+)\\b`,
+    `\\b(${varPattern})\\.([\\u4e00-\\u9fff\\w]+)\\b(?!\\s*\\()`,
     'g',
   );
+  // 迭代变量可能是 DOM 元素时常见的非数据属性（非调用形态）
+  const DOM_PROPS = new Set([
+    'classList', 'className', 'textContent', 'innerHTML', 'innerText', 'outerHTML',
+    'style', 'dataset', 'children', 'childNodes', 'parentNode', 'parentElement',
+    'nextSibling', 'previousSibling', 'nextElementSibling', 'previousElementSibling',
+    'firstChild', 'lastChild', 'firstElementChild', 'lastElementChild', 'ownerDocument',
+    'offsetWidth', 'offsetHeight', 'offsetLeft', 'offsetTop', 'offsetParent',
+    'clientWidth', 'clientHeight', 'clientLeft', 'clientTop',
+    'scrollWidth', 'scrollHeight', 'scrollTop', 'scrollLeft',
+    'tagName', 'nodeName', 'nodeType', 'ownerElement', 'baseURI', 'isConnected',
+  ]);
   let match: RegExpExecArray | null;
   while ((match = fieldPattern.exec(js)) !== null) {
     const fieldName = match[2];
 
     if (actualFieldNames.has(fieldName)) continue;
     if (getBuiltins().has(fieldName)) continue;
+    if (DOM_PROPS.has(fieldName)) continue;
 
     const exists = unknownFields.some((f) => f.used === fieldName);
     if (exists) continue;
@@ -1369,6 +1382,7 @@ function validateDashboardIntegrity(html: string, js: string, _errors: string[],
 
   const chartInitPatterns = [
     /LubanUI\.chart\s*\(\s*['"]{ID}['"]/,
+    /LubanUI\.decor\.panel\s*\(\s*['"]{ID}['"]/,
     /LubanUI\.chartPresets\.\w+\s*\(\s*['"]{ID}['"]/,
     /echarts\.init\s*\(\s*document\.getElementById\s*\(\s*['"]{ID}['"]/,
     /getElementById\s*\(\s*['"]{ID}['"]\s*\)/,

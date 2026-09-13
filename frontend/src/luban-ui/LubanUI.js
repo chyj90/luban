@@ -132,6 +132,12 @@ window.LubanUI = window.LubanUI || {};
   function tokenColors(kind, isDark, fallback) {
     var st = styleToken();
     if (st && st.chart && st.chart[kind] && st.chart[kind].length) return st.chart[kind];
+    // 无命名风格时跟随 screenPalette（setPalette/setTheme 派生，保证整屏配色统一）
+    var P = UI.screenPalette;
+    if (P && P.series && P.series.length) {
+      if (kind === 'pieColors') return P.series.concat(['#9E86E0', '#30A8D8', '#8FB8E8']);
+      return P.series;
+    }
     return fallback;
   }
   function lighten(hex, t) {
@@ -812,16 +818,27 @@ window.LubanUI = window.LubanUI || {};
       });
     }
 
-    // 中心数字 + 单位
+    // 中心数字 + 单位（x/y 像素锚定饼图圆心：主文字底边贴圆心、副文字顶边贴圆心，
+    // left/top 百分比会让对齐属性失效导致文字贴顶/并排，必须用像素坐标）
     var graphics = [];
     if (opts.centerText) {
-      graphics.push({ type: 'text', left: 'center', top: 'calc(' + centerPos[1] + ' - 20px)',
+      var _el = document.getElementById(containerId);
+      var _cw = (_el && _el.clientWidth) || 300;
+      var _ch = (_el && _el.clientHeight) || 200;
+      var _pct = function(v, total) {
+        var s = String(v);
+        return s.indexOf('%') >= 0 ? parseFloat(s) / 100 * total : (parseFloat(s) || 0);
+      };
+      var _cx = _pct(centerPos[0], _cw);
+      var _cy = _pct(centerPos[1], _ch);
+      graphics.push({ type: 'text', x: _cx, y: _cy,
         style: { text: opts.centerText, fill: isDark ? '#ffffff' : '#1e293b', font: 'bold 26px sans-serif',
-          textAlign: 'center' } });
+          textAlign: 'center', textVerticalAlign: opts.centerSub ? 'bottom' : 'middle',
+          align: 'center', verticalAlign: opts.centerSub ? 'bottom' : 'middle' } });
       if (opts.centerSub) {
-        graphics.push({ type: 'text', left: 'center', top: 'calc(' + centerPos[1] + ' + 12px)',
+        graphics.push({ type: 'text', x: _cx, y: _cy,
           style: { text: opts.centerSub, fill: isDark ? '#7ee0ff' : '#64748b', font: '12px sans-serif',
-            textAlign: 'center' } });
+            textAlign: 'center', textVerticalAlign: 'top', align: 'center', verticalAlign: 'top' } });
       }
     }
 
@@ -1619,6 +1636,7 @@ window.LubanUI = window.LubanUI || {};
   UI.worldClock = function(containerId, opts) {
     var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
     if (!el) return null;
+    if (Array.isArray(opts)) opts = { zones: opts }; // 容错：直接传时区数组
     opts = opts || {};
     var zones = opts.zones || [{ label: '北京时间', offset: 8 }];
     el.innerHTML = zones.map(function(z, i) {
@@ -1927,7 +1945,33 @@ window.LubanUI = window.LubanUI || {};
   UI.gis = function(containerId, config) {
     var el = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
     if (!el) return null;
-    if (typeof L === 'undefined') { console.warn('LubanUI: Leaflet 未加载，GIS 地图不可用'); return null; }
+    if (typeof L === 'undefined') {
+      // Leaflet 惰性激活可能晚于页面脚本执行：轮询等待，就绪后用同一配置重新初始化（此前直接 return null 导致地图空白）
+      if (el.__gisWaiting) return el.__gisApi || null;
+      console.warn('LubanUI: Leaflet 尚未就绪，GIS 地图将在激活后自动初始化');
+      el.__gisWaiting = true;
+      var tries = 0;
+      var t = setInterval(function() {
+        tries++;
+        if (typeof L !== 'undefined') {
+          clearInterval(t);
+          el.__gisWaiting = false;
+          UI.gis(containerId, config);
+        } else if (tries > 150) {
+          clearInterval(t);
+          el.__gisWaiting = false;
+          console.warn('LubanUI: Leaflet 加载超时（15s），GIS 地图未初始化');
+        }
+      }, 100);
+      if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
+        window.__LUBAN__.onPageUnload(function() { clearInterval(t); });
+      }
+      var stub = { map: null, pending: true, markers: [], lines: [],
+        addMarker: function() { return null; }, addLine: function() { return null; },
+        flyTo: function() {}, remove: function() { clearInterval(t); } };
+      el.__gisApi = stub;
+      return stub;
+    }
     config = config || {};
     var isDark = UI.getTheme() === 'dark';
     if (config.theme === 'dark') isDark = true;
@@ -2013,6 +2057,7 @@ window.LubanUI = window.LubanUI || {};
     if (window.__LUBAN__ && window.__LUBAN__.onPageUnload) {
       window.__LUBAN__.onPageUnload(function() { map.remove(); });
     }
+    el.__gisApi = api;
     return api;
   };
 
