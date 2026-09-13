@@ -73,3 +73,10 @@ __pycache__/
 
 # ====== 本地安全密钥（不入仓库） ======
 backend/config/*.pem
+
+# ====== WorkBuddy ======
+.workbuddy/
+
+# ====== PPTX 演示文稿 ======
+*.pptx
+pptx/
