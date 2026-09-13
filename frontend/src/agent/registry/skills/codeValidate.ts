@@ -173,8 +173,8 @@ function validateHtml(code: string, errors: string[], _warnings: string[]) {
     errors.push(`[HTML] ${el.textContent?.replace(/\n\s*/g, ' ').trim()}`);
   });
 
-  // 检查 Leaflet 库引用
-  if (/leaflet/i.test(code)) {
+  // 检查 Leaflet 库引用——只在真实 src/href 引入时报；注释/文案提到 Leaflet 不算引入
+  if (/(?:src|href)\s*=\s*["'][^"']*leaflet/i.test(code)) {
     errors.push(`[HTML] ${LIBRARY_RULES['leaflet']}`);
   }
 }
@@ -260,8 +260,10 @@ function validateJs(code: string, errors: string[], warnings: string[], _fixable
     }
   }
 
-  // 检查 Leaflet 禁用
-  if (/leaflet|L\.map|L\.tileLayer|L\.marker|L\.circle|L\.polygon|L\.geoJSON/i.test(code)) {
+  // 检查 Leaflet 禁用——只认 Leaflet API 的实际调用（L.map( 等），
+  // 裸关键词 "leaflet" 会命中注释/文案（如"创建 Leaflet 地图实例"）造成误报；
+  // 真正的 libraries CDN 引入由 validateLibraries 按 URL 单独把关
+  if (/\bL\s*\.\s*(map|tileLayer|marker|circle|polygon|geoJSON)\s*\(/.test(code)) {
     errors.push(
       `[JS] ${LIBRARY_RULES['leaflet']}`
     );
@@ -1383,6 +1385,10 @@ function validateDashboardIntegrity(html: string, js: string, _errors: string[],
   const chartInitPatterns = [
     /LubanUI\.chart\s*\(\s*['"]{ID}['"]/,
     /LubanUI\.decor\.panel\s*\(\s*['"]{ID}['"]/,
+    // 地图类容器的合法初始化（GIS 真实底图 / 逻辑地图 / 3D 地图）
+    /LubanUI\.gis\s*\(\s*['"]{ID}['"]/,
+    /LubanUI\.map3d\s*\(\s*['"]{ID}['"]/,
+    /LubanUI\.map\s*\(\s*['"]{ID}['"]/,
     /LubanUI\.chartPresets\.\w+\s*\(\s*['"]{ID}['"]/,
     /echarts\.init\s*\(\s*document\.getElementById\s*\(\s*['"]{ID}['"]/,
     /getElementById\s*\(\s*['"]{ID}['"]\s*\)/,
