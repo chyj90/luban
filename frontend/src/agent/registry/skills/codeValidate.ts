@@ -34,6 +34,7 @@ const BLOCKING_ERROR_PATTERNS = [
   /^\[HTML\]/,
   /^\[CSS\] 第/,
   /^\[JS\] 第.*第.*列/,
+  /^\[DataQuery 名称\]/,
   /async function.*is not defined/,
 ];
 
@@ -43,6 +44,7 @@ function isBlockingError(msg: string): boolean {
 
 function getFixPriority(msg: string): number {
   if (/\.run\(\)/.test(msg) || /result\.data/.test(msg) || /result\.success/.test(msg) || /result\.message/.test(msg)) return 1;
+  if (/\[DataQuery 名称\]/.test(msg)) return 1;
   if (/DOMContentLoaded|readyState/.test(msg)) return 2;
   if (/字段名/.test(msg)) return 3;
   if (/假成功|TODO/.test(msg)) return 4;
@@ -81,6 +83,7 @@ export async function validateCode(
   try { if (js) validateCrossPageParams(js, errors, warnings); } catch (e: any) { errors.push(`[跨页面参数校验] 异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateMockData(js, validateOptions, errors); } catch (e: any) { errors.push(`[Mock数据] 校验异常: ${e?.message || e}`); }
   try { if (js && validateOptions) await validateFieldNames(js, validateOptions, errors, warnings); } catch (e: any) { errors.push(`[字段校验] 异常: ${e?.message || e}`); }
+  try { if (js && validateOptions) await validateDataQueryCallNames(js, validateOptions.applicationId, errors); } catch (e) { errors.push(`[DataQuery名称] 校验异常: ${(e as Error)?.message || e}`); }
   try { if (html || js) validateLubanUIUsage(html, js, errors, warnings, fixable); } catch (e: any) { errors.push(`[LubanUI] 校验异常: ${e?.message || e}`); }
   try { if (js) validateTableEmptyState(js, warnings); } catch (e: any) { errors.push(`[表格空态] 校验异常: ${e?.message || e}`); }
   try { if (css) validateCssComponentOverride(css, errors); } catch (e: any) { errors.push(`[CSS组件覆盖] 校验异常: ${e?.message || e}`); }
@@ -484,7 +487,57 @@ function extractQueryNamesFromJS(js: string): string[] {
   while ((match = runPattern.exec(js)) !== null) {
     names.add(match[1]);
   }
+  // 推荐写法 DataQuery.queryName(...) / window.DataQuery.queryName(...) 同样提取，
+  // 供字段名校验使用（此前只认 .run() 直调，官方推荐写法反而脱离校验范围）
+  const dqPattern = /(?:window\.)?DataQuery\.(\w+)\s*\(/g;
+  while ((match = dqPattern.exec(js)) !== null) {
+    names.add(match[1]);
+  }
   return [...names];
+}
+
+/**
+ * DataQuery 调用名与真实查询清单精确比对。window.DataQuery 按查询原名注册，JS 属性
+ * 访问区分大小写：写错大小写时调用值为 undefined，页面只弹 toast 不报明确错误——
+ * 这是"页面查不到数据"类问题的隐蔽根因，必须在保存/更新页面时拦下。
+ */
+async function validateDataQueryCallNames(
+  js: string,
+  applicationId: number,
+  errors: string[],
+) {
+  if (!js || !/DataQuery\s*\.\s*\w+\s*\(/.test(js)) return;
+
+  const actualQueries = await fetchAllQueries(applicationId);
+  if (actualQueries.length === 0) return;
+
+  const byExact = new Set(actualQueries.map((q) => q.name));
+  const byLower = new Map<string, string>();
+  for (const q of actualQueries) byLower.set(q.name.toLowerCase(), q.name);
+
+  const seen = new Set<string>();
+  const callPattern = /(?:window\.)?DataQuery\.(\w+)\s*\(/g;
+  let match: RegExpExecArray | null;
+  while ((match = callPattern.exec(js)) !== null) {
+    const called = match[1];
+    if (seen.has(called)) continue;
+    seen.add(called);
+    if (byExact.has(called)) continue;
+
+    const lineNum = js.substring(0, match.index).split('\n').length;
+    const caseFixed = byLower.get(called.toLowerCase());
+    if (caseFixed) {
+      errors.push(
+        `[DataQuery 名称] 第 ${lineNum} 行：DataQuery.${called} 不存在——查询名区分大小写，实际查询名为 "${caseFixed}"。` +
+        `请改为 DataQuery.${caseFixed}(...)，并确认该查询已绑定到本页面（queryIds）`
+      );
+    } else {
+      errors.push(
+        `[DataQuery 名称] 第 ${lineNum} 行：DataQuery.${called} 不存在。` +
+        `请核对查询名是否正确；若查询尚未创建，需先委派 DBA 创建并绑定到本页面`
+      );
+    }
+  }
 }
 
 function fetchQueriesByIds(queryIds: number[], applicationId: number): Promise<QueryInfo[]> {

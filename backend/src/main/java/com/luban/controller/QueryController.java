@@ -68,7 +68,7 @@ public class QueryController {
         String upperSql = request.getSql() != null ? request.getSql().trim().toUpperCase() : "";
         boolean isDdl = upperSql.matches("(?s)^\\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\\b.*");
         if (isDdl && !Boolean.TRUE.equals(request.getAllowDdl())) {
-            return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行，请前往数据源管理面板手动操作"));
+            return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行（Agent 端请勿重试或换写法尝试），请生成完整 SQL 交由用户在数据源管理面板手动执行"));
         }
         if (Boolean.TRUE.equals(request.getMulti())) {
             return ResponseEntity.ok(ApiResponse.ok(

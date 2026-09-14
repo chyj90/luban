@@ -14,6 +14,18 @@ export function getPageSkillSummary(): string {
 - 不确定目标页面时主动向用户确认`;
 }
 
+/** 登录身份与"我的数据"规范：分析（数据模型/交互设计）与执行（页面代码）两阶段都必须可见 */
+export function getIdentityRulesSummary(): string {
+  return `## 身份与"我的数据"规范
+- 平台在页面注入 \`window.__LUBAN_USER__ = { id, account, name, employeeNo, mobile, email }\`，**只用于展示**当前用户（如"张三的工作台"标题、问候语），不承担身份过滤
+- **身份过滤必须用服务端变量 this.auth**：查询 SQL 里直接写 \`WHERE user_id = {{ this.auth.userId }}\`（后端 SecurityContext 注入，页面传不进来、改不了）。可用变量：userId（平台用户ID，绑定键）、userName（登录账号）、userDisplayName（姓名）、userEmail、userMobile、userEmployeeNo（工号，账号可未配置，禁止作为绑定键）
+- 数据模型设计时，凡需关联登录用户的业务表必须包含绑定列 \`user_id BIGINT\`（= 平台用户ID this.auth.userId）；工号 employee_no 若业务需要只作展示字段
+- "我的数据"查询（我的休假/我的订单/我的待办…）**不声明、不传任何身份筛选参数**：SQL 直接用 {{ this.auth.userId }}，页面调用时完全不传身份参数；无匹配记录时页面显示"当前账号未关联数据"提示，禁止静默空白或报错
+- **禁止**让页面通过 this.params 传身份参数（userId/employeeNo/userAccount 等一律不行）——参数来自前端内存可被篡改，属于越权漏洞
+- 需求出现"我的/当前用户/自己/登录人"字样时，**禁止**默认做"选择当前员工"的选择器——除非用户明确要求管理员切换查看对象
+- 测试数据的绑定列 user_id 必须填"当前用户身份"里给出的平台用户 ID，页面演示无需任何手工 UPDATE 对齐`;
+}
+
 /** 外部库与内置能力规则：分析阶段（填 libraries 时）与执行阶段都必须可见 */
 export function getLibraryRulesSummary(): string {
   return `## 外部库与内置能力（声明 libraries 前必读）
@@ -39,6 +51,7 @@ export function getCodePageSkillSummary(): string {
 
 ### ⚠️ DataQuery 调用规则（详细示例请调用 get_dataquery_guide 工具）
 - **唯一正确方式**：DataQuery.queryName(params).then(fn)，返回 Promise<{rows, columns, totalCount}>
+- **查询名区分大小写，必须与 DBA 创建的查询名逐字符一致**（如查询名为 GetMeetings，就必须写 DataQuery.GetMeetings，写 getMeetings 会是 undefined 且页面静默无数据）。写代码前先核对 delegate_query 返回的真实查询名或 window.__QUERIES__
 - 写操作同样用 DataQuery，返回 Promise<{affectedRows, success}>
 - 禁止 .run() / result.data.rows / async function 声明 / JSON.stringify(row) / TODO假成功
 - 可用查询名在 window.__QUERIES__ 数组中列出
@@ -64,23 +77,26 @@ export function getDataQueryGuide(): string {
 
 平台在 window.DataQuery 上自动注册了所有绑定查询的包装函数，包括读（SELECT）和写（INSERT/UPDATE/DELETE），**这是唯一正确的数据调用方式**。
 
+⚠️ **查询名区分大小写**：DataQuery 后面的名字必须与查询名逐字符一致（DBA 创建的查询通常是帕斯卡命名，如 GetMeetings、InsertSignin）。写错大小写不会报"查询不存在"，而是静默失败、页面无数据。动手前先核对 delegate_query 返回的真实查询名或 window.__QUERIES__ 数组。
+
 \`\`\`js
 // ✅ 读操作：DataQuery.queryName(params) — 返回 Promise<{rows, columns, totalCount}>
-DataQuery.getCustomerList(params).then(function(result) {
+//（queryName 用 delegate_query 返回的真实名称，下例假设查询名为 GetCustomerList）
+DataQuery.GetCustomerList(params).then(function(result) {
   var rows = result.rows;
 });
 
 // ✅ 写操作：同样用 DataQuery，DBA 会为 INSERT/UPDATE/DELETE 创建对应查询
 // 写查询返回 Promise<{affectedRows, success}>
-DataQuery.insertCustomer(formData).then(function(result) {
+DataQuery.InsertCustomer(formData).then(function(result) {
   LubanUI.toast.success('保存成功');
   searchData();
 });
-DataQuery.updateCustomer({ id: editId, ...formData }).then(function(result) {
+DataQuery.UpdateCustomer({ id: editId, ...formData }).then(function(result) {
   LubanUI.toast.success('更新成功');
   searchData();
 });
-DataQuery.deleteCustomer({ id: deleteId }).then(function(result) {
+DataQuery.DeleteCustomer({ id: deleteId }).then(function(result) {
   LubanUI.toast.success('删除成功');
   searchData();
 });
@@ -100,11 +116,11 @@ LubanUI.toast.success('保存成功'); // 禁止！这是假成功，数据没�
 async function saveCustomer() { ... }  // 禁止！onclick="saveCustomer()" 会报 is not defined
 // ✅ 正确：用 function + .then() 或 var + async function 表达式
 function saveCustomer() {
-  DataQuery.insertCustomer(formData).then(function(result) { ... });
+  DataQuery.InsertCustomer(formData).then(function(result) { ... });
 }
 // 或
 var saveCustomer = async function() {
-  var result = await DataQuery.insertCustomer(formData);
+  var result = await DataQuery.InsertCustomer(formData);
 };
 
 // ❌ 禁止：JSON.stringify(row) 在 render 中使用（触发 toJSON 属性访问导致字段名校验报错）
@@ -476,12 +492,12 @@ export function getAnalysisExamples(): string {
 #### 模块 1：请假表单
 - 展示内容：请假类型、起止日期、请假天数、请假原因
 - 数据来源：无（表单提交）
-- 交互方式：填写后提交发起审批
+- 交互方式：以当前登录用户身份提交（window.__LUBAN_USER__），填写后提交发起审批
 
 #### 模块 2：审批流程
 - 展示内容：请假 ≤3 天 → 直属上级审批；>3 天 → 直属上级 → 部门经理审批
 - 数据来源：无（流程引擎处理）
-- 交互方式：审批人通过/驳回，可加签
+- 交互方式：审批人通过/驳回，可加签；发起人身份取当前登录账号，不做"选择员工"
 
 ## 3. 页面规划
 - 无需创建页面（流程由流程设计助手处理，发起入口在已有页面中）

@@ -69,6 +69,28 @@ export interface RouteResult {
   processedInput: string;
 }
 
+// —— 跨面板重挂载的 router 注册表 ——
+// AgentPanel 会因路由跳转（如侧边栏“设置”跳 /people/roles）或条件渲染整体卸载重挂，
+// 组件 ref 随之销毁；而进行中的会话 executor 是纯异步闭包、仍在运行，会话消息/计划
+// 写在全局 store 里，界面看起来“没断”。若新面板实例拿不到 executor，挂起恢复按钮
+// 就会退化为“会话已失效”。registry 按 applicationId 保存存活的 ChatRouter 供接管。
+const routerRegistry = new Map<string, ChatRouter>();
+
+export function getLiveRouter(applicationId: string | number): ChatRouter | null {
+  return routerRegistry.get(String(applicationId)) ?? null;
+}
+
+export function registerRouter(applicationId: string | number, router: ChatRouter): void {
+  routerRegistry.set(String(applicationId), router);
+}
+
+/** 取消并移除指定应用的存活 router（真正的应用切换/清空会话时调用） */
+export function discardRouter(applicationId: string | number): void {
+  const key = String(applicationId);
+  routerRegistry.get(key)?.cancel();
+  routerRegistry.delete(key);
+}
+
 export class ChatRouter {
   private sessionOptions: RouterSessionOptions;
   private callbacks: RouterCallbacks;
@@ -91,6 +113,11 @@ export class ChatRouter {
 
   updateSessionOptions(options: Partial<RouterSessionOptions>): void {
     Object.assign(this.sessionOptions, options);
+  }
+
+  /** 面板重挂载接管存活 router 时换绑最新实例的 callbacks（配合 createExecutor 的间接层生效） */
+  updateCallbacks(callbacks: RouterCallbacks): void {
+    this.callbacks = callbacks;
   }
 
   async route(request: RouteRequest): Promise<RouteResult> {
@@ -205,18 +232,23 @@ export class ChatRouter {
       initialMessages?: Message[];
     },
   ): Promise<AgentExecutor> {
+    // 回调经由 this 间接读取而不是直接快照：executor 创建后面板可能重挂载
+    // （updateCallbacks/updateSessionOptions 换绑），工具触发时必须路由到最新
+    // 面板实例的闭包，旧实例的 setState 在卸载后是无效调用
+    const liveUiCallbacks = () => this.callbacks;
+    const liveSessionOptions = () => this.sessionOptions;
     const toolContext = {
       applicationId: Number(this.sessionOptions.applicationId),
       pageId: this.sessionOptions.currentPageId,
-      dispatch: this.callbacks.dispatch,
-      onPagesChange: this.callbacks.onPagesChange || this.sessionOptions.onPagesChange,
-      onPageChange: this.callbacks.onPageChange || this.sessionOptions.onPageChange,
-      onQuerySelect: this.callbacks.onQuerySelect || this.sessionOptions.onQuerySelect,
-      onQueryRun: this.callbacks.onQueryRun || this.sessionOptions.onQueryRun,
-      onQueriesChange: this.callbacks.onQueriesChange || this.sessionOptions.onQueriesChange,
-      onDatasourceChange: this.callbacks.onDatasourceChange || this.sessionOptions.onDatasourceChange,
-      onToolsChange: this.callbacks.onToolsChange || this.sessionOptions.onToolsChange,
-      onWorkflowNavigate: this.callbacks.onWorkflowNavigate || this.sessionOptions.onWorkflowNavigate,
+      dispatch: (event: { type: string; payload: unknown }) => liveUiCallbacks().dispatch(event),
+      onPagesChange: () => (liveUiCallbacks().onPagesChange || liveSessionOptions().onPagesChange)?.(),
+      onPageChange: (pageId: number) => (liveUiCallbacks().onPageChange || liveSessionOptions().onPageChange)?.(pageId),
+      onQuerySelect: (query: { id: number; name: string }) => (liveUiCallbacks().onQuerySelect || liveSessionOptions().onQuerySelect)?.(query),
+      onQueryRun: (info: QueryRunInfo) => (liveUiCallbacks().onQueryRun || liveSessionOptions().onQueryRun)?.(info),
+      onQueriesChange: () => (liveUiCallbacks().onQueriesChange || liveSessionOptions().onQueriesChange)?.(),
+      onDatasourceChange: () => (liveUiCallbacks().onDatasourceChange || liveSessionOptions().onDatasourceChange)?.(),
+      onToolsChange: (apiId?: number) => (liveUiCallbacks().onToolsChange || liveSessionOptions().onToolsChange)?.(apiId),
+      onWorkflowNavigate: (view: import('@/types/agent').WorkflowNavigateView) => (liveUiCallbacks().onWorkflowNavigate || liveSessionOptions().onWorkflowNavigate)?.(view),
     };
 
     const tools = overrides?.tools || resolveAgentTools(agentDef, toolContext, this);
@@ -235,12 +267,14 @@ export class ChatRouter {
       confirmPlan: (planId) => useAgentStore.getState().confirmPlan(planId),
       setFocusPlan: (planId) => useAgentStore.getState().setFocusPlan(planId),
       updatePlan: (planId, updates) => useAgentStore.getState().updatePlan(planId, updates),
+      getOrphanedPending: () => useAgentStore.getState().orphanedPending,
+      clearOrphanedPending: () => useAgentStore.getState().clearOrphanedPending(),
     };
 
     return createAgent({
       ...this.sessionOptions,
       sessionId,
-      dispatch: this.callbacks.dispatch,
+      dispatch: (event: { type: string; payload: unknown }) => this.callbacks.dispatch(event),
       addMessage: this.callbacks.addMessage,
       updateMessage: this.callbacks.updateMessage,
       removeMessage: this.callbacks.removeMessage,

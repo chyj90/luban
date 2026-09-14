@@ -18,7 +18,6 @@ import com.luban.security.appaccess.AppAccessService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -52,6 +51,7 @@ public class OrchestrationService {
     private final com.luban.workflow.repository.WorkflowDefinitionRepository workflowDefinitionRepository;
     private final OrchestrationLinter linter;
     private final OrchestrationEngine engine;
+    private final OrchestrationExecutionRecorder executionRecorder;
     private final AppAccessService appAccessService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -68,8 +68,7 @@ public class OrchestrationService {
     @Transactional
     public OrchestrationDefinition create(String name, String description, Long applicationId,
                                           String dslJson, Long userId) {
-        OrchestrationDsl.Dsl dsl = parseDsl(dslJson);
-        var lint = lintDsl(dsl);
+        var lint = lintDslJson(dslJson);
         if (!lint.passed()) {
             throw new IllegalArgumentException("编排校验未通过: " + String.join("; ", lint.errors()));
         }
@@ -91,8 +90,7 @@ public class OrchestrationService {
     @Transactional
     public OrchestrationVersion saveVersion(Long definitionId, String dslJson, Long userId) {
         OrchestrationDefinition def = getById(definitionId);
-        OrchestrationDsl.Dsl dsl = parseDsl(dslJson);
-        var lint = lintDsl(dsl);
+        var lint = lintDslJson(dslJson);
         if (!lint.passed()) {
             throw new IllegalArgumentException("编排校验未通过: " + String.join("; ", lint.errors()));
         }
@@ -130,6 +128,25 @@ public class OrchestrationService {
                 wfDefId -> workflowDefinitionRepository.existsById(wfDefId));
     }
 
+    /**
+     * 完整 lint：结构/引用/语义校验 + 未知字段扫描。
+     * 入参是原始 DSL 字符串——反序列化用 ignoreUnknown=true，字段名写错会被静默丢弃，
+     * 必须在原始 JSON 上扫一遍未知字段，否则 LLM 生成的 DSL 会变成空壳节点还查不出原因。
+     */
+    public OrchestrationLinter.LintResult lintDslJson(String dslJson) {
+        OrchestrationDsl.Dsl dsl = parseDsl(dslJson);
+        var structural = lintDsl(dsl);
+        var unknown = linter.checkUnknownFields(dslJson);
+        if (unknown.errors().isEmpty() && unknown.warnings().isEmpty()) {
+            return structural;
+        }
+        java.util.List<String> errors = new java.util.ArrayList<>(structural.errors());
+        errors.addAll(unknown.errors());
+        java.util.List<String> warnings = new java.util.ArrayList<>(structural.warnings());
+        warnings.addAll(unknown.warnings());
+        return new OrchestrationLinter.LintResult(errors.isEmpty(), errors, warnings);
+    }
+
     /** 既有 Query 存在性（避免依赖具体 service；此处用 repository 精确查询） */
     @org.springframework.beans.factory.annotation.Autowired
     private com.luban.repository.QueryRepository queryRepository;
@@ -150,8 +167,14 @@ public class OrchestrationService {
         }
     }
 
-    /** 试运行 / 执行：engine.execute + 执行留痕 */
-    @Transactional
+    /**
+     * 试运行 / 执行：engine.execute + 执行留痕。
+     * 刻意不加 @Transactional：workflow 等节点会调用 ProcessService 等 @Transactional(REQUIRED)
+     * 服务并加入本事务，节点异常即使被引擎捕获，事务也已被标记 rollback-only，方法正常返回后
+     * 提交时抛 UnexpectedRollbackException，结构化失败结果与 nodeTrace 全部丢失
+     * （2026-09-14 请假编排案例）。节点各自管理事务；执行记录由
+     * OrchestrationExecutionRecorder 以独立事务落库，保证失败也有迹可查。
+     */
     public Map<String, Object> execute(Long definitionId, Long userId, String trigger,
                                        Long apiKeyId, Map<String, Object> inputs) {
         OrchestrationDefinition def = getById(definitionId);
@@ -176,7 +199,11 @@ public class OrchestrationService {
         exec.setStatus(result.success() ? "SUCCESS" : ("TIMEOUT".equals(result.errorCode()) ? "TIMEOUT" : "FAILED"));
         exec.setErrorCode(result.errorCode());
         exec.setDurationMs((int) duration);
-        saveExecutionRecord(exec);
+        executionRecorder.save(exec);
+        if (!result.success()) {
+            log.warn("编排 {} 执行失败（{}）：{}，nodeTrace={}", definitionId, result.errorCode(),
+                    result.errorMessage(), result.nodeTrace());
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", result.success());
@@ -390,7 +417,11 @@ public class OrchestrationService {
         exec.setStatus(result.success() ? "SUCCESS" : ("TIMEOUT".equals(result.errorCode()) ? "TIMEOUT" : "FAILED"));
         exec.setErrorCode(result.errorCode());
         exec.setDurationMs((int) duration);
-        saveExecutionRecord(exec);
+        executionRecorder.save(exec);
+        if (!result.success()) {
+            log.warn("编排 {} 执行失败（{}）：{}，nodeTrace={}", definitionId, result.errorCode(),
+                    result.errorMessage(), result.nodeTrace());
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", result.success());
@@ -446,7 +477,7 @@ public class OrchestrationService {
         exec.setStatus(result.success() ? "SUCCESS" : "FAILED");
         exec.setErrorCode(result.errorCode());
         exec.setDurationMs((int) duration);
-        saveExecutionRecord(exec);
+        executionRecorder.save(exec);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("success", result.success());
@@ -481,15 +512,5 @@ public class OrchestrationService {
                 .orElseThrow(() -> new IllegalArgumentException("编排不存在: " + definitionId));
         def.setStatus(STATUS_ARCHIVED);
         definitionRepository.save(def);
-    }
-
-    /**
-     * 独立事务保存执行记录，避免被编排节点内的 @Transactional 异常污染。
-     * 例如 workflow 节点调用 ProcessService（@Transactional）抛出 BusinessException 时，
-     * 外层事务会被标记为 rollback-only，此时执行记录仍需落库。
-     */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    private OrchestrationExecution saveExecutionRecord(OrchestrationExecution exec) {
-        return executionRepository.save(exec);
     }
 }

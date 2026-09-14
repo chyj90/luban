@@ -25,7 +25,9 @@ export type InputRequest =
 export type ResumeCommand =
   | { kind: 'confirm' }
   | { kind: 'cancel' }
-  | { kind: 'complete'; note?: string };
+  | { kind: 'complete'; note?: string }
+  /** 用户不确认也不取消，给出新指示/补充意见（banner 第三选项） */
+  | { kind: 'redirect'; note: string };
 
 export interface ToolResultSnapshot {
   ok: boolean;
@@ -78,6 +80,8 @@ export type SessionEvent =
   | { type: 'turn.completed'; turnId: string; response: string; at: number }
   | { type: 'turn.failed'; turnId: string; error: string; at: number }
   | { type: 'turn.cancelled'; turnId: string; at: number }
+  /** runTurn 被拒绝（并发回合/未挂起时收到恢复命令）：无状态变化，UI 必须复位并告知原因 */
+  | { type: 'turn.rejected'; reason: string; sessionStatus: 'idle' | 'running' | 'suspended'; at: number }
   | { type: 'session.reset' };
 
 export function describeInputRequest(request: InputRequest): string {

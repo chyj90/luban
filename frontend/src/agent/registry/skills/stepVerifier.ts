@@ -14,6 +14,7 @@
  * - result 文本中解析不到资源 ID 时判"失败"并在返回信息中指导模型补 ID 后重标。
  */
 import { formApi, workflowApi } from '@/api/workflow';
+import { getOrchestration } from '@/api/orchestration';
 import { listQueries } from '@/api';
 import type { WorkflowDefinition } from '@/types/workflow';
 
@@ -28,6 +29,7 @@ export interface StepVerifyResult {
 interface VerifyDeps {
   getForm: (id: number) => Promise<{ id: number; name?: string; fields?: string }>;
   getWorkflow: (id: number) => Promise<WorkflowDefinition>;
+  getOrchestration: (id: number) => Promise<{ data: { id: number; name?: string } }>;
   listQueries: (applicationId: number) => Promise<{ data: Array<{ id: number; name: string }> }>;
   listPages?: (applicationId: number) => Promise<Array<{ id: number; name: string }>>;
 }
@@ -35,6 +37,7 @@ interface VerifyDeps {
 const injectableDeps: VerifyDeps = {
   getForm: (id) => formApi.get(id),
   getWorkflow: (id) => workflowApi.getDefinition(id),
+  getOrchestration: (id) => getOrchestration(id),
   listQueries: (applicationId) => listQueries(applicationId),
 };
 
@@ -43,6 +46,7 @@ export function setStepVerifierDeps(overrides?: Partial<VerifyDeps>): void {
   if (overrides) Object.assign(injectableDeps, overrides);
 }
 
+/** 从 result 文本解析资源 ID。兼容全角括号/冒号、"流程(id: 211)"、"流程ID为211"、"表单ID=64" 等模型常见变体 */
 function parseId(result: string, patterns: RegExp[]): number | null {
   for (const p of patterns) {
     const m = result.match(p);
@@ -54,20 +58,44 @@ function parseId(result: string, patterns: RegExp[]): number | null {
   return null;
 }
 
+const FORM_ID_PATTERNS = [
+  /表单\s*ID\s*[:：为=＝]?\s*(\d+)/i,
+  /[（(]\s*表单\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
+];
+const PROCESS_ID_PATTERNS = [
+  /流程\s*ID\s*[:：为=＝]?\s*(\d+)/i,
+  /[（(]\s*(?:审批)?流程\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
+  /[（(]\s*id\s*[:：]\s*(\d+)\s*[)）]/i,
+];
+const ORCH_ID_PATTERNS = [
+  /编排\s*ID\s*[:：为=＝]?\s*(\d+)/i,
+  /[（(]\s*编排\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
+];
+
 async function parseJsonSafe(v: unknown): Promise<unknown> {
   if (typeof v !== 'string') return v;
   try { return JSON.parse(v); } catch { return null; }
 }
 
-/** 核验 delegate_workflow 步骤：资源存在 + 条件分支结构与描述一致 */
+/** 核验 delegate_workflow 步骤：资源存在 + 条件分支结构与描述一致 + 闭环承诺不被草稿状态糊弄 */
 async function verifyWorkflowStep(description: string, result: string): Promise<StepVerifyResult> {
-  const formId = parseId(result, [/表单ID[:：]?\s*(\d+)/i, /表单\s*ID[:：]?\s*(\d+)/i]);
-  const processId = parseId(result, [/流程ID[:：]?\s*(\d+)/i, /流程\s*ID[:：]?\s*(\d+)/i, /\(ID[:：]?\s*(\d+)\)/]);
+  const formId = parseId(result, FORM_ID_PATTERNS);
+  const processId = parseId(result, PROCESS_ID_PATTERNS);
 
   if (!formId && !processId) {
     return {
       verified: false,
       reason: `result 中未找到真实的资源 ID（需包含"表单ID: N"或"流程ID: N"），无法核验。请用委派返回的真实 ID 重新标记；若该步骤确实未产生任何资源，说明执行失败，不应标记为 completed`,
+    };
+  }
+
+  // 业务闭环：只有当步骤本身承诺"发布/挂接/接入/联动"时，草稿或待接入状态才算未完成
+  // （纯设计步骤以草稿结束是正常的，发布由后续闭环步骤负责）
+  const promisesClosure = /发布|挂接|接入|联动|发起链路/.test(description);
+  if (promisesClosure && /草稿|待发布|未发布|待接入|待挂接|待确认/.test(result)) {
+    return {
+      verified: false,
+      reason: `步骤承诺了流程闭环（发布/挂接/联动），但 result 显示仍有未完成项（草稿/待接入/待确认等）。请先完成发布与发起链路接入再标记 completed；确因平台能力无法闭环的，请将该步骤标记 error 并向用户如实说明缺口`,
     };
   }
 
@@ -125,6 +153,32 @@ async function verifyQueryStep(applicationId: number, description: string, resul
   }
 }
 
+/** 核验 delegate_orchestration 步骤：编排真实存在，且名称与步骤声明一致（防跨步骤贴结果） */
+async function verifyOrchestrationStep(description: string, result: string): Promise<StepVerifyResult> {
+  const orchId = parseId(result, ORCH_ID_PATTERNS);
+  if (!orchId) {
+    return {
+      verified: false,
+      reason: `result 中未找到真实的编排 ID（需包含"编排ID: N"），无法核验。请用委派返回的真实 ID 重新标记；若该步骤确实未创建编排，说明执行失败，不应标记为 completed`,
+    };
+  }
+  let orch: { data: { id: number; name?: string } };
+  try {
+    orch = await injectableDeps.getOrchestration(orchId);
+  } catch {
+    return { verified: false, reason: `编排 ID ${orchId} 不存在或查询失败，请核实真实 ID` };
+  }
+  const nameMatch = description.match(/创建编排\s+([A-Za-z_]\w*)/);
+  const actualName = orch.data?.name;
+  if (nameMatch?.[1] && actualName && actualName !== nameMatch[1]) {
+    return {
+      verified: false,
+      reason: `编排 ID ${orchId} 的实际名称是「${actualName}」，与步骤要创建的编排「${nameMatch[1]}」不符——result 可能贴自其他步骤，请核实后重新标记`,
+    };
+  }
+  return { verified: true };
+}
+
 /**
  * 核验步骤是否真的完成。返回 verified=false 时 update_plan_item 应拒绝 completed。
  */
@@ -138,6 +192,8 @@ export async function verifyStepCompletion(
     switch (toolName) {
       case 'delegate_workflow':
         return await verifyWorkflowStep(description, result);
+      case 'delegate_orchestration':
+        return await verifyOrchestrationStep(description, result);
       case 'delegate_query':
         return await verifyQueryStep(applicationId, description, result);
       default:

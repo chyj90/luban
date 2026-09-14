@@ -1,14 +1,14 @@
 import { useEffect, useRef, useMemo, useCallback } from 'react';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
-import { useQueryBridge } from '@/hooks/useQueryBridge';
+import { useQueryBridge, type UserInfo } from '@/hooks/useQueryBridge';
 import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE, LEAFLET_SOURCE } from '@/luban-ui';
 import './InteliPreview.css';
 
 interface InteliPreviewProps {
   codePage: CodePageData;
   queries: Query[];
-  userInfo?: { id: number; account: string; email: string } | null;
+  userInfo?: UserInfo | null;
   allPages?: Array<{ id: number; name: string }>;
   onNavigate?: (pageId: number) => void;
   applicationId?: number;

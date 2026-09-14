@@ -89,7 +89,7 @@ export function GlobalHeader() {
                 <path d="M2 17l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
                 <path d="M2 12l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
               </svg>
-              <span className="global-header-logo-text">鲁班</span>
+              <span className="global-header-logo-text">知行</span>
             </div>
             <span className="global-header-breadcrumb-sep">/</span>
             <span className="global-header-app-name">{appName}</span>
@@ -102,7 +102,7 @@ export function GlobalHeader() {
                 <path d="M2 17l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
                 <path d="M2 12l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
               </svg>
-              <span className="global-header-logo-text">鲁班</span>
+              <span className="global-header-logo-text">知行</span>
             </div>
             <nav className="global-header-nav">
               {filteredNav.map((item) => (

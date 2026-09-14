@@ -259,7 +259,7 @@ public class LubanAuditInterceptor implements HandlerInterceptor {
         String audit = request.getHeader("X-Luban-Audit");
         String sig = request.getHeader("X-Luban-Signature");
 
-        if (audit == null || sig == null) return true; // 非鲁班请求
+        if (audit == null || sig == null) return true; // 非知行请求
 
         // 防重放：5分钟过期
         long ts = parseTimestamp(audit);
@@ -354,7 +354,7 @@ def verify_luban_audit(headers):
     sig = headers.get("X-Luban-Signature")
 
     if not audit or not sig:
-        return None  # 非鲁班请求，走原有认证
+        return None  # 非知行请求，走原有认证
 
     # 防重放：5分钟过期
     audit_data = json.loads(audit)
@@ -397,15 +397,15 @@ function GuideModal({ onClose, tab, onTabChange }: GuideModalProps) {
           <div className="guide-section">
             <h4 className="guide-section-title">认证原理</h4>
             <p className="guide-text">
-              鲁班使用 <strong>Ed25519 公私钥签名</strong> 完成认证。创建系统时自动生成公私钥对：
+              知行使用 <strong>Ed25519 公私钥签名</strong> 完成认证。创建系统时自动生成公私钥对：
             </p>
             <ul className="guide-list">
-              <li><strong>私钥</strong>：保留在鲁班服务端，AES-256 加密存储，用于对请求签名</li>
+              <li><strong>私钥</strong>：保留在知行服务端，AES-256 加密存储，用于对请求签名</li>
               <li><strong>公钥</strong>：在系统卡片中展示，需复制到本地系统用于验证签名</li>
             </ul>
             <p className="guide-text">
-              鲁班调用您的系统 API 时，会在请求头中注入 <code>X-Luban-Audit</code>（审计信息，含时间戳）和
-              <code>X-Luban-Signature</code>（用私钥对审计信息签名）。您的系统用公钥验证签名即可确认请求来自鲁班，无需额外的 API Key 或 Token。
+              知行调用您的系统 API 时，会在请求头中注入 <code>X-Luban-Audit</code>（审计信息，含时间戳）和
+              <code>X-Luban-Signature</code>（用私钥对审计信息签名）。您的系统用公钥验证签名即可确认请求来自知行，无需额外的 API Key 或 Token。
             </p>
           </div>
 
@@ -415,7 +415,7 @@ function GuideModal({ onClose, tab, onTabChange }: GuideModalProps) {
               <li>在系统卡片中点击「查看密钥」，获取公钥</li>
               <li>将公钥作为配置项添加到本地系统</li>
               <li>在网关或中间件中加入签名验证代码（下方示例）</li>
-              <li>验证通过 = 请求来自鲁班 = 认证通过</li>
+              <li>验证通过 = 请求来自知行 = 认证通过</li>
             </ol>
           </div>
 

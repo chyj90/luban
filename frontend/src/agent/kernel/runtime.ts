@@ -13,6 +13,7 @@ import type { Message, ToolDefinition, ToolExecuteResult } from '@/types/agent';
 import type { LLMCallOptions, LLMStreamChunk } from '../core/llmClient';
 import { callLLMAPIStream, parseToolArguments } from '../core/llmClient';
 import { compactForApi } from '../core/contextWindow';
+import { stripThinkBlocks } from '../core/llmClient';
 import type { SessionEvent, ResumeCommand } from './events';
 import { describeInputRequest } from './events';
 
@@ -91,6 +92,8 @@ export interface RunResult {
   conversationMessages: Message[];
   suspended: boolean;
   cancelled: boolean;
+  /** runTurn 被拒绝（并发/未挂起）：会话状态无任何变化，调用方不应取回结果或做收尾 */
+  rejected?: boolean;
 }
 
 export type KernelTurnInput =
@@ -132,8 +135,8 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
     conversation.push({ id: `sys-${++turnSeq}`, role: 'system', content, timestamp: Date.now() });
   };
 
-  const makeResult = (suspended: boolean, cancelled = false): RunResult =>
-    ({ state: session, conversationMessages: [...conversation], suspended, cancelled });
+  const makeResult = (suspended: boolean, cancelled = false, rejected = false): RunResult =>
+    ({ state: session, conversationMessages: [...conversation], suspended, cancelled, rejected });
 
   /** 把对话中某次调用的占位工具结果改写为最终结果（保持 tool_call_id 配对不变） */
   const rewriteToolResult = (callId: string, resultJson: string): void => {
@@ -192,7 +195,9 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         for await (const chunk of streamGen) {
           if (chunk.type === 'content' && chunk.content) {
             emit({ type: 'llm.delta', turnId, text: chunk.content, reasoning: chunk.reasoning });
-            content += chunk.content;
+            // reasoning 块只走事件通道供 UI 展示思考过程，禁止混入正文——
+            // 否则思考全文会进入对话历史，模型读着自己的摇摆继续摇摆
+            if (!chunk.reasoning) content += chunk.content;
           } else if (chunk.type === 'tool_call' && chunk.toolCall) {
             accumulated.push({ id: chunk.toolCall.id, name: chunk.toolCall.function.name, arguments: chunk.toolCall.function.arguments });
           }
@@ -207,10 +212,12 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         return makeResult(false);
       }
 
-      emit({ type: 'llm.turn.finished', turnId, content: content.trim() });
+      // 兜底剥离内联 <think> 思考块（正常情况思考走 reasoning 通道，不经过这里）
+      const visibleContent = stripThinkBlocks(content).trim();
+      emit({ type: 'llm.turn.finished', turnId, content: visibleContent });
 
       if (accumulated.length === 0) {
-        const assistantContent = content.trim() || '执行完毕。';
+        const assistantContent = visibleContent || '执行完毕。';
         conversation.push({ id: `a-${++turnSeq}`, role: 'assistant', content: assistantContent, timestamp: Date.now() });
 
         // 完成前策略拦截（计划有未完成步骤等）：注入指令继续循环，有上限
@@ -228,7 +235,7 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
       conversation.push({
         id: `a-${++turnSeq}`,
         role: 'assistant',
-        content: content.trim(),
+        content: visibleContent,
         timestamp: Date.now(),
         toolCalls: accumulated.map((tc) => ({ id: tc.id, name: tc.name, arguments: parseToolArguments(tc.arguments) ?? {}, status: 'pending' as const })),
       });
@@ -326,13 +333,18 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
 
     async runTurn(input: KernelTurnInput): Promise<RunResult> {
       if (session.status === 'running') {
-        console.warn('[KernelRuntime] 上一回合仍在进行，拒绝并发 runTurn');
-        return makeResult(false);
+        const reason = '上一回合仍在进行，已拒绝并发执行';
+        console.warn(`[KernelRuntime] ${reason}`);
+        // 拒绝必须可观测：UI 据此复位 streaming/status 并提示用户，否则按钮像"点了没反应"
+        emit({ type: 'turn.rejected', reason, sessionStatus: session.status, at: Date.now() });
+        return makeResult(false, false, true);
       }
       const isResume = input.kind !== 'user-message';
       if (isResume && session.status !== 'suspended') {
-        console.warn(`[KernelRuntime] 收到恢复命令但会话未挂起（${session.status}），忽略`);
-        return makeResult(false);
+        const reason = `收到恢复命令但会话未挂起（${session.status}），操作未生效`;
+        console.warn(`[KernelRuntime] ${reason}，忽略`);
+        emit({ type: 'turn.rejected', reason, sessionStatus: session.status, at: Date.now() });
+        return makeResult(false, false, true);
       }
 
       const turnId = `turn-${++turnSeq}`;
@@ -390,13 +402,26 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         return runLlmLoop(turnId);
       }
 
-      // complete：用户表示挂起事项已完成
-      const completeEffect = pending?.kind !== 'user-action'
+      // complete：用户表示挂起事项已完成；redirect：用户不确认也不取消，给出新指示
+      const isRedirect = input.kind === 'redirect';
+      // redirect 不是对挂起事项的确认/放弃，不触发策略（如 plan-confirm 的确认/拒绝语义）
+      const completeEffect = pending?.kind !== 'user-action' && !isRedirect
         ? policy?.onResume?.(session, input)
         : undefined;
       emit({ type: 'turn.started', turnId, input: { kind: 'resume', command: input }, at: Date.now() });
-      if (pending?.kind === 'user-action') {
-        pushSystemMessage(`【挂起事项已解除】用户已完成所需的手动操作。挂起原因：${pending.reason}。${input.note ? `用户补充：${input.note}。` : ''}请继续执行后续步骤。`);
+      if (isRedirect) {
+        // 新指示必须锚定原挂起事项一起转述，否则模型（尤其是重建过的 executor）会
+        // 把"给建议"误解为对其他步骤的确认——这正是 10:11 "已完成，继续"被误读的教训
+        pushSystemMessage(
+          `【用户未确认完成，给出了新指示】${input.note}\n原挂起事项：${pending ? describeInputRequest(pending) : '（无）'}。` +
+          `请先回应/吸收该指示：若新指示替代了原挂起事项，按新指示执行；若只是补充，结合补充信息继续原事项；` +
+          `若用户否定了当前方向，先给出修正方案再行动，不要固执沿用原方案。`,
+        );
+      } else if (pending?.kind === 'user-action') {
+        pushSystemMessage(
+          `【挂起事项已解除】用户已完成所需的手动操作。挂起原因：${pending.reason}。${input.note ? `用户补充：${input.note}。` : ''}` +
+          `若挂起前有未完成的委派任务，请重新委派并在任务描述中说明用户已完成的手动操作与待校验项，不要跳过校验直接继续。请继续执行后续步骤。`,
+        );
       } else {
         pushSystemMessage(completeEffect?.systemMessage || `用户已确认挂起事项已完成${input.note ? `：${input.note}` : ''}，请继续执行后续步骤。`);
       }

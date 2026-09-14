@@ -189,6 +189,10 @@ export function applyEvent(state: SessionState, event: SessionEvent): SessionSta
       };
     }
 
+    case 'turn.rejected':
+      // runTurn 被拒绝（并发/未挂起）：会话状态无任何变化，事件仅用于 UI 复位与对账
+      return state;
+
     default:
       return state;
   }

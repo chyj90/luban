@@ -3,7 +3,7 @@ import type { Message } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
 
 import { toast } from '@/stores/toastStore';
-import { ChatRouter } from '@/agent/core/chatRouter';
+import { ChatRouter, getLiveRouter, registerRouter, discardRouter } from '@/agent/core/chatRouter';
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
@@ -248,6 +248,11 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const [tokenUsage, setTokenUsage] = useState<{ inputTokens: number; outputTokens: number; totalTokens: number } | null>(null);
   const [showDebugMenu, setShowDebugMenu] = useState(false);
   const [isSsePending, setIsSsePending] = useState(false);
+  // banner 第三选项（输入建议）的展开态与草稿
+  const [suspendNoteOpen, setSuspendNoteOpen] = useState(false);
+  const [suspendNote, setSuspendNote] = useState('');
+  // 超长挂起内容的展开态
+  const [msgExpanded, setMsgExpanded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -312,11 +317,18 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     }
   }, [appId]);
 
-  // 切换应用时重置聊天路由，避免旧应用的执行器上下文被复用
+  // 聊天路由的存活边界是“应用”而不是面板组件实例。侧边栏“设置”等入口会跳走路由
+  // 再返回，面板整体卸载重挂；进行中的会话 executor 在 registry 中继续存活并往
+  // store 写消息（界面看起来“没断”），重挂后必须接管同一个 router，否则挂起横幅
+  // 点击时报“会话已失效”。只有真正切换应用才销毁旧应用的执行器上下文。
+  const lastAppIdRef = useRef(appId);
   useEffect(() => {
-    chatRouterRef.current?.cancel();
-    chatRouterRef.current = null;
-    lastApiMessagesRef.current = [];
+    if (lastAppIdRef.current !== appId) {
+      discardRouter(lastAppIdRef.current);
+      lastApiMessagesRef.current = [];
+      lastAppIdRef.current = appId;
+    }
+    chatRouterRef.current = getLiveRouter(appId);
   }, [appId]);
 
   useEffect(() => {
@@ -331,6 +343,33 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
       setIsSsePending(false);
     }
   }, [status, isSsePending]);
+
+  // 重挂载对账（兜底）：正常路径上面的接管 effect 已从 registry 恢复 router 并跳过此处。
+  // 仅当 registry 无存活 router 而 store 里仍残留 pendingInput 时，banner 会是“点了没
+  // 反应”的死横幅——转存为 orphanedPending（下次输入时降级注入新会话）并撤下 banner
+  useEffect(() => {
+    if (chatRouterRef.current) return;
+    const stale = useAgentStore.getState().pendingInput;
+    if (!stale) return;
+    useAgentStore.getState().setOrphanedPending(stale.message);
+    setPendingInput?.(null);
+    addMessage({
+      id: crypto.randomUUID(),
+      role: 'system',
+      content: `⚠️ 页面刷新/面板重置导致挂起会话中断，以下事项未能恢复：${stale.message}\n请直接输入指示继续（已完成就回复"已完成"，有新建议直接说明）。`,
+      timestamp: Date.now(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 挂起横幅消失（恢复/取消/失效）时收起新指示输入框并清空草稿与展开态
+  useEffect(() => {
+    if (!pendingInput) {
+      setSuspendNoteOpen(false);
+      setSuspendNote('');
+      setMsgExpanded(false);
+    }
+  }, [pendingInput]);
 
   // 打开面板时滚动到底部
   useEffect(() => {
@@ -454,31 +493,37 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     onWorkflowNavigate,
   }), [addMessage, updateMessage, removeMessage, addPlan, updatePlan, updateStep, setStatus, setStreaming, setError, setPendingInput, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate]);
 
+  const buildSessionOptions = (): RouterSessionOptions => ({
+    model: 'default',
+    currentPageId,
+    currentPageName,
+    allPages,
+    applicationId: appId,
+    onPagesChange,
+    onPageChange,
+    onQuerySelect,
+    onQueryRun,
+    onQueriesChange,
+    onDatasourceChange,
+    onToolsChange,
+    onWorkflowNavigate,
+  });
+
   const runAgent = async (userMessage: string) => {
     setIsSsePending(true);
 
-    const sessionOptions: RouterSessionOptions = {
-      model: 'default',
-      currentPageId,
-      currentPageName,
-      allPages,
-      applicationId: appId,
-      onPagesChange,
-      onPageChange,
-      onQuerySelect,
-      onQueryRun,
-      onQueriesChange,
-      onDatasourceChange,
-      onToolsChange,
-      onWorkflowNavigate,
-    };
+    const sessionOptions = buildSessionOptions();
 
     if (!chatRouterRef.current) {
       generateSessionId();
       chatRouterRef.current = new ChatRouter(sessionOptions, callbacks);
+      registerRouter(appId, chatRouterRef.current);
     } else {
       chatRouterRef.current.updateSessionOptions(sessionOptions);
     }
+    // 接管的存活 router 可能带着旧面板实例的 callbacks，先换绑（store 动作本身稳定，
+    // 关键是 dispatch/页面刷新等组件闭包必须指向当前实例）
+    chatRouterRef.current.updateCallbacks(callbacks);
 
     const sessionId = useAgentStore.getState().sessionId || `session_${Date.now()}`;
 
@@ -497,13 +542,34 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     }
   };
 
-  /** 挂起恢复：UI 确认/取消/完成按钮 → 显式 ResumeCommand（控制流唯一入口，无文本猜测） */
-  const handleResume = async (command: 'confirm' | 'cancel' | 'complete') => {
-    const executor = chatRouterRef.current?.getActiveExecutor();
-    if (!executor) return;
+  /** 挂起恢复：UI 确认/取消/完成/新指示按钮 → 显式 ResumeCommand（控制流唯一入口，无文本猜测） */
+  const handleResume = async (command: 'confirm' | 'cancel' | 'complete' | 'redirect', note?: string) => {
+    const router = chatRouterRef.current;
+    const executor = router?.getActiveExecutor();
+    if (!executor) {
+      // 兜底：executor 缺失（如应用切换销毁了 router）但 banner 还在。
+      // 禁止静默返回——显式报错并把挂起事项转存，让下一次输入仍能锚定原事项
+      const orphan = useAgentStore.getState().pendingInput;
+      setPendingInput?.(null);
+      if (orphan) {
+        useAgentStore.getState().setOrphanedPending(orphan.message);
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `⚠️ 会话已失效，无法按按钮恢复。未完成的事项：${orphan.message}\n请直接在下方输入指示继续（已完成就回复"已完成"，有新建议直接说明）。`,
+          timestamp: Date.now(),
+        });
+      } else {
+        setError('会话已失效，操作未生效。请重新输入指示。');
+      }
+      return;
+    }
+    // 同 runAgent：接管场景下先换绑最新实例的 callbacks/sessionOptions 再恢复
+    router!.updateCallbacks(callbacks);
+    router!.updateSessionOptions(buildSessionOptions());
     setIsSsePending(true);
     try {
-      await executor.resume({ kind: command });
+      await executor.resume(command === 'redirect' ? { kind: 'redirect', note: note || '' } : { kind: command });
     } catch (e) {
       setError((e as Error).message);
       setIsSsePending(false);
@@ -626,7 +692,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           <span className="ap-title">AI Agent</span>
         </div>
         <div className="ap-header-right">
-          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); setIsSsePending(false); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
+          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); setIsSsePending(false); discardRouter(appId); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>
@@ -777,24 +843,83 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               <div ref={messagesEndRef} />
             </div>
 
-            {pendingInput && (
-              <div className="ap-suspend-bar">
-                <span className="ap-suspend-msg">{pendingInput.message}</span>
-                <div className="ap-suspend-actions">
-                  {(pendingInput.kind === 'danger-confirm' || pendingInput.kind === 'plan-confirm') && (
-                    <button className="ap-btn-confirm" onClick={() => handleResume('confirm')}>
-                      {pendingInput.kind === 'plan-confirm' ? '确认计划' : '确认执行'}
+            {pendingInput && (() => {
+              const suspendTitle = pendingInput.kind === 'danger-confirm'
+                ? '危险操作待确认'
+                : pendingInput.kind === 'plan-confirm'
+                  ? '计划等待确认'
+                  : pendingInput.kind === 'user-action'
+                    ? '需要你先完成手动操作'
+                    : '等待处理';
+              const needClamp = pendingInput.message.length > 160;
+              return (
+                <div className="ap-suspend-bar" data-kind={pendingInput.kind}>
+                  <div className="ap-suspend-head">
+                    <svg className="ap-suspend-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                      <line x1="12" y1="9" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    <span className="ap-suspend-title">{suspendTitle}</span>
+                    {needClamp && (
+                      <button className="ap-suspend-toggle" onClick={() => setMsgExpanded((v) => !v)}>
+                        {msgExpanded ? '收起' : '展开全文'}
+                      </button>
+                    )}
+                  </div>
+                  <div className={`ap-suspend-msg ${msgExpanded ? 'expanded' : ''}`}>{pendingInput.message}</div>
+                  <div className="ap-suspend-actions">
+                    {(pendingInput.kind === 'danger-confirm' || pendingInput.kind === 'plan-confirm') && (
+                      <button className="ap-btn-confirm" onClick={() => handleResume('confirm')}>
+                        {pendingInput.kind === 'plan-confirm' ? '确认计划' : '确认执行'}
+                      </button>
+                    )}
+                    {pendingInput.kind === 'user-action' && (
+                      <button className="ap-btn-confirm" onClick={() => handleResume('complete')}>已完成，继续</button>
+                    )}
+                    <button
+                      className={`ap-btn-note ${suspendNoteOpen ? 'active' : ''}`}
+                      onClick={() => setSuspendNoteOpen((v) => !v)}
+                      title="不确认也不取消？给 Agent 新指示或补充说明"
+                    >
+                      输入建议
                     </button>
+                    <button className="ap-btn-cancel" onClick={() => handleResume('cancel')}>
+                      {pendingInput.kind === 'plan-confirm' ? '放弃' : '取消'}
+                    </button>
+                  </div>
+                  {suspendNoteOpen && (
+                    <div className="ap-suspend-note">
+                      <textarea
+                        className="ap-suspend-note-input"
+                        value={suspendNote}
+                        onChange={(e) => setSuspendNote(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            const note = suspendNote.trim();
+                            if (note) handleResume('redirect', note);
+                          }
+                        }}
+                        rows={2}
+                        autoFocus
+                        placeholder="不确认也不取消？输入新指示/补充意见，回车发送（Shift+Enter 换行）"
+                      />
+                      <button
+                        className="ap-btn-confirm"
+                        disabled={!suspendNote.trim()}
+                        onClick={() => {
+                          const note = suspendNote.trim();
+                          if (note) handleResume('redirect', note);
+                        }}
+                      >
+                        发送
+                      </button>
+                    </div>
                   )}
-                  {pendingInput.kind === 'user-action' && (
-                    <button className="ap-btn-confirm" onClick={() => handleResume('complete')}>已完成</button>
-                  )}
-                  <button className="ap-btn-cancel" onClick={() => handleResume('cancel')}>
-                    {pendingInput.kind === 'plan-confirm' ? '放弃' : '取消'}
-                  </button>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div className="ap-input-area">
               <textarea

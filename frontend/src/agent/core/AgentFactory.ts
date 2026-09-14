@@ -113,6 +113,36 @@ function injectActivePlanContext(
   });
 }
 
+/**
+ * 全新 executor（刷新/重挂载后 ChatRouter 重建）没有对话历史，模型面对"还是没有"这类
+ * 指代式追问会彻底失忆。从 store 回放最近的用户指令，保住需求主线。
+ * 仅在对话里还没有任何 user 消息时注入（老 executor 已有完整历史，注入纯属重复）。
+ */
+function injectRecentUserMessages(
+  storeReader: IStoreReader,
+  conversationMessages: Message[],
+  isMainAgent: boolean,
+) {
+  if (!isMainAgent) return;
+  if (conversationMessages.some((m) => m.role === 'user')) return;
+
+  const recentUserMessages = storeReader
+    .getMessages()
+    .filter((m) => m.role === 'user' && m.content)
+    .slice(-5);
+  if (recentUserMessages.length === 0) return;
+
+  const lines = recentUserMessages.map(
+    (m) => `- ${(m.content as string).slice(0, 200).replace(/\s+/g, ' ').trim()}`,
+  );
+  conversationMessages.push({
+    id: crypto.randomUUID(),
+    role: 'system',
+    content: `## 本应用此前的用户指令记录（按时间序，供理解背景）\n${lines.join('\n')}\n以上是历史脉络；用户最新一条消息在对话末尾，回复时以它为准。`,
+    timestamp: Date.now(),
+  });
+}
+
 export async function createAgent(options: AgentFactoryOptions): Promise<AgentExecutor> {
   const {
     model,
@@ -216,8 +246,13 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       }
 
       case 'llm.delta': {
-        streamingContent += event.text;
-        if (event.reasoning) streamingReasoning += event.text;
+        // reasoning 与 content 强制分流：思考文本只进 reasoningContent，
+        // 混入正文会既展示给用户又污染对话历史（模型读着自己的摇摆继续摇摆）
+        if (event.reasoning) {
+          streamingReasoning += event.text;
+        } else {
+          streamingContent += event.text;
+        }
         const now = Date.now();
         if (now - lastFlush < 50 && streamingId) return;
         lastFlush = now;
@@ -320,8 +355,25 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         setStatus('suspended');
         setPendingInput?.({
           kind: event.request.kind,
-          message: describeInputRequest(event.request),
+          // user-action 的 reason 本身已是完整句子（如"需要在数据源管理面板手动执行 DDL…"），
+          // 直接使用；describeInputRequest 的"等待用户手动操作："前缀只保留给模型侧转述，
+          // 避免横幅出现"等待用户手动操作：需要用户手动操作…"的双重冗余
+          message: event.request.kind === 'user-action'
+            ? event.request.reason
+            : describeInputRequest(event.request),
         });
+        break;
+      }
+
+      case 'turn.rejected': {
+        // 内核拒绝（并发回合/未挂起时收到恢复命令）：必须把 executeTurn 预先置起的
+        // planning/streaming 状态复位，否则 UI 永远卡在"AI 正在思考"且无任何解释
+        clearStreamingPlaceholder();
+        setStreaming(false);
+        if (event.sessionStatus !== 'suspended') {
+          setPendingInput?.(null);
+        }
+        setError(`操作未生效：${event.reason}`);
         break;
       }
 
@@ -347,7 +399,13 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
   // 对话与会话状态留在工厂跨回合持有；内核按回合创建（独立的 AbortSignal / 迭代预算），
   // 结束后取回对话与折叠状态——挂起恢复依赖状态迁移，不能随实例丢弃
-  let conversation: Message[] = initialMessages ? [...initialMessages] : [];
+  // 真实系统提示词必须在工厂创建时占住对话首位：上轮操作摘要/活跃计划等上下文注入同为
+  // system 角色，若让它们先入列，内核会因"已存在 system 消息"跳过提示词注入，模型只看到
+  // 摘要而没有身份/行为准则/工具规范（导出 API 日志曾出现 system 仅剩"上轮操作摘要"）
+  let conversation: Message[] = [
+    { id: 'sys-prompt', role: 'system', content: finalSystemPrompt, timestamp: Date.now() },
+    ...(initialMessages ? initialMessages.filter((m) => m.role !== 'system') : []),
+  ];
   let lastSession: SessionState = createSessionState();
   let abortController: AbortController | null = null;
 
@@ -399,6 +457,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     });
     try {
       const result = await kernel.runTurn(input);
+      if (result.rejected) {
+        // 被内核拒绝：会话状态没有任何变化，不取回结果、不做计划收尾
+        runStartLog('回合被拒绝', '');
+        return;
+      }
       conversation = result.conversationMessages;
       lastSession = result.state;
       lastResultSuspended = result.suspended;
@@ -440,6 +503,22 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       // 在这里 push 会造成对话中出现两条相同的 user 消息
       injectRecentCompletedSummary(storeReader, conversation, isMainAgent);
       injectActivePlanContext(storeReader, conversation);
+
+      // 会话失效降级：挂起事项曾因 executor 丢失无法按按钮恢复，把上下文带给模型，
+      // 让"继续/已完成"这类恢复指令有锚点，而不是靠模型重新猜整场对话
+      const orphanedPending = storeReader.getOrphanedPending?.();
+      if (orphanedPending) {
+        conversation.push({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `【未恢复的挂起事项】${orphanedPending}\n该事项此前点击恢复按钮时会话已失效，未被处理。请结合用户本轮消息处理：若用户表示已完成，继续后续步骤；若用户给出新指示，按新指示执行。`,
+          timestamp: Date.now(),
+        });
+        storeReader.clearOrphanedPending?.();
+      }
+
+      // 全新 executor 没有对话历史：回放最近的用户指令，避免需求主线丢失
+      injectRecentUserMessages(storeReader, conversation, isMainAgent);
 
       await executeTurn({ kind: 'user-message', text: userMessage });
     },

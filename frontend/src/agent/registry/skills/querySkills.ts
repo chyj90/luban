@@ -63,11 +63,14 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
 ⚠️ {{ }} 会自动给字符串值加引号，SQL 中不要再手写引号：
   错误：WHERE name = '{{ this.params.name }}'（双重引号 → ''x''）
   正确：WHERE name = {{ this.params.name }}
-  LIKE 场景：LIKE CONCAT('%', {{ this.params.name }}, '%')（不要写 '%{{}}%'）`,
+  LIKE 场景：LIKE CONCAT('%', {{ this.params.name }}, '%')（不要写 '%{{}}%'）
+
+⚠️ 参数值中的冒号会被模板引擎破坏（如 09:50:00 → 09NULLNULL）：时间参数请让调用方传 HHMMSS 紧凑格式并用 STR_TO_DATE({{ this.params.time }}, '%H%i%s') 转换，或直接用数据库 NOW()；纯日期 YYYY-MM-DD 不受影响。
+⚠️ 查询名用帕斯卡命名（如 GetMeetings、InsertSignin）：页面代码通过 DataQuery.查询名 调用且区分大小写，创建后名称不可再随意变更大小写。`,
       parameters: {
         type: 'object',
         properties: {
-          name: { type: 'string', description: '查询名称，英文驼峰命名' },
+          name: { type: 'string', description: '查询名称，帕斯卡命名（如 GetMeetings、InsertSignin）。页面代码用 DataQuery.查询名 调用且区分大小写' },
           datasourceId: { type: 'number', description: '数据源 ID' },
           body: { type: 'string', description: 'SQL 语句' },
           type: { type: 'string', enum: ['SQL'], description: '查询类型' },
@@ -122,24 +125,26 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         queryId: { type: 'number', description: '查询 ID' },
         body: { type: 'string', description: '新的 SQL 语句' },
         name: { type: 'string', description: '查询名称' },
-        params: { type: 'array', items: { type: 'object' }, description: '参数定义' },
+        params: { type: 'array', items: { type: 'object' }, description: '参数定义列表；传空数组 [] 表示清空全部参数，不传则保持不变' },
         description: { type: 'string', description: '查询描述' },
       },
       required: ['queryId'],
     },
     async execute(args) {
       try {
-        const paramsArray = (args.params as unknown[]) || [];
-          const params = paramsArray.length > 0
-            ? Object.fromEntries(paramsArray.map((p: any) => [p.name || p.key, p]))
-            : undefined;
+        // 仅当调用方完全未传 params 时保持 undefined（后端按 null 跳过，部分更新语义）；
+        // 显式传空数组表示清空全部参数 → 转空对象，否则后端收到 null 会跳过赋值，
+        // 废弃参数永远删不掉（2026-09-14 GetMyLeaves 残留 employeeNo 案例）
+        const params = args.params === undefined
+          ? undefined
+          : Object.fromEntries((args.params as unknown[]).map((p: any) => [p.name || p.key, p]));
 
-          const res = await updateQuery(args.queryId as number, {
-            body: args.body as string | undefined,
-            name: args.name as string | undefined,
-            params,
-            description: (args.description as string) || '',
-          });
+        const res = await updateQuery(args.queryId as number, {
+          body: args.body as string | undefined,
+          name: args.name as string | undefined,
+          params,
+          description: (args.description as string) || '',
+        });
         ctx.onQueriesChange?.();
         ctx.onQuerySelect?.({ id: args.queryId as number, name: (args.name as string) || '' });
         return { success: true, message: '查询更新成功', data: res.data };
@@ -251,7 +256,8 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     name: 'execute_sql',
     description: `直接执行 SQL 语句，不经过模板解析。
 用于插入数据（INSERT）、更新数据（UPDATE）、删除数据（DELETE）等操作。
-⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）会被后端拦截并返回失败，但可以先尝试执行。若被拦截，需生成 SQL 供用户手动执行。
+⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）必定被拦截（前端预检+后端双层拦截），禁止尝试执行、禁止重试：直接生成完整 SQL 交给用户在数据源管理面板手动执行。
+⚠️ 时间/日期时间参数值中的冒号会被模板引擎破坏（如 09:50:00 会变成 09NULLNULL）：时间请传 HHMMSS 紧凑格式（如 090000）配合 STR_TO_DATE 转换，或直接用数据库 NOW()；纯日期 YYYY-MM-DD 不受影响。
 返回查询结果（SELECT）或影响行数（DML）。
 支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
 批量模式返回每条语句的执行结果数组。`,
@@ -268,7 +274,7 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
       try {
         const sql = (args.sql as string || '').trim();
         if (/^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(sql)) {
-          return { success: false, message: 'DDL 操作不允许通过 Agent 执行，请前往数据源管理面板手动操作' };
+          return { success: false, message: 'DDL 操作不允许通过 Agent 执行（不要重试、不要换写法尝试）。请直接生成完整 SQL 交由用户在数据源管理面板手动执行' };
         }
         const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean);
         if (args.multi) {

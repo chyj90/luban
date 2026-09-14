@@ -449,7 +449,15 @@ export function AppEditorPage() {
               <InteliPreview
                 codePage={currentPage!.codePage}
                 queries={queries}
-                userInfo={user ? { id: user.id, account: user.account ?? '', email: user.email } : null}
+                userInfo={user ? {
+                  id: user.id,
+                  account: user.account ?? '',
+                  email: user.email,
+                  // 业务表通过 employee_no 与登录账号绑定，"我的数据"需求依赖这两个字段
+                  name: user.displayName ?? '',
+                  employeeNo: user.employeeNo ?? '',
+                  mobile: user.mobile ?? '',
+                } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}
                 applicationId={Number(appId)}

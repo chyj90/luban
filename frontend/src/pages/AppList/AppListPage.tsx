@@ -68,7 +68,7 @@ export function AppListPage() {
               <path d="M2 17l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
               <path d="M2 12l10 5 10-5" stroke="#1677ff" strokeWidth="2" />
             </svg>
-            <span className="applist-logo-text">鲁班</span>
+            <span className="applist-logo-text">知行</span>
           </div>
         </div>
         <div className="applist-spacer" />

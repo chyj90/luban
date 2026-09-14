@@ -64,15 +64,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<ApiResponse<Void>> handleRuntime(RuntimeException ex) {
-        log.warn("运行时异常: {}", ex.getMessage());
+        log.warn("运行时异常: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error(describe(ex)));
     }
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleAll(Exception ex) {
         log.error("未捕获异常: {}", ex.getMessage(), ex);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ApiResponse.error(ex.getMessage()));
+                .body(ApiResponse.error(describe(ex)));
+    }
+
+    /** 500 响应必须带异常类名：NPE 等 message 为 null 的异常若只回 null，调用方只能看到裸状态码，无从排查 */
+    private String describe(Exception ex) {
+        String cls = ex.getClass().getSimpleName();
+        return ex.getMessage() == null ? cls : cls + ": " + ex.getMessage();
     }
 }

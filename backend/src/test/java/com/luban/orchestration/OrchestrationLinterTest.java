@@ -206,4 +206,50 @@ class OrchestrationLinterTest {
         var r = linter.lint(dsl, QUERY_72_EXISTS, TOOL_5_EXISTS);
         assertThat(r.errors()).isEmpty();
     }
+
+    // ── 2026-09-14 请假管理事故回归：LLM 写 "type" 被 ignoreUnknown 静默丢弃，
+    //    nodeType=null 触发 Set.of.contains(null) NPE，对外表现为无诊断信息的 500 ──
+
+    /** 事故原始报文：节点用 "type" 而非 "nodeType"，lint 必须给出明确错误而非 NPE */
+    @Test
+    void nullNodeTypeReportsClearErrorInsteadOfNpe() throws Exception {
+        String raw = "{\"nodes\":[{\"id\":\"start\",\"type\":\"start\"}]}";
+        OrchestrationDsl.Dsl dsl = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(raw, OrchestrationDsl.Dsl.class);
+        // 反序列化后 nodeType 为 null（字段被静默忽略）
+        assertThat(dsl.getNodes().get(0).getNodeType()).isNull();
+        var r = linter.lint(dsl, QUERY_72_EXISTS, TOOL_5_EXISTS);
+        assertThat(r.passed()).isFalse();
+        assertThat(r.errors().stream().anyMatch(e -> e.contains("缺少 nodeType")))
+                .as("errors=%s", r.errors()).isTrue();
+    }
+
+    /** 未知字段扫描：type/params 等错位字段必须带纠正提示浮出，而不是静默丢弃 */
+    @Test
+    void unknownFieldsAreReportedWithSuggestions() {
+        String raw = "{\"name\":\"Orc\",\"nodes\":[{\"id\":\"start\",\"type\":\"start\",\"params\":{}},"
+                + "{\"id\":\"py\",\"nodeType\":\"python\",\"data\":{\"label\":\"py\",\"config\":{\"code\":\"def main(ctx): pass\"}}}],"
+                + "\"edges\":[]}";
+        var r = linter.checkUnknownFields(raw);
+        assertThat(r.passed()).isFalse();
+        assertThat(r.errors().stream().anyMatch(e -> e.contains("\"type\"") && e.contains("nodeType")))
+                .as("errors=%s", r.errors()).isTrue();
+        assertThat(r.errors().stream().anyMatch(e -> e.contains("\"params\"") && e.contains("data.config.inputs")))
+                .as("errors=%s", r.errors()).isTrue();
+        assertThat(r.errors().stream().anyMatch(e -> e.contains("\"code\"") && e.contains("data.config.source")))
+                .as("errors=%s", r.errors()).isTrue();
+        // 顶层误放的元数据只警告不阻断
+        assertThat(r.warnings().stream().anyMatch(w -> w.contains("\"name\"")))
+                .as("warnings=%s", r.warnings()).isTrue();
+    }
+
+    /** 无 edges 字段（null）不应在连通性检查时 NPE */
+    @Test
+    void nullEdgesDoesNotThrow() {
+        OrchestrationDsl.Dsl dsl = validDsl();
+        dsl.setEdges(null);
+        var r = linter.lint(dsl, QUERY_72_EXISTS, TOOL_5_EXISTS);
+        assertThat(r.passed()).isFalse(); // start 无出边
+        assertThat(r.errors().stream().anyMatch(e -> e.contains("start 节点没有出边"))).isTrue();
+    }
 }

@@ -27,10 +27,15 @@ interface BridgeResponse {
   instance?: unknown;
 }
 
-interface UserInfo {
+export interface UserInfo {
   id: number;
   account: string;
   email: string;
+  /** 登录用户姓名（页面展示"当前用户"用） */
+  name?: string;
+  /** 工号：业务表通过 employee_no 与登录账号绑定的桥梁（"我的数据"需求依赖） */
+  employeeNo?: string;
+  mobile?: string;
 }
 
 interface PageInfo {
@@ -332,7 +337,7 @@ export function useQueryBridge(
                 var warnKey = cols.join(',') + '|' + prop;
                 if (!_fieldWarned[warnKey]) {
                   _fieldWarned[warnKey] = true;
-                  console.error('[鲁班] 字段名错误：' + prop + ' 不存在，可用字段：' + cols.join(', '));
+                  console.error('[知行] 字段名错误：' + prop + ' 不存在，可用字段：' + cols.join(', '));
                 }
               }
               return target[prop];
@@ -447,7 +452,7 @@ export function useQueryBridge(
         if (d.js) {
           var script = document.createElement('script');
           script.setAttribute('data-luban-page', '1');
-          script.textContent = 'try {\\n' + d.js + '\\n} catch(e) { console.error("[鲁班] 页面脚本错误:", e); }';
+          script.textContent = 'try {\\n' + d.js + '\\n} catch(e) { console.error("[知行] 页面脚本错误:", e); }';
           document.body.appendChild(script);
         }
 
@@ -473,7 +478,7 @@ export function useQueryBridge(
             try { if (typeof echarts !== 'undefined') echarts.registerMap('china', geoJson); } catch (e) {}
             ready();
           }).catch(function(err) {
-            console.warn('[鲁班] 内置中国地图加载失败（/luban/china.json）:', err && err.message);
+            console.warn('[知行] 内置中国地图加载失败（/luban/china.json）:', err && err.message);
             ready();
           });
         } catch (e) { ready(); }
@@ -494,7 +499,7 @@ export function useQueryBridge(
               link.href = url;
               link.onload = onLibLoaded;
               link.onerror = function() {
-                console.error('[鲁班] CSS 库加载失败: ' + url);
+                console.error('[知行] CSS 库加载失败: ' + url);
                 onLibLoaded();
               };
               document.head.appendChild(link);
@@ -503,7 +508,7 @@ export function useQueryBridge(
               script.src = url;
               script.onload = onLibLoaded;
               script.onerror = function() {
-                console.error('[鲁班] 库加载失败: ' + url);
+                console.error('[知行] 库加载失败: ' + url);
                 onLibLoaded();
               };
               document.head.appendChild(script);
@@ -652,6 +657,21 @@ ${JSON.stringify(queryNames)}.forEach(function(name) {
       return { rows: result.rows || [], columns: result.columns || [], totalCount: result.totalCount || 0 };
     });
   };
+});
+// 大小写兜底：查询名区分大小写，调错时调用值为 undefined 只会弹 toast——
+// 在注册表上挂 Proxy 打出正确名称，把"页面无数据"的隐蔽错误变成显式提示
+window.DataQuery = new Proxy(window.DataQuery, {
+  get: function(target, prop) {
+    if (typeof prop === 'string' && !(prop in target) && prop !== 'then') {
+      var keys = Object.keys(target);
+      var lower = prop.toLowerCase();
+      var hit = keys.find(function(k) { return k.toLowerCase() === lower; });
+      console.error('[知行] DataQuery.' + prop + ' 不存在' +
+        (hit ? '（查询名区分大小写，应为 DataQuery.' + hit + '）' : '') +
+        (keys.length ? '。本页面可用查询：' + keys.join(', ') : '。本页面未绑定任何查询（queryIds 为空）'));
+    }
+    return target[prop];
+  }
 });`;
   }, [userInfo, allPages]);
 

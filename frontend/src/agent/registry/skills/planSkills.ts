@@ -148,7 +148,41 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
-  // pages[].orchestrations → delegate_orchestration 步骤，依赖对应页面的查询步骤
+  // 流程设计+发布步骤必须先于编排步骤：workflow 节点要填 workflowDefinitionId（数字），
+  // 且后端 lint 强制校验流程定义已存在。2026-09-14 请假管理案例中编排排在流程之前，
+  // 即使 DSL 写对也必然报"引用的流程定义不存在"。发布步骤 ID 收集后注入编排步骤依赖。
+  const publishStepIds: string[] = [];
+  const wireStepBuilders: Array<{ publishStepId: string; wf: AnalysisData['workflows'][number] }> = [];
+  for (const wf of analysis.workflows) {
+    if (wf.hasForm) {
+      const formStepId = nextId();
+      items.push({
+        id: formStepId,
+        category: 'datasource',
+        description: wf.formDescription || `设计表单：${wf.description}`,
+        toolName: 'delegate_workflow',
+        toolInput: {
+          task_type: 'design_form',
+          requirement: wf.formDescription || wf.description,
+        },
+        dependencies: [],
+      });
+
+      if (wf.hasWorkflow) {
+        const publishStepId = appendWorkflowDesignSteps(wf, nextId(), [formStepId], items, nextId);
+        publishStepIds.push(publishStepId);
+        wireStepBuilders.push({ publishStepId, wf });
+      }
+    } else if (wf.hasWorkflow) {
+      const publishStepId = appendWorkflowDesignSteps(wf, nextId(), [], items, nextId);
+      publishStepIds.push(publishStepId);
+      wireStepBuilders.push({ publishStepId, wf });
+    }
+  }
+
+  // pages[].orchestrations → delegate_orchestration 步骤，依赖对应页面的查询步骤；
+  // 若分析中声明了流程，编排还依赖全部流程发布步骤（编排可能经 workflow 节点发起流程，
+  // 分析数据未声明编排与流程的对应关系，保守取全量依赖）
   const pageOrchStep = new Map<string, string>();
   for (const page of analysis.pages) {
     if (!page.orchestrations || page.orchestrations.length === 0) continue;
@@ -164,10 +198,10 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
       description: `创建编排 ${orchDescriptions}`,
       toolName: 'delegate_orchestration',
       toolInput: {
-        requirement: `为页面「${page.name}」创建以下编排，引用的查询为 ${queryNames.join('、')}：${orchDescriptions}。编排创建后需发布，发布的 ToolDefinition id 需回传给页面绑定`,
+        requirement: `为页面「${page.name}」创建以下编排，引用的查询为 ${queryNames.join('、')}：${orchDescriptions}。编排创建后需发布，发布的 ToolDefinition id 需回传给页面绑定。若编排需要发起审批流程，引用已发布流程的 workflowDefinitionId（数字），禁止编造`,
         context: `页面: ${page.name}，查询: ${queryNames.join('、')}`,
       },
-      dependencies: ownQueryStep ? [ownQueryStep] : [],
+      dependencies: [...(ownQueryStep ? [ownQueryStep] : []), ...publishStepIds],
     });
   }
 
@@ -211,52 +245,66 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
-  for (const wf of analysis.workflows) {
-    if (wf.hasForm) {
-      const stepId = nextId();
-      items.push({
-        id: stepId,
-        category: 'datasource',
-        description: wf.formDescription || `设计表单：${wf.description}`,
-        toolName: 'delegate_workflow',
-        toolInput: {
-          task_type: 'design_form',
-          requirement: wf.formDescription || wf.description,
-        },
-        dependencies: [],
-      });
-
-      if (wf.hasWorkflow) {
-        const wfStepId = nextId();
-        items.push({
-          id: wfStepId,
-          category: 'datasource',
-          description: wf.workflowDescription || `设计流程：${wf.description}`,
-          toolName: 'delegate_workflow',
-          toolInput: {
-            task_type: 'design_workflow',
-            requirement: wf.workflowDescription || wf.description,
-          },
-          dependencies: [stepId],
-        });
-      }
-    } else if (wf.hasWorkflow) {
-      const stepId = nextId();
-      items.push({
-        id: stepId,
-        category: 'datasource',
-        description: wf.workflowDescription || `设计流程：${wf.description}`,
-        toolName: 'delegate_workflow',
-        toolInput: {
-          task_type: 'design_workflow',
-          requirement: wf.workflowDescription || wf.description,
-        },
-        dependencies: [],
-      });
-    }
+  // 流程发起链路接入放在最后：wire 是 update_code_page，必须等页面步骤执行完
+  for (const { publishStepId } of wireStepBuilders) {
+    items.push({
+      id: nextId(),
+      category: 'code_page',
+      description: `流程发起链路接入：在业务发起入口（表单提交/按钮）挂接 window.__LUBAN__.startWorkflow(流程ID, formData)，formData 字段必须与流程设计的发起字段契约逐字一致；并核验审批通过/驳回后的数据联动是否有实现路径（流程引擎不能写业务库时，用编排实现或向用户明确列出联动缺口），禁止留下无人处理的断链`,
+      toolName: 'update_code_page',
+      toolInput: {},
+      dependencies: [publishStepId],
+    });
   }
 
   return items;
+}
+
+/**
+ * 流程设计之后自动追加"发布流程"步骤，返回发布步骤 ID。
+ * 背景（2026-09-14 请假管理案例）：流程设计完是草稿、页面提交也没挂 startWorkflow，
+ * 审批流成了死流程，但计划照样验证通过并汇报"全部完成"。推导层直接把闭环纳入步骤。
+ * "流程发起链路接入"（wire）由调用方在页面步骤之后追加——它是 update_code_page，
+ * 依赖页面已存在，不能和设计/发布步骤连在一起。
+ *
+ * 发布/wire 步骤的 id 必须也走 nextId()（数字连续），不能使用 `publish-3` 这类组合 id：
+ * submit_analysis 返回的步骤清单按位置编号，主智能体天然拿清单序号当 item_id 用——
+ * 同一案例中模型标"步骤 4"（发布），实际命中了 id 为 "4" 的编排步骤，发布步骤永远停在
+ * in_progress、编排步骤带着发布结果被误标完成。id 与展示序号恒等后此错位不可能发生。
+ */
+function appendWorkflowDesignSteps(
+  wf: AnalysisData['workflows'][number],
+  wfStepId: string,
+  extraDeps: string[],
+  items: PlanItem[],
+  nextId: () => string,
+): string {
+  items.push({
+    id: wfStepId,
+    category: 'datasource',
+    description: wf.workflowDescription || `设计流程：${wf.description}`,
+    toolName: 'delegate_workflow',
+    toolInput: {
+      task_type: 'design_workflow',
+      requirement: wf.workflowDescription || wf.description,
+    },
+    dependencies: extraDeps,
+  });
+
+  const publishStepId = nextId();
+  items.push({
+    id: publishStepId,
+    category: 'datasource',
+    description: `发布流程（${wf.description}）：将设计好的流程从草稿发布为可用状态。完成后 result 必须包含"流程ID: N"且状态为已发布，禁止以草稿状态结束本步骤`,
+    toolName: 'delegate_workflow',
+    toolInput: {
+      task_type: 'design_workflow',
+      requirement: `发布此前已设计的流程：${wf.description}。不要重新设计，仅将草稿流程发布为可用状态，并在结果中明确返回"流程ID: N"与已发布状态`,
+    },
+    dependencies: [wfStepId],
+  });
+
+  return publishStepId;
 }
 
 function buildPlanSummary(plan: {
@@ -356,6 +404,43 @@ export function createPlanInternal(
   return { planId, message };
 }
 
+/**
+ * 业务闭环核验（2026-09-14 请假管理案例）：分析报告承诺"审批通过后扣减对应假期额度"
+ * 这类状态变迁，但没有任何步骤实现联动（流程引擎不能写业务库、页面也没挂接发起），
+ * 计划却验证通过并汇报全部完成。验证通过前在这里强制对账。
+ */
+function checkBusinessClosure(plan: {
+  analysisReport?: string;
+  steps: Array<{ description?: string; result?: string }>;
+}): { blocked: string[]; reminders: string[] } {
+  const report = plan.analysisReport || '';
+  if (!report) return { blocked: [], reminders: [] };
+
+  const transitions = (report.match(/[^\n。]*?(?:通过|驳回|批准)后[^\n。]*?(?:扣减|增加|更新|修改|写入|回写|置为|变为|联动|清空)[^\n。]*/g) || [])
+    .map((s) => s.trim())
+    .filter((s) => s.length > 6);
+
+  const linkageText = plan.steps
+    .map((s) => `${s.description || ''} ${s.result || ''}`)
+    .join('\n');
+  const hasLinkage = /联动|回调|扣减|回写|状态更新|编排|startWorkflow|挂接|接入/.test(linkageText);
+
+  if (transitions.length > 0 && !hasLinkage) {
+    return {
+      blocked: [
+        `分析报告承诺了审批后的数据联动（如"${transitions[0].slice(0, 90)}"），但所有步骤的描述与结果中都没有联动/回调/编排/页面挂接相关实现。` +
+        `请用 adjust_plan 追加联动实现步骤（编排或页面挂接）并执行后再验证；若平台确实无法实现该联动，必须先向用户说明缺口并获确认`,
+      ],
+      reminders: [],
+    };
+  }
+
+  return {
+    blocked: [],
+    reminders: transitions.map((t) => `汇报时必须对承诺"${t.slice(0, 60)}"逐条说明实现情况（已实现 / 明确缺口），禁止笼统汇报"全部完成"`),
+  };
+}
+
 export const planSkills: Record<string, SkillFactory> = {
   'plan:submit_analysis': () => ({
     id: 'plan:submit_analysis',
@@ -366,7 +451,8 @@ export const planSkills: Record<string, SkillFactory> = {
 ⚠️ 必须在输出分析报告文本的同一个 assistant message 中调用此工具。
 ⚠️ interactions 必须从分析报告第 8 章逐条提取。
 ⚠️ analysisReport 为必填，将完整分析报告文本传入，执行阶段会注入此报告作为上下文。
-⚠️ score 为必填，按评分标准自评（评分标准见系统提示词「分析评分标准」章节）。`,
+⚠️ score 为必填，按评分标准自评（评分标准见系统提示词「分析评分标准」章节）。
+⚠️ 参数必须是完整、合法的 JSON（报告文本放入 analysisReport 字符串字段时正确转义换行与引号）。参数解析失败会导致整份分析重做：宁可精简文字也要保证 JSON 闭合，不要为塞入更多细节而冒解析失败的风险。`,
     parameters: {
       type: 'object',
       properties: {
@@ -721,6 +807,15 @@ export const planSkills: Record<string, SkillFactory> = {
       const runningSteps = plan.steps.filter((s) => s.status === 'running');
 
       if (pendingSteps.length === 0 && runningSteps.length === 0) {
+        // 业务闭环对账：分析报告承诺的状态变迁必须有实现路径，否则拒绝验证通过
+        const closure = checkBusinessClosure(plan);
+        if (closure.blocked.length > 0) {
+          return {
+            success: false,
+            message: `计划验证未通过（业务闭环缺失）：\n${closure.blocked.map((i) => `- ${i}`).join('\n')}`,
+            data: { closureIssues: closure.blocked },
+          };
+        }
         store.updatePlan(plan_id, { status: 'completed' });
         upsertPlanMessage(plan_id);
         const resultSummary = plan.steps
@@ -728,9 +823,12 @@ export const planSkills: Record<string, SkillFactory> = {
             return s.result ? `- ${s.result}` : `- [无 result 摘要] ${s.description || ''}`;
           })
           .join('\n');
+        const closureReminder = closure.reminders.length > 0
+          ? `\n\n⚠️ 业务闭环汇报要求：\n${closure.reminders.map((r) => `- ${r}`).join('\n')}`
+          : '';
         return {
           success: true,
-          message: `计划验证通过！共 ${plan.steps.length} 个步骤，全部已完成。\n\n各步骤实际执行结果（汇报时以此为准，禁止编造或夸大）：\n${resultSummary}\n\n请立即向用户汇报最终执行结果，列出每个步骤的完成情况，并告知用户任务已全部完成。禁止在此消息后直接结束对话，必须先生成汇报文本。`,
+          message: `计划验证通过！共 ${plan.steps.length} 个步骤，全部已完成。\n\n各步骤实际执行结果（汇报时以此为准，禁止编造或夸大）：\n${resultSummary}${closureReminder}\n\n请立即向用户汇报最终执行结果，列出每个步骤的完成情况，并告知用户任务已全部完成。禁止在此消息后直接结束对话，必须先生成汇报文本。`,
           data: { totalSteps: plan.steps.length, doneSteps: doneSteps.length, pendingSteps: 0 },
         };
       }

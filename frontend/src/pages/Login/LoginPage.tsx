@@ -41,7 +41,7 @@ export function LoginPage() {
     <div className="login-container">
       <div className="login-card">
         <div className="login-logo">
-          <h1>鲁班</h1>
+          <h1>知行</h1>
           <p>AI 驱动应用构建平台</p>
         </div>
 

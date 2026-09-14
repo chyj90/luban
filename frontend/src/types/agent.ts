@@ -187,6 +187,8 @@ export interface AgentState {
   error: string | null;
   /** 内核挂起请求（Phase 2.4）：非空时 UI 显示确认/取消按钮，点击产生显式 ResumeCommand */
   pendingInput: { kind: string; message: string } | null;
+  /** 会话失效时残留的挂起事项（不持久化）：AgentFactory 在下一次 run 时注入并清除 */
+  orphanedPending: string | null;
 }
 
 export interface LLMConfig {

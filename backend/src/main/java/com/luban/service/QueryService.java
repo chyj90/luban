@@ -176,6 +176,9 @@ public class QueryService {
         authParams.put("userId", 0);
         authParams.put("userName", "validation");
         authParams.put("userEmail", "validation@local");
+        authParams.put("userDisplayName", "validation");
+        authParams.put("userMobile", "validation");
+        authParams.put("userEmployeeNo", "validation");
 
         String resolved = resolveTemplate(body, validationParams, authParams);
         String upperSql = resolved.trim().toUpperCase();
@@ -286,6 +289,9 @@ public class QueryService {
             authParams.put("userId", user.getId());
             authParams.put("userName", user.getAccount());
             authParams.put("userEmail", user.getEmail());
+            authParams.put("userDisplayName", user.getName());
+            authParams.put("userMobile", user.getMobile());
+            authParams.put("userEmployeeNo", user.getEmployeeNo());
         }
 
         String finalBody = resolveTemplate(query.getBody(), mergedParams, authParams);

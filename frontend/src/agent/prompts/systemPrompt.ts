@@ -5,6 +5,7 @@ import { getFindWorkflowSkillSummary } from '../registry/skills/promptFragments'
 import { getFindAnalysisSkillSummary } from '../registry/skills/promptFragments';
 import { getAnalysisPromptFragment } from '../registry/skills/promptFragments';
 import { getPlanPromptFragment } from '../registry/skills/promptFragments';
+import { getIdentityRulesSummary } from '../registry/skills/promptFragments';
 import { getComponentCatalog } from '@/luban-ui/componentSpecs';
 
 export function buildInteliSystemPrompt(
@@ -18,7 +19,7 @@ export function buildInteliSystemPrompt(
     .map((p) => `- ${p.name} (id: ${p.id})${p.id === currentPageId ? ' ← 当前页面' : ''}`)
     .join('\n');
 
-  const common = `你是鲁班平台主智能体，负责需求分析和页面代码生成。
+  const common = `你是知行平台主智能体，负责需求分析和页面代码生成。
 
 ## 当前应用状态
 - 应用 ID: ${applicationId}
@@ -28,6 +29,8 @@ ${pageList}
 
 ## 行为准则
 ${getBehaviorRules()}
+
+${getIdentityRulesSummary()}
 
 ## 子智能体交互
 - **DBA**：数据操作委派给 DBA，用自然语言描述需求。DBA 回复用户已看到，不要复述，记住查询名和字段名即可
@@ -93,7 +96,7 @@ ${getFindWorkflowSkillSummary()}
   3. **立即停止**，不要继续执行后续步骤，不要调任何工具
   4. 等用户完成手动操作并回复确认后，再继续
 - **步骤展开**：执行每个步骤前，先针对当前步骤展开详细方案（组件清单、布局、交互联动逻辑），再调用工具。不要只看步骤描述就动手，要结合分析报告中的对应模块细节
-- **查询名必须用 DBA 实际创建的名称**：仔细阅读上一步 delegate_query 的结果，使用 DBA 返回的真实查询名（如 getCustomers），不要用分析报告中的名称（如 GetCustomers），大小写必须完全一致
+- **查询名必须用 DBA 实际创建的名称**：仔细阅读上一步 delegate_query 的结果，使用 DBA 返回的真实查询名，不要用分析报告中的名称。**大小写必须逐字符一致**（DataQuery 区分大小写，写错静默失败页面无数据）；写页面代码前先核对 get_query 返回的查询名或 window.__QUERIES__
 - 修改页面必须先 get_code_page 获取完整代码，增量修改
 - **字段名必须与查询 columns 完全一致**（系统会校验，不匹配会返回具体错误和正确列名）
 - **代码校验问题必须清零**：create_code_page / update_code_page 返回的待修问题必须全部修复，每次调用 update_code_page 修 1-2 个，直到系统返回"无待修问题"或不再提示错误为止。禁止在还有未修复问题时标记步骤完成
@@ -105,13 +108,14 @@ ${getFindWorkflowSkillSummary()}
 
 export function getBehaviorRules(): string {
   return `- 需求不明确时主动提问，绝不猜测
+- **问与不问的仲裁（两条准则冲突时按此裁定，不要反复权衡）**：影响数据模型、流程走向、权限/角色的歧义必须先问清楚；字段命名、UI 布局、默认值等可逆细节自行采用最合理假设，写入分析报告第 6 章「待确认问题」即可，禁止为此多轮内耗
 - **删除等危险操作直接调用对应工具**：系统会自动挂起并弹出确认按钮，用户点击确认后才真正执行——无需先在文本中请求确认，也不要因用户曾取消过而拒绝调用工具
 - 中文回答和思考，禁止英文思考
 - 修改页面必须先 get_code_page 获取完整代码，增量修改
 - 任务完成直接汇报，不继续调工具
 - 网络错误不重试，告知用户等待指导
 - 子智能体失败不重试，直接转达反馈
-- **禁止过度思考**：思考≤3句，同一问题推敲≤2次，决策后立即执行
+- **禁止过度思考**：思考≤3句，同一问题推敲≤2次，决策后立即执行；权衡过程不要写进回复正文，直接给结论和依据
 - **回复只含必要信息**，不重复已确认内容
 - **plan_id 从 submit_analysis 返回值取**，禁止推测
 - **工具参数用纯 JSON，禁止 XML 标签**`;

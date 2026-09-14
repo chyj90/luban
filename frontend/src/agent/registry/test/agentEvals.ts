@@ -24,7 +24,7 @@ import {
   type ConsistencyTarget,
 } from '../agentSelfCheck';
 import { derivePlanFromAnalysis } from '../skills/planSkills';
-import { delegateSkills, buildWorkflowDelegateSystemPrompt, extractWorkflowOutcomes, validateDDLExecution } from '../skills/delegateSkills';
+import { delegateSkills, buildWorkflowDelegateSystemPrompt, extractWorkflowOutcomes, validateDDLExecution, detectManualInterventionRequest } from '../skills/delegateSkills';
 import * as contextWindowModule from '../../core/contextWindow';
 import * as agentMemoryModule from '../agentMemory';
 import { resolveSkills } from '../skillRegistry';
@@ -100,15 +100,22 @@ function evalPlanDerivation(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  if (items.length !== 2) checks.push(`步骤数应为 2，实际 ${items.length}`);
-  const [step1, step2] = items;
+  if (items.length !== 4) checks.push(`步骤数应为 4（表单/流程/发布/挂接），实际 ${items.length}`);
+  const [step1, step2, step3, step4] = items;
   if (step1?.toolName !== 'delegate_workflow') checks.push(`步骤1 toolName 应为 delegate_workflow，实际 ${step1?.toolName}`);
   if (step1?.toolInput.task_type !== 'design_form') checks.push(`步骤1 task_type 应为 design_form，实际 ${step1?.toolInput.task_type}`);
   if (step2?.toolName !== 'delegate_workflow') checks.push(`步骤2 toolName 应为 delegate_workflow，实际 ${step2?.toolName}`);
   if (step2?.toolInput.task_type !== 'design_workflow') checks.push(`步骤2 task_type 应为 design_workflow，实际 ${step2?.toolInput.task_type}`);
   if (JSON.stringify(step2?.dependencies) !== '["1"]') checks.push(`步骤2 依赖应为 ["1"]，实际 ${JSON.stringify(step2?.dependencies)}`);
+  // 业务闭环：设计后必须自动追加"发布流程"与"发起链路接入"（2026-09-14 请假管理案例）
+  if (step3?.toolName !== 'delegate_workflow') checks.push(`步骤3（发布流程）toolName 应为 delegate_workflow，实际 ${step3?.toolName}`);
+  if (!step3 || !/发布/.test(step3.description)) checks.push('步骤3 描述应包含"发布流程"');
+  if (JSON.stringify(step3?.dependencies) !== '["2"]') checks.push(`步骤3 依赖应为 ["2"]，实际 ${JSON.stringify(step3?.dependencies)}`);
+  if (step4?.toolName !== 'update_code_page') checks.push(`步骤4（发起链路接入）toolName 应为 update_code_page，实际 ${step4?.toolName}`);
+  if (!step4 || !/发起链路接入|startWorkflow/.test(step4.description)) checks.push('步骤4 描述应包含"发起链路接入/startWorkflow"');
+  if (JSON.stringify(step4?.dependencies) !== JSON.stringify([step3?.id])) checks.push(`步骤4 依赖应为 [${step3?.id}]，实际 ${JSON.stringify(step4?.dependencies)}`);
 
-  return evalResult('E3-计划自动推导(请假审批)', checks.length === 0, checks.length === 0 ? '结构完全符合预期' : checks.join('；'));
+  return evalResult('E3-计划自动推导(请假审批)', checks.length === 0, checks.length === 0 ? '结构完全符合预期（含闭环步骤）' : checks.join('；'));
 }
 
 /** E3b: 计划自动推导——含编排（pages[].orchestrations）的回归 */
@@ -145,6 +152,73 @@ function evalPlanDerivationWithOrch(): EvalResult {
   if (JSON.stringify(step3?.dependencies) !== '["1","2"]') checks.push(`步骤3 依赖应为 ["1","2"]，实际 ${JSON.stringify(step3?.dependencies)}`);
 
   return evalResult('E3b-计划推导(含编排)', checks.length === 0, checks.length === 0 ? '步骤顺序与依赖正确' : checks.join('；'));
+}
+
+/**
+ * E3c: 计划自动推导——流程+编排+页面共存的排序回归（2026-09-14 请假管理案例）。
+ * 编排的 workflow 节点需要已发布的流程定义 ID，执行器又是严格按步骤顺序串行的，
+ * 所以编排步骤必须物理排在"发布流程"之后；wire（update_code_page）必须排在页面之后。
+ */
+function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
+  const analysis = {
+    title: '创建员工管理应用',
+    summary: '员工页面+请假编排+请假审批流程',
+    pages: [
+      {
+        name: '员工管理',
+        action: 'create' as const,
+        queries: [
+          { queryName: 'GetEmployees', purpose: '员工列表', needsNewTable: true, fields: 'id,name,department,status', filterParams: 'keyword(文本,模糊匹配)' },
+        ],
+        apis: [],
+        orchestrations: [
+          { orchName: 'OrcLeaveApply', purpose: '写入请假记录并发起审批流程' },
+        ],
+      },
+    ],
+    workflows: [
+      {
+        description: '员工请假审批流程',
+        hasForm: true,
+        formDescription: '请假表单：类型/起止日期/天数/原因',
+        hasWorkflow: true,
+        workflowDescription: '请假审批：≤3天直属上级，>3天加部门经理',
+      },
+    ],
+  };
+  const items = derivePlanFromAnalysis(analysis);
+
+  const checks: string[] = [];
+  // 预期 7 步：query → form → design → publish → orchestration → page → wire
+  if (items.length !== 7) checks.push(`步骤数应为 7，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  // 2026-09-14 回归：步骤 id 必须与清单序号一致（publish/wire 也要占数字 id），
+  // 否则主智能体按 submit_analysis 清单序号标状态会命中错误步骤
+  const idMismatchIdx = items.findIndex((it, idx) => it.id !== String(idx + 1));
+  if (idMismatchIdx >= 0) checks.push(`步骤 id 应等于清单序号：第 ${idMismatchIdx + 1} 步的 id 是 "${items[idMismatchIdx].id}"`);
+  const toolNames = items.map(i => i.toolName);
+  const orchIdx = toolNames.indexOf('delegate_orchestration');
+  const publishIdx = items.findIndex(i => i.description.startsWith('发布流程'));
+  const pageIdx = toolNames.indexOf('create_code_page');
+  const wireIdx = toolNames.findIndex((t, i) => t === 'update_code_page' && i > 0);
+  if (orchIdx < 0) checks.push('缺少 delegate_orchestration 步骤');
+  if (publishIdx < 0) checks.push('缺少发布流程步骤');
+  if (orchIdx >= 0 && publishIdx >= 0 && orchIdx < publishIdx) {
+    checks.push(`编排步骤(序号${orchIdx + 1})必须排在发布流程步骤(序号${publishIdx + 1})之后`);
+  }
+  if (wireIdx >= 0 && pageIdx >= 0 && wireIdx < pageIdx) {
+    checks.push(`流程挂接步骤(序号${wireIdx + 1})必须排在页面创建步骤(序号${pageIdx + 1})之后`);
+  }
+  const orch = items[orchIdx];
+  const publishId = items[publishIdx]?.id;
+  if (orch && publishId && !orch.dependencies.includes(publishId)) {
+    checks.push(`编排步骤应依赖发布流程步骤 ${publishId}，实际 ${JSON.stringify(orch.dependencies)}`);
+  }
+  const wire = items[wireIdx];
+  if (wire && publishId && !wire.dependencies.includes(publishId)) {
+    checks.push(`流程挂接步骤应依赖发布流程步骤 ${publishId}，实际 ${JSON.stringify(wire.dependencies)}`);
+  }
+
+  return evalResult('E3c-计划推导(编排排在流程发布后)', checks.length === 0, checks.length === 0 ? '查询→表单→流程→发布→编排→页面→挂接 顺序与依赖正确' : checks.join('；'));
 }
 
 /** E4: 委派失败检测回归——子智能体工具报"不存在"时，delegate_workflow 不得返回成功 */
@@ -284,6 +358,36 @@ async function evalStepVerifier(): Promise<EvalResult> {
     '已配置条件分支（流程ID: 17）',
   );
   if (!realBranch.verified) checks.push(`真实条件分支应放行，实际拦截: ${realBranch.reason}`);
+
+  // 2026-09-14 案例回归：编排步骤贴了发布流程的 result（无编排ID）→ 必须拦截；
+  // 编排存在且名称与步骤声明一致 → 放行；名称不符 → 拦截
+  setStepVerifierDeps({
+    getOrchestration: async (id) => (id === 70
+      ? { data: { id: 70, name: 'OrcLeaveApply' } }
+      : Promise.reject(new Error('404'))),
+  });
+  const orchCrossStep = await verifyStepCompletion(
+    'delegate_orchestration', 1,
+    '创建编排 OrcLeaveApply（先插入请假记录再发起审批流程）',
+    '请假审批流程发布成功，流程ID: 212，状态已发布(PUBLISHED) v1，绑定表单ID: 64',
+  );
+  if (orchCrossStep.verified) checks.push('编排步骤 result 无编排ID应拦截（防跨步骤贴结果）');
+  const orchOk = await verifyStepCompletion(
+    'delegate_orchestration', 1,
+    '创建编排 OrcLeaveApply（先插入请假记录再发起审批流程）',
+    '编排 OrcLeaveApply 创建成功，编排ID: 70，试运行通过',
+  );
+  if (!orchOk.verified) checks.push(`编排存在且名称匹配应放行，实际拦截: ${orchOk.reason}`);
+  const orchNameMismatch = await verifyStepCompletion(
+    'delegate_orchestration', 1,
+    '创建编排 OrcOther（其他编排）',
+    '编排ID: 70',
+  );
+  if (orchNameMismatch.verified) checks.push('编排名称与步骤声明不符应拦截');
+
+  // 表单ID 用 = 连接的变体也应可解析（2026-09-14 案例中 "表单ID=64" 被误判为无资源 ID）
+  const formEq = await verifyStepCompletion('delegate_workflow', 1, '设计请假表单', '表单创建成功，表单ID=21');
+  if (!formEq.verified) checks.push(`"表单ID=21" 变体应放行，实际拦截: ${formEq.reason}`);
 
   setStepVerifierDeps(); // 恢复真实 API 依赖
   return evalResult('E7-步骤完成核验(grounding)', checks.length === 0, checks.length === 0 ? '伪造完成被拦截、真实完成被放行' : checks.join('；'));
@@ -580,6 +684,49 @@ function evalDDLFallbackValidation(): EvalResult {
   return evalResult('E13-DDL降级校验', checks.length === 0, checks.length === 0 ? '4 个场景全部通过' : checks.join('；'));
 }
 
+/**
+ * E13b: 文本介入标记检测——子智能体"不尝试 DDL、直接请求人工操作"时也必须识别为介入。
+ * 2026-09-14 员工管理死循环案例：主智能体委派时禁止尝试 DDL，DBA 照做（无 execute_sql 调用），
+ * validateDDLExecution 探测不到 → 委派被判成功 → 主智能体文本转达后想结束回合 →
+ * planPolicy 强制继续提醒顶回 → 死循环。
+ */
+function evalManualInterventionDetection(): EvalResult {
+  const checks: string[] = [];
+
+  // 场景 1（事故原文风格）：显式 interventionRequired 标记 + SQL 块 → 必须识别
+  const incidentReport = [
+    '## ⚠️ interventionRequired：leave_requests 表缺 user_id 列，需人工补列',
+    '### 三、需要您在数据源管理面板手动执行的 DDL（禁止 Agent 执行）',
+    '```sql',
+    'ALTER TABLE leave_requests ADD COLUMN user_id INT NULL;',
+    '```',
+  ].join('\n');
+  const incident = detectManualInterventionRequest(incidentReport);
+  if (!incident.required) checks.push('场景1-显式标记：应识别为介入但未识别');
+  if (incident.required && !/interventionRequired/i.test(incident.reason || '')) {
+    checks.push(`场景1-显式标记：reason 应取标记行，实际: ${incident.reason}`);
+  }
+
+  // 场景 2：无显式标记，但按 DBA 契约措辞请求人工执行 SQL → 必须识别
+  const contractReport = '建表被拦截，请在数据源管理面板手动执行以下 SQL：\n```sql\nCREATE TABLE leaves (id INT);\n```';
+  const contract = detectManualInterventionRequest(contractReport);
+  if (!contract.required) checks.push('场景2-契约措辞：应识别为介入但未识别');
+
+  // 场景 3：普通完成汇报 → 不得误报
+  const normalReport = '查询 GetEmployeeStats 创建成功（ID 131）并验证通过，共 2 个查询全部完成。';
+  if (detectManualInterventionRequest(normalReport).required) {
+    checks.push('场景3-正常完成：不应识别为介入');
+  }
+
+  // 场景 4：提及过去已完成的手动操作（无请求语气、无 SQL 依据）→ 不得误报
+  const pastReport = '用户此前已在数据源管理面板完成建表，本次任务全部完成。';
+  if (detectManualInterventionRequest(pastReport).required) {
+    checks.push('场景4-历史操作提及：不应识别为介入');
+  }
+
+  return evalResult('E13b-文本介入检测', checks.length === 0, checks.length === 0 ? '显式标记/契约措辞可识别，正常完成与历史提及不误报' : checks.join('；'));
+}
+
 // ============================================================================
 // Phase 0 止血补丁回归（E14-E20）
 // ============================================================================
@@ -806,6 +953,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
     evalIncidentToolDrift(),
     evalPlanDerivation(),
     evalPlanDerivationWithOrch(),
+    evalPlanDerivationOrchAfterWorkflow(),
     evalConfirmationGate(),
     evalDelegateModeIsolation(),
     evalDelegateOutcomes(),
@@ -813,6 +961,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
     evalDelegationMemoryBound(),
     evalPlanQueryBatching(),
     evalDDLFallbackValidation(),
+    evalManualInterventionDetection(),
     evalConfirmationGuardTightening(),
     evalParseToolArgumentsStrictness(),
   ];

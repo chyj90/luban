@@ -405,15 +405,48 @@ export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>)
 
   console.log(`[validateDDLExecution] DDL 降级校验通过：${blockedDDL.length} 条 DDL 被拦截，已提供降级 SQL`);
 
-  // 注意：reason 会被内核在恢复时拼进「用户已完成手动操作（reason）」消息，
-  // 因此这里只描述事实，不要包含「请等待…」之类会与「已完成」矛盾的操作指令；
-  // DDL 全文不截断（建表语句很短，截断会让用户转达出无法执行的残缺 SQL）
-  const ddlFull = blockedDDL.map(d => d.sql).join('；').slice(0, 2000);
+  // 注意：reason 会被内核在恢复时拼进「用户已完成手动操作（reason）」消息，且直接显示在
+  // 挂起横幅上——只放简短事实（语句类型+表名），SQL 全文留在对话里供模型转达，
+  // 不再整段塞进 reason（此前 2000 字符的 SQL 直接把横幅撑成换行大块）
+  const ddlHeads = blockedDDL
+    .map((d) => d.sql.trim().split(/\s+/).slice(0, 3).join(' '))
+    .filter((h, i, arr) => arr.indexOf(h) === i)
+    .slice(0, 4)
+    .join('、');
   return {
     warnings,
     interventionRequired: true,
-    interventionReason: `DDL 操作被后端拦截（${ddlFull}），已降级生成手动 SQL`,
+    interventionReason: `需要在数据源管理面板手动执行 DDL（${ddlHeads}${blockedDDL.length > 4 ? ' 等' : ''}），完整 SQL 已在对话中给出`,
   };
+}
+
+/**
+ * 文本介入标记检测：子智能体按指示"不尝试 DDL、直接请求人工操作"时，
+ * validateDDLExecution 的"尝试→被拦截→降级"链路探测不到（消息里没有 execute_sql 调用），
+ * 委派会被误判为已完成：主智能体文本转达介入请求后想结束回合，被 planPolicy 的
+ * 强制继续提醒顶回，形成"请继续执行 vs 等待用户操作"的死循环（2026-09-14 员工管理案例）。
+ * 这里从最终汇报文本识别人工介入请求，补上结构化挂起信号。
+ *
+ * 识别两类信号（满足其一即介入）：
+ * 1. 显式标记 interventionRequired（dbaPrompt 契约要求人工 DDL 汇报必须携带）；
+ * 2. 要求用户去数据源管理面板手动执行 SQL/DDL 的自然语言 + 存在可执行的 SQL 依据。
+ */
+export function detectManualInterventionRequest(finalReport: string): { required: boolean; reason?: string } {
+  if (!finalReport) return { required: false };
+  const hasMarker = /interventionRequired/i.test(finalReport);
+  const hasManualSqlAsk =
+    /数据源管理面板/.test(finalReport) &&
+    /(手动执行|请您执行|请手动|需要您执行|人工执行)/.test(finalReport) &&
+    /```sql|ALTER\s+TABLE|CREATE\s+TABLE/i.test(finalReport);
+  if (!hasMarker && !hasManualSqlAsk) return { required: false };
+
+  const lines = finalReport.split('\n');
+  const reasonLine =
+    lines.find((l) => /interventionRequired/i.test(l)) ||
+    lines.find((l) => /(手动执行|请您执行|需要您执行|人工执行)/.test(l)) ||
+    '';
+  const reason = reasonLine.replace(/[#>*`]|⚠️/g, '').trim().slice(0, 120);
+  return { required: true, reason: reason || '子智能体请求用户手动操作后才能继续' };
 }
 
 /** delegate_query 返回给主智能体的 details 上限：DBA 的中间推理过程不应整段灌入主上下文 */
@@ -514,11 +547,12 @@ export const delegateSkills: Record<string, SkillFactory> = {
 - 查询/列出数据源、查询、API、表结构
 - 创建/修改/删除查询
 - 连接/测试/删除数据源和外部 API
-只需用自然语言描述需求，DBA 会自行判断该做什么。`,
+只需用自然语言描述需求，DBA 会自行判断该做什么。
+⚠️ requirement 必须携带你已知的上下文（数据源 ID、相关查询 ID 与当前状态、上一步卡点、用户已手动完成的操作），避免子智能体重复探查；恢复被 DDL 干预中断的任务时，必须说明"用户已完成的手动操作 + 待校验项"。`,
       parameters: {
         type: 'object',
         properties: {
-          requirement: { type: 'string', description: '自然语言描述的需求，如"列出所有数据源"、"为订单页创建查询，需要 id、订单号、金额、状态字段"、"删除查询 xxx"' },
+          requirement: { type: 'string', description: '自然语言描述的需求。必须包含已知上下文（数据源 ID、查询 ID、上一步卡点、用户已完成的操作），如"数据源 12，为订单页创建查询，需要 id、订单号、金额、状态字段"' },
           target_page: { type: 'string', description: '目标页面名称（可选）' },
           query_name: { type: 'string', description: '查询名称（可选，创建/修改时建议提供；单查询时使用）' },
           filter_params: { type: 'string', description: '声明的筛选参数（可选，单查询时使用），格式：paramName(类型,匹配方式)，逗号分隔。DBA 完成后会校验 SQL 是否覆盖所有参数' },
@@ -655,15 +689,26 @@ export const delegateSkills: Record<string, SkillFactory> = {
           // 结构化干预标记：DDL 被拦截且已降级 → 返回 _pause 让主循环硬暂停，
           // 等待用户在数据源管理面板完成手动操作。此前只把标记放进 data，
           // 停止全靠 prompt 劝说 LLM，模型不听话时主智能体会继续跑
-          if (ddlCheck.interventionRequired) {
+          // 文本介入标记兜底：DBA 被要求"禁止尝试 DDL、直接请求人工操作"时没有
+          // execute_sql 调用可查，从最终汇报文本识别介入请求（缺了这层会死循环：
+          // 委派被判成功 → 主智能体转达后想结束 → planPolicy 强制继续 → 顶牛）
+          const finalReportMsg = [...messages]
+            .reverse()
+            .find((m) => (m as Message).role === 'assistant') as Message | undefined;
+          const textIntervention = detectManualInterventionRequest(
+            typeof finalReportMsg?.content === 'string' ? finalReportMsg.content : '',
+          );
+          const interventionRequired = ddlCheck.interventionRequired || textIntervention.required;
+          const interventionReason = ddlCheck.interventionReason || textIntervention.reason;
+          if (interventionRequired) {
             result.interventionRequired = true;
-            result.interventionReason = ddlCheck.interventionReason;
+            result.interventionReason = interventionReason;
             result.message = '需要用户手动操作（建表/改表），请等待用户完成后再继续';
-            console.warn(`[delegate_query] DDL 干预，主智能体暂停 | ${(ddlCheck.interventionReason || '').slice(0, 80)}`);
+            console.warn(`[delegate_query] 人工介入，主智能体暂停 | ${(interventionReason || '').slice(0, 80)}`);
             return {
               success: false,
               _pause: true,
-              message: `需要用户手动操作后本次任务才算完成：${ddlCheck.interventionReason || ''}。请将需要手动执行的 SQL 转达给用户，等用户在数据源管理面板执行完成并回复后，再继续后续步骤。`,
+              message: `需要用户手动操作后本次任务才算完成：${interventionReason || ''}。请将需要手动执行的 SQL 转达给用户，等用户在数据源管理面板执行完成并回复后，再继续后续步骤。`,
               data: { ...result, outcomes: extractQueryOutcomes(messages) },
             };
           }
@@ -798,6 +843,31 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             .join('\n\n')
             .trim();
 
+          // 发起字段契约核对：需求里声明的契约字段（与业务表列名一致）必须原样出现在
+          // 流程设计输出中。2026-09-14 请假案例：需求契约 leave_type，流程输出写成
+          // employee_type——照抄进页面 startWorkflow 后条件分支与数据联动会全错
+          let contractWarning = '';
+          const contractLine = `${requirement}\n${context || ''}`.match(/发起字段契约[：:]\s*([^\n]+)/)?.[1];
+          if (contractLine) {
+            const splitFields = (s: string) =>
+              s.split(/[,，、;；]/).map((f) => f.trim().split(/[\s（(]/)[0].trim()).filter(Boolean);
+            const reqFields = splitFields(contractLine);
+            const resultContract = response.match(/发起字段契约[：:]\s*([^\n]+)/)?.[1];
+            if (resultContract && reqFields.length > 0) {
+              const outFields = splitFields(resultContract);
+              const missing = reqFields.filter((f) => !outFields.includes(f));
+              const extra = outFields.filter((f) => !reqFields.includes(f));
+              if (missing.length > 0 || extra.length > 0) {
+                contractWarning =
+                  `\n\n⚠️ 发起字段契约核对不一致：需求要求 [${reqFields.join(', ')}]，流程设计输出 [${outFields.join(', ')}]` +
+                  `${missing.length > 0 ? `；缺失字段: ${missing.join(', ')}` : ''}` +
+                  `${extra.length > 0 ? `；输出中多出/疑似改名: ${extra.join(', ')}` : ''}` +
+                  `。页面挂接 startWorkflow 时必须以需求契约（业务表字段名）为准，请核对流程条件分支与表单使用的字段名`;
+                console.warn(`[delegate_workflow]${contractWarning.trim()}`);
+              }
+            }
+          }
+
           // 检测子智能体执行过程中的工具失败，失败时不能向主智能体返回成功。
           // 只看本次任务的消息，避免上一轮已解决的失败反复误报为"本次失败"
           const failedToolMessages = Array.from(new Set(
@@ -829,6 +899,23 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             };
           }
 
+          // 文本介入标记兜底（与 delegate_query 同因）：流程助手请求用户手动操作时
+          // 也必须硬挂起，否则主智能体转达后想结束回合会被 planPolicy 顶回死循环
+          const wfIntervention = detectManualInterventionRequest(response);
+          if (wfIntervention.required) {
+            console.warn(`[delegate_workflow] 人工介入，主智能体暂停 | ${(wfIntervention.reason || '').slice(0, 80)}`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_WORKFLOW_END',
+              payload: { success: false, error: `需要用户手动操作：${wfIntervention.reason || ''}` },
+            });
+            return {
+              success: false,
+              _pause: true,
+              message: `需要用户手动操作后本次任务才算完成：${wfIntervention.reason || ''}。请将请求转达给用户，等用户完成并回复后再继续后续步骤。`,
+              data: { response, outcomes: extractWorkflowOutcomes(messages) },
+            };
+          }
+
           const outcomes = extractWorkflowOutcomes(messages);
           ctx.dispatch?.({
             type: 'DELEGATE_WORKFLOW_END',
@@ -841,7 +928,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
             .join('；');
           return {
             success: true,
-            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}`,
+            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}`,
             data: { response, outcomes },
           };
         } catch (e: unknown) {

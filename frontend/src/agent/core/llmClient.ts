@@ -240,6 +240,16 @@ export function parseToolArguments(rawArgs: string): Record<string, unknown> | n
   }
 }
 
+/** 兜底剥离模型内联输出的 <think> 思考块（正常情况思考走 reasoning 通道，不经过这里） */
+export function stripThinkBlocks(text: string): string {
+  if (!text || !text.includes('<think')) return text;
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think>[\s\S]*$/i, '')
+    .replace(/<\/?think>/gi, '')
+    .trim();
+}
+
 export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator<LLMStreamChunk> {
   const { model, messages, tools, temperature, timeout, signal } = options;
 

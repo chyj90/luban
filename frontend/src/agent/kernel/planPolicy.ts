@@ -40,6 +40,21 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
     },
 
     afterToolResult(_state, call): InputRequest | null {
+      // 委派介入兜底：委派类工具结果携带结构化介入标记但未携带 _pause 时
+      // （检测层遗漏的场景），同样挂起等待用户。缺了这层，主智能体文本转达介入
+      // 请求后想结束回合，会被 beforeComplete 的强制继续提醒顶回，形成
+      // "请继续执行 vs 等待用户操作"的死循环（2026-09-14 员工管理案例）
+      if (call.name.startsWith('delegate_')) {
+        const data = call.result?.data as
+          | { interventionRequired?: boolean; interventionReason?: string }
+          | undefined;
+        if (data?.interventionRequired && !call.result._pause) {
+          return {
+            kind: 'user-action',
+            reason: data.interventionReason || '子智能体请求用户手动操作后才能继续',
+          };
+        }
+      }
       if (!PLAN_SUBMITTING_TOOLS.has(call.name) || !call.result.success) return null;
       // 取最新的 draft：挂起期间用户修改需求会再次 submit_analysis，旧 draft 计划
       // 不会被自动作废，find 第一个可能选中过期的那个
@@ -96,6 +111,9 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
         if (pending.length === 0 && running.length === 0) continue;
 
         if (completionExtensions >= MAX_COMPLETION_EXTENSIONS) {
+          // 放行完成的同时重置预算：否则计数器永久滞留在上限，本会话后续所有
+          // "防止半途而废"的强制继续全部失效（一次耗尽即终身失效）
+          completionExtensions = 0;
           return null; // 达到上限，放行完成（旧语义：强制结束）
         }
         completionExtensions++;

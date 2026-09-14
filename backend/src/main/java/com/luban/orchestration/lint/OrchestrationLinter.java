@@ -47,6 +47,89 @@ public class OrchestrationLinter {
         static LintResult ok() { return new LintResult(true, List.of(), List.of()); }
     }
 
+    /** DSL 顶层已知字段 */
+    private static final Set<String> KNOWN_DSL_KEYS = Set.of("nodes", "edges");
+    /** 节点顶层已知字段（React Flow 风格结构） */
+    private static final Set<String> KNOWN_NODE_KEYS = Set.of("id", "nodeType", "position", "data");
+    /** data 已知字段 */
+    private static final Set<String> KNOWN_DATA_KEYS = Set.of("label", "config");
+    /** data.config 已知字段（与 OrchestrationDsl.NodeDef.Config 对齐） */
+    private static final Set<String> KNOWN_CONFIG_KEYS = Set.of(
+            "inputs", "toolId", "url", "method", "headers", "paramsTemplate", "bodyTemplate",
+            "workflowAction", "workflowDefinitionId", "instanceIdTemplate", "formDataTemplate",
+            "comment", "timeoutMs", "retries", "queryId", "source", "entry", "packages",
+            "template", "strategy");
+
+    /**
+     * 常见字段名错误的纠正提示（LLM 生成的 DSL 高频踩坑点）。
+     * 反序列化标了 ignoreUnknown=true 会把错误字段静默丢弃，这里把丢弃变成显式报错，
+     * 否则节点会反序列化成 nodeType=null 的空壳，调用方只能看到莫名 500。
+     */
+    private static final Map<String, String> FIELD_SUGGESTIONS = Map.of(
+            "type", "字段名应为 nodeType（不是 type）",
+            "params", "start 入参应写为 data.config.inputs（数组，元素含 name/type/required）",
+            "code", "python 代码应写为 data.config.source（入口必须 def main(ctx)）",
+            "processName", "workflow 节点不支持按名称引用，应写 data.config.workflowAction + data.config.workflowDefinitionId（数字 ID，必须已存在）",
+            "formData", "发起流程的表单应写为 data.config.formDataTemplate",
+            "url", "http 直连地址应写为 data.config.url（且仅限 IpGuard 白名单地址，写库请用 query 节点 + 已有查询）",
+            "method", "http 方法应写为 data.config.method",
+            "body", "http 请求体应写为 data.config.bodyTemplate",
+            "queryId", "query 节点的查询 ID 应写为 data.config.queryId",
+            "result", "output 节点无配置；编排返回值为各节点输出按节点 id 组成的字典，最终结构请在 python 节点中整形");
+
+    /**
+     * 对原始 DSL JSON 做未知字段扫描（解析失败时返回空，由 parseDsl 报错）。
+     * 节点级未知字段计为 error（会静默改变语义），顶层未知字段计为 warning（通常是误放的元数据）。
+     */
+    public LintResult checkUnknownFields(String dslJson) {
+        List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        if (dslJson == null || dslJson.isBlank()) return new LintResult(true, errors, warnings);
+        com.fasterxml.jackson.databind.JsonNode root;
+        try {
+            root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(dslJson);
+        } catch (Exception e) {
+            return new LintResult(true, errors, warnings); // JSON 语法错误由 parseDsl 负责
+        }
+        if (!root.isObject()) return new LintResult(true, errors, warnings);
+
+        root.fieldNames().forEachRemaining(f -> {
+            if (!KNOWN_DSL_KEYS.contains(f)) {
+                warnings.add("DSL 顶层存在未知字段 \"" + f + "\"（将被忽略；DSL 顶层仅支持 nodes/edges）");
+            }
+        });
+
+        com.fasterxml.jackson.databind.JsonNode nodes = root.get("nodes");
+        if (nodes != null && nodes.isArray()) {
+            for (com.fasterxml.jackson.databind.JsonNode node : nodes) {
+                if (!node.isObject()) continue;
+                String nodeId = node.path("id").asText("(缺少id)");
+                node.fieldNames().forEachRemaining(f -> {
+                    if (KNOWN_NODE_KEYS.contains(f)) return;
+                    errors.add("节点 " + nodeId + " 存在未知字段 \"" + f + "\"（将被忽略）"
+                            + (FIELD_SUGGESTIONS.containsKey(f) ? "：" + FIELD_SUGGESTIONS.get(f) : ""));
+                });
+                com.fasterxml.jackson.databind.JsonNode data = node.get("data");
+                if (data != null && data.isObject()) {
+                    data.fieldNames().forEachRemaining(f -> {
+                        if (KNOWN_DATA_KEYS.contains(f)) return;
+                        errors.add("节点 " + nodeId + " 的 data 存在未知字段 \"" + f + "\"（将被忽略）："
+                                + (FIELD_SUGGESTIONS.containsKey(f) ? FIELD_SUGGESTIONS.get(f) : "节点配置应放在 data.config 下"));
+                    });
+                    com.fasterxml.jackson.databind.JsonNode config = data.get("config");
+                    if (config != null && config.isObject()) {
+                        config.fieldNames().forEachRemaining(f -> {
+                            if (KNOWN_CONFIG_KEYS.contains(f)) return;
+                            errors.add("节点 " + nodeId + " 的 data.config 存在未知字段 \"" + f + "\"（将被忽略）"
+                                    + (FIELD_SUGGESTIONS.containsKey(f) ? "：" + FIELD_SUGGESTIONS.get(f) : ""));
+                        });
+                    }
+                }
+            }
+        }
+        return new LintResult(errors.isEmpty(), errors, warnings);
+    }
+
     public LintResult lint(OrchestrationDsl.Dsl dsl,
                            java.util.function.LongPredicate queryExists,
                            java.util.function.LongPredicate toolExists) {
@@ -75,14 +158,23 @@ public class OrchestrationLinter {
             if (byId.putIfAbsent(n.getId(), n) != null) {
                 errors.add("节点 id 重复: " + n.getId());
             }
-            if (!NODE_TYPES.contains(n.getNodeType())) {
-                errors.add("节点 " + n.getId() + " 的 nodeType 无效: " + n.getNodeType());
+            // Set.of 不可变集合 contains(null) 会抛 NPE（对外表现为无诊断信息的 500），
+            // 必须先判空；null 恰恰是最常见的契约错误（LLM 写成 "type" 被 ignoreUnknown 静默丢弃）
+            String nodeType = n.getNodeType();
+            if (nodeType == null || nodeType.isBlank()) {
+                errors.add("节点 " + n.getId() + " 缺少 nodeType（字段名必须是 nodeType 而不是 type，"
+                        + "节点配置必须嵌套在 data.config 下，参见 DSL 契约示例）");
+            } else if (!NODE_TYPES.contains(nodeType)) {
+                errors.add("节点 " + n.getId() + " 的 nodeType 无效: " + nodeType
+                        + "（有效类型: " + String.join("/", NODE_TYPES) + "）");
             }
             // 名称建议：缺 label 不阻塞，但提醒
             if (n.getData() == null || n.getData().getLabel() == null || n.getData().getLabel().isBlank()) {
                 warnings.add("节点 " + n.getId() + " 缺少名称（label），建议为每个节点设置可读名称");
             }
-            types.add(n.getNodeType());
+            if (nodeType != null) {
+                types.add(nodeType);
+            }
         }
         if (errors.isEmpty()) {
             if (types.stream().filter("start"::equals).count() != 1) {
@@ -291,7 +383,7 @@ public class OrchestrationLinter {
     private void dfs(String current, Map<String, OrchestrationDsl.NodeDef> byId,
                      List<OrchestrationDsl.EdgeDef> edges, Set<String> visited) {
         if (current == null || !visited.add(current)) return;
-        for (OrchestrationDsl.EdgeDef e : edges) {
+        for (OrchestrationDsl.EdgeDef e : edges == null ? List.<OrchestrationDsl.EdgeDef>of() : edges) {
             if (current.equals(e.getSource())) {
                 dfs(e.getTarget(), byId, edges, visited);
             }

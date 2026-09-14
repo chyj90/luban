@@ -1493,25 +1493,82 @@
   background: #fff2f0;
   border-color: #ff4d4f;
 }
-/* Phase 2.4：内核挂起（等待显式确认/取消命令） */
+/* 挂起确认条：三段式结构（头部 图标+标题+展开开关 / 内容 限高可展开 / 操作行 带分隔线），
+   长内容不再与按钮挤在同一行、不再撑破布局；按挂起类型区分配色 */
 .ap-suspend-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 8px 12px;
-  padding: 10px 12px;
-  border: 1px solid #f0c36d;
-  background: #fffaf0;
-  border-radius: 8px;
+  margin: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid #eed9a4;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fffcf2 0%, #fff7e4 100%);
+  box-shadow: 0 2px 10px rgba(160, 120, 0, 0.07);
   font-size: 13px;
 }
+.ap-suspend-bar[data-kind='danger-confirm'] {
+  border-color: #f0c5c5;
+  background: linear-gradient(180deg, #fffafa 0%, #ffefef 100%);
+}
+.ap-suspend-bar[data-kind='plan-confirm'] {
+  border-color: #c3d9f5;
+  background: linear-gradient(180deg, #fafcff 0%, #eff6ff 100%);
+}
+.ap-suspend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ap-suspend-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: #d97b00;
+}
+.ap-suspend-bar[data-kind='danger-confirm'] .ap-suspend-icon { color: #d64545; }
+.ap-suspend-bar[data-kind='plan-confirm'] .ap-suspend-icon { color: #3572d6; }
+.ap-suspend-title {
+  font-weight: 600;
+  color: #8a5b00;
+}
+.ap-suspend-bar[data-kind='danger-confirm'] .ap-suspend-title { color: #a03030; }
+.ap-suspend-bar[data-kind='plan-confirm'] .ap-suspend-title { color: #2a5db0; }
+.ap-suspend-toggle {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: #b98a2e;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.ap-suspend-toggle:hover { color: #8a5b00; background: rgba(217, 123, 0, 0.08); }
 .ap-suspend-msg {
-  flex: 1;
-  color: #7a5b00;
+  margin-top: 6px;
+  color: #6f5a1e;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.ap-suspend-bar[data-kind='danger-confirm'] .ap-suspend-msg { color: #7a3b3b; }
+.ap-suspend-bar[data-kind='plan-confirm'] .ap-suspend-msg { color: #33547e; }
+.ap-suspend-msg.expanded {
+  display: block;
+  max-height: 240px;
+  overflow-y: auto;
+  -webkit-line-clamp: unset;
 }
 .ap-suspend-actions {
   display: flex;
+  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(160, 120, 0, 0.18);
 }
 .ap-btn-confirm {
   padding: 4px 14px;
@@ -1521,15 +1578,55 @@
   color: #fff;
   cursor: pointer;
   font-size: 13px;
+  white-space: nowrap;
 }
 .ap-btn-confirm:hover { background: #b96800; }
 .ap-btn-cancel {
   padding: 4px 14px;
-  border: 1px solid #d0d0d0;
+  border: 1px solid #d9d4c5;
   border-radius: 6px;
   background: #fff;
-  color: #555;
+  color: #6b6250;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ap-btn-cancel:hover { background: #f6f3ea; }
+/* banner 第三选项：不确认也不取消，输入新指示（redirect） */
+.ap-btn-note {
+  padding: 4px 14px;
+  border: 1px solid #d97b00;
+  border-radius: 6px;
+  background: #fff;
+  color: #b96800;
   cursor: pointer;
   font-size: 13px;
 }
-.ap-btn-cancel:hover { background: #f2f2f2; }
+.ap-btn-note:hover,
+.ap-btn-note.active { background: #fdf1dc; }
+.ap-suspend-note {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ap-suspend-note-input {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid #eed9a4;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.ap-suspend-note-input:focus {
+  outline: none;
+  border-color: #d97b00;
+}
+.ap-btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

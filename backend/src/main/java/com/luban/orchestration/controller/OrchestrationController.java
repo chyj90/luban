@@ -2,7 +2,6 @@ package com.luban.orchestration.controller;
 
 import com.luban.dto.ApiResponse;
 import com.luban.entity.User;
-import com.luban.orchestration.dsl.OrchestrationDsl;
 import com.luban.orchestration.entity.OrchestrationDefinition;
 import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.orchestration.lint.OrchestrationLinter;
@@ -83,13 +82,12 @@ public class OrchestrationController {
         return ResponseEntity.ok(ApiResponse.ok(Map.of("versionId", version.getId())));
     }
 
-    /** lint（不落库，直接校验 DSL 文本） */
+    /** lint（不落库，直接校验 DSL 文本，含未知字段诊断） */
     @PostMapping("/lint")
     @AppAccess(action = AppAction.DEVELOP, from = AppAccess.Source.BODY, key = "applicationId")
     public ResponseEntity<ApiResponse<OrchestrationLinter.LintResult>> lint(
             @RequestBody Map<String, Object> body) {
-        OrchestrationDsl.Dsl dsl = orchestrationService.parseDsl(String.valueOf(body.get("dsl")));
-        var result = orchestrationService.lintDsl(dsl);
+        var result = orchestrationService.lintDslJson(String.valueOf(body.get("dsl")));
         return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
