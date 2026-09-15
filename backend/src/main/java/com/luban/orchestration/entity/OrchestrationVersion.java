@@ -29,6 +29,10 @@ public class OrchestrationVersion {
     @Column(nullable = false, length = 64)
     private String checksum; // sha256(dsl)，变更检测
 
+    /** 发布固化目标清单（capability manifest）：["QUERY:1","TOOL:3","ORCHESTRATION:8","FLOW:2"]；发布时写入 */
+    @Column(name = "targets", columnDefinition = "JSON")
+    private String targets;
+
     @Column(name = "created_by", nullable = false)
     private Long createdBy;
 

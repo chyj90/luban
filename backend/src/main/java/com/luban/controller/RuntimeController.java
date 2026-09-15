@@ -11,7 +11,6 @@ import com.luban.entity.Query;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.entity.ApplicationApiKey;
-import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.orchestration.service.OrchestrationService;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.CodePageRepository;
@@ -35,15 +34,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,60 +47,29 @@ public class RuntimeController {
     private static final Logger log = LoggerFactory.getLogger(RuntimeController.class);
 
     private final PageService pageService;
-    private final QueryService queryService;
     private final PageRepository pageRepository;
-    private final ApplicationRepository applicationRepository;
     private final CodePageRepository codePageRepository;
     private final QueryRepository queryRepository;
-    private final com.luban.repository.DatasourceRepository datasourceRepository;
-    private final RoleRepository roleRepository;
-    private final RoleUserRepository roleUserRepository;
-    private final RolePermissionRepository rolePermissionRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
-    private final ApplicationApiKeyRepository applicationApiKeyRepository;
-    private final ApiKeyToolRepository apiKeyToolRepository;
     private final com.luban.security.appaccess.AppAccessService appAccessService;
-    private final com.luban.service.ApiKeyService apiKeyService;
-    private final OrchestrationService orchestrationService;
-
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private final com.luban.invoke.InvocationService invocationService;
 
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     public RuntimeController(PageService pageService,
-                             QueryService queryService,
                              PageRepository pageRepository,
-                             ApplicationRepository applicationRepository,
                              CodePageRepository codePageRepository,
                              QueryRepository queryRepository,
-                             com.luban.repository.DatasourceRepository datasourceRepository,
-                             RoleRepository roleRepository,
-                             RoleUserRepository roleUserRepository,
-                             RolePermissionRepository rolePermissionRepository,
                              ToolDefinitionRepository toolDefinitionRepository,
-                             ApplicationApiKeyRepository applicationApiKeyRepository,
-                             ApiKeyToolRepository apiKeyToolRepository,
                              com.luban.security.appaccess.AppAccessService appAccessService,
-                             com.luban.service.ApiKeyService apiKeyService,
-                             OrchestrationService orchestrationService) {
+                             com.luban.invoke.InvocationService invocationService) {
         this.pageService = pageService;
-        this.queryService = queryService;
         this.pageRepository = pageRepository;
-        this.applicationRepository = applicationRepository;
         this.codePageRepository = codePageRepository;
         this.queryRepository = queryRepository;
-        this.datasourceRepository = datasourceRepository;
-        this.roleRepository = roleRepository;
-        this.roleUserRepository = roleUserRepository;
-        this.rolePermissionRepository = rolePermissionRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
-        this.applicationApiKeyRepository = applicationApiKeyRepository;
-        this.apiKeyToolRepository = apiKeyToolRepository;
         this.appAccessService = appAccessService;
-        this.apiKeyService = apiKeyService;
-        this.orchestrationService = orchestrationService;
+        this.invocationService = invocationService;
     }
 
     @GetMapping("/{pageId}/code")
@@ -143,33 +103,21 @@ public class RuntimeController {
     }
 
     @PostMapping("/{pageId}/query/{queryId}/run")
-    public ResponseEntity<ApiResponse<RunQueryResponse>> runQuery(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> runQuery(
             @PathVariable Long pageId,
             @PathVariable Long queryId,
             @RequestBody(required = false) RunQueryRequest request,
             @AuthenticationPrincipal User user) {
         checkPageAccess(pageId, user);
-        // 页面访问权只覆盖本页面绑定的查询：queryId 必须属于页面所在应用，防止跨应用查询执行
-        Query query = queryRepository.findById(queryId)
-                .orElseThrow(() -> new RuntimeException("查询不存在"));
-        Page page = pageRepository.findById(pageId)
-                .orElseThrow(() -> new RuntimeException("页面不存在"));
-        if (!query.getApplicationId().equals(page.getApplicationId())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("无权在当前页面执行此查询"));
-        }
-
-        // PLATFORM 数据源是跨应用共享资源：应用必须有绑定 Key 且获 APPROVED 授权才能在页面使用
-        Datasource ds = datasourceRepository.findById(query.getDatasourceId())
-                .orElseThrow(() -> new RuntimeException("数据源不存在"));
-        if ("PLATFORM".equals(ds.getEffectiveScope())
-                && !apiKeyService.hasApplicationDatasourcePermission(page.getApplicationId(), ds.getId())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("应用未获此数据源访问授权，请先申请并完成审批"));
-        }
-
-        if (request == null) request = new RunQueryRequest();
-        return ResponseEntity.ok(ApiResponse.ok(queryService.run(queryId, request)));
+        // 查询归属与 PLATFORM 数据源授权由 QueryTargetExecutor 统一执行
+        Map<String, Object> params = request == null ? Map.of() : request.getParams();
+        var result = invocationService.invoke(com.luban.invoke.InvocationRequest.of(
+                com.luban.invoke.TargetType.QUERY, queryId, params,
+                com.luban.invoke.ExecutionContext.root(
+                        com.luban.invoke.InvocationOrigin.PAGE,
+                        com.luban.invoke.InvocationPrincipal.ofUser(user.getId()),
+                        getPageApplicationId(pageId), null)));
+        return invocationResponse(result);
     }
 
     @PostMapping("/{pageId}/tool/{toolId}/run")
@@ -179,82 +127,28 @@ public class RuntimeController {
             @RequestBody Map<String, Object> body,
             @AuthenticationPrincipal User user) {
         checkPageAccess(pageId, user);
+        // scope 归属 / 白名单 / Key 绑定 / ORCHESTRATION 子调用由 ToolTargetExecutor 统一执行
+        @SuppressWarnings("unchecked")
+        Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
+        var result = invocationService.invoke(com.luban.invoke.InvocationRequest.of(
+                com.luban.invoke.TargetType.TOOL, toolId, params,
+                com.luban.invoke.ExecutionContext.root(
+                        com.luban.invoke.InvocationOrigin.PAGE,
+                        com.luban.invoke.InvocationPrincipal.ofUser(user.getId()),
+                        getPageApplicationId(pageId), null)));
+        return invocationResponse(result);
+    }
 
-        ToolDefinition tool = toolDefinitionRepository.findById(toolId)
-                .orElseThrow(() -> new RuntimeException("API 不存在: " + toolId));
-
-        String scope = tool.getScope();
-        if ("APPLICATION".equals(scope)) {
-            Long applicationId = getPageApplicationId(pageId);
-            if (!tool.getGroupId().equals(applicationId)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("无权调用此 API"));
-            }
-        } else if ("PLATFORM".equals(scope)) {
-            Long applicationId = getPageApplicationId(pageId);
-            if (!tool.getGroupId().equals(applicationId)) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("无权调用此 API"));
-            }
-
-            List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
-            List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
-            List<RoleUser> userRoles = roleUserRepository.findByUserId(user.getId());
-            boolean inWhitelist = userRoles.stream()
-                    .anyMatch(ru -> appRoleIds.contains(ru.getRoleId()));
-            if (!inWhitelist) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("无权访问此应用，请联系管理员"));
-            }
-
-            List<ApplicationApiKey> bindings = applicationApiKeyRepository
-                    .findByApplicationIdAndStatus(applicationId, "ACTIVE");
-            if (bindings.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("应用未绑定有效 API KEY"));
-            }
-            boolean hasKeyPermission = bindings.stream().anyMatch(binding -> {
-                return apiKeyToolRepository.findByApiKeyIdAndToolId(binding.getApiKeyId(), tool.getId())
-                        .map(akt -> "APPROVED".equals(akt.getStatus()))
-                        .orElse(false);
-            });
-            if (!hasKeyPermission) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("API KEY 无权调用此工具"));
-            }
-        } else {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(ApiResponse.error("不支持的 API 类型"));
+    private ResponseEntity<ApiResponse<Map<String, Object>>> invocationResponse(
+            com.luban.invoke.InvocationResult result) {
+        if (result.isSuccess()) {
+            return ResponseEntity.ok(ApiResponse.ok(result.dataAsMap()));
         }
-
-        // ORCHESTRATION 类型：委托编排引擎执行，跳过 HTTP executeTool
-        if (tool.getToolType() == com.luban.constant.ToolType.ORCHESTRATION) {
-            Map<String, Object> orchConfig;
-            try {
-                orchConfig = objectMapper.readValue(
-                        tool.getConfig() == null ? "{}" : tool.getConfig(),
-                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-            } catch (Exception e) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.error("编排工具配置解析失败"));
-            }
-            Long orchDefId = orchConfig.get("orchestrationId") instanceof Number n ? n.longValue() : null;
-            if (orchDefId == null) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.error("编排工具配置缺少 orchestrationId"));
-            }
-            var orchDef = orchestrationService.getById(orchDefId);
-            if (!orchDef.getApplicationId().equals(getPageApplicationId(pageId))) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("无权调用此编排（属于其他应用）"));
-            }
-            Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
-            Map<String, Object> result = orchestrationService.execute(
-                    orchDefId, user.getId(), OrchestrationExecution.TRIGGER_RUNTIME, null, params);
-            return ResponseEntity.ok(ApiResponse.ok(result));
-        }
-
-        return executeTool(tool, body);
+        String code = result.getErrorCode();
+        HttpStatus status = com.luban.invoke.InvocationException.FORBIDDEN.equals(code)
+                || com.luban.invoke.InvocationException.TARGET_NOT_IN_MANIFEST.equals(code)
+                ? HttpStatus.FORBIDDEN : HttpStatus.BAD_REQUEST;
+        return ResponseEntity.status(status).body(ApiResponse.error(result.getErrorMessage()));
     }
 
     private void checkPageAccess(Long pageId, User user) {
@@ -268,108 +162,6 @@ public class RuntimeController {
         Page page = pageRepository.findById(pageId)
                 .orElseThrow(() -> new RuntimeException("页面不存在"));
         return page.getApplicationId();
-    }
-
-    @SuppressWarnings("unchecked")
-    private ResponseEntity<ApiResponse<Map<String, Object>>> executeTool(ToolDefinition tool, Map<String, Object> body) {
-        Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
-
-        try {
-            Map<String, Object> config = objectMapper.readValue(tool.getConfig(), Map.class);
-            String method = (String) config.getOrDefault("method", "GET");
-            String url = (String) config.get("url");
-
-            if (url == null || url.isBlank()) {
-                return ResponseEntity.badRequest()
-                        .body(ApiResponse.error("API 未配置 URL"));
-            }
-
-            String resolvedUrl = replaceVars(url, params);
-
-            List<Map<String, String>> headers = (List<Map<String, String>>) config.get("headers");
-            List<Map<String, String>> queryParams = (List<Map<String, String>>) config.get("queryParams");
-            String bodyContent = (String) config.get("body");
-            String contentType = (String) config.getOrDefault("contentType", "application/json");
-
-            if (queryParams != null && !queryParams.isEmpty()) {
-                StringBuilder qs = new StringBuilder();
-                for (Map<String, String> p : queryParams) {
-                    String k = p.get("key");
-                    String v = p.get("value");
-                    if (k != null && !k.isBlank()) {
-                        String resolvedV = replaceVars(v != null ? v : "", params);
-                        if (qs.length() > 0) qs.append("&");
-                        qs.append(encode(k)).append("=").append(encode(resolvedV));
-                    }
-                }
-                if (qs.length() > 0) {
-                    resolvedUrl += (resolvedUrl.contains("?") ? "&" : "?") + qs.toString();
-                }
-            }
-
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(resolvedUrl))
-                    .timeout(Duration.ofSeconds(30));
-
-            HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.noBody();
-            if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) {
-                if (bodyContent != null && !bodyContent.isBlank()) {
-                    String resolvedBody = replaceVars(bodyContent, params);
-                    bodyPublisher = HttpRequest.BodyPublishers.ofString(resolvedBody);
-                    builder.header("Content-Type", contentType != null ? contentType : "application/json");
-                }
-            }
-
-            builder.method(method.toUpperCase(), bodyPublisher);
-
-            if (headers != null) {
-                for (Map<String, String> h : headers) {
-                    String k = h.get("key");
-                    String v = h.get("value");
-                    String enabled = h.get("enabled");
-                    if (k != null && !k.isBlank() && !"false".equals(enabled)) {
-                        builder.header(k, replaceVars(v != null ? v : "", params));
-                    }
-                }
-            }
-
-            long start = System.currentTimeMillis();
-            HttpResponse<String> response = httpClient.send(builder.build(),
-                    HttpResponse.BodyHandlers.ofString());
-            long elapsed = System.currentTimeMillis() - start;
-
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("status", response.statusCode());
-            result.put("headers", response.headers().map());
-            result.put("elapsed", elapsed);
-
-            String responseBody = response.body();
-            try {
-                result.put("body", objectMapper.readValue(responseBody, Object.class));
-            } catch (Exception e) {
-                result.put("body", responseBody);
-            }
-
-            log.info("Runtime API run: {} {} ({}ms) -> {}", tool.getDisplayName(), method, elapsed, response.statusCode());
-            return ResponseEntity.ok(ApiResponse.ok(result));
-        } catch (Exception e) {
-            log.error("Runtime API run failed: {}", tool.getDisplayName(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("API 调用失败: " + e.getMessage()));
-        }
-    }
-
-    private String replaceVars(String template, Map<String, Object> params) {
-        if (template == null || params == null || params.isEmpty()) return template;
-        String result = template;
-        for (Map.Entry<String, Object> entry : params.entrySet()) {
-            result = result.replace("{{" + entry.getKey() + "}}", String.valueOf(entry.getValue()));
-        }
-        return result;
-    }
-
-    private String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private List<Long> fromJsonLongList(String json) {

@@ -7,8 +7,6 @@ import com.luban.dto.ApiResponse;
 import com.luban.entity.AlgorithmExecutionLog;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
-import com.luban.executor.HttpExecutor;
-import com.luban.executor.McpExecutor;
 import com.luban.repository.AlgorithmExecutionLogRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.service.ApiKeyService;
@@ -35,8 +33,7 @@ public class ToolDefinitionController {
 
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final ToolEmbeddingService toolEmbeddingService;
-    private final HttpExecutor httpExecutor;
-    private final McpExecutor mcpExecutor;
+    private final com.luban.service.ToolExecutionService toolExecutionService;
     private final ApiKeyService apiKeyService;
     private final HttpServletRequest request;
     private final CodeExecutorService codeExecutorService;
@@ -134,24 +131,10 @@ public class ToolDefinitionController {
     }
 
     private String executeTool(ToolDefinition tool, Map<String, Object> arguments) {
-        ToolType toolType = tool.getToolType();
-        return switch (toolType) {
-            case HTTP -> httpExecutor.execute(tool, arguments, "test");
-            case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
-            case ORCHESTRATION -> "{\"error\": \"请通过编排端点调用 ORCHESTRATION 工具\"}";
-            case ALGORITHM -> {
-                com.luban.service.algorithm.AlgorithmConfig config = com.luban.service.algorithm.AlgorithmConfig.parse(tool.getConfig());
-                if (config.getScriptPath() == null || config.getScriptPath().isBlank()) {
-                    yield "{\"error\": \"算法未上传脚本\"}";
-                }
-                Map<String, Object> result = codeExecutorService.executeScript(config.getScriptPath(), arguments, config.getTimeout());
-                try {
-                    yield new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(result);
-                } catch (Exception e) {
-                    yield "{\"error\": \"结果序列化失败: " + e.getMessage().replace("\"", "\\\"") + "\"}";
-                }
-            }
-        };
+        if (tool.getToolType() == ToolType.ORCHESTRATION) {
+            return "{\"error\": \"请通过编排端点调用 ORCHESTRATION 工具\"}";
+        }
+        return toolExecutionService.executeToolDefinition(tool, arguments, "test");
     }
 
     private Map<String, Object> toToolSummary(ToolDefinition tool) {

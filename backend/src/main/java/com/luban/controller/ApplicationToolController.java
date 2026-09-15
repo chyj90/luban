@@ -7,7 +7,6 @@ import com.luban.entity.ToolDefinition;
 import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.entity.User;
-import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.ApiKeyTool;
 import com.luban.repository.ApplicationRepository;
@@ -29,16 +28,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @RestController
@@ -47,12 +39,10 @@ import java.util.stream.Collectors;
 public class ApplicationToolController {
 
     private final com.luban.orchestration.service.OrchestrationService orchestrationService;
+    private final com.luban.service.ToolExecutionService toolExecutionService;
+    private final com.luban.orchestration.service.OrchestrationToolInvoker orchestrationToolInvoker;
 
     private static final Logger log = LoggerFactory.getLogger(ApplicationToolController.class);
-    private static final Pattern VAR_PATTERN = Pattern.compile("\\{\\{(\\w+)\\}\\}");
-    private static final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
 
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final RoleRepository roleRepository;
@@ -71,7 +61,9 @@ public class ApplicationToolController {
                                      UserRepository userRepository,
                                      PageService pageService,
                                      ApplicationRepository applicationRepository,
-            com.luban.orchestration.service.OrchestrationService orchestrationService) {
+            com.luban.orchestration.service.OrchestrationService orchestrationService,
+            com.luban.service.ToolExecutionService toolExecutionService,
+            com.luban.orchestration.service.OrchestrationToolInvoker orchestrationToolInvoker) {
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
@@ -81,6 +73,8 @@ public class ApplicationToolController {
         this.pageService = pageService;
         this.applicationRepository = applicationRepository;
         this.orchestrationService = orchestrationService;
+        this.toolExecutionService = toolExecutionService;
+        this.orchestrationToolInvoker = orchestrationToolInvoker;
     }
 
     @PostMapping("/{applicationId}")
@@ -228,29 +222,21 @@ public class ApplicationToolController {
         // ORCHESTRATION 类型工具：委托编排引擎执行（params 即 start 入参）。
         // 编排属应用级资源：工具所属应用必须与请求应用一致（防跨应用越权执行）。
         if (tool.getToolType() == com.luban.constant.ToolType.ORCHESTRATION) {
-            Map<String, Object> orchConfig;
+            Long orchDefId;
             try {
-                orchConfig = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
-                        tool.getConfig() == null ? "{}" : tool.getConfig(),
-                        new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-            } catch (Exception parseEx) {
+                orchDefId = orchestrationToolInvoker.requireOrchestrationId(tool);
+            } catch (IllegalArgumentException e) {
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.error("编排工具配置解析失败"));
-            }
-            Long orchDefId = orchConfig.get("orchestrationId") instanceof Number n ? n.longValue() : null;
-            if (orchDefId == null) {
-                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                        .body(ApiResponse.error("编排工具配置缺少 orchestrationId"));
+                        .body(ApiResponse.error(e.getMessage()));
             }
             var orchDef = orchestrationService.getById(orchDefId);
             if (!orchDef.getApplicationId().equals(applicationId)) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(ApiResponse.error("无权调用此编排（属于其他应用）"));
             }
-            Map<String, Object> orchResult = orchestrationService.execute(
-                    orchDefId, user.getId(), OrchestrationExecution.TRIGGER_RUNTIME, null,
-                    (Map<String, Object>) body.getOrDefault("params", Map.of()));
-            return ResponseEntity.ok(ApiResponse.ok(orchResult));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> orchParams = (Map<String, Object>) body.getOrDefault("params", Map.of());
+            return ResponseEntity.ok(ApiResponse.ok(orchestrationToolInvoker.invoke(orchDefId, user.getId(), orchParams)));
         }
 
         // 授权 API（PLATFORM scope）额外校验：白名单 + KEY 绑定权限
@@ -286,90 +272,14 @@ public class ApplicationToolController {
         Map<String, Object> params = (Map<String, Object>) body.getOrDefault("params", Map.of());
 
         try {
-            Map<String, Object> config = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readValue(tool.getConfig(), Map.class);
-            String method = (String) config.getOrDefault("method", "GET");
-            String url = (String) config.get("url");
-
-            if (url == null || url.isBlank()) {
-                return ResponseEntity.badRequest()
-                        .body(ApiResponse.error("API 未配置 URL"));
-            }
-
-            String resolvedUrl = replaceVars(url, params);
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, String>> headers = (List<Map<String, String>>) config.get("headers");
-            @SuppressWarnings("unchecked")
-            List<Map<String, String>> queryParams = (List<Map<String, String>>) config.get("queryParams");
-            String bodyContent = (String) config.get("body");
-            String contentType = (String) config.getOrDefault("contentType", "application/json");
-
-            if (queryParams != null && !queryParams.isEmpty()) {
-                StringBuilder qs = new StringBuilder();
-                for (Map<String, String> p : queryParams) {
-                    String k = p.get("key");
-                    String v = p.get("value");
-                    if (k != null && !k.isBlank()) {
-                        String resolvedV = replaceVars(v != null ? v : "", params);
-                        if (qs.length() > 0) qs.append("&");
-                        qs.append(encode(k)).append("=").append(encode(resolvedV));
-                    }
-                }
-                if (qs.length() > 0) {
-                    resolvedUrl += (resolvedUrl.contains("?") ? "&" : "?") + qs.toString();
-                }
-            }
-
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(resolvedUrl))
-                    .timeout(Duration.ofSeconds(30));
-
-            HttpRequest.BodyPublisher bodyPublisher = HttpRequest.BodyPublishers.noBody();
-            if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) {
-                if (bodyContent != null && !bodyContent.isBlank()) {
-                    String resolvedBody = replaceVars(bodyContent, params);
-                    bodyPublisher = HttpRequest.BodyPublishers.ofString(resolvedBody);
-                    builder.header("Content-Type", contentType != null ? contentType : "application/json");
-                }
-            }
-
-            builder.method(method.toUpperCase(), bodyPublisher);
-
-            if (headers != null) {
-                for (Map<String, String> h : headers) {
-                    String k = h.get("key");
-                    String v = h.get("value");
-                    String enabled = h.get("enabled");
-                    if (k != null && !k.isBlank() && !"false".equals(enabled)) {
-                        builder.header(k, replaceVars(v != null ? v : "", params));
-                    }
-                }
-            }
-
-            long start = System.currentTimeMillis();
-            HttpResponse<String> response = httpClient.send(builder.build(),
-                    HttpResponse.BodyHandlers.ofString());
-            long elapsed = System.currentTimeMillis() - start;
-
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("status", response.statusCode());
-            result.put("headers", response.headers().map());
-            result.put("elapsed", elapsed);
-
-            String responseBody = response.body();
-            try {
-                result.put("body", new com.fasterxml.jackson.databind.ObjectMapper().readValue(responseBody, Object.class));
-            } catch (Exception e) {
-                result.put("body", responseBody);
-            }
-
-            log.info("API run: {} {} ({}ms) -> {}", tool.getDisplayName(), method, elapsed, response.statusCode());
-            return ResponseEntity.ok(ApiResponse.ok(result));
+            return ResponseEntity.ok(ApiResponse.ok(toolExecutionService.executeApplicationTool(tool, params)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
+                    .body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
             log.error("API run failed: {}", tool.getDisplayName(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("API 调用失败: " + e.getMessage()));
+                    .body(ApiResponse.error(e.getMessage()));
         }
     }
 
@@ -446,27 +356,6 @@ public class ApplicationToolController {
         }
 
         return ResponseEntity.ok(ApiResponse.ok(null));
-    }
-
-    private String replaceVars(String template, Map<String, Object> params) {
-        if (template == null || params == null || params.isEmpty()) return template;
-        Matcher m = VAR_PATTERN.matcher(template);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String varName = m.group(1);
-            Object value = params.get(varName);
-            m.appendReplacement(sb, Matcher.quoteReplacement(value != null ? value.toString() : ""));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    private String encode(String value) {
-        try {
-            return java.net.URLEncoder.encode(value, "UTF-8");
-        } catch (Exception e) {
-            return value;
-        }
     }
 
     private Map<String, Object> toToolMap(ToolDefinition tool) {

@@ -61,6 +61,7 @@ class OrchestrationEndToEndTest {
     @Autowired private WorkflowDefinitionRepository workflowDefinitionRepository;
     @Autowired private ToolDefinitionRepository toolDefinitionRepository;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private org.springframework.core.env.Environment environment;
 
     @SpyBean private DefaultNodeInvokers nodeInvokers;
 
@@ -103,11 +104,40 @@ class OrchestrationEndToEndTest {
                 .filter(q -> q.getName().startsWith("e2e_"))
                 .forEach(q -> queryRepository.delete(q));
 
-        // --- 数据源 ---
-        List<Datasource> dsList = datasourceRepository.findBySlugAndOwnerId("APPLICATION", APP_ID);
-        assertThat(dsList).as("appId=1 下需至少有一个数据源").isNotEmpty();
-        datasourceId = dsList.get(0).getId();
-        System.out.println("[E2E] 使用数据源 datasourceId=" + datasourceId + " name=" + dsList.get(0).getName());
+        // --- 数据源：自建 e2e 专属数据源（复用存量数据源会因历史密钥不一致导致解密失败） ---
+        datasourceRepository.findAll().stream()
+                .filter(d -> "e2e_test_db".equals(d.getName()))
+                .forEach(d -> datasourceRepository.delete(d));
+
+        String jdbcUrl = environment.getProperty("spring.datasource.url");
+        String dbUser = environment.getProperty("spring.datasource.username");
+        String dbPassword = environment.getProperty("spring.datasource.password");
+        assertThat(jdbcUrl).as("spring.datasource.url 必须已配置").isNotBlank();
+        java.util.regex.Matcher hostMatcher = java.util.regex.Pattern
+                .compile("jdbc:mysql://([^:/]+):(\\d+)").matcher(jdbcUrl);
+        assertThat(hostMatcher.find()).as("spring.datasource.url 需为 jdbc:mysql://host:port 形式").isTrue();
+        String host = hostMatcher.group(1);
+        String port = hostMatcher.group(2);
+
+        Map<String, Object> dsConfig = new java.util.LinkedHashMap<>();
+        dsConfig.put("host", host);
+        dsConfig.put("port", Integer.parseInt(port));
+        dsConfig.put("database", "luban");
+        dsConfig.put("username", dbUser);
+        dsConfig.put("password", dbPassword);
+        // 密码以明文落库：decryptPassword 对未加密值原样返回，查询节点可正常建连
+
+        Datasource ds = new Datasource();
+        ds.setOwnerId(APP_ID);
+        ds.setSlug("APPLICATION");
+        ds.setScope("APPLICATION");
+        ds.setName("e2e_test_db");
+        ds.setType("MySQL");
+        ds.setConfig(toJson(dsConfig));
+        ds.setStatus("connected");
+        ds = datasourceRepository.save(ds);
+        datasourceId = ds.getId();
+        System.out.println("[E2E] 自建数据源 datasourceId=" + datasourceId + " name=e2e_test_db");
 
         // --- Query（带入参 name_filter，从 $input.name 传递） ---
         Query query = new Query();
@@ -438,7 +468,8 @@ class OrchestrationEndToEndTest {
 
         var t1 = node("t1", "transform", "提取记录");
         t1.setPosition(pos(700, 200));
-        t1.config().setTemplate(Map.of("record", "$nodes.q1.rows.0.name"));
+        // Query 节点输出 rows 为数组的数组（列名在 columns）：取第 2 列（name）须用下标 1
+        t1.config().setTemplate(Map.of("record", "$nodes.q1.rows.0.1"));
 
         var api1 = node("api1", "http", "调用API");
         api1.setPosition(pos(1000, 200));
@@ -508,7 +539,7 @@ class OrchestrationEndToEndTest {
                     "params", (Object) params,
                     "data", Map.of("echoed", params),
                     "statusCode", "ok");
-        }).when(nodeInvokers).callTool(anyLong(), anyMap(), anyInt(), anyInt());
+        }).when(nodeInvokers).callTool(anyLong(), anyMap(), anyInt(), anyInt(), org.mockito.ArgumentMatchers.isNull());
 
         // callHttpUrl：HTTP 直连出站，mock
         doReturn(Map.of("status", "not_called"))
@@ -532,7 +563,7 @@ class OrchestrationEndToEndTest {
                     "status", "started",
                     "instanceId", 999L,
                     "formData", (Object) formData);
-        }).when(nodeInvokers).runWorkflowAction(anyString(), anyLong(), anyMap(), isNull(), isNull());
+        }).when(nodeInvokers).runWorkflowAction(anyString(), anyLong(), anyMap(), isNull(), isNull(), org.mockito.ArgumentMatchers.isNull());
 
         // runQuery 不 stub → 走真实 QueryService.run() → 真实 MySQL
     }

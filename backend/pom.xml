@@ -21,6 +21,10 @@
         <java.version>21</java.version>
         <jjwt.version>0.12.6</jjwt.version>
         <lombok.version>1.18.38</lombok.version>
+        <!-- 覆盖 Spring Boot 3.3.2 默认版本：JDK 25 运行时 Byte Buddy 1.14 无法生成代理类
+             （官方仅支持到 Java 23），Mockito/SpyBean 全部失效；1.17.x 起官方支持 Java 25 -->
+        <mockito.version>5.20.0</mockito.version>
+        <byte-buddy.version>1.17.7</byte-buddy.version>
     </properties>
 
     <dependencies>

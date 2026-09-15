@@ -2,31 +2,36 @@ package com.luban.orchestration.engine;
 
 import com.luban.entity.Query;
 import com.luban.entity.ToolDefinition;
+import com.luban.invoke.ExecutionContext;
+import com.luban.invoke.InvocationRequest;
+import com.luban.invoke.InvocationResult;
+import com.luban.invoke.InvocationService;
+import com.luban.invoke.TargetType;
 import com.luban.repository.QueryRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import com.luban.service.QueryService;
-import com.luban.workflow.service.ProcessEngine;
+import com.luban.service.ToolExecutionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * 默认节点执行器：把引擎的抽象 invoker 落到平台既有服务。
  *
- * - runQuery  → QueryService.run（参数化执行，用户上下文来自当前请求）
- * - callTool  → 平台已注册 API 工具出站调用（复用 http 节点的 IP 建连逻辑与超时）
- * - callHttpUrl → 直连出站（URL 已由引擎 IpGuard 校验并替换为验证过的 IP 建连地址）
+ * 跨对象节点（query/tool/workflow/subflow）在携带 ExecutionContext 时一律经
+ * InvocationService 漏斗执行（深度/环/manifest/审计统一生效）；ctx 为 null
+ * （开发态试运行等直连场景）时回退到直调领域服务的旧行为。
+ *
+ * - runQuery  → 漏斗 → QueryService.run
+ * - callTool  → 漏斗 → ToolTargetExecutor（ORCHESTRATION 型工具会经漏斗递归子编排）
+ * - callHttpUrl → ToolExecutionService 裸出站通道（IP 建连/重试统一管理）
  * - runPython → SandboxPythonClient（embedding-service 沙箱池）
+ * - runWorkflowAction → 漏斗 → 流程引擎（发起权限/审批 assignee 校验天然生效）
+ * - runSubflow → 漏斗 → 子编排（InvocationService 护栏管深度与环）
  */
 @Slf4j
 @Component
@@ -39,14 +44,104 @@ public class DefaultNodeInvokers implements OrchestrationEngine.NodeInvokers {
     private final SandboxPythonClient sandboxPythonClient;
     private final com.luban.workflow.service.ProcessService processService;
     private final com.luban.workflow.repository.WorkflowTaskRepository workflowTaskRepository;
-
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .followRedirects(HttpClient.Redirect.NEVER) // 重定向逐跳校验由调用方负责
-            .build();
+    private final com.luban.repository.UserRepository userRepository;
+    private final ToolExecutionService toolExecutionService;
+    private final ObjectProvider<InvocationService> invocationServiceProvider;
 
     @Override
-    public Map<String, Object> runQuery(Long queryId, Map<String, Object> params) {
+    public Map<String, Object> runQuery(Long queryId, Map<String, Object> params, ExecutionContext ctx) {
+        if (ctx == null) {
+            return runQueryDirect(queryId, params);
+        }
+        InvocationResult result = invocationServiceProvider.getObject().invoke(
+                InvocationRequest.of(TargetType.QUERY, queryId, params,
+                        ctx.child(TargetType.QUERY, String.valueOf(queryId))));
+        requireSuccess(result, "query:" + queryId);
+        return result.dataAsMap();
+    }
+
+    @Override
+    public Map<String, Object> callTool(Long toolId, Map<String, Object> params, int timeoutMs, int retries,
+                                        ExecutionContext ctx) {
+        ToolDefinition tool = toolDefinitionRepository.findById(toolId)
+                .orElseThrow(() -> new IllegalArgumentException("API 工具不存在: " + toolId));
+        if (ctx != null) {
+            // 经漏斗：ORCHESTRATION 型工具可正确递归子编排（修复旧实现静默不递归）
+            InvocationResult result = invocationServiceProvider.getObject().invoke(
+                    InvocationRequest.of(TargetType.TOOL, toolId, params,
+                            ctx.child(TargetType.TOOL, String.valueOf(toolId))));
+            requireSuccess(result, "tool:" + toolId);
+            return result.dataAsMap();
+        }
+        // 开发态直连通道：工具 config 中的 url/method 由平台注册时管理（已受控）
+        return toolExecutionService.callHttpRaw(urlOf(tool.getConfig()), methodOf(tool.getConfig()),
+                Map.of(), params, timeoutMs, retries, true);
+    }
+
+    @Override
+    public Map<String, Object> callHttpUrl(String url, String method, Map<String, Object> headers,
+                                           Object body, int timeoutMs, int retries) {
+        return toolExecutionService.callHttpRaw(url, method, headers, body, timeoutMs, retries, false);
+    }
+
+    @Override
+    public Map<String, Object> runPython(String source, String entry, java.util.List<String> packages,
+                                         Map<String, Object> inputs, int timeoutMs) {
+        SandboxPythonClient.SandboxResult r = sandboxPythonClient.execute(source, entry, inputs, timeoutMs);
+        if (!r.ok()) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("__python_error__", r.errorCode());
+            out.put("message", r.stderr() == null ? "沙箱执行失败" : r.stderr());
+            return out;
+        }
+        return r.result();
+    }
+
+    @Override
+    public Map<String, Object> runWorkflowAction(String action, Long workflowDefinitionId,
+                                                 Map<String, Object> formData, Long instanceId, String comment,
+                                                 ExecutionContext ctx) {
+        if (ctx == null) {
+            return runWorkflowActionDirect(action, workflowDefinitionId, formData, instanceId, comment);
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("action", action);
+        if (instanceId != null) params.put("instanceId", instanceId);
+        if (formData != null) params.put("formData", formData);
+        params.put("comment", comment);
+        InvocationResult result = invocationServiceProvider.getObject().invoke(
+                InvocationRequest.of(TargetType.FLOW, workflowDefinitionId, params,
+                        ctx.child(TargetType.FLOW, String.valueOf(workflowDefinitionId))));
+        requireSuccess(result, "flow:" + workflowDefinitionId);
+        return result.dataAsMap();
+    }
+
+    @Override
+    public Map<String, Object> runSubflow(Long subOrchestrationId, Map<String, Object> params, ExecutionContext ctx) {
+        if (ctx == null) {
+            // 开发态试运行：直接执行子编排（当前版本），不走漏斗
+            return orchestrationDirect(subOrchestrationId, params);
+        }
+        InvocationResult result = invocationServiceProvider.getObject().invoke(
+                InvocationRequest.of(TargetType.ORCHESTRATION, subOrchestrationId, params,
+                        ctx.child(TargetType.ORCHESTRATION, String.valueOf(subOrchestrationId))));
+        requireSuccess(result, "orchestration:" + subOrchestrationId);
+        Map<String, Object> data = result.dataAsMap();
+        Object payload = data.get("data");
+        return payload instanceof Map<?, ?> m ? asStringMap(m) : data;
+    }
+
+    private void requireSuccess(InvocationResult result, String target) {
+        if (!result.isSuccess()) {
+            throw new IllegalStateException("调用 " + target + " 失败: "
+                    + (result.getErrorCode() != null ? result.getErrorCode() + " " : "")
+                    + result.getErrorMessage());
+        }
+    }
+
+    // ---------- ctx == null 的直连旧行为（开发态试运行 / 兼容路径） ----------
+
+    private Map<String, Object> runQueryDirect(Long queryId, Map<String, Object> params) {
         com.luban.dto.RunQueryRequest request = new com.luban.dto.RunQueryRequest();
         if (params != null && !params.isEmpty()) request.setParams(params);
         var response = queryService.run(queryId, request);
@@ -57,69 +152,8 @@ public class DefaultNodeInvokers implements OrchestrationEngine.NodeInvokers {
         return out;
     }
 
-    @Override
-    public Map<String, Object> callTool(Long toolId, Map<String, Object> params, int timeoutMs, int retries) {
-        ToolDefinition tool = toolDefinitionRepository.findById(toolId)
-                .orElseThrow(() -> new IllegalArgumentException("API 工具不存在: " + toolId));
-        String config = tool.getConfig();
-        // 复用直连通道：工具 config 中的 url/method 由平台注册时管理（已受控）
-        return callHttpUrlWithRetries(urlOf(config), methodOf(config), Map.of(), params, timeoutMs, retries, true);
-    }
-
-    @Override
-    public Map<String, Object> callHttpUrl(String url, String method, Map<String, Object> headers,
-                                           Object body, int timeoutMs, int retries) {
-        return callHttpUrlWithRetries(url, method, headers, body, timeoutMs, retries, false);
-    }
-
-    private Map<String, Object> callHttpUrlWithRetries(String url, String method, Map<String, Object> headers,
-                                                       Object body, int timeoutMs, int retries, boolean hasHostHeader) {
-        Map<String, Object> lastResult = Map.of("error", "未执行");
-        int attempts = Math.max(1, retries + 1);
-        for (int i = 0; i < attempts; i++) {
-            lastResult = callHttpOnce(url, method, headers, body, timeoutMs, hasHostHeader);
-            Object err = lastResult.get("error");
-            if (err == null) return lastResult;
-            log.warn("HTTP call attempt {}/{} failed: {}", i + 1, attempts, err);
-        }
-        return lastResult;
-    }
-
-    private Map<String, Object> callHttpOnce(String url, String method, Map<String, Object> headers,
-                                             Object body, int timeoutMs, boolean hasHostHeader) {
-        try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofMillis(timeoutMs));
-            if (headers != null) {
-                headers.forEach((k, v) -> builder.header(k, String.valueOf(v)));
-            }
-            if (!hasHostHeader) {
-                // IP 建连时由引擎补 Host；此处兜底
-                URI uri = URI.create(url);
-                builder.header("Host", uri.getHost());
-            }
-            if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)) {
-                String payload = body == null ? "" : toJson(body);
-                builder.method(method.toUpperCase(), HttpRequest.BodyPublishers.ofString(payload));
-                builder.header("Content-Type", "application/json");
-            } else {
-                builder.method(method.toUpperCase(), HttpRequest.BodyPublishers.noBody());
-            }
-            HttpResponse<String> resp = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("status", resp.statusCode());
-            String bodyText = resp.body() == null ? "" : resp.body();
-            out.put("data", bodyText.length() > 1_000_000 ? bodyText.substring(0, 1_000_000) : bodyText);
-            return out;
-        } catch (Exception e) {
-            return Map.of("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-        }
-    }
-
-    @Override
-    public Map<String, Object> runWorkflowAction(String action, Long workflowDefinitionId,
-                                                 Map<String, Object> formData, Long instanceId, String comment) {
+    private Map<String, Object> runWorkflowActionDirect(String action, Long workflowDefinitionId,
+                                                        Map<String, Object> formData, Long instanceId, String comment) {
         Long userId = currentUserId();
         String userName = currentUserName();
         if (userId == null) {
@@ -155,6 +189,10 @@ public class DefaultNodeInvokers implements OrchestrationEngine.NodeInvokers {
         return out;
     }
 
+    private Map<String, Object> orchestrationDirect(Long subOrchestrationId, Map<String, Object> params) {
+        throw new IllegalStateException("开发态试运行不支持嵌套子编排（发布后经漏斗执行）");
+    }
+
     private com.luban.workflow.entity.WorkflowTask pendingTaskForInstance(Long instanceId, Long userId) {
         var tasks = workflowTaskRepository.findByAssigneeIdAndInstanceId(userId, instanceId);
         return tasks.stream().filter(t -> "PENDING".equals(t.getStatus())).findFirst()
@@ -180,17 +218,11 @@ public class DefaultNodeInvokers implements OrchestrationEngine.NodeInvokers {
         }
     }
 
-    @Override
-    public Map<String, Object> runPython(String source, String entry, java.util.List<String> packages,
-                                         Map<String, Object> inputs, int timeoutMs) {
-        SandboxPythonClient.SandboxResult r = sandboxPythonClient.execute(source, entry, inputs, timeoutMs);
-        if (!r.ok()) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("__python_error__", r.errorCode());
-            out.put("message", r.stderr() == null ? "沙箱执行失败" : r.stderr());
-            return out;
-        }
-        return r.result();
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> asStringMap(Map<?, ?> m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return out;
     }
 
     private String urlOf(String config) {
@@ -210,5 +242,4 @@ public class DefaultNodeInvokers implements OrchestrationEngine.NodeInvokers {
             return "GET";
         }
     }
-
 }

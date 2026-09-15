@@ -33,7 +33,7 @@ public final class OrchestrationDsl {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class NodeDef {
         private String id;
-        private String nodeType; // start / http / query / python / transform / condition / parallel / workflow / output / error
+        private String nodeType; // start / http / query / python / transform / condition / parallel / workflow / subflow / output / error
         private Map<String, Object> position;
         private NodeData data;
 
@@ -71,6 +71,8 @@ public final class OrchestrationDsl {
             private Integer retries;
             // query
             private Long queryId;
+            // subflow：显式子编排（经漏斗递归执行，深度/环由 InvocationService 护栏管理）
+            private Long subOrchestrationId;
             // python
             private String source;
             private String entry;

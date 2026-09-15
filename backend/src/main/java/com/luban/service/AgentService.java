@@ -11,10 +11,7 @@ import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.ToolDefinition;
-import com.luban.orchestration.entity.OrchestrationExecution;
 import com.luban.entity.ToolGroup;
-import com.luban.executor.HttpExecutor;
-import com.luban.executor.McpExecutor;
 import com.luban.repository.AgentConfigRepository;
 import com.luban.repository.AlgorithmExecutionLogRepository;
 import com.luban.repository.ChatMessageRepository;
@@ -61,9 +58,7 @@ public class AgentService {
     private final AgentConfigService agentConfigService;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final ToolGroupRepository toolGroupRepository;
-    private final HttpExecutor httpExecutor;
-    private final McpExecutor mcpExecutor;
-    private final com.luban.orchestration.service.OrchestrationService orchestrationService;
+    private final com.luban.invoke.InvocationService invocationService;
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptRelationRepository conceptRelationRepository;
@@ -131,9 +126,7 @@ public class AgentService {
                         AgentConfigService agentConfigService,
                         ToolDefinitionRepository toolDefinitionRepository,
                         ToolGroupRepository toolGroupRepository,
-                        HttpExecutor httpExecutor,
-                        McpExecutor mcpExecutor,
-                        com.luban.orchestration.service.OrchestrationService orchestrationService,
+                        com.luban.invoke.InvocationService invocationService,
                         ConceptMappingRepository conceptMappingRepository,
                         ConceptJoinMappingRepository conceptJoinMappingRepository,
                         ConceptRelationRepository conceptRelationRepository,
@@ -154,9 +147,7 @@ public class AgentService {
         this.agentConfigService = agentConfigService;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.toolGroupRepository = toolGroupRepository;
-        this.httpExecutor = httpExecutor;
-        this.mcpExecutor = mcpExecutor;
-        this.orchestrationService = orchestrationService;
+        this.invocationService = invocationService;
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
         this.conceptRelationRepository = conceptRelationRepository;
@@ -3639,31 +3630,27 @@ public class AgentService {
             return "{\"error\": \"Tool not found: " + toolName + "\"}";
         }
         try {
-            ToolType toolType = tool.getToolType();
-            return switch (toolType) {
-                case HTTP -> httpExecutor.execute(tool, arguments, "agent");
-                case MCP_PASSTHROUGH -> mcpExecutor.execute(tool, arguments);
-                case ORCHESTRATION -> {
-                    var orchConfig = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
-                            tool.getConfig() == null ? "{}" : tool.getConfig(),
-                            new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {});
-                    long orchDefId = ((Number) orchConfig.getOrDefault("orchestrationId", 0)).longValue();
-                    Map<String, Object> orchResult = orchestrationService.execute(
-                            orchDefId, null, OrchestrationExecution.TRIGGER_RUNTIME, null, arguments);
-                    yield new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(orchResult);
-                }
-                case ALGORITHM -> {
-                    com.luban.service.algorithm.AlgorithmConfig algoConfig = com.luban.service.algorithm.AlgorithmConfig.parse(tool.getConfig());
-                    if (algoConfig.getScriptPath() == null || algoConfig.getScriptPath().isBlank()) {
-                        yield "{\"error\": \"算法未上传脚本\"}";
-                    }
-                    Map<String, Object> result = codeExecutorService.executeScript(algoConfig.getScriptPath(), arguments, algoConfig.getTimeout());
-                    yield result.toString();
-                }
-            };
+            // 统一经漏斗执行：ORCHESTRATION 型工具可递归子编排，深度/环/审计统一生效
+            var ctx = com.luban.invoke.ExecutionContext.root(
+                    com.luban.invoke.InvocationOrigin.AGENT,
+                    com.luban.invoke.InvocationPrincipal.onBehalfOf(currentAgentUserId()),
+                    null, null);
+            var result = invocationService.invoke(com.luban.invoke.InvocationRequest.of(
+                    com.luban.invoke.TargetType.TOOL, tool.getId(), arguments, ctx));
+            if (!result.isSuccess()) {
+                return "{\"error\": \"" + result.getErrorMessage() + "\"}";
+            }
+            return result.getData() instanceof String s ? s
+                    : new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(result.getData());
         } catch (Exception e) {
             log.error("Tool execution failed: {}", toolName, e);
             return "{\"error\": \"" + e.getMessage() + "\"}";
         }
+    }
+
+    /** Agent 以登录用户身份执行（无登录上下文时为系统身份） */
+    private Long currentAgentUserId() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getPrincipal() instanceof com.luban.entity.User u ? u.getId() : null;
     }
 }

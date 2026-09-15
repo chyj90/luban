@@ -41,6 +41,16 @@ public class ProcessEngine {
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
     private final DepartmentRepository departmentRepository;
+    private final WorkflowTriggerService triggerService;
+    private final ApproverScriptHelper approverScriptHelper;
+
+    /** 审批人脚本执行池：带超时护栏（守护线程，避免阻塞 JVM 退出） */
+    private final java.util.concurrent.ExecutorService approverScriptExecutor =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "approver-script");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -151,6 +161,8 @@ public class ProcessEngine {
 
             // 取消其他待处理任务
             cancelAllPendingTasks(instance.getId());
+            triggerService.fireNodeEvent(instance, task.getNodeId(),
+                    WorkflowTriggerService.EVT_REJECTED, task.getId(), comment);
             rejectToStart(instance, task.getNodeId(), comment, operatorId);
             return task;
         }
@@ -189,6 +201,10 @@ public class ProcessEngine {
                 workflowTaskRepository.saveAll(siblings);
                 recordHistory(instance.getId(), task.getId(), task.getNodeId(), action,
                         operatorId, comment, null, null, null);
+                if ("APPROVE".equals(action)) {
+                    triggerService.fireNodeEvent(instance, task.getNodeId(),
+                            WorkflowTriggerService.EVT_APPROVED, task.getId(), comment);
+                }
                 createTasksForNextNodes(definition, instance, task.getNodeId(), instance.getFormData());
                 checkAndCompleteInstance(instance);
                 return task;
@@ -217,6 +233,8 @@ public class ProcessEngine {
                 operatorId, comment, null, null, null);
 
         if ("APPROVE".equals(action)) {
+            triggerService.fireNodeEvent(instance, task.getNodeId(),
+                    WorkflowTriggerService.EVT_APPROVED, task.getId(), comment);
             WorkflowDefinition definition = workflowDefinitionRepository.findById(instance.getWorkflowId())
                     .orElseThrow(() -> new RuntimeException("流程定义不存在"));
 
@@ -237,6 +255,8 @@ public class ProcessEngine {
             createTasksForNextNodes(definition, instance, task.getNodeId(), instance.getFormData());
             checkAndCompleteInstance(instance);
         } else if ("REJECT".equals(action)) {
+            triggerService.fireNodeEvent(instance, task.getNodeId(),
+                    WorkflowTriggerService.EVT_REJECTED, task.getId(), comment);
             rejectToStart(instance, task.getNodeId(), comment, operatorId);
         }
 
@@ -966,6 +986,7 @@ public class ProcessEngine {
                 task.setAllAssigneeIds(objectMapper.valueToTree(assigneeIds).toString());
             }
             workflowTaskRepository.save(task);
+            triggerService.fireNodeEvent(instance, nodeId, WorkflowTriggerService.EVT_NODE_ENTERED, null, null);
             return;
         }
 
@@ -978,6 +999,7 @@ public class ProcessEngine {
             }
             workflowTaskRepository.save(task);
         }
+        triggerService.fireNodeEvent(instance, nodeId, WorkflowTriggerService.EVT_NODE_ENTERED, null, null);
     }
 
     private WorkflowTask buildTask(WorkflowInstance instance, String nodeId, Long assigneeId,
@@ -1159,18 +1181,24 @@ public class ProcessEngine {
                         return Collections.emptyList();
                     }
 
-                    // 注入上下文变量
+                    // 沙箱：只注入受控上下文；仓库与完整用户实体不再暴露给脚本，
+                    // 用户/角色查询统一经 helper 的脱敏白名单接口（见 ApproverScriptHelper）
                     engine.put("formData", formData);
                     engine.put("initiatorId", initiatorId);
-                    if (initiatorId != null) {
-                        userRepository.findById(initiatorId).ifPresent(u -> {
-                            engine.put("initiator", u);
-                        });
-                    }
-                    engine.put("userRepository", userRepository);
-                    engine.put("roleRepository", roleRepository);
+                    engine.put("initiator", approverScriptHelper.findUserById(initiatorId));
+                    engine.put("helper", approverScriptHelper);
 
-                    Object result = engine.eval(script);
+                    // 超时护栏：脚本 3s 内未结束视为失败
+                    java.util.concurrent.Future<Object> evalFuture =
+                            approverScriptExecutor.submit(() -> engine.eval(script));
+                    Object result;
+                    try {
+                        result = evalFuture.get(3, java.util.concurrent.TimeUnit.SECONDS);
+                    } catch (java.util.concurrent.TimeoutException te) {
+                        evalFuture.cancel(true);
+                        log.error("审批人脚本执行超时（3s），已中断");
+                        return Collections.emptyList();
+                    }
                     if (result instanceof List) {
                         @SuppressWarnings("unchecked")
                         List<Object> list = (List<Object>) result;
@@ -1213,6 +1241,8 @@ public class ProcessEngine {
         instance.setStatus("REJECTED");
         instance.setCompletedAt(LocalDateTime.now());
         workflowInstanceRepository.save(instance);
+        triggerService.fireNodeEvent(instance, fromNodeId,
+                WorkflowTriggerService.EVT_INSTANCE_REJECTED, null, comment);
 
         // 取消所有待处理任务
         List<WorkflowTask> pendingTasks = workflowTaskRepository.findByInstanceId(instance.getId())
@@ -1249,6 +1279,8 @@ public class ProcessEngine {
                 instance.setStatus("COMPLETED");
                 instance.setCompletedAt(LocalDateTime.now());
                 workflowInstanceRepository.save(instance);
+                triggerService.fireNodeEvent(instance, "end",
+                        WorkflowTriggerService.EVT_INSTANCE_COMPLETED, null, null);
             }
         }
     }

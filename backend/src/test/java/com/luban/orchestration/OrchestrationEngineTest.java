@@ -1,5 +1,6 @@
 package com.luban.orchestration;
 
+import com.luban.invoke.ExecutionContext;
 import com.luban.orchestration.dsl.OrchestrationDsl;
 import com.luban.orchestration.engine.OrchestrationEngine;
 import com.luban.orchestration.engine.VariableResolver;
@@ -56,12 +57,12 @@ class OrchestrationEngineTest {
         Map<String, Long> receivedQueryId = new java.util.HashMap<>();
         Map<String, Map<String, Object>> receivedParams = new java.util.HashMap<>();
         var result = new OrchestrationEngine(resolver, new OrchestrationEngine.NodeInvokers() {
-            public Map<String, Object> runQuery(Long qid, Map<String, Object> params) {
+            public Map<String, Object> runQuery(Long qid, Map<String, Object> params, ExecutionContext ctx) {
                 receivedQueryId.put("qid", qid);
                 receivedParams.put("params", params);
                 return Map.of("rows", List.of("r1"));
             }
-            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r) { return Map.of(); }
+            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r, ExecutionContext ctx) { return Map.of(); }
             public Map<String, Object> callHttpUrl(String u, String m, Map<String, Object> h, Object b, int to, int r) { return Map.of(); }
             public Map<String, Object> runPython(String s, String e, List<String> pk, Map<String, Object> in, int to) { return Map.of(); }
         }, ipGuard).execute(dsl, Map.of("id", 42), null);
@@ -113,11 +114,11 @@ class OrchestrationEngineTest {
 
         Map<String, Object> captured = new java.util.HashMap<>();
         var result = new OrchestrationEngine(resolver, new OrchestrationEngine.NodeInvokers() {
-            public Map<String, Object> runQuery(Long q, Map<String, Object> p) { return Map.of(); }
-            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r) { return Map.of(); }
+            public Map<String, Object> runQuery(Long q, Map<String, Object> p, ExecutionContext ctx) { return Map.of(); }
+            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r, ExecutionContext ctx) { return Map.of(); }
             public Map<String, Object> callHttpUrl(String u, String m, Map<String, Object> h, Object b, int to, int r) { return Map.of(); }
             public Map<String, Object> runPython(String s, String e, List<String> pk, Map<String, Object> in, int to) { return Map.of(); }
-            public Map<String, Object> runWorkflowAction(String action, Long defId, Map<String, Object> formData, Long instanceId, String comment) {
+            public Map<String, Object> runWorkflowAction(String action, Long defId, Map<String, Object> formData, Long instanceId, String comment, ExecutionContext ctx) {
                 captured.put("action", action);
                 captured.put("defId", defId);
                 captured.put("formData", formData);
@@ -182,8 +183,8 @@ class OrchestrationEngineTest {
 
     private OrchestrationEngine.NodeInvokers noopInvokers() {
         return new OrchestrationEngine.NodeInvokers() {
-            public Map<String, Object> runQuery(Long q, Map<String, Object> p) { return Map.of("rows", List.of()); }
-            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r) { return Map.of(); }
+            public Map<String, Object> runQuery(Long q, Map<String, Object> p, ExecutionContext ctx) { return Map.of("rows", List.of()); }
+            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r, ExecutionContext ctx) { return Map.of(); }
             public Map<String, Object> callHttpUrl(String u, String m, Map<String, Object> h, Object b, int to, int r) { return Map.of(); }
             public Map<String, Object> runPython(String s, String e, List<String> pk, Map<String, Object> in, int to) { return Map.of(); }
         };
@@ -191,8 +192,8 @@ class OrchestrationEngineTest {
 
     private OrchestrationEngine.NodeInvokers failingInvokers() {
         return new OrchestrationEngine.NodeInvokers() {
-            public Map<String, Object> runQuery(Long q, Map<String, Object> p) { throw new RuntimeException("boom"); }
-            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r) { return Map.of(); }
+            public Map<String, Object> runQuery(Long q, Map<String, Object> p, ExecutionContext ctx) { throw new RuntimeException("boom"); }
+            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r, ExecutionContext ctx) { return Map.of(); }
             public Map<String, Object> callHttpUrl(String u, String m, Map<String, Object> h, Object b, int to, int r) { return Map.of(); }
             public Map<String, Object> runPython(String s, String e, List<String> pk, Map<String, Object> in, int to) { return Map.of(); }
         };
@@ -200,8 +201,8 @@ class OrchestrationEngineTest {
 
     private OrchestrationEngine.NodeInvokers throwingQueryInvokers() {
         return new OrchestrationEngine.NodeInvokers() {
-            public Map<String, Object> runQuery(Long q, Map<String, Object> p) { throw new RuntimeException("db down"); }
-            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r) { return Map.of(); }
+            public Map<String, Object> runQuery(Long q, Map<String, Object> p, ExecutionContext ctx) { throw new RuntimeException("db down"); }
+            public Map<String, Object> callTool(Long t, Map<String, Object> p, int to, int r, ExecutionContext ctx) { return Map.of(); }
             public Map<String, Object> callHttpUrl(String u, String m, Map<String, Object> h, Object b, int to, int r) { return Map.of(); }
             public Map<String, Object> runPython(String s, String e, List<String> pk, Map<String, Object> in, int to) { return Map.of(); }
         };

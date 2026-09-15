@@ -125,7 +125,8 @@ public class OrchestrationService {
         return linter.lint(dsl,
                 queryId -> queryRepositoryExists(queryId),
                 toolId -> toolDefinitionRepository.existsById(toolId),
-                wfDefId -> workflowDefinitionRepository.existsById(wfDefId));
+                wfDefId -> workflowDefinitionRepository.existsById(wfDefId),
+                orchId -> definitionRepository.existsById(orchId));
     }
 
     /**
@@ -177,6 +178,16 @@ public class OrchestrationService {
      */
     public Map<String, Object> execute(Long definitionId, Long userId, String trigger,
                                        Long apiKeyId, Map<String, Object> inputs) {
+        return execute(definitionId, userId, trigger, apiKeyId, inputs, null);
+    }
+
+    /**
+     * 带调用上下文的执行：版本 manifest 作为内部触发的授权清单写入 ctx，
+     * 由漏斗在节点级调用时校验（深度/环/清单）。
+     */
+    public Map<String, Object> execute(Long definitionId, Long userId, String trigger,
+                                       Long apiKeyId, Map<String, Object> inputs,
+                                       com.luban.invoke.ExecutionContext ctx) {
         OrchestrationDefinition def = getById(definitionId);
         Long versionId = def.getPublishedVersionId() != null
                 && !OrchestrationExecution.TRIGGER_USER_TEST.equals(trigger)
@@ -184,9 +195,15 @@ public class OrchestrationService {
         OrchestrationVersion version = versionRepository.findById(versionId)
                 .orElseThrow(() -> new IllegalArgumentException("编排版本不存在"));
         OrchestrationDsl.Dsl dsl = parseDsl(version.getDsl());
+        if (ctx != null) {
+            ctx = ctx.withAppId(def.getApplicationId())
+                    .withAllowedTargets(manifestOf(version));
+        }
 
         long start = System.currentTimeMillis();
-        OrchestrationEngine.ExecutionResult result = engine.execute(dsl, inputs, inputSchemaOf(dsl));
+        OrchestrationEngine.ExecutionResult result = ctx != null
+                ? engine.execute(dsl, inputs, inputSchemaOf(dsl), ctx)
+                : engine.execute(dsl, inputs, inputSchemaOf(dsl));
         long duration = System.currentTimeMillis() - start;
 
         OrchestrationExecution exec = new OrchestrationExecution();
@@ -247,6 +264,12 @@ public class OrchestrationService {
 
         OrchestrationVersion version = versionRepository.findById(def.getCurrentVersionId()).orElseThrow();
         OrchestrationDsl.Dsl dsl = parseDsl(version.getDsl());
+
+        // 固化目标清单（capability manifest）：运行时内部触发只允许调用清单内目标
+        if (version.getTargets() == null || version.getTargets().isBlank()) {
+            version.setTargets(extractTargetsJson(dsl));
+            version = versionRepository.save(version);
+        }
 
         // 注册/更新 ToolDefinition（ORCHESTRATION 类型），input/output schema 由 DSL 推导
         String toolName = "orch_" + definitionId;
@@ -439,6 +462,11 @@ public class OrchestrationService {
      * 无状态校验（不依赖 SecurityContext）——供 ApiKeyAuthFilter 白名单路径调用。
      */
     public Map<String, Object> invokeByApiKey(String toolName, Long apiKeyId, Map<String, Object> inputs) {
+        return invokeByApiKey(toolName, apiKeyId, inputs, null);
+    }
+
+    public Map<String, Object> invokeByApiKey(String toolName, Long apiKeyId, Map<String, Object> inputs,
+                                              com.luban.invoke.ExecutionContext ctx) {
         checkRateLimit(apiKeyId);
         ToolDefinition tool = toolDefinitionRepository.findAll().stream()
                 .filter(t -> toolName.equals(t.getName()))
@@ -462,9 +490,14 @@ public class OrchestrationService {
         OrchestrationVersion version = versionRepository.findById(publishedVersionId)
                 .orElseThrow(() -> new IllegalArgumentException("发布版本不存在"));
 
+        if (ctx != null) {
+            ctx = ctx.withAppId(def.getApplicationId()).withAllowedTargets(manifestOf(version));
+        }
         long start = System.currentTimeMillis();
         OrchestrationDsl.Dsl dsl = parseDsl(version.getDsl());
-        OrchestrationEngine.ExecutionResult result = engine.execute(dsl, inputs, inputSchemaOf(dsl));
+        OrchestrationEngine.ExecutionResult result = ctx != null
+                ? engine.execute(dsl, inputs, inputSchemaOf(dsl), ctx)
+                : engine.execute(dsl, inputs, inputSchemaOf(dsl));
         long duration = System.currentTimeMillis() - start;
 
         OrchestrationExecution exec = new OrchestrationExecution();
@@ -485,6 +518,39 @@ public class OrchestrationService {
         out.put("durationMs", duration);
         if (!result.success()) out.put("errorCode", result.errorCode());
         return out;
+    }
+
+    /** 版本发布清单解析；历史版本无 targets 字段时返回 null（不限制，向后兼容） */
+    public java.util.Set<String> manifestOf(OrchestrationVersion version) {
+        if (version == null || version.getTargets() == null || version.getTargets().isBlank()) {
+            return null;
+        }
+        try {
+            List<String> keys = objectMapper.readValue(version.getTargets(),
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+            return new java.util.LinkedHashSet<>(keys);
+        } catch (Exception e) {
+            log.warn("版本 {} manifest 解析失败，按不限制处理", version.getId());
+            return null;
+        }
+    }
+
+    /** 从 DSL 提取所有跨对象目标引用，作为发布固化清单 */
+    private String extractTargetsJson(OrchestrationDsl.Dsl dsl) {
+        java.util.Set<String> targets = new java.util.LinkedHashSet<>();
+        if (dsl.getNodes() == null) return toJson(targets);
+        for (OrchestrationDsl.NodeDef node : dsl.getNodes()) {
+            OrchestrationDsl.NodeDef.Config c = node.config();
+            String type = node.getNodeType() == null ? "" : node.getNodeType();
+            switch (type) {
+                case "query" -> { if (c.getQueryId() != null) targets.add("QUERY:" + c.getQueryId()); }
+                case "http" -> { if (c.getToolId() != null) targets.add("TOOL:" + c.getToolId()); }
+                case "workflow" -> { if (c.getWorkflowDefinitionId() != null) targets.add("FLOW:" + c.getWorkflowDefinitionId()); }
+                case "subflow" -> { if (c.getSubOrchestrationId() != null) targets.add("ORCHESTRATION:" + c.getSubOrchestrationId()); }
+                default -> { }
+            }
+        }
+        return toJson(targets);
     }
 
     private Map<String, Object> parseConfigJson(String config) {

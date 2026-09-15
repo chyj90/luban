@@ -25,7 +25,7 @@ public class OrchestrationLinter {
 
     private static final Set<String> NODE_TYPES = Set.of(
             "start", "http", "query", "python", "transform", "condition", "parallel",
-            "workflow", "output");
+            "workflow", "subflow", "output");
     private static final Set<String> WORKFLOW_ACTIONS = Set.of(
             "start", "get_status", "approve", "reject");
 
@@ -58,7 +58,7 @@ public class OrchestrationLinter {
             "inputs", "toolId", "url", "method", "headers", "paramsTemplate", "bodyTemplate",
             "workflowAction", "workflowDefinitionId", "instanceIdTemplate", "formDataTemplate",
             "comment", "timeoutMs", "retries", "queryId", "source", "entry", "packages",
-            "template", "strategy");
+            "template", "strategy", "subOrchestrationId");
 
     /**
      * 常见字段名错误的纠正提示（LLM 生成的 DSL 高频踩坑点）。
@@ -140,6 +140,14 @@ public class OrchestrationLinter {
                            java.util.function.LongPredicate queryExists,
                            java.util.function.LongPredicate toolExists,
                            java.util.function.LongPredicate workflowDefExists) {
+        return lint(dsl, queryExists, toolExists, workflowDefExists, id -> false);
+    }
+
+    public LintResult lint(OrchestrationDsl.Dsl dsl,
+                           java.util.function.LongPredicate queryExists,
+                           java.util.function.LongPredicate toolExists,
+                           java.util.function.LongPredicate workflowDefExists,
+                           java.util.function.LongPredicate orchestrationExists) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
 
@@ -237,7 +245,7 @@ public class OrchestrationLinter {
 
         // ---- 各节点 config 检查 ----
         for (OrchestrationDsl.NodeDef n : dsl.getNodes()) {
-            lintNodeConfig(n, queryExists, toolExists, workflowDefExists, errors, warnings);
+            lintNodeConfig(n, queryExists, toolExists, workflowDefExists, orchestrationExists, errors, warnings);
         }
 
         // ---- 全局变量引用语法 ----
@@ -260,6 +268,7 @@ public class OrchestrationLinter {
                                 java.util.function.LongPredicate queryExists,
                                 java.util.function.LongPredicate toolExists,
                                 java.util.function.LongPredicate workflowDefExists,
+                                java.util.function.LongPredicate orchestrationExists,
                                 List<String> errors, List<String> warnings) {
         OrchestrationDsl.NodeDef.Config c = n.config();
         switch (n.getNodeType() == null ? "" : n.getNodeType()) {
@@ -314,6 +323,16 @@ public class OrchestrationLinter {
                         }
                     }
                 }
+                }
+            }
+            case "subflow" -> {
+                if (c.getSubOrchestrationId() == null) {
+                    errors.add("subflow 节点 " + n.getId() + " 缺少 subOrchestrationId");
+                } else if (!orchestrationExists.test(c.getSubOrchestrationId())) {
+                    errors.add("subflow 节点 " + n.getId() + " 引用的编排定义 " + c.getSubOrchestrationId() + " 不存在");
+                }
+                if (c.getParamsTemplate() == null) {
+                    warnings.add("subflow 节点 " + n.getId() + " 无 paramsTemplate，子编排将以空入参执行");
                 }
             }
             case "start" -> {

@@ -18,6 +18,7 @@ public class McpMethodRouter {
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final ToolGroupRepository toolGroupRepository;
     private final ObjectMapper objectMapper;
+    private final com.luban.service.ToolExecutionService toolExecutionService;
 
     public JsonRpcResponse dispatch(JsonRpcRequest request) {
         try {
@@ -93,11 +94,17 @@ public class McpMethodRouter {
                     "Tool not found: " + toolName, null);
         }
 
+        if (tool.getToolType() == com.luban.constant.ToolType.ORCHESTRATION) {
+            return JsonRpcResponse.error(request.getId(), -32603,
+                    "ORCHESTRATION 类型工具请通过编排端点调用", null);
+        }
+
+        String output = toolExecutionService.executeToolDefinition(tool, arguments, "mcp-gateway");
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("content", List.of(Map.of(
                 "type", "text",
-                "text", "Tool '" + toolName + "' called with arguments: " + arguments +
-                        " (execution not yet implemented)"
+                "text", output
         )));
         return JsonRpcResponse.success(request.getId(), result);
     }

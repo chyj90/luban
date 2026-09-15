@@ -34,8 +34,11 @@ public class PublicOrchestrationController {
                     .body(ApiResponse.error("缺少有效 X-API-Key（需申请并获批编排调用权限）"));
         }
         try {
+            var ctx = com.luban.invoke.ExecutionContext.root(
+                    com.luban.invoke.InvocationOrigin.PUBLIC_API,
+                    com.luban.invoke.InvocationPrincipal.ofApiKey(apiKeyId), null, null);
             return ResponseEntity.ok(ApiResponse.ok(orchestrationService.invokeByApiKey(
-                    toolName, apiKeyId, body == null ? Map.of() : body)));
+                    toolName, apiKeyId, body == null ? Map.of() : body, ctx)));
         } catch (SecurityException e) {
             boolean rateLimited = e.getMessage() != null
                     && (e.getMessage().contains("频繁") || e.getMessage().contains("配额"));

@@ -1,5 +1,6 @@
 package com.luban.orchestration.engine;
 
+import com.luban.invoke.ExecutionContext;
 import com.luban.orchestration.dsl.OrchestrationDsl;
 import com.luban.workflow.service.ConditionEvaluator;
 import org.springframework.stereotype.Component;
@@ -45,23 +46,34 @@ public class OrchestrationEngine {
     public record ExecutionResult(boolean success, Map<String, Object> output,
                                   List<Map<String, Object>> nodeTrace, String errorCode, String errorMessage) {}
 
-    /** 由调用方注入的执行环境：各类型节点的实际执行委托 */
+    /** 由调用方注入的执行环境：各类型节点的实际执行委托（ctx 供跨对象节点走统一漏斗，null = 直连旧通道） */
     public interface NodeInvokers {
-        Map<String, Object> runQuery(Long queryId, Map<String, Object> params);
-        Map<String, Object> callTool(Long toolId, Map<String, Object> params, int timeoutMs, int retries);
+        Map<String, Object> runQuery(Long queryId, Map<String, Object> params, ExecutionContext ctx);
+        Map<String, Object> callTool(Long toolId, Map<String, Object> params, int timeoutMs, int retries, ExecutionContext ctx);
         Map<String, Object> callHttpUrl(String url, String method, Map<String, Object> headers,
                                         Object body, int timeoutMs, int retries);
         Map<String, Object> runPython(String source, String entry, List<String> packages,
                                       Map<String, Object> inputs, int timeoutMs);
-        /** workflow 节点：经流程引擎执行（发起权限 canSubmitWorkflow、审批 assignee 校验天然生效）。默认不支持。 */
+        /** workflow 节点：经漏斗 → 流程引擎执行（发起权限 canSubmitWorkflow、审批 assignee 校验天然生效）。默认不支持。 */
         default Map<String, Object> runWorkflowAction(String action, Long workflowDefinitionId,
-                                                      Map<String, Object> formData, Long instanceId, String comment) {
+                                                      Map<String, Object> formData, Long instanceId, String comment,
+                                                      ExecutionContext ctx) {
             throw new UnsupportedOperationException("workflow 节点未被该执行器支持");
+        }
+        /** subflow 节点：经漏斗递归执行子编排（深度/环/manifest 由 InvocationService 护栏管理）。默认不支持。 */
+        default Map<String, Object> runSubflow(Long subOrchestrationId, Map<String, Object> params, ExecutionContext ctx) {
+            throw new UnsupportedOperationException("subflow 节点未被该执行器支持");
         }
     }
 
     public ExecutionResult execute(OrchestrationDsl.Dsl dsl, Map<String, Object> inputs,
                                    Map<String, Object> inputSchema) {
+        return execute(dsl, inputs, inputSchema, null);
+    }
+
+    /** invocationCtx 非空时：跨对象节点经 InvocationService 漏斗执行（深度/环/manifest/审计生效） */
+    public ExecutionResult execute(OrchestrationDsl.Dsl dsl, Map<String, Object> inputs,
+                                   Map<String, Object> inputSchema, ExecutionContext invocationCtx) {
         long start = System.currentTimeMillis();
         List<Map<String, Object>> trace = new ArrayList<>();
         Map<String, Object> context = new LinkedHashMap<>();
@@ -71,6 +83,7 @@ public class OrchestrationEngine {
         OrchestrationDsl.NodeDef current = findStart(dsl);
         Map<String, Object> lastOutput = null;
         int depth = 0;
+        ExecutionContext ctx = invocationCtx;
 
         try {
             while (current != null) {
@@ -86,7 +99,7 @@ public class OrchestrationEngine {
                     continue;
                 }
                 if ("parallel".equals(current.getNodeType())) {
-                    current = runParallel(dsl, current, context, trace);
+                    current = runParallel(dsl, current, context, trace, ctx);
                     continue;
                 }
                 if ("output".equals(current.getNodeType())) {
@@ -97,7 +110,7 @@ public class OrchestrationEngine {
                 long nodeStart = System.currentTimeMillis();
                 Map<String, Object> output;
                 try {
-                    output = executeNode(current, context);
+                    output = executeNode(current, context, ctx);
                 } catch (Exception e) {
                     trace.add(nodeTrace(current, "FAILED", System.currentTimeMillis() - nodeStart, e.getMessage()));
                     String strategy = current.config().getStrategy();
@@ -139,16 +152,18 @@ public class OrchestrationEngine {
         return snapshot;
     }
 
-    private Map<String, Object> executeNode(OrchestrationDsl.NodeDef node, Map<String, Object> context) {
+    private Map<String, Object> executeNode(OrchestrationDsl.NodeDef node, Map<String, Object> context,
+                                            ExecutionContext ctx) {
         OrchestrationDsl.NodeDef.Config c = node.config();
         Map<String, Object> params = variableResolver.resolveTemplate(c.getParamsTemplate(), context);
         return switch (node.getNodeType() == null ? "" : node.getNodeType()) {
             case "http" -> c.getToolId() != null
                     ? nodeInvokers.callTool(c.getToolId(), params,
                             c.getTimeoutMs() != null ? c.getTimeoutMs() : 10_000,
-                            c.getRetries() != null ? c.getRetries() : 0)
+                            c.getRetries() != null ? c.getRetries() : 0, ctx)
                     : invokeHttpDirect(node, c, context);
-            case "query" -> nodeInvokers.runQuery(c.getQueryId(), params);
+            case "query" -> nodeInvokers.runQuery(c.getQueryId(), params, ctx);
+            case "subflow" -> nodeInvokers.runSubflow(c.getSubOrchestrationId(), params, ctx);
             case "python" -> nodeInvokers.runPython(c.getSource(),
                     c.getEntry() == null ? "main" : c.getEntry(),
                     c.getPackages(),
@@ -164,7 +179,7 @@ public class OrchestrationEngine {
                             c.getFormDataTemplate() == null ? Map.of() : new LinkedHashMap<>(c.getFormDataTemplate()),
                             context),
                     variableResolver.resolveInstanceId(c.getInstanceIdTemplate(), context),
-                    c.getComment());
+                    c.getComment(), ctx);
             default -> Map.of();
         };
     }
@@ -244,7 +259,8 @@ public class OrchestrationEngine {
     private OrchestrationDsl.NodeDef runParallel(OrchestrationDsl.Dsl dsl,
                                                  OrchestrationDsl.NodeDef parallelNode,
                                                  Map<String, Object> context,
-                                                 List<Map<String, Object>> trace) {
+                                                 List<Map<String, Object>> trace,
+                                                 ExecutionContext ctx) {
         List<OrchestrationDsl.NodeDef> branches = dsl.getEdges().stream()
                 .filter(e -> parallelNode.getId().equals(e.getSource()))
                 .map(e -> findNode(dsl, e.getTarget()))
@@ -256,7 +272,7 @@ public class OrchestrationEngine {
                 Map<String, Object> out;
                 long nodeStart = System.currentTimeMillis();
                 try {
-                    out = executeNode(branch, context);
+                    out = executeNode(branch, context, ctx);
                     context.put(branch.getId(), out);
                     trace.add(nodeTrace(branch, "SUCCESS", System.currentTimeMillis() - nodeStart, null));
                 } catch (Exception e) {
