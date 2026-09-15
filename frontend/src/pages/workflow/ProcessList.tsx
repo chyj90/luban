@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { WorkflowDefinition, FormWorkflowBinding } from '../../types/workflow';
 import { workflowApi, formApi, bindingApi } from '../../api/workflow';
 import { confirm } from '../../stores/confirmStore';
+import { toast } from '../../stores/toastStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import SearchBox from '@/components/SearchBox';
 import styles from './ProcessList.module.css';
@@ -248,13 +249,17 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                               confirmText: '发布',
                             });
                             if (!confirmed) return;
-                            workflowApi.publishDefinition(def.id).then(() => {
-                              setDefinitions((prev) =>
-                                prev.map((d) =>
-                                  d.id === def.id ? { ...d, status: 'PUBLISHED' as const } : d,
-                                ),
-                              );
-                            });
+                            workflowApi.publishDefinition(def.id)
+                              .then(() => {
+                                setDefinitions((prev) =>
+                                  prev.map((d) =>
+                                    d.id === def.id ? { ...d, status: 'PUBLISHED' as const } : d,
+                                  ),
+                                );
+                              })
+                              .catch((e: unknown) => {
+                                toast.error(e instanceof Error ? e.message : '发布失败');
+                              });
                           }}
                         >
                           发布
@@ -264,13 +269,17 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                         <button
                           className={styles.actionBtn}
                           onClick={() => {
-                            workflowApi.unpublishDefinition(def.id).then(() => {
-                              setDefinitions((prev) =>
-                                prev.map((d) =>
-                                  d.id === def.id ? { ...d, status: 'DRAFT' as const } : d,
-                                ),
-                              );
-                            });
+                            workflowApi.unpublishDefinition(def.id)
+                              .then(() => {
+                                setDefinitions((prev) =>
+                                  prev.map((d) =>
+                                    d.id === def.id ? { ...d, status: 'DRAFT' as const } : d,
+                                  ),
+                                );
+                              })
+                              .catch((e: unknown) => {
+                                toast.error(e instanceof Error ? e.message : '下线失败');
+                              });
                           }}
                         >
                           下线
@@ -286,9 +295,13 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                             variant: 'danger',
                           });
                           if (confirmed) {
-                            workflowApi.deleteDefinition(def.id).then(() => {
-                              setDefinitions((prev) => prev.filter((d) => d.id !== def.id));
-                            });
+                            workflowApi.deleteDefinition(def.id)
+                              .then(() => {
+                                setDefinitions((prev) => prev.filter((d) => d.id !== def.id));
+                              })
+                              .catch((e: unknown) => {
+                                toast.error(e instanceof Error ? e.message : '删除失败');
+                              });
                           }
                         }}
                       >

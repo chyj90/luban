@@ -261,7 +261,21 @@ export function AppEditorPage() {
           queries={queries}
           onQueriesChange={refreshQueries}
           onPageChange={handlePageChange}
-          onPagesChange={() => loadPages(currentPage?.id)}
+          onPagesChange={(deletedPageId?: number) => {
+            listPages(Number(appId)).then((res) => {
+              const list = res.data.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+              setPages(list);
+              if (list.length > 0) {
+                if (deletedPageId != null && deletedPageId === currentPage?.id) {
+                  fetchPage((list.find((p) => p.isDefault) || list[0]).id);
+                }
+              } else {
+                loadPages();
+              }
+            }).catch(() => {
+              loadPages();
+            });
+          }}
           onQuerySelect={setSelectedQuery}
           onWorkflowNavigate={handleWorkflowNavigate}
           onTabChange={handleSidebarTabChange}

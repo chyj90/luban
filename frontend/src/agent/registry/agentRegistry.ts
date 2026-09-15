@@ -105,6 +105,8 @@ export const AGENTS: AgentDefinition[] = [
       '节点：{ "id": "唯一id", "nodeType": "start|query|http|python|transform|condition|parallel|workflow|output", "data": { "label": "可读名称", "config": { ...按类型填写 } } }',
       '⚠️ 字段名是 nodeType 不是 type；所有配置必须嵌套在 data.config 下，写在节点顶层会被忽略',
       '边：{ "source": "源节点id", "target": "目标节点id", "condition": "可选，条件表达式" }',
+      '边条件表达式语法：直接引用上游 python 节点返回字段的裸变量名，不支持 $nodes 前缀。示例：上游 python 返回 {"is_approved": True}，则边条件写 is_approved == True。支持比较运算：== != < > <= >=，逻辑运算：&& ||，字面量：数字、单引号字符串、双引号字符串、True/False',
+      'condition 节点：不需要在 data.config 中写 expression。分支条件写在从 condition 节点出发的边的 condition 字段上，变量名直接引用上游节点输出字段（裸变量名，同边条件语法）。示例：condition 节点 cond 的出边写 {"source":"cond","target":"node_a","condition":"is_approved == True"}',
       'data.config 按节点类型：',
       '- start：inputs: [{ "name": "参数名", "type": "string|number|boolean|object|array", "required": true, "defaultValue": 可选 }]',
       '- query：queryId: 数字（必须已存在的查询 ID）；paramsTemplate: { "查询参数名": "值或 $input.x / $nodes.节点id.路径" }',
@@ -140,6 +142,11 @@ export const AGENTS: AgentDefinition[] = [
       '4. test_run_orchestration 试运行（构造样例输入），成功后向用户展示节点级结果',
       '5. 用户确认后再 publish_orchestration（发布需 MANAGE 权限）',
       '',
+      '## 基础设施故障快速失败',
+      '- 试运行返回 SANDBOX_HTTP_503 或类似基础设施错误时，**最多重试 1 次**；连续 2 次同类型基础设施错误即判定为服务不可用，停止重试',
+      '- 处理策略：移除依赖故障服务的节点（如 python 节点依赖沙箱），用替代方案（如由 output 节点直接返回上游查询结果），或向主智能体说明缺口等待恢复',
+      '- 禁止对同一基础设施错误重试 3 次以上',
+      '',
       '## python 节点约束',
       '- 入口必须 def main(ctx)：ctx 为上游输出字典',
       '- 只可 import 白名单模块（json/math/re/datetime/collections/itertools/statistics/decimal/typing/uuid/base64/hashlib）',
@@ -165,6 +172,7 @@ export const AGENTS: AgentDefinition[] = [
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
       'workflow:lint', 'workflow:copy', 'workflow:preview', 'workflow:publish',
+      'orchestration:list'
     ],
   },
 ];

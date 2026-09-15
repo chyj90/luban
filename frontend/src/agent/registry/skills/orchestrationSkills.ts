@@ -159,7 +159,7 @@ export const orchestrationSkills: Record<string, SkillFactory> = {
     id: 'orchestration:list',
     category: SkillCategory.ORCHESTRATION,
     name: 'list_orchestrations',
-    description: '列出应用内的编排定义。',
+    description: '列出应用内的编排定义。applicationId 是应用 ID（非页面 ID），不确定时从 list_queries 返回结果的 applicationId 字段获取。',
     parameters: {
       type: 'object',
       properties: { applicationId: { type: 'number' } },

@@ -114,9 +114,18 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
           // 放行完成的同时重置预算：否则计数器永久滞留在上限，本会话后续所有
           // "防止半途而废"的强制继续全部失效（一次耗尽即终身失效）
           completionExtensions = 0;
-          return null; // 达到上限，放行完成（旧语义：强制结束）
+          return null; // 达到上限，放行完成
         }
         completionExtensions++;
+
+        // 强制跳过：同一运行中步骤多次尝试仍无法完成（常见于平台能力缺失如权限配置接口），
+        // 且存在后续待完成步骤 → 注入指令要求标记 error 后继续执行，而不是反复重试。
+        if (completionExtensions >= 2 && running.length === 1 && running[0].toolName?.startsWith('delegate_')) {
+          return {
+            systemMessage: `[系统强制指令] 你已 ${completionExtensions} 次尝试结束回合，但步骤「${running[0].description}」始终无法完成。该步骤很可能因平台能力缺失（如权限接口、沙箱服务 503）而无法独立推进。\n\n你必须立即执行以下操作（禁止继续重试该步骤）：\n1. 调用 update_plan_item 将该步骤标记为 error（id="${running[0].id}"，status="error"，result 中如实说明失败原因与建议修复方式）\n2. 然后继续执行后续不依赖该步骤产出的步骤\n\n禁止：继续调用该步骤的委派工具、尝试绕过平台限制（如 unfreeze_workflow 解决权限问题）`,
+          };
+        }
+
         const lines = [...running, ...pending]
           .map((s) => `  - [${s.status === 'running' ? '执行中' : '待完成'}] ${s.description}`)
           .join('\n');

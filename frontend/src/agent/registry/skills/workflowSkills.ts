@@ -555,14 +555,14 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:freeze',
     category: SkillCategory.WORKFLOW,
     name: 'freeze_workflow',
-    description: '冻结流程定义。',
+    description: '冻结流程实例。',
     parameters: {
       type: 'object',
-      properties: { processId: { type: 'number', description: '流程 ID' } },
-      required: ['processId'],
+      properties: { instanceId: { type: 'number', description: '流程实例 ID' } },
+      required: ['instanceId'],
     },
     async execute(args) {
-      try { await instanceApi.freeze(args.processId as number); return { success: true, message: '流程已冻结' }; }
+      try { await instanceApi.freeze(args.instanceId as number); return { success: true, message: '流程实例已冻结' }; }
       catch (e: unknown) { return { success: false, message: `冻结失败: ${(e as Error).message}` }; }
     },
   }),
@@ -571,14 +571,14 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:unfreeze',
     category: SkillCategory.WORKFLOW,
     name: 'unfreeze_workflow',
-    description: '解冻流程定义。',
+    description: '解冻流程实例。',
     parameters: {
       type: 'object',
-      properties: { processId: { type: 'number', description: '流程 ID' } },
-      required: ['processId'],
+      properties: { instanceId: { type: 'number', description: '流程实例 ID' } },
+      required: ['instanceId'],
     },
     async execute(args) {
-      try { await instanceApi.unfreeze(args.processId as number); return { success: true, message: '流程已解冻' }; }
+      try { await instanceApi.unfreeze(args.instanceId as number); return { success: true, message: '流程实例已解冻' }; }
       catch (e: unknown) { return { success: false, message: `解冻失败: ${(e as Error).message}` }; }
     },
   }),

@@ -25,7 +25,7 @@ interface EditorSidebarProps {
   queries?: Query[];
   onQueriesChange?: () => void;
   onPageChange: (pageId: number) => void;
-  onPagesChange: () => void;
+  onPagesChange: (deletedPageId?: number) => void;
   onQuerySelect: (query: Query | null) => void;
   onWorkflowNavigate: (view: WorkflowView) => void;
   onTabChange: (tab: TabKey) => void;
@@ -119,7 +119,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
     if (!confirmed) return;
     try {
       await deletePage(page.id);
-      onPagesChange();
+      onPagesChange(page.id);
     } catch { /* ignore */ }
   };
 

@@ -61,15 +61,19 @@ function parseId(result: string, patterns: RegExp[]): number | null {
 const FORM_ID_PATTERNS = [
   /表单\s*ID\s*[:：为=＝]?\s*(\d+)/i,
   /[（(]\s*表单\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
+  /form\s*ID\s*[:：为=＝]?\s*(\d+)/i,
 ];
 const PROCESS_ID_PATTERNS = [
   /流程\s*ID\s*[:：为=＝]?\s*(\d+)/i,
   /[（(]\s*(?:审批)?流程\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
   /[（(]\s*id\s*[:：]\s*(\d+)\s*[)）]/i,
+  /流程\s*[（(]\s*ID\s*[:：]?\s*(\d+)\s*[)）]/i,
+  /流程.*?ID\s*[:：为=＝]?\s*(\d+)/i,
 ];
 const ORCH_ID_PATTERNS = [
   /编排\s*ID\s*[:：为=＝]?\s*(\d+)/i,
   /[（(]\s*编排\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
+  /编排.*?ID\s*[:：为=＝]?\s*(\d+)/i,
 ];
 
 async function parseJsonSafe(v: unknown): Promise<unknown> {
