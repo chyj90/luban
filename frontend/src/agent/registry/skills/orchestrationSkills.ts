@@ -135,12 +135,16 @@ export const orchestrationSkills: Record<string, SkillFactory> = {
     id: 'orchestration:publish',
     category: SkillCategory.ORCHESTRATION,
     name: 'publish_orchestration',
-    description: '发布编排（固定当前版本并注册为平台工具）。发布需 MANAGE 权限；发布后外部可经授权 API Key 调用。',
+    description: '发布编排（固化当前版本并注册为平台工具，外部可经授权 API Key 调用）。⚠️ 发布为外向型变更，必须先向用户确认，且建议 lint 与试运行均已通过。',
     parameters: {
       type: 'object',
       properties: { id: { type: 'number' } },
       required: ['id'],
     },
+    // 发布会固化版本并注册平台工具，属外向型变更：走内核确认门（挂起等用户确认），
+    // 委派场景由 delegate_orchestration 的暂停传播上浮到主智能体
+    isDangerous: true,
+    requiresConfirmation: true,
     async execute(args) {
       try {
         const res = await publishOrchestration(args.id as number);

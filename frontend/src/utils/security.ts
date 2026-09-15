@@ -34,11 +34,22 @@ function pemToDer(pem: string): ArrayBuffer {
 
 async function getRsaPublicKey(): Promise<CryptoKey> {
   if (!publicKeyPromise) {
+    if (!crypto?.subtle) {
+      throw new Error(
+        '当前环境不支持 Web Crypto API（crypto.subtle 不可用）。' +
+        '请通过 HTTPS 或 localhost 访问页面，非安全上下文（如 http://IP:port）下浏览器禁用此 API。',
+      );
+    }
     publicKeyPromise = get<{ publicKey: string }>('/security/public-key')
-      .then((res) => crypto.subtle.importKey(
-        'spki', pemToDer(res.data.publicKey),
-        { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'],
-      ))
+      .then((res) => {
+        if (!res.data?.publicKey) {
+          throw new Error('公钥响应格式异常：' + JSON.stringify(res));
+        }
+        return crypto.subtle.importKey(
+          'spki', pemToDer(res.data.publicKey),
+          { name: 'RSA-OAEP', hash: 'SHA-256' }, false, ['encrypt'],
+        );
+      })
       .catch((e) => {
         publicKeyPromise = null;
         throw new Error('获取平台公钥失败：' + (e?.message || e));

@@ -42,8 +42,10 @@ public class WorkflowTriggerService {
 
     /**
      * 节点事件 → 命中的触发器写入 outbox。入队失败只记日志，不阻断审批主流程。
-     * 用 REQUIRES_NEW：即使外层事务回滚（如审批异常），已发出的外部调用意图也必须可见，
-     * 避免半执行状态；正常路径下与业务同事务提交。
+     * 与业务同事务（REQUIRED，标准 outbox）：outbox 行与流程状态变更同提交同回滚——
+     * 审批事务回滚时触发意图一并消失，不会把不存在的状态派发给外部目标；
+     * 实际派发由 TriggerDispatcher 异步执行（at-least-once + 退避重试），
+     * 用异步边界打断"流程→编排→流程"环。
      */
     @Transactional(propagation = Propagation.REQUIRED)
     public void fireNodeEvent(WorkflowInstance instance, String nodeId, String event,

@@ -30,8 +30,11 @@ export function LoginPage() {
         setPermissions([]);
       }
       navigate('/apps');
-    } catch {
-      setError('登录失败，请检查邮箱和密码');
+    } catch (e: unknown) {
+      const msg = (e as Error)?.message || '';
+      setError(msg.includes('crypto.subtle') || msg.includes('公钥')
+        ? msg
+        : '登录失败，请检查邮箱和密码');
     } finally {
       setLoading(false);
     }

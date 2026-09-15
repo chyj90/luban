@@ -24,6 +24,13 @@ COPY --from=build /build/dist /usr/share/nginx/html
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-EXPOSE 80
+# Create SSL directory for optional HTTPS cert mount
+RUN mkdir -p /etc/nginx/ssl
+
+# Entrypoint: dynamically enable HTTPS if certs are mounted
+COPY docker-entrypoint.sh /docker-entrypoint.d/99-https.sh
+RUN chmod +x /docker-entrypoint.d/99-https.sh
+
+EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]

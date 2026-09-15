@@ -99,10 +99,10 @@ RUN chmod +x /entrypoint.sh
 RUN rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache/pip
 
 # ---------- 创建数据目录 ----------
-RUN mkdir -p /app/data/mysql /app/data/logs \
+RUN mkdir -p /app/data/mysql /app/data/logs /etc/nginx/ssl \
     && chown -R www-data:www-data /app/frontend
 
-EXPOSE 80
+EXPOSE 80 443
 
 VOLUME ["/app/data"]
 

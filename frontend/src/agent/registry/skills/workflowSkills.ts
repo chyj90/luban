@@ -218,15 +218,15 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:design_form',
     category: SkillCategory.WORKFLOW,
     name: 'design_form',
-    description: '设计流程表单。创建或修改表单字段配置。',
+    description: '设计流程表单。三种用法：只传 formId 查看表单已有字段（只读）；formId+fields 修改该表单（fields 整体覆盖）；都不传则新建表单。',
     parameters: {
       type: 'object',
       properties: {
-        formId: { type: 'number', description: '表单 ID（修改时提供）' },
-        name: { type: 'string', description: '表单名称' },
-        fields: { type: 'array', description: '表单字段列表' },
+        formId: { type: 'number', description: '表单 ID：查看时单独传；修改时与 fields 一起传；新建时不传' },
+        name: { type: 'string', description: '表单名称（新建必填；修改时可选，不传保持原名）' },
+        fields: { type: 'array', description: '表单字段列表（修改时必须传修改后的完整字段列表，整体覆盖原字段）' },
       },
-      required: ['name'],
+      required: [],
     },
     async execute(args) {
       try {
@@ -239,9 +239,26 @@ export const workflowSkills: Record<string, SkillFactory> = {
             : [];
           return {
             success: true,
-            message: `表单「${existing.name}」(ID: ${formId}) 已有字段：${fieldList.map((f: { key: string; label: string; type: string; required?: boolean }) => `${f.label}(${f.key}, ${f.type}${f.required ? ', 必填' : ''})`).join('；')}`,
+            message: `表单「${existing.name}」(ID: ${formId}) 已有字段：${fieldList.map((f: { key: string; label: string; type: string; required?: boolean }) => `${f.label}(${f.key}, ${f.type}${f.required ? ', 必填' : ''})`).join('；')}。如需修改请带 formId + 完整 fields 重新调用本工具`,
             data: existing,
           };
+        }
+        if (formId) {
+          // 修改已有表单：先取现有定义合并，后端 update 会用入参直接覆盖
+          // name/description/codePageId，不回读会把未传字段清成 null
+          const existing = await formApi.get(formId);
+          const result = await formApi.update(formId, {
+            name: (args.name as string) || existing.name,
+            description: existing.description,
+            applicationId: existing.applicationId,
+            codePageId: existing.codePageId,
+            fields: JSON.stringify(fields),
+          });
+          if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', formMode: true, formId: result.id });
+          return { success: true, message: `表单「${result.name}」(ID: ${formId}) 已更新，共 ${(fields as unknown[]).length} 个字段`, data: result };
+        }
+        if (!args.name) {
+          return { success: false, message: '新建表单必须提供 name（表单名称）。修改已有表单请传 formId + fields。' };
         }
         const result = await formApi.create({
           name: args.name as string,
@@ -249,12 +266,12 @@ export const workflowSkills: Record<string, SkillFactory> = {
           fields: JSON.stringify((args.fields as unknown[]) || []),
         });
         if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', formMode: true, formId: result.id });
-        return { success: true, message: '表单创建成功', data: result };
+        return { success: true, message: `表单创建成功 (ID: ${result.id})`, data: result };
       } catch (e: unknown) {
         const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
           || (e as Error).message
           || '未知错误';
-        return { success: false, message: `表单创建失败：${errMsg}。请检查 fields 格式是否正确（参考系统提示词中的字段类型和格式）。` };
+        return { success: false, message: `表单保存失败：${errMsg}。请检查 fields 格式是否正确（参考系统提示词中的字段类型和格式）。` };
       }
     },
   }),

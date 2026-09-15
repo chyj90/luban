@@ -74,6 +74,8 @@ services:
       - LUBAN_EMBEDDING_BASE_URL=http://embedding:8765
       # 沙箱模式（Docker 容器内默认关闭，使用直接 subprocess 执行）
       - SANDBOX_ENABLED=false
+      # CORS：Docker 部署由 Nginx 做安全隔离，后端允许所有来源
+      - APP_CORS_ALLOWED_ORIGINS=*
     ports:
       # 调试时可取消注释
       # - "${BACKEND_PORT:-8080}:8080"
@@ -96,6 +98,10 @@ services:
       - backend
     ports:
       - "${FRONTEND_PORT:-80}:80"
+      - "${FRONTEND_HTTPS_PORT:-443}:443"
+    # HTTPS: 将 tls.crt + tls.key 放入 /app/data/ssl/ 即可（与数据盘同一 volume）
+    # 测试用自签证书: openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    #   -keyout /app/data/ssl/tls.key -out /app/data/ssl/tls.crt -subj "/CN=localhost"
     networks:
       - luban-net
     restart: unless-stopped

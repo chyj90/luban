@@ -102,7 +102,7 @@ export const AGENTS: AgentDefinition[] = [
       '',
       '## DSL 契约（必须逐字段遵守；字段名写错会被静默忽略，导致节点变成空壳、校验莫名失败）',
       '顶层结构只允许两个字段：{ "nodes": [...], "edges": [...] }',
-      '节点：{ "id": "唯一id", "nodeType": "start|query|http|python|transform|condition|parallel|workflow|output", "data": { "label": "可读名称", "config": { ...按类型填写 } } }',
+      '节点：{ "id": "唯一id", "nodeType": "start|query|http|python|transform|condition|parallel|workflow|subflow|output", "data": { "label": "可读名称", "config": { ...按类型填写 } } }',
       '⚠️ 字段名是 nodeType 不是 type；所有配置必须嵌套在 data.config 下，写在节点顶层会被忽略',
       '边：{ "source": "源节点id", "target": "目标节点id", "condition": "可选，条件表达式" }',
       '边条件表达式语法：直接引用上游 python 节点返回字段的裸变量名，不支持 $nodes 前缀。示例：上游 python 返回 {"is_approved": True}，则边条件写 is_approved == True。支持比较运算：== != < > <= >=，逻辑运算：&& ||，字面量：数字、单引号字符串、双引号字符串、True/False',
@@ -110,12 +110,14 @@ export const AGENTS: AgentDefinition[] = [
       'data.config 按节点类型：',
       '- start：inputs: [{ "name": "参数名", "type": "string|number|boolean|object|array", "required": true, "defaultValue": 可选 }]',
       '- query：queryId: 数字（必须已存在的查询 ID）；paramsTemplate: { "查询参数名": "值或 $input.x / $nodes.节点id.路径" }',
-      '- http：优先 toolId: 数字（平台已注册工具）；url+method 直连仅限白名单地址，禁止编造内网 URL；写数据库必须用 query 节点（先让 DBA 创建写查询），禁止 http 直调数据库接口',
+      '- http：优先 toolId: 数字（平台已注册工具，用 list_apis 查询可用工具及其 ID）；url+method 直连仅限白名单地址，禁止编造内网 URL；写数据库必须用 query 节点（先让 DBA 创建写查询），禁止 http 直调数据库接口',
       '- python：source: 代码字符串（入口必须 def main(ctx)，ctx 为 {节点id: 输出} 字典）；packages 可选',
       '- transform：template: { "输出字段": "模板字符串" }',
       '- workflow：workflowAction: "start|get_status|approve|reject"；start 需 workflowDefinitionId（数字，流程必须已设计并发布，禁止按名称引用）+ formDataTemplate: { "表单字段": "值或 $input.x" }；get_status/approve/reject 需 instanceIdTemplate',
+      '- subflow：subOrchestrationId: 数字（已发布的其他编排定义 ID，用 list_orchestrations 查询）。用于复用已有编排；⚠️ 含 subflow 的编排试运行会失败（开发态试运行不支持嵌套），lint 通过后直接发布，发布后正式执行才支持嵌套',
       '- output：无配置；编排返回值为各节点输出按节点 id 组成的字典，最终返回结构用 python 节点整形',
       '变量引用：$input.参数名（入口参数）、$nodes.节点id.字段路径（上游输出，数字段为数组下标）',
+      '错误策略（所有节点可选）：data.config.strategy: "continue"（节点失败时置 __skipped__ 继续后续节点）| "fallback"（节点失败时以 data.config.template 作为该节点兜底输出继续）。不配置时任何节点失败即整体失败。需要容忍部分数据缺失的旁路查询（如可选的日志/统计查询）建议配 strategy',
       '校验硬规则：有且只有一个 start 和一个 output；节点 id 唯一；start 必须有出边、output 不能有出边；start 必须可达 output；python 只能 import 白名单模块（json/math/re/datetime/collections/itertools/statistics/decimal/typing/copy/textwrap/uuid/base64/hashlib/hmac/string）',
       '',
       '### 最小正确示例（查询 + python 汇总）',
@@ -136,7 +138,8 @@ export const AGENTS: AgentDefinition[] = [
       '```',
       '',
       '## 工作流（必须按序）',
-      '1. 先用 list_queries / list_orchestrations 探查可复用资源（禁止编造 queryId/toolId/workflowDefinitionId）',
+      '1. 先用 list_queries / list_orchestrations / list_apis 探查可复用资源（禁止编造 queryId/toolId/workflowDefinitionId/subOrchestrationId）',
+      '2. 需求或上下文带「编排资源契约：queryId 126=客户基础信息、…」时，DSL 引用的资源 ID 必须与契约一致，最终汇报必须原样复述该契约行',
       '2. 构造 DSL：严格按上方契约；若编排需要发起审批流程而流程尚未创建，直接说明"需先设计并发布流程，拿到流程定义 ID 后再建编排"，不要编造 workflowDefinitionId',
       '3. lint_orchestration 校验，未通过则按错误信息修正（未知字段错误必须把字段移到 data.config 下的正确位置，而不是换顶层结构重试）',
       '4. test_run_orchestration 试运行（构造样例输入），成功后向用户展示节点级结果',
@@ -156,7 +159,7 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'orchestration:create', 'orchestration:get', 'orchestration:save', 'orchestration:lint',
       'orchestration:testRun', 'orchestration:publish', 'orchestration:list', 'orchestration:executions',
-      'observation:list_queries', 'query:get',
+      'observation:list_queries', 'query:get', 'api:list',
     ],
   },
   {
@@ -172,7 +175,7 @@ export const AGENTS: AgentDefinition[] = [
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
       'workflow:lint', 'workflow:copy', 'workflow:preview', 'workflow:publish',
-      'orchestration:list'
+      'orchestration:list', 'query:list'
     ],
   },
 ];

@@ -20,7 +20,38 @@ export const WORKFLOW_AGENT_PROMPT = `你是一个**流程设计助手**，专�
 ## 驳回与加签（引擎内置能力，禁止配置到节点）
 - **驳回退回发起人**：流程引擎默认行为，审批人执行"驳回"后流程自动退回发起人重新提交，无需在节点 config 中配置任何参数
 - **加签**：审批人处理任务时的运行时操作（前加签/后加签），由审批界面提供，与流程设计无关，无需配置
-- ⚠️ 节点 data.config 只允许包含本提示词列出的字段（nodeName、approverType 及其对应的审批人参数），**禁止编造 allowReject、allowAddSign、rejectTo 等引擎不支持的配置项**——写入也不会生效
+- ⚠️ 节点 data.config 只允许包含本提示词列出的字段（nodeName、approverType 及其对应的审批人参数、triggers 触发器），**禁止编造 allowReject、allowAddSign、rejectTo 等引擎不支持的配置项**——写入也不会生效
+
+## 节点触发器（审批节点可配，事件触发异步调用）
+当用户要求"审批通过后自动 XX / 流程完结后自动 XX"时，在**审批节点**的 data.config.triggers 数组中配置触发器：
+\`\`\`json
+{
+  "nodeType": "approval",
+  "data": {
+    "config": {
+      "nodeName": "部门负责人审批",
+      "approverType": "leader",
+      "leaderOf": "initiator",
+      "triggers": [
+        {
+          "triggerId": "tg_leave1",
+          "on": "APPROVED",
+          "target": { "type": "ORCHESTRATION", "ref": 12 },
+          "paramsMapping": [{ "to": "employeeNo", "from": "form.data.employeeNo" }],
+          "mode": "ASYNC",
+          "retry": { "maxAttempts": 3, "backoffSeconds": [30, 120, 600] }
+        }
+      ]
+    }
+  }
+}
+\`\`\`
+字段契约（写错会被后端忽略）：
+- **on** 取值：APPROVED（本节点审批通过）/ NODE_ENTERED（节点进入）/ REJECTED（本节点被驳回）/ INSTANCE_COMPLETED（整个流程完结）/ INSTANCE_REJECTED（整个流程被驳回）
+- **target.type** 取值：ORCHESTRATION（编排）/ QUERY（查询）/ TOOL（API 工具）；**ref 为对应资源的数字 ID**
+- **paramsMapping.from** 支持路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id；不配置时目标收到默认入参 {instanceId, formData}
+- **retry** 可选；触发为异步 outbox 派发，失败按退避重试，超过 maxAttempts 进入死信，不会阻塞或回滚审批主流程
+- ⚠️ ref 必须是真实存在的数字 ID：编排只可用已发布（PUBLISHED）状态的（用 list_orchestrations 查），查询用 list_queries 查——**禁止编造 ID**；用户需求里的目标尚未创建时，如实说明"需先创建并发布编排/查询，拿到 ID 后再补触发器"
 
 ## 表单设计
 使用 design_form 工具创建表单。常见表单类型：

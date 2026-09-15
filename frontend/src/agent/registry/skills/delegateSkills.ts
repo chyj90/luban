@@ -3,6 +3,7 @@ import { buildDataAssistantPrompt } from '../../prompts/dbaPrompt';
 import { loadDelegationMemory, saveDelegationMemory } from '../agentMemory';
 import { formApi } from '@/api/workflow';
 import { listQueries } from '@/api';
+import { getOrchestration } from '@/api/orchestration';
 import { getCallerIdentity } from '../../prompts/callerContext';
 import { toolArgsKey } from '../../kernel/runtime';
 import { approvePendingApproval } from '../../core/confirmationGuard';
@@ -14,7 +15,17 @@ const activeDelegations = new Set<string>();
 const WORKFLOW_ENGINE_SEMANTICS = `## 驳回与加签（引擎内置能力，禁止配置到节点）
 - **驳回退回发起人**：流程引擎默认行为，审批人执行"驳回"后流程自动退回发起人重新提交，无需在节点 config 中配置任何参数
 - **加签**：审批人处理任务时的运行时操作（前加签/后加签），由审批界面提供，与流程设计无关，无需配置
-- ⚠️ 节点 data.config 只允许包含本文档列出的字段（nodeName、approverType 及其对应的审批人参数），**禁止编造 allowReject、allowAddSign、rejectTo 等引擎不支持的配置项**——写了也不会生效`;
+- ⚠️ 节点 data.config 只允许包含本文档列出的字段（nodeName、approverType 及其对应的审批人参数、triggers 触发器），**禁止编造 allowReject、allowAddSign、rejectTo 等引擎不支持的配置项**——写了也不会生效`;
+
+/** 节点触发器契约（与后端 WorkflowTriggerService / NodeTriggerEditor 一致） */
+const WORKFLOW_TRIGGER_CONTRACT = `## 节点触发器（审批节点可配，事件触发异步调用）
+用户要求"审批通过后自动 XX / 流程完结后自动 XX"时，在**审批节点**的 data.config 中加 triggers 数组：
+{ "triggerId": "tg_前缀加短随机串", "on": "APPROVED", "target": { "type": "ORCHESTRATION", "ref": 编排ID }, "paramsMapping": [{ "to": "目标参数名", "from": "form.data.字段key" }], "mode": "ASYNC", "retry": { "maxAttempts": 3, "backoffSeconds": [30, 120, 600] } }
+- on：APPROVED（本节点审批通过）/ NODE_ENTERED（节点进入）/ REJECTED（本节点被驳回）/ INSTANCE_COMPLETED（流程完结）/ INSTANCE_REJECTED（流程被驳回）
+- target.type：ORCHESTRATION（编排，必须已发布）/ QUERY（查询）/ TOOL（API 工具）；ref = 对应资源的数字 ID
+- paramsMapping.from 路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id；不配置时目标收到默认入参 {instanceId, formData}
+- ref 必须是真实存在的数字 ID（编排用 list_orchestrations 查、只可用 PUBLISHED 状态；查询用 list_queries 查），禁止编造；目标尚未创建时如实说明，先完成其它步骤
+- 触发为异步派发，失败自动重试，不阻塞审批主流程`;
 
 /** task_type=design_form：仅设计表单 */
 const DESIGN_FORM_WORKFLOW = `## 工作流程（仅设计表单）
@@ -30,8 +41,9 @@ const DESIGN_WORKFLOW_ONLY_PROMPT = `## 工作流程（仅设计/修改流程，
 3. 上下文或对话记录中已有本次相关表单（含表单 ID）时，用 bind_workflow(processId, formId) 绑定；看不到字段 key 时，用 design_form 传入 formId 且不传 fields 查看
 4. ⚠️ 条件分支连线的 condition 表达式必须使用表单的**真实字段 key**（通过 design_form(formId) 查询或上下文获得），禁止猜测字段名
 5. 先用 search_members 或 search_roles 查询可用的审批人/角色，再设置审批人
-6. 汇报时列出流程 ID、节点结构、每条条件分支的表达式及其引用的字段 key
-7. 如果用户明确说不需要表单或页面通过自己的弹窗发起流程，汇报时附上发起代码示例：
+6. 需求包含"审批通过后自动 XX"等事件触发要求时，按下方触发器契约在对应审批节点 config.triggers 中配置
+7. 汇报时列出流程 ID、节点结构、每条条件分支的表达式及其引用的字段 key、已配置的触发器
+8. 如果用户明确说不需要表单或页面通过自己的弹窗发起流程，汇报时附上发起代码示例：
    \`\`\`js
    window.__LUBAN__.startWorkflow(流程ID, { 字段1: '值1', 字段2: '值2' })
      .then(function(instance) { alert('流程已发起，实例ID：' + instance.id); })
@@ -50,9 +62,10 @@ const FULL_WORKFLOW_PROMPT = `## 工作流程
 ### 仅设计流程（用户明确说不需要表单，或页面通过自己的弹窗发起流程时）
 1. 先用 search_members 或 search_roles 查询可用的审批人/角色
 2. 如果已有可复用表单，用 bind_workflow 绑定到流程（可选）
-3. 用 design_workflow 创建流程
+3. 用 design_workflow 创建流程；需求含"审批通过后自动 XX"等触发要求时按下方触发器契约配置 config.triggers
 4. 汇报结果时，必须包含以下信息：
    - 流程名称和 ID
+   - 已配置的触发器（如有）
    - 页面弹窗发起流程的 JS 代码示例：
    \`\`\`js
    window.__LUBAN__.startWorkflow(流程ID, { 字段1: '值1', 字段2: '值2' })
@@ -69,7 +82,7 @@ const FULL_WORKFLOW_PROMPT = `## 工作流程
 
 /** 委派产出资源的结构化描述（需求 R7） */
 export interface DelegateOutcome {
-  type: 'form' | 'workflow' | 'binding' | 'query';
+  type: 'form' | 'workflow' | 'binding' | 'query' | 'orchestration';
   id: number;
   name?: string;
   /** type=form 时携带字段 key 列表，供后续步骤的条件表达式引用 */
@@ -77,6 +90,10 @@ export interface DelegateOutcome {
   /** type=binding 时为绑定的另一方 ID */
   boundFormId?: number;
   boundProcessId?: number;
+  /** type=orchestration 且已发布时：注册出的平台工具 ID */
+  toolDefinitionId?: number;
+  /** type=orchestration 且已发布时：发布固化的版本 ID */
+  publishedVersionId?: number;
 }
 
 interface ToolMessageLike {
@@ -223,6 +240,146 @@ export function extractQueryOutcomes(messages: Array<ToolMessageLike | unknown>)
   return outcomes;
 }
 
+/** delegate_orchestration 的结构化产出：从 tool 消息中提取编排的创建/保存/发布结果 */
+export function extractOrchestrationOutcomes(messages: Array<ToolMessageLike | unknown>): DelegateOutcome[] {
+  const outcomes: DelegateOutcome[] = [];
+  const argsByCallId = new Map<string, { name: string; args: Record<string, unknown> }>();
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'assistant' || !Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls as Array<Record<string, unknown>>) {
+      if (typeof tc.id === 'string' && typeof tc.name === 'string') {
+        argsByCallId.set(tc.id, { name: tc.name, args: (tc.arguments as Record<string, unknown>) || {} });
+      }
+    }
+  }
+
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (m.role !== 'tool' || typeof m.content !== 'string' || !m.toolCallId) continue;
+    let parsed: { success?: boolean; message?: string; data?: unknown };
+    try { parsed = JSON.parse(String(m.content)) as typeof parsed; } catch { continue; }
+    if (parsed.success !== true) continue;
+    const call = argsByCallId.get(String(m.toolCallId));
+    if (!call) continue;
+    const data = (parsed.data ?? {}) as Record<string, unknown>;
+
+    if (call.name === 'create_orchestration') {
+      const id = Number(data.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'orchestration', id, name: (data.name as string) || (call.args.name as string) });
+      }
+    } else if (call.name === 'save_orchestration') {
+      const id = Number(call.args.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({ type: 'orchestration', id });
+      }
+    } else if (call.name === 'publish_orchestration') {
+      const id = Number(call.args.id);
+      if (Number.isFinite(id) && id > 0) {
+        outcomes.push({
+          type: 'orchestration',
+          id,
+          toolDefinitionId: Number(data.toolDefinitionId) || undefined,
+          publishedVersionId: Number(data.publishedVersionId) || undefined,
+        });
+      }
+    }
+  }
+
+  // 同一编排多次出现时保留最后一次（save/publish 场景），保留已知名称
+  const merged: DelegateOutcome[] = [];
+  for (const o of outcomes) {
+    const idx = merged.findIndex((x) => x.type === o.type && x.id === o.id);
+    if (idx >= 0) merged[idx] = { ...merged[idx], ...o, name: o.name || merged[idx].name };
+    else merged.push(o);
+  }
+  return merged;
+}
+
+/** 编排 DSL 中会被契约核对引用的资源键（与 OrchestrationDsl.NodeDef.Config 对齐） */
+const ORCH_REF_KINDS = ['queryId', 'toolId', 'workflowDefinitionId', 'subOrchestrationId'] as const;
+type OrchRefKind = typeof ORCH_REF_KINDS[number];
+
+function formatOrchRefs(map: Map<OrchRefKind, Set<number>>): string {
+  return [...map.entries()]
+    .flatMap(([kind, ids]) => [...ids].map((id) => `${kind} ${id}`))
+    .join(', ');
+}
+
+/**
+ * 编排资源契约核对：需求/上下文声明「编排资源契约：queryId 126=客户基础信息、toolId 8=风控接口」
+ * 时，逐项核对声明的资源 ID 是否真实出现在委派产出的编排 DSL 中（反向：DSL 引用但未声明的
+ * 资源也要提示）。与 delegate_workflow 的发起字段契约核对同因：lint 只校验引用的资源**存在**，
+ * 校验不了引用的资源**是不是需求要的那一个**——选错查询/工具会把错误数据接进页面链路。
+ *
+ * 核对直接读持久化 DSL（getOrchestration），不依赖子智能体文本复述。返回告警文案，无差异返回空串。
+ */
+export async function verifyOrchestrationResourceContract(
+  contractLine: string,
+  messages: Array<ToolMessageLike | unknown>,
+): Promise<string> {
+  const declared = new Map<OrchRefKind, Set<number>>();
+  for (const m of contractLine.matchAll(/(queryId|toolId|workflowDefinitionId|subOrchestrationId)\s*[=:：]?\s*(\d+)/g)) {
+    const kind = m[1] as OrchRefKind;
+    const id = Number(m[2]);
+    if (!declared.has(kind)) declared.set(kind, new Set());
+    declared.get(kind)!.add(id);
+  }
+  if (declared.size === 0) return '';
+
+  const orchestrationIds = new Set(
+    extractOrchestrationOutcomes(messages)
+      .map((o) => o.id)
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
+  if (orchestrationIds.size === 0) return '';
+
+  const referenced = new Map<OrchRefKind, Set<number>>();
+  let parsedAny = false;
+  for (const orchId of orchestrationIds) {
+    try {
+      const res = await getOrchestration(orchId);
+      const dsl = typeof res.data?.dsl === 'string' && res.data.dsl ? JSON.parse(res.data.dsl) : null;
+      if (!dsl) continue;
+      parsedAny = true;
+      const nodes = Array.isArray(dsl.nodes) ? (dsl.nodes as Array<Record<string, unknown>>) : [];
+      for (const node of nodes) {
+        const config = ((node.data as Record<string, unknown> | undefined)?.config ?? {}) as Record<string, unknown>;
+        for (const kind of ORCH_REF_KINDS) {
+          const id = Number(config[kind]);
+          if (Number.isFinite(id) && id > 0) {
+            if (!referenced.has(kind)) referenced.set(kind, new Set());
+            referenced.get(kind)!.add(id);
+          }
+        }
+      }
+    } catch (e) {
+      // 读不到 DSL（权限/网络）时跳过核对，不让契约检查本身拖垮委派结果
+      console.warn('[delegate_orchestration] 契约核对读取编排 DSL 失败，跳过该编排:', e);
+    }
+  }
+  if (!parsedAny) {
+    return `\n\n⚠️ 编排资源契约核对失败：声明了 [${formatOrchRefs(declared)}] 但未能读取到任何编排 DSL（可能委派未产出编排或读取失败），请人工确认资源引用是否正确`;
+  }
+
+  const missing: string[] = [];
+  for (const [kind, ids] of declared) {
+    const refIds = referenced.get(kind) ?? new Set<number>();
+    for (const id of ids) if (!refIds.has(id)) missing.push(`${kind} ${id}`);
+  }
+  const extra: string[] = [];
+  for (const [kind, ids] of referenced) {
+    const decIds = declared.get(kind) ?? new Set<number>();
+    for (const id of ids) if (!decIds.has(id)) extra.push(`${kind} ${id}`);
+  }
+  if (missing.length === 0 && extra.length === 0) return '';
+  return `\n\n⚠️ 编排资源契约核对不一致：需求声明 [${formatOrchRefs(declared)}]` +
+    `，编排 DSL 实际引用 [${formatOrchRefs(referenced)}]` +
+    `${missing.length > 0 ? `；声明未引用: ${missing.join(', ')}` : ''}` +
+    `${extra.length > 0 ? `；引用未声明: ${extra.join(', ')}` : ''}` +
+    `。页面挂接与后续联动必须以需求契约为准，请核对编排是否选错了查询/工具`;
+}
+
 /** 委派给 data-assistant 的技能 ID 列表（须与 agentRegistry 中 data-assistant.allowedSkills 保持一致，agentSelfCheck 会校验两者漂移） */
 export const DBA_DELEGATE_SKILL_IDS = [
   'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
@@ -278,6 +435,8 @@ ${userIdentity}
 ${opts.existingFormsInfo || ''}
 ${opts.context ? `上下文信息：${opts.context}` : ''}
 ${WORKFLOW_ENGINE_SEMANTICS}
+
+${WORKFLOW_TRIGGER_CONTRACT}
 
 ${modePrompt}
 
@@ -945,7 +1104,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
     };
   },
 
-  'delegate:orchestration': (_ctx, chatRouter) => {
+  'delegate:orchestration': (ctx, chatRouter) => {
     if (!chatRouter) {
       return {
         id: 'delegate:orchestration',
@@ -961,31 +1120,152 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
       id: 'delegate:orchestration',
       category: SkillCategory.DELEGATE,
       name: 'delegate_orchestration',
-      description: `委派 API 编排任务给编排设计助手：自然语言描述数据聚合/调用链需求，助手产出 DSL 并完成校验、试运行；发布需你确认。`,
+      description: `委派 API 编排任务给编排设计助手：自然语言描述数据聚合/调用链需求，助手产出 DSL 并完成校验、试运行；发布为独立确认步骤。`,
       parameters: {
         type: 'object',
         properties: {
           requirement: { type: 'string', description: '编排需求描述，如"聚合客户 360 视图：查客户基础信息+订单列表，Python 合并返回"' },
-          context: { type: 'string', description: '相关上下文（页面名称、已有 queryId/toolId 等）' },
+          context: { type: 'string', description: '相关上下文（页面名称、已有 queryId/toolId 等）。涉及具体资源时建议声明一行「编排资源契约：queryId 126=客户基础信息、toolId 8=风控接口」，委派完成后会核对编排 DSL 实际引用与契约的一致性' },
         },
         required: ['requirement'],
       },
-      async execute(args) {
+      async execute(args, execCtx) {
+        // 内核确认重执行：为子会话即将重试的危险操作放行（批准接力）
+        if ((execCtx as { kernelCall?: { resume?: boolean } } | undefined)?.kernelCall?.resume) {
+          approvePendingApproval();
+        }
         const { requirement, context } = args as { requirement: string; context?: string };
-        console.log(`[delegate_orchestration] 开始 | ${String(requirement).slice(0, 60)}`);
+        if (activeDelegations.has('orchestration')) {
+          console.warn(`[delegate_orchestration] 编排设计助手正在工作中，拒绝重复调用`);
+          return { success: false, message: '编排设计助手正在工作中，请等待其完成后再试', _noRetry: true };
+        }
+        activeDelegations.add('orchestration');
+
+        const execStart = Date.now();
+        console.log(`[delegate_orchestration] 开始委派编排任务 | ${String(requirement).slice(0, 60)}`);
+        ctx.dispatch?.({
+          type: 'DELEGATE_ORCHESTRATION_START',
+          payload: { requirement },
+        });
+
         try {
           const executor = await chatRouter.routeTo('orchestration-assistant',
             `请设计编排：${requirement}${context ? `（上下文：${context}）` : ''}`,
-            `orch-${Date.now()}`, { isDelegated: true, agentContext: { requirement, context } });
+            `orch-${Date.now()}`, {
+              isDelegated: true,
+              initialMessages: loadDelegationMemory(ctx.applicationId, 'orchestration-assistant'),
+              agentContext: { requirement, context },
+            });
           const messages = executor.getMessages();
+          saveDelegationMemory(ctx.applicationId, 'orchestration-assistant', messages);
+
+          // 确认门暂停传播：子智能体（如待确认的 publish_orchestration）带未确认操作返回时，
+          // 主智能体必须挂起转述用户，与 delegate_workflow 相同
+          const pauseReason = detectSubAgentPause(messages);
+          if (pauseReason) {
+            console.warn(`[delegate_orchestration] 子智能体等待用户确认，主智能体暂停 | ${pauseReason.slice(0, 80)}`);
+            const kernelCallId = (execCtx as { kernelCall?: { callId?: string } } | undefined)?.kernelCall?.callId || '';
+            const delegateArgs = args as Record<string, unknown>;
+            return {
+              success: false,
+              _pause: true,
+              message: `编排设计助手有一个危险操作等待用户确认，本次任务未完成。请向用户转述下面的确认请求，等用户回复"确认"后重新委派本任务；用户回复"取消"则放弃该操作：\n${pauseReason}`,
+              data: kernelCallId ? {
+                suspendRequest: {
+                  kind: 'danger-confirm',
+                  callId: kernelCallId,
+                  toolName: 'delegate_orchestration',
+                  args: delegateArgs,
+                  argsKey: toolArgsKey(delegateArgs),
+                  message: `子智能体危险操作待确认：${pauseReason}`,
+                },
+              } : undefined,
+            };
+          }
+
           const response = messages
             .filter((m) => (m as Message).role === 'assistant')
             .map((m) => (m as Message).content || '')
             .join('\n\n')
             .trim();
-          return { success: true, message: response || '编排设计助手已完成', data: { response } };
-        } catch (e) {
-          return { success: false, message: `编排设计助手执行失败: ${(e as Error).message}` };
+
+          // 子智能体执行过程中的工具失败必须透传（如 lint 三连败/试运行失败），禁止报成功
+          const failedToolMessages = Array.from(new Set(
+            messagesSinceLastUserTask(messages)
+              .filter((m) => (m as Message).role === 'tool')
+              .map((m) => (m as Message).content || '')
+              .filter((content: string) => !content.includes('已暂停，等待用户确认后继续'))
+              .map((content: string) => {
+                try {
+                  const parsed = JSON.parse(content) as { success?: boolean; message?: string };
+                  return parsed.success === false ? (parsed.message || '未知错误') : null;
+                } catch {
+                  return null;
+                }
+              })
+              .filter((msg): msg is string => !!msg),
+          ));
+          if (failedToolMessages.length > 0) {
+            console.warn(`[delegate_orchestration] 子智能体执行中有 ${failedToolMessages.length} 次工具失败 | ${failedToolMessages.join('；')}`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_ORCHESTRATION_END',
+              payload: { success: false, error: failedToolMessages.join('；'), details: response },
+            });
+            return {
+              success: false,
+              message: `编排设计助手执行过程中有工具调用失败，任务可能未完成，请将以下失败信息如实转达用户，禁止标记为已完成：\n${failedToolMessages.map((f) => `- ${f}`).join('\n')}\n\n子智能体最后回复：${response || '（无）'}`,
+              data: { response, outcomes: extractOrchestrationOutcomes(messages), failures: failedToolMessages },
+            };
+          }
+
+          // 请求用户手动操作时硬挂起，避免 planPolicy 死循环（与 delegate_workflow 同因）
+          const orchIntervention = detectManualInterventionRequest(response);
+          if (orchIntervention.required) {
+            console.warn(`[delegate_orchestration] 人工介入，主智能体暂停 | ${(orchIntervention.reason || '').slice(0, 80)}`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_ORCHESTRATION_END',
+              payload: { success: false, error: `需要用户手动操作：${orchIntervention.reason || ''}` },
+            });
+            return {
+              success: false,
+              _pause: true,
+              message: `需要用户手动操作后本次任务才算完成：${orchIntervention.reason || ''}。请将请求转达给用户，等用户完成并回复后再继续后续步骤。`,
+              data: { response, outcomes: extractOrchestrationOutcomes(messages) },
+            };
+          }
+
+          const outcomes = extractOrchestrationOutcomes(messages);
+
+          // 编排资源契约核对：需求/上下文声明「编排资源契约：…」时，核对声明的资源 ID
+          // 与持久化 DSL 实际引用的一致性（lint 只保证资源存在，不保证选对了资源）
+          let contractWarning = '';
+          const contractLine = `${requirement}\n${context || ''}`.match(/编排资源契约[：:]\s*([^\n]+)/)?.[1];
+          if (contractLine) {
+            contractWarning = await verifyOrchestrationResourceContract(contractLine, messages);
+          }
+
+          ctx.dispatch?.({
+            type: 'DELEGATE_ORCHESTRATION_END',
+            payload: { success: true, details: response },
+          });
+          console.log(`[delegate_orchestration] 完成 | 总耗时: ${Date.now() - execStart}ms | outcomes: ${JSON.stringify(outcomes)}${contractWarning ? ' | 契约告警' : ''}`);
+          const outcomeSummary = outcomes
+            .map((o) => `${o.name ? `「${o.name}」` : ''}编排(ID: ${o.id})${o.publishedVersionId ? ` 已发布 v${o.publishedVersionId}` : ''}${o.toolDefinitionId ? ` 工具ID: ${o.toolDefinitionId}` : ''}`)
+            .join('；');
+          return {
+            success: true,
+            message: `编排设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}`,
+            data: { response, outcomes },
+          };
+        } catch (e: unknown) {
+          console.error(`[delegate_orchestration] 失败:`, e);
+          ctx.dispatch?.({
+            type: 'DELEGATE_ORCHESTRATION_END',
+            payload: { success: false, error: (e as Error).message },
+          });
+          return { success: false, message: `编排设计助手执行失败: ${(e as Error).message}`, _noRetry: true };
+        } finally {
+          activeDelegations.delete('orchestration');
         }
       },
     };

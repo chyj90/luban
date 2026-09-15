@@ -146,7 +146,12 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     }
 
     const config = buildConfig();
-    await encryptConfigSecrets(config); // 传输层信封加密敏感字段（密码等）
+    try {
+      await encryptConfigSecrets(config);
+    } catch (e: unknown) {
+      toast((e as Error)?.message || '敏感字段加密失败', 'error');
+      return;
+    }
     const payload = {
       ownerId: applicationId, slug: 'APPLICATION' as const,
       name: form.name, type: form.type, config,

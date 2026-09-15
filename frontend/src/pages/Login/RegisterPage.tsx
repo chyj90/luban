@@ -20,8 +20,11 @@ export function RegisterPage() {
       const encryptedPwd = await encryptSecret(password);
       await registerApi({ account, email, password: encryptedPwd });
       navigate('/login');
-    } catch {
-      setError('注册失败，请稍后重试');
+    } catch (e: unknown) {
+      const msg = (e as Error)?.message || '';
+      setError(msg.includes('crypto.subtle') || msg.includes('公钥')
+        ? msg
+        : '注册失败，请稍后重试');
     } finally {
       setLoading(false);
     }

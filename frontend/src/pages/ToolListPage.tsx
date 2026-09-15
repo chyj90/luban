@@ -414,8 +414,9 @@ export default function ToolListPage() {
       setDsShowForm(false);
       setDsEditingId(null);
       fetchDatasources();
-    } catch {
-      toast('操作失败', 'error');
+    } catch (e: unknown) {
+      const msg = (e as Error)?.message || '';
+      toast(msg.includes('crypto.subtle') || msg.includes('公钥') ? msg : '操作失败', 'error');
     }
   };
 
