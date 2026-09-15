@@ -20,6 +20,7 @@ import type { WorkflowNode, WorkflowEdge } from '../../types/workflow';
 import { workflowApi, formApi, bindingApi, instanceApi } from '../../api/workflow';
 import { toast } from '@/stores/toastStore';
 import ApproverSelector from './ApproverSelector';
+import NodeTriggerEditor from './NodeTriggerEditor';
 import Select from '@/components/Select';
 import * as XLSX from 'xlsx';
 import styles from './WorkflowDesigner.module.css';
@@ -1816,11 +1817,18 @@ export default function WorkflowDesigner({
               </div>
 
               {(selectedNode.data as { nodeType: string }).nodeType === 'approval' && (
-                <ApproverSelector
-                  config={selectedNodeConfig}
-                  onChange={updateNodeConfig}
-                  appId={appId}
-                />
+                <>
+                  <ApproverSelector
+                    config={selectedNodeConfig}
+                    onChange={updateNodeConfig}
+                    appId={appId}
+                  />
+                  <NodeTriggerEditor
+                    config={selectedNodeConfig}
+                    onChange={updateNodeConfig}
+                    appId={appId}
+                  />
+                </>
               )}
 
               {(selectedNode.data as { nodeType: string }).nodeType === 'condition' && (

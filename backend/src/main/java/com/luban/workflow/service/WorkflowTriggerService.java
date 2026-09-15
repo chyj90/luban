@@ -61,11 +61,13 @@ public class WorkflowTriggerService {
                 Map<String, Object> target = castMap(trigger.get("target"));
                 String type = str(target.get("type"));
                 Object ref = target.get("ref");
-                if (type.isBlank() || ref == null) {
-                    log.warn("触发器配置缺少 target.type/ref，忽略: node={} trigger={}", nodeId, trigger);
+                Long refId = ref instanceof Number n && n.longValue() > 0
+                        ? n.longValue() : parsePositive(ref);
+                if (type.isBlank() || refId == null) {
+                    log.warn("触发器配置缺少 target.type/ref（或 ref 非法），忽略: node={} trigger={}", nodeId, trigger);
                     continue;
                 }
-                enqueue(instance, nodeId, taskId, trigger, type, Long.valueOf(String.valueOf(ref)));
+                enqueue(instance, nodeId, taskId, comment, trigger, type, refId);
             }
         } catch (Exception e) {
             log.error("触发器事件入队失败 instance={} node={} event={}",
@@ -75,7 +77,7 @@ public class WorkflowTriggerService {
 
     private void enqueue(WorkflowInstance instance, String nodeId, Long taskId, String lastComment,
                          Map<String, Object> trigger, String targetType, Long targetRef) {
-        Map<String, Object> params = resolveParams(trigger.get("paramsMapping"), instance, taskId, nodeId);
+        Map<String, Object> params = resolveParams(trigger.get("paramsMapping"), instance, taskId, nodeId, lastComment);
         Map<String, Object> retry = castMap(trigger.get("retry"));
 
         WorkflowTriggerOutbox row = new WorkflowTriggerOutbox();
@@ -202,6 +204,15 @@ public class WorkflowTriggerService {
     }
 
     private String str(Object o) { return o == null ? "" : String.valueOf(o); }
+
+    private Long parsePositive(Object o) {
+        try {
+            long v = Long.parseLong(String.valueOf(o).trim());
+            return v > 0 ? v : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> castMap(Object o) { return o instanceof Map ? (Map<String, Object>) o : Map.of(); }
