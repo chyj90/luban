@@ -1,5 +1,6 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createCodePage, getCodePage, updateCodePage, runQuery, listApplicationTools, runAppTool, listPages, listQueries } from '@/api';
+import { workflowApi } from '@/api/workflow';
 import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
 import { getComponentSpecByName, getComponentCatalog } from '@/luban-ui/componentSpecs';
 import { getAnalysisExamples, getDataQueryGuide } from './promptFragments';
@@ -27,6 +28,35 @@ function extractApiNamesFromJS(js: string): string[] {
     names.add(match[1]);
   }
   return [...names];
+}
+
+function extractStartWorkflowIds(js: string): number[] {
+  const ids = new Set<number>();
+  const pattern = /startWorkflow\s*\(\s*(\d+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(js)) !== null) {
+    ids.add(Number(match[1]));
+  }
+  return [...ids];
+}
+
+/**
+ * 页面 JS 里 startWorkflow 引用的流程 ID 若已不存在（流程被删后页面不会自动更新），
+ * 发起流程会直接失败且发起前已写入的业务记录无法回滚（2026-09-16 流程 242 案例）。
+ * 保存不阻塞——流程允许后建；但在成功消息里显式提示，要求处理完引用才算收尾。
+ */
+async function checkStartWorkflowRefs(js: string, applicationId: number): Promise<string> {
+  const ids = extractStartWorkflowIds(js);
+  if (ids.length === 0) return '';
+  try {
+    const defs = await workflowApi.listDefinitions({ applicationId });
+    const valid = new Set((defs || []).map((d: { id: number }) => d.id));
+    const missing = ids.filter((id) => !valid.has(id));
+    if (missing.length === 0) return '';
+    return `\n\n⚠️ 页面 JS 中 startWorkflow 引用的流程 ID 不存在：${missing.join('、')}（流程可能已被删除）。流程发起会直接失败，且发起前的业务写入不会回滚。请先用 list_workflows（委派流程助手）核对可用流程并更新调用点；确需新流程时先创建拿到 ID，再用 update_code_page 回写此处。`;
+  } catch {
+    return ''; // 流程列表获取失败不阻塞保存
+  }
 }
 
 async function runPageQueries(
@@ -225,6 +255,7 @@ export const codeSkills: Record<string, SkillFactory> = {
           // listPages 失败不阻塞，继续走后端创建（后端仍有唯一约束兜底）
         }
 
+        const wfWarning = await checkStartWorkflowRefs(js, ctx.applicationId);
         const res = await createCodePage({
           applicationId: ctx.applicationId,
           name,
@@ -247,11 +278,11 @@ export const codeSkills: Record<string, SkillFactory> = {
           fixMsg += '\n\n⚠️ 每次只修 1-2 个问题，修完调用 update_code_page。修复所有问题后才能标记步骤完成。';
           return {
             success: true,
-            message: fixMsg,
+            message: fixMsg + wfWarning,
             data: res.data,
           };
         }
-        return { success: true, message: `代码页面 "${name}" 创建成功`, data: res.data };
+        return { success: true, message: `代码页面 "${name}" 创建成功${wfWarning}`, data: res.data };
       } catch (e: any) {
         return { success: false, message: `创建代码页面失败: ${(e as Error).message}` };
       }
@@ -470,6 +501,7 @@ export const codeSkills: Record<string, SkillFactory> = {
         if (effectiveToolIds.length > 0) {
           updateData.toolIds = effectiveToolIds;
         }
+        const wfWarning = await checkStartWorkflowRefs(js, ctx.applicationId);
         const res = await updateCodePage(pageId, updateData);
         ctx.onPageChange?.(pageId);
         if (validation.fixable.length > 0) {
@@ -482,11 +514,11 @@ export const codeSkills: Record<string, SkillFactory> = {
           fixMsg += '\n\n⚠️ 每次只修 1-2 个问题，修完调用 update_code_page。修复所有问题后才能标记步骤完成。';
           return {
             success: true,
-            message: fixMsg,
+            message: fixMsg + wfWarning,
             data: res.data,
           };
         }
-        return { success: true, message: '页面代码更新成功', data: res.data };
+        return { success: true, message: `页面代码更新成功${wfWarning}`, data: res.data };
       } catch (e: any) {
         return { success: false, message: `更新代码失败: ${(e as Error).message}` };
       }

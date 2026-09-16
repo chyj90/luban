@@ -7,7 +7,7 @@ import { ChatRouter, getLiveRouter, registerRouter, discardRouter } from '@/agen
 import type { RouterSessionOptions, RouterCallbacks } from '@/agent/core/chatRouter';
 import { AGENTS } from '@/agent/registry/agentRegistry';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
-import { setAgentMemory } from '@/agent/registry/agentMemory';
+import { setAgentMemory, clearAppMemory } from '@/agent/registry/agentMemory';
 import { listPages } from '@/api';
 import type { SessionStatus } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
@@ -692,7 +692,7 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           <span className="ap-title">AI Agent</span>
         </div>
         <div className="ap-header-right">
-          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); setIsSsePending(false); discardRouter(appId); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
+          <button className="ap-clear-btn" onClick={() => { reset(); setTokenUsage(null); setIsSsePending(false); discardRouter(appId); clearAppMemory(Number(appId)); chatRouterRef.current = null; lastApiMessagesRef.current = []; try { localStorage.removeItem(getDebugLogKey()); } catch { /* ignore */ } }} title="清空对话和计划">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8c9cab" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
             </svg>

@@ -82,10 +82,20 @@ public class ProcessService {
         WorkflowDefinition existing = getDefinition(id);
         checkAppOwner(existing, userId);
         validateNodeConfig(updated.getNodes());
-        existing.setName(updated.getName());
-        existing.setDescription(updated.getDescription());
-        existing.setNodes(updated.getNodes());
-        existing.setEdges(updated.getEdges());
+        // 只覆盖调用方显式传入的字段：实体 nodes/edges 是 TEXT 列存 JSON 字符串，
+        // 无条件 set 会把部分更新（如只补触发器）未携带的字段清成 null
+        if (updated.getName() != null) {
+            existing.setName(updated.getName());
+        }
+        if (updated.getDescription() != null) {
+            existing.setDescription(updated.getDescription());
+        }
+        if (updated.getNodes() != null) {
+            existing.setNodes(updated.getNodes());
+        }
+        if (updated.getEdges() != null) {
+            existing.setEdges(updated.getEdges());
+        }
         return workflowDefinitionRepository.save(existing);
     }
 
@@ -245,6 +255,8 @@ public class ProcessService {
             }
         }
 
+        // 绑定不随流程删除会变成悬挂引用，表单默认流程查找会踩空
+        formWorkflowBindingRepository.deleteByWorkflowIdIn(List.of(id));
         workflowDefinitionRepository.deleteById(id);
     }
 
@@ -665,16 +677,8 @@ public class ProcessService {
             Map<String, Object> target = t.get("target") instanceof Map
                     ? (Map<String, Object>) t.get("target") : Map.of();
             String type = String.valueOf(target.getOrDefault("type", ""));
-            Object ref = target.get("ref");
-            Long refId = null;
-            if (ref instanceof Number n && n.longValue() > 0) {
-                refId = n.longValue();
-            } else if (ref != null) {
-                try {
-                    long v = Long.parseLong(ref.toString().trim());
-                    if (v > 0) refId = v;
-                } catch (NumberFormatException ignored) { }
-            }
+            // 一次性解析出 refId 后不再重新赋值：refId 会被下方 lambda 捕获，必须是 effectively final
+            Long refId = parseTriggerRef(target.get("ref"));
             if (refId == null) {
                 errors.add("节点「" + nodeName + "」触发器(on=" + on + ")缺少合法的 target.ref（正整数 ID）");
                 continue;
@@ -700,6 +704,22 @@ public class ProcessService {
                 }
                 default -> { /* TOOL 等类型由派发层校验 */ }
             }
+        }
+    }
+
+    /** 解析触发器 target.ref 为正整数 ID，非法（null/非数字/≤0）返回 null。 */
+    private static Long parseTriggerRef(Object ref) {
+        if (ref instanceof Number n && n.longValue() > 0) {
+            return n.longValue();
+        }
+        if (ref == null) {
+            return null;
+        }
+        try {
+            long v = Long.parseLong(ref.toString().trim());
+            return v > 0 ? v : null;
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 }

@@ -45,9 +45,9 @@ const DESIGN_FORM_WORKFLOW = `## 工作流程（仅设计表单）
 
 /** task_type=design_workflow：仅设计/修改流程 */
 const DESIGN_WORKFLOW_ONLY_PROMPT = `## 工作流程（仅设计/修改流程，不创建表单）
-1. **修改已有流程**（需求给出流程 ID 时）：先用 get_definition(processId) 读取现有节点和连线，再基于现有结构调用 update_workflow(processId, nodes, edges) 传入修改后的**完整**节点和连线。update_workflow 失败时才用 design_workflow 创建新流程，并说明新旧流程 ID 的对应关系
+1. **修改已有流程**（需求给出流程 ID 时）：先用 list_workflows 确认流程存在（上下文里的流程 ID 可能已过期——流程被删后页面 JS 不会自动更新），存在再用 get_definition(processId) 读取现有节点和连线，基于现有结构调用 update_workflow(processId, nodes, edges) 传入修改后的**完整**节点和连线。update_workflow 失败时才用 design_workflow 创建新流程，并说明新旧流程 ID 的对应关系
 2. **新建流程**：用 design_workflow 创建（name 必填，applicationId 必填，nodes/edges 必填）
-3. 上下文或对话记录中已有本次相关表单（含表单 ID）时，用 bind_workflow(processId, formId) 绑定；看不到字段 key 时，用 design_form 传入 formId 且不传 fields 查看
+3. 上下文或对话记录中已有本次相关表单（含表单 ID）时：先用 design_form 传入 formId 且不传 fields 确认表单仍存在并读取字段 key（上下文中的表单 ID 可能已过期——表单被删除后不会自动恢复）；存在才 bind_workflow(processId, formId) 绑定；查询失败/不存在时，本次确需表单字段就重建（design_form 传 name + 完整 fields，再绑定新 ID），不需要就如实说明，禁止把已不存在的表单 ID 当作产出或绑定对象汇报
 4. ⚠️ 条件分支连线的 condition 表达式必须使用表单的**真实字段 key**（通过 design_form(formId) 查询或上下文获得），禁止猜测字段名
 5. 先用 search_members 或 search_roles 查询可用的审批人/角色，再设置审批人
 6. 需求包含"审批通过后自动 XX"等事件触发要求时，按下方触发器契约在对应审批节点 config.triggers 中配置
@@ -57,7 +57,9 @@ const DESIGN_WORKFLOW_ONLY_PROMPT = `## 工作流程（仅设计/修改流程，
    window.__LUBAN__.startWorkflow(流程ID, { 字段1: '值1', 字段2: '值2' })
      .then(function(instance) { alert('流程已发起，实例ID：' + instance.id); })
      .catch(function(err) { alert('发起失败：' + err.message); });
-   \`\`\``;
+   \`\`\`
+9. ⚠️ get_definition / lint_workflow / copy_workflow 返回「流程 X 不存在」或 HTTP 404 时，结论就是该流程不存在：不要换工具反复试探，禁止用 copy_workflow 探测存在性（它是写操作）。直接如实汇报"流程 X 不存在"；需求里给了完整节点结构就按结构新建，没给就如实说明缺少的信息
+10. 汇报新建或变更的流程 ID 时，必须同时提醒：页面 JS 中所有 startWorkflow(旧流程ID) 调用点需要同步更新为新 ID（页面代码由主智能体负责更新，你只需在汇报中明确提醒）`;
 
 /** 未指定 task_type：表单 + 流程完整执行 */
 const FULL_WORKFLOW_PROMPT = `## 工作流程
@@ -70,7 +72,7 @@ const FULL_WORKFLOW_PROMPT = `## 工作流程
 
 ### 仅设计流程（用户明确说不需要表单，或页面通过自己的弹窗发起流程时）
 1. 先用 search_members 或 search_roles 查询可用的审批人/角色
-2. 如果已有可复用表单，用 bind_workflow 绑定到流程（可选）
+2. 如果已有可复用表单，先用 design_form 传入 formId 且不传 fields 确认其仍存在（上下文中的表单 ID 可能已过期——表单被删除后不会自动恢复），存在才用 bind_workflow 绑定到流程（可选）；不存在且本次需要表单字段契约就重建
 3. 用 design_workflow 创建流程；需求含"审批通过后自动 XX"等触发要求时按下方触发器契约配置 config.triggers
 4. 汇报结果时，必须包含以下信息：
    - 流程名称和 ID
@@ -84,10 +86,12 @@ const FULL_WORKFLOW_PROMPT = `## 工作流程
    - 说明：startWorkflow 的 formData 参数应与页面弹窗表单的字段对应
 
 ### 修改已有流程（用户给出流程 ID 时）
-1. 先用 get_definition(processId) 读取现有节点和连线
+1. 先用 list_workflows 确认流程存在（上下文里的流程 ID 可能已过期——流程被删后页面 JS 不会自动更新），再用 get_definition(processId) 读取现有节点和连线
 2. 用 update_workflow(processId, nodes, edges) 传入修改后的完整节点和连线，不要创建新流程
 3. update_workflow 失败时才用 design_workflow 创建新流程，并说明新旧流程 ID 的对应关系
-4. ⚠️ 条件表达式的字段 key 必须用 design_form 传入 formId 且不传 fields 查询真实字段，禁止猜测`;
+4. ⚠️ get_definition / lint_workflow / copy_workflow 返回「流程 X 不存在」或 HTTP 404 时，结论就是该流程不存在：不要换工具反复试探，禁止用 copy_workflow 探测存在性（写操作）。直接如实汇报
+5. ⚠️ 条件表达式的字段 key 必须用 design_form 传入 formId 且不传 fields 查询真实字段，禁止猜测
+6. 汇报新建或变更的流程 ID 时，必须同时提醒：页面 JS 中所有 startWorkflow(旧流程ID) 调用点需要同步更新为新 ID（页面代码由主智能体负责更新，你只需在汇报中明确提醒）`;
 
 /** 委派产出资源的结构化描述（需求 R7） */
 export interface DelegateOutcome {
@@ -179,8 +183,11 @@ export function extractWorkflowOutcomes(messages: Array<ToolMessageLike | unknow
     const data = (parsed.data ?? {}) as Record<string, unknown>;
 
     if (call.name === 'design_form') {
+      // 只读用法（只传 formId 查字段）不是产出：把"查看"误报成"产出"会诱导主智能体拿一个
+      // 本步骤从未创建的资源 ID 去标记完成，被核验器拦下（2026-09-16 表单 67 案例）
+      const fieldsProvided = Array.isArray(call.args.fields) && (call.args.fields as unknown[]).length > 0;
       const id = Number(data.id);
-      if (Number.isFinite(id) && id > 0) {
+      if (fieldsProvided && Number.isFinite(id) && id > 0) {
         outcomes.push({ type: 'form', id, name: (data.name as string) || (call.args.name as string), fields: parseFields(call.args.fields) });
       }
     } else if (call.name === 'design_workflow' || call.name === 'update_workflow' || call.name === 'copy_workflow') {
@@ -1094,9 +1101,14 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           const outcomeSummary = outcomes
             .map((o) => `${o.type} ${o.name || ''}(ID: ${o.id})${o.fields ? ` 字段[${o.fields.map((f) => f.key).join(',')}]` : ''}`)
             .join('；');
+          // 产出/变更流程后强制主智能体核对页面挂接：流程 ID 变了页面 JS 不会自动跟着变，
+          // 漏改 startWorkflow 调用点会让页面发起直接失败（2026-09-16 流程 242 案例）
+          const pageSyncReminder = outcomes.some((o) => o.type === 'workflow')
+            ? '\n\n⚠️ 页面挂接核对：页面 JS 里若已有对其它流程 ID 的 startWorkflow 引用（流程被删除/替换后页面不会自动更新），必须用 get_code_page + update_code_page 同步为本次流程 ID，缺这步页面发起流程会直接失败。'
+            : '';
           return {
             success: true,
-            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}`,
+            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}${pageSyncReminder}`,
             data: { response, outcomes },
           };
         } catch (e: unknown) {

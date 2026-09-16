@@ -1,5 +1,6 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { formApi, workflowApi, instanceApi, taskApi, orgApi, bindingApi, lintApi } from '@/api/workflow';
+import type { WorkflowDefinition } from '@/types/workflow';
 import { listRoles, listDepartments } from '@/api/user';
 
 const VALID_NODE_TYPES = ['start', 'approval', 'condition', 'parallel', 'sub_process', 'end', 'cc'];
@@ -213,6 +214,50 @@ async function validateNodeConfigReferences(nodes: unknown[]): Promise<string | 
   return null;
 }
 
+/**
+ * 校验并序列化流程图。后端 WorkflowDefinition 的 nodes/edges 是 TEXT 列存 JSON 字符串
+ * （实体字段为 String，直接传数组会 Jackson 400），所有工具在发请求前统一走这里：
+ * 数组 → 校验节点/连线/引用 → 序列化为字符串。
+ */
+async function validateAndSerializeWorkflowGraph(
+  rawNodes: unknown,
+  rawEdges: unknown,
+): Promise<{ nodes: string; edges: string } | { error: string }> {
+  const toGraph = (v: unknown): unknown[] | null => {
+    if (Array.isArray(v)) return v;
+    // 模型偶发无视 schema 传 JSON 字符串：能解析成数组就收下，避免被 JSON.stringify 二次编码写脏库
+    if (typeof v === 'string') {
+      try {
+        const parsed = JSON.parse(v);
+        return Array.isArray(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const nodes = toGraph(rawNodes);
+  const edges = toGraph(rawEdges);
+  if (!nodes || !edges) {
+    return { error: 'nodes 和 edges 必须是数组（节点列表/连线列表），不能是对象、字符串或其它类型' };
+  }
+  const nodeError = validateWorkflowNodes(nodes);
+  if (nodeError) {
+    return { error: nodeError };
+  }
+  const nodeIds = new Set(nodes.map((n) => (n as Record<string, unknown>).id as string));
+  const edgeError = validateWorkflowEdges(edges, nodeIds);
+  if (edgeError) {
+    return { error: edgeError };
+  }
+  const refError = await validateNodeConfigReferences(nodes);
+  if (refError) {
+    return { error: refError };
+  }
+  return { nodes: JSON.stringify(nodes), edges: JSON.stringify(edges) };
+}
+
 export const workflowSkills: Record<string, SkillFactory> = {
   'workflow:design_form': (ctx) => ({
     id: 'workflow:design_form',
@@ -313,22 +358,13 @@ export const workflowSkills: Record<string, SkillFactory> = {
 
       const appId = (applicationId as number) || ctx.applicationId;
       try {
-        const validationError = validateWorkflowNodes((nodes as unknown[]) || []);
-        if (validationError) {
-          return { success: false, message: validationError };
-        }
-        const nodeIds = new Set((nodes as unknown[]).map((n: unknown) => (n as Record<string, unknown>).id as string));
-        const edgeError = validateWorkflowEdges((edges as unknown[]) || [], nodeIds);
-        if (edgeError) {
-          return { success: false, message: edgeError };
-        }
-        const refError = await validateNodeConfigReferences((nodes as unknown[]) || []);
-        if (refError) {
-          return { success: false, message: refError };
+        const graph = await validateAndSerializeWorkflowGraph(nodes, edges);
+        if ('error' in graph) {
+          return { success: false, message: graph.error };
         }
         const result = await workflowApi.createDefinition({
           name, description, applicationId: appId,
-          nodes: JSON.stringify(nodes || []), edges: JSON.stringify(edges || []),
+          nodes: graph.nodes, edges: graph.edges,
         });
         if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', processId: result.id });
         return { success: true, data: result, message: `流程「${name}」创建成功` };
@@ -395,6 +431,14 @@ export const workflowSkills: Record<string, SkillFactory> = {
         const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
           || (e as Error).message
           || '未知错误';
+        // 404 在进 controller 前由 AppAccess 拦截器判定，语义就是"流程不存在"。
+        // 不明确说破的话模型会把 404 当权限/参数问题，换 lint/copy 反复试探（2026-09-16 流程 242 案例）
+        if (/\[HTTP 404\]/.test(errMsg)) {
+          return {
+            success: false,
+            message: `流程 ${args.processId} 不存在（可能已被删除或 ID 已过期——流程被删后页面 JS 里的 startWorkflow(旧ID) 不会自动更新）。请用 list_workflows 查看当前应用的流程列表核对，不要换其它工具反复探测。`,
+          };
+        }
         return { success: false, message: `获取流程定义失败：${errMsg}` };
       }
     },
@@ -404,27 +448,41 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:update_definition',
     category: SkillCategory.WORKFLOW,
     name: 'update_workflow',
-    description: '更新已有流程定义的节点和连线。用于修改流程路由逻辑、替换审批节点等。',
+    description: '更新已有流程定义。用于修改流程路由逻辑、替换审批节点、增删节点触发器等。nodes/edges 必须基于 get_definition 返回的现有结构修改后整体传入，未传的字段保持不变。',
     parameters: {
       type: 'object',
       properties: {
         processId: { type: 'number', description: '要更新的流程 ID' },
-        name: { type: 'string', description: '流程名称' },
-        nodes: { type: 'array', description: '新的节点列表' },
-        edges: { type: 'array', description: '新的连线列表' },
+        name: { type: 'string', description: '流程名称（可选，不传保持原名）' },
+        nodes: { type: 'array', description: '修改后的完整节点列表（数组），必须与 edges 一起传入' },
+        edges: { type: 'array', description: '修改后的完整连线列表（数组），必须与 nodes 一起传入' },
       },
       required: ['processId'],
     },
     async execute(args) {
       try {
-        const processId = args.processId as number;
-        const updateData: Record<string, unknown> = {};
+        const updateData: Partial<WorkflowDefinition> = {};
         if (args.name) updateData.name = args.name as string;
-        if (args.nodes) updateData.nodes = args.nodes;
-        if (args.edges) updateData.edges = args.edges;
-        const result = await workflowApi.updateDefinition(processId, updateData);
+        if (args.nodes || args.edges) {
+          if (!args.nodes || !args.edges) {
+            return {
+              success: false,
+              message: '更新流程失败：nodes 和 edges 必须一起传入修改后的完整内容（先 get_definition 读取现有结构，基于它修改后整体传入），只传其一会破坏流程图完整性。',
+            };
+          }
+          const graph = await validateAndSerializeWorkflowGraph(args.nodes, args.edges);
+          if ('error' in graph) {
+            return { success: false, message: graph.error };
+          }
+          updateData.nodes = graph.nodes;
+          updateData.edges = graph.edges;
+        }
+        if (!updateData.name && !updateData.nodes) {
+          return { success: false, message: '更新流程失败：至少要传 name 或 nodes+edges 之一，没有可更新的内容。' };
+        }
+        const result = await workflowApi.updateDefinition(args.processId as number, updateData);
         if (ctx.onWorkflowNavigate) ctx.onWorkflowNavigate({ view: 'designer', processId: result.id });
-        return { success: true, data: result, message: `流程「${result.name || processId}」(ID: ${processId}) 已更新` };
+        return { success: true, data: result, message: `流程「${result.name || args.processId}」(ID: ${args.processId}) 已更新` };
       } catch (e: unknown) {
         const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
           || (e as Error).message
@@ -452,6 +510,13 @@ export const workflowSkills: Record<string, SkillFactory> = {
         const errMsg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
           || (e as Error).message
           || '未知错误';
+        // 404 语义就是 formId/processId 有一方不存在（可能已被删除），不明确说破模型会反复换工具试探
+        if (/\[HTTP 404\]/.test(errMsg)) {
+          return {
+            success: false,
+            message: `流程绑定失败：formId ${args.formId} 或 processId ${args.processId} 不存在（可能已被删除或 ID 已过期）。请分别核实两个 ID；表单已删除且本次确需表单的，先用 design_form 重建再用新 formId 绑定。`,
+          };
+        }
         return { success: false, message: `流程绑定失败：${errMsg}。请确保 formId 和 processId 正确。` };
       }
     },
@@ -513,6 +578,32 @@ export const workflowSkills: Record<string, SkillFactory> = {
         return { success: true, message: `找到 ${result.length} 个部门`, data: result };
       } catch (e: unknown) {
         return { success: false, message: `搜索部门失败: ${(e as Error).message}` };
+      }
+    },
+  }),
+
+  'workflow:list': (ctx) => ({
+    id: 'workflow:list',
+    category: SkillCategory.WORKFLOW,
+    name: 'list_workflows',
+    description: '列出当前应用的流程定义（ID/名称/状态）。判断某个流程 ID 是否存在、寻找可复用流程时必须先用本工具，禁止用 copy_workflow 等写操作探测存在性。',
+    parameters: {
+      type: 'object',
+      properties: { status: { type: 'string', description: '按状态筛选（DRAFT/PUBLISHED）' } },
+    },
+    async execute(args) {
+      try {
+        const result = await workflowApi.listDefinitions({
+          applicationId: ctx.applicationId,
+          status: args.status as string | undefined,
+        });
+        if (!result || result.length === 0) {
+          return { success: true, message: `当前应用（ID: ${ctx.applicationId}）暂无流程定义`, data: result };
+        }
+        const lines = result.map((d) => `  - ${d.id} 「${d.name}」 ${d.status}`);
+        return { success: true, message: `当前应用共 ${result.length} 个流程定义：\n${lines.join('\n')}`, data: result };
+      } catch (e: unknown) {
+        return { success: false, message: `获取流程列表失败: ${(e as Error).message}` };
       }
     },
   }),
@@ -649,7 +740,13 @@ export const workflowSkills: Record<string, SkillFactory> = {
         }
         return { success: true, message: parts.join('\n'), data: result };
       }
-      catch (e: unknown) { return { success: false, message: `检查失败: ${(e as Error).message}` }; }
+      catch (e: unknown) {
+        const errMsg = (e as Error).message || '未知错误';
+        if (/\[HTTP 404\]/.test(errMsg)) {
+          return { success: false, message: `流程 ${args.processId} 不存在，无法检查（可能已被删除或 ID 已过期）。请用 list_workflows 核对。` };
+        }
+        return { success: false, message: `检查失败: ${errMsg}` };
+      }
     },
   }),
 
@@ -667,7 +764,13 @@ export const workflowSkills: Record<string, SkillFactory> = {
       try {
         const result = await workflowApi.copyDefinition(args.processId as number);
         return { success: true, message: '流程复制成功', data: result };
-      } catch (e: unknown) { return { success: false, message: `复制失败: ${(e as Error).message}` }; }
+      } catch (e: unknown) {
+        const errMsg = (e as Error).message || '未知错误';
+        if (/\[HTTP 404\]/.test(errMsg)) {
+          return { success: false, message: `流程 ${args.processId} 不存在，无法复制。copy_workflow 是写操作，不能用来探测流程是否存在，请用 list_workflows 核对。` };
+        }
+        return { success: false, message: `复制失败: ${errMsg}` };
+      }
     },
   }),
 

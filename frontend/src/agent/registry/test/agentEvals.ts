@@ -463,11 +463,15 @@ function evalDelegateOutcomes(): EvalResult {
         { id: 't1', name: 'design_form', arguments: { name: '请假申请单', fields: [{ key: 'leaveDays', label: '请假天数', type: 'number', required: true }] } },
         { id: 't2', name: 'design_workflow', arguments: { name: '请假审批流程' } },
         { id: 't3', name: 'bind_workflow', arguments: { processId: 17, formId: 21 } },
+        // 只读用法：只传 formId 查字段，不是产出（2026-09-16 表单 67 案例：只读被误报为产出，
+        // 主智能体拿从未创建的资源 ID 标记完成，被核验器拦下后无路可走）
+        { id: 't4', name: 'design_form', arguments: { formId: 99 } },
       ],
     },
     { id: 'm1', role: 'tool', content: JSON.stringify({ success: true, message: '表单创建成功', data: { id: 21, name: '请假申请单' } }), toolCallId: 't1', timestamp: 0 },
     { id: 'm2', role: 'tool', content: JSON.stringify({ success: true, message: '流程创建成功', data: { id: 17, name: '请假审批流程' } }), toolCallId: 't2', timestamp: 0 },
     { id: 'm3', role: 'tool', content: JSON.stringify({ success: true, message: '流程绑定成功' }), toolCallId: 't3', timestamp: 0 },
+    { id: 'm4', role: 'tool', content: JSON.stringify({ success: true, message: '表单「旧表单」(ID: 99) 已有字段：x(x, text)', data: { id: 99, name: '旧表单' } }), toolCallId: 't4', timestamp: 0 },
   ];
 
   const outcomes = extractWorkflowOutcomes(messages);
@@ -478,6 +482,7 @@ function evalDelegateOutcomes(): EvalResult {
   if (!form?.fields?.some((f) => f.key === 'leaveDays')) checks.push('form outcome 应携带字段 key leaveDays');
   if (!wf || wf.id !== 17) checks.push('应提取 workflow id=17');
   if (!binding || binding.boundFormId !== 21 || binding.boundProcessId !== 17) checks.push('应提取 binding 21↔17');
+  if (outcomes.some((o) => o.type === 'form' && o.id === 99)) checks.push('design_form 只读（不传 fields）不应计为产出');
 
   return evalResult('E8-结构化委派契约', checks.length === 0, checks.length === 0 ? 'outcomes 提取完整（form+fields/workflow/binding）' : checks.join('；'));
 }

@@ -161,7 +161,10 @@ async function verifyWorkflowStep(description: string, result: string): Promise<
         return { verified: false, reason: `表单 ${formId} 存在但没有任何字段，可能创建不完整` };
       }
     } catch {
-      return { verified: false, reason: `表单 ID ${formId} 不存在或查询失败，请核实真实 ID` };
+      return {
+        verified: false,
+        reason: `表单 ID ${formId} 不存在或查询失败。若委派实际创建了新表单，请改用其返回的真实 ID 重新标记；若该表单确实已不存在（被删除或未建成）且本步骤需要它，请重新委派流程设计助手补建，再用新 ID 标记 completed；若本步骤并不依赖该表单（如页面自带弹窗发起），请修正 result 移除该表单 ID 后重新标记`,
+      };
     }
   }
 
@@ -170,7 +173,10 @@ async function verifyWorkflowStep(description: string, result: string): Promise<
     try {
       def = await injectableDeps.getWorkflow(processId);
     } catch {
-      return { verified: false, reason: `流程 ID ${processId} 不存在或查询失败，请核实真实 ID` };
+      return {
+        verified: false,
+        reason: `流程 ID ${processId} 不存在或查询失败。若委派实际创建了新流程，请改用其返回的真实 ID 重新标记；若该流程确实已不存在（被删除或未建成），请重新委派补建并发布后再用新 ID 标记 completed`,
+      };
     }
     const nodes = (await parseJsonSafe(def.nodes)) as
       | Array<{ nodeType?: string; data?: { config?: { triggers?: Array<{ on?: string }> } } }>
@@ -245,7 +251,7 @@ async function verifyOrchestrationStep(description: string, result: string): Pro
   try {
     orch = await injectableDeps.getOrchestration(orchId);
   } catch {
-    return { verified: false, reason: `编排 ID ${orchId} 不存在或查询失败，请核实真实 ID` };
+    return { verified: false, reason: `编排 ID ${orchId} 不存在或查询失败。若委派实际创建了新编排，请改用其返回的真实 ID 重新标记；若确实已不存在（被删除或未建成），请重新委派补建后再标记 completed` };
   }
   const nameMatch = description.match(/创建编排\s+([A-Za-z_]\w*)/);
   const actualName = orch.data?.name;

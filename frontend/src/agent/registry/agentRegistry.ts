@@ -172,6 +172,7 @@ export const AGENTS: AgentDefinition[] = [
     buildSystemPrompt: () => buildWorkflowAgentPrompt(),
     allowedSkills: [
       'workflow:design_form', 'workflow:design', 'workflow:update_definition', 'workflow:get_definition', 'workflow:bind',
+      'workflow:list',
       'workflow:search_members', 'workflow:search_roles', 'workflow:search_departments',
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
