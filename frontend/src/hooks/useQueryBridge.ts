@@ -648,10 +648,13 @@ ${JSON.stringify(queryNames)}.forEach(function(name) {
 window.__QUERIES__ = ${JSON.stringify(queryNames)};
 window.DataQuery = {};
 ${JSON.stringify(queryNames)}.forEach(function(name) {
-  var isWrite = name.match(/^(insert|update|delete|create|remove|add|save)/i);
   window.DataQuery[name] = function(params) {
     return window[name].run(params || {}).then(function(result) {
       var affected = result.totalCount || (result.rows ? result.rows.length : 0) || 0;
+      // 写查询判定：查询名前缀，或后端返回携带 insertId（仅 INSERT 会带）——
+      // 名字不带写前缀的写查询也能拿到正确的结果形状
+      var isWrite = /^(insert|update|delete|create|remove|add|save)/i.test(name) ||
+        (result && result.insertId != null);
       if (isWrite) {
         // insertId：INSERT 查询返回的自增主键。审批回写场景页面必须把它放进
         // startWorkflow 的 formData，触发器才能定位业务记录（缺它即断链）

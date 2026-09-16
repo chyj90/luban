@@ -1797,12 +1797,13 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fi
   }
 
   // 10. 校验 DataQuery 返回值访问方式（AST 分析）
-  // DataQuery.xxx(params) 返回 Promise<{rows, columns, totalCount}>
+  // 读查询返回 {rows, columns, totalCount}，写查询返回 {affectedRows, success, insertId, rows, columns}
+  // 静态分析无法可靠区分读/写查询（查询名前缀不可靠），白名单取两者并集
   // 禁止：result.data / result.data.rows / result.list 等
   try {
     const dqResultVars = new Set<string>();
     const dqResultAliasVars = new Map<string, string>();
-    const VALID_DQ_PROPS = new Set(['rows', 'columns', 'totalCount', 'then']);
+    const VALID_DQ_PROPS = new Set(['rows', 'columns', 'totalCount', 'affectedRows', 'success', 'insertId', 'then']);
 
     const ast10 = acornParse(js, { ecmaVersion: 2022, sourceType: 'script', locations: true }) as AcornNode;
 
@@ -1875,7 +1876,7 @@ function validateLubanUIJs(js: string, errors: string[], warnings: string[], _fi
           if (dqResultVars.has(varName) && !VALID_DQ_PROPS.has(prop)) {
             const lineNum = node.loc?.start?.line || 0;
             errors.push(
-              `[LubanUI] 第 ${lineNum} 行：${varName}.${prop} 访问错误。DataQuery 返回 { rows, columns, totalCount }，没有 .${prop} 属性。正确：${varName}.rows / ${varName}.columns / ${varName}.totalCount`
+              `[LubanUI] 第 ${lineNum} 行：${varName}.${prop} 访问错误。读查询返回 { rows, columns, totalCount }，写查询返回 { affectedRows, success, insertId, rows, columns }，没有 .${prop} 属性。正确：${varName}.rows / ${varName}.columns / ${varName}.totalCount / ${varName}.insertId（INSERT 主键）`
             );
           }
           if (dqResultAliasVars.has(varName)) {
@@ -2212,12 +2213,39 @@ function validateCssComponentOverride(css: string, errors: string[]) {
     }
     if (!matchedSelector) continue;
 
-    // 收集声明块的属性名，纯布局属性放行
+    // 单行规则（selector { ... } 同行闭合）：只取本行大括号内的声明。
+    // 若仍向后扫行，会把后续无关规则的属性错误归到本选择器名下
+    // （2026-09-16 案例：.luban-filter-bar { margin-bottom: 16px } 因扫到后续
+    // 规则的 width/content 被判"视觉覆盖"，布局豁免形同虚设）
+    const collectProps = (declText: string): string[] =>
+      declText
+        .split(';')
+        .filter((d) => d.includes(':'))
+        .map((d) => d.split(':')[0]?.trim().toLowerCase())
+        .filter((p): p is string => Boolean(p));
+
+    if (line.includes('}')) {
+      const inline = line.slice(line.indexOf('{') + 1, line.lastIndexOf('}'));
+      const properties = collectProps(inline);
+      const isLayoutOnly = properties.length > 0 && properties.every((p) => LAYOUT_ONLY_PROPERTIES.has(p));
+      if (!isLayoutOnly) {
+        violations.push({ line: i + 1, selector: matchedSelector });
+      }
+      continue;
+    }
+
+    // 多行规则：收集声明块的属性名，纯布局属性放行
     const properties: string[] = [];
     for (let j = i + 1; j < lines.length; j++) {
-      const decl = lines[j].trim();
-      if (decl === '}') break;
-      const prop = decl.split(':')[0]?.trim().toLowerCase();
+      let decl = lines[j].trim();
+      if (decl.includes('}')) {
+        // 结束行可能带最后一条声明（如 "color: red; }"）
+        decl = decl.slice(0, decl.indexOf('}')).trim();
+        const prop = decl.includes(':') ? decl.split(':')[0]?.trim().toLowerCase() : '';
+        if (prop) properties.push(prop);
+        break;
+      }
+      const prop = decl.includes(':') ? decl.split(':')[0]?.trim().toLowerCase() : '';
       if (prop) properties.push(prop);
     }
     const isLayoutOnly = properties.length > 0 && properties.every((p) => LAYOUT_ONLY_PROPERTIES.has(p));

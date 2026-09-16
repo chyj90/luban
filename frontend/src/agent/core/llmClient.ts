@@ -218,26 +218,32 @@ export function tryTrimJson(jsonStr: string): string | null {
 }
 
 /**
- * 解析工具调用参数。空参数（无参工具）返回 {}；解析失败返回 null，
+ * 解析工具调用参数并给出失败原因。空参数（无参工具）返回 {}；解析失败返回 args: null，
  * 由调用方作为工具错误反馈给模型，禁止静默降级为 {}（会导致工具带着空参数"成功"执行）。
+ * reason 携带 JSON.parse 的原始错误（含出错位置），让模型能自修正而不是盲试。
  */
-export function parseToolArguments(rawArgs: string): Record<string, unknown> | null {
+export function parseToolArgumentsWithReason(rawArgs: string): { args: Record<string, unknown> | null; reason?: string } {
   const trimmed = (rawArgs || '').trim();
-  if (!trimmed) return {};
+  if (!trimmed) return { args: {} };
   try {
-    return JSON.parse(trimmed) as Record<string, unknown>;
-  } catch {
+    return { args: JSON.parse(trimmed) as Record<string, unknown> };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
     const repaired = tryRepairJson(trimmed) || tryTrimJson(trimmed);
     if (repaired) {
       try {
-        return JSON.parse(repaired) as Record<string, unknown>;
+        return { args: JSON.parse(repaired) as Record<string, unknown> };
       } catch {
         // fallthrough
       }
     }
     console.warn('[parseToolArguments] JSON 解析失败。原始参数:', trimmed.slice(0, 300));
-    return null;
+    return { args: null, reason };
   }
+}
+
+export function parseToolArguments(rawArgs: string): Record<string, unknown> | null {
+  return parseToolArgumentsWithReason(rawArgs).args;
 }
 
 /** 兜底剥离模型内联输出的 <think> 思考块（正常情况思考走 reasoning 通道，不经过这里） */

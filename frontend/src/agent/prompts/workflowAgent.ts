@@ -38,7 +38,6 @@ export const WORKFLOW_AGENT_PROMPT = `你是一个**流程设计助手**，专�
           "on": "APPROVED",
           "target": { "type": "ORCHESTRATION", "ref": 12 },
           "paramsMapping": [{ "to": "employeeNo", "from": "form.data.employeeNo" }],
-          "mode": "ASYNC",
           "retry": { "maxAttempts": 3, "backoffSeconds": [30, 120, 600] }
         }
       ]
@@ -49,9 +48,10 @@ export const WORKFLOW_AGENT_PROMPT = `你是一个**流程设计助手**，专�
 字段契约（写错会被后端忽略）：
 - **on** 取值：APPROVED（本节点审批通过）/ NODE_ENTERED（节点进入）/ REJECTED（本节点被驳回）/ INSTANCE_COMPLETED（整个流程完结）/ INSTANCE_REJECTED（整个流程被驳回）
 - **target.type** 取值：ORCHESTRATION（编排）/ QUERY（查询）/ TOOL（API 工具）；**ref 为对应资源的数字 ID**
-- **paramsMapping.from** 支持路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id；不配置时目标收到默认入参 {instanceId, formData}
-- **retry** 可选；触发为异步 outbox 派发，失败按退避重试，超过 maxAttempts 进入死信，不会阻塞或回滚审批主流程
+- **paramsMapping.from** 支持路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id；不配置时目标收到默认入参 {instanceId, formData}；⚠️ 引用的 form.data.字段在发起侧 formData 里不存在时该参数为 null，目标查询的必填参数校验会直接报错（不会拿 NULL 去静默命中 0 行）
+- **retry** 可选；触发为异步 outbox 派发，失败按退避重试，超过 maxAttempts 进入死信，不会阻塞或回滚审批主流程（无需也不支持 mode 字段——派发恒为异步）
 - ⚠️ ref 必须是真实存在的数字 ID：编排只可用已发布（PUBLISHED）状态的（用 list_orchestrations 查），查询用 list_queries 查——**禁止编造 ID**；用户需求里的目标尚未创建时，如实说明"需先创建并发布编排/查询，拿到 ID 后再补触发器"
+- ⚠️ **驳回重提必须恢复业务状态**：如果 INSTANCE_REJECTED 触发器把业务状态改成"已驳回"（或任何非"待审批"值），必须同时在**首个审批节点**配 NODE_ENTERED 触发器 + 常量把状态重置回"待审批"（首次发起和驳回后重新提交都会触发节点进入）。否则驳回过的申请重新提交、再次审批通过时，回写查询的 status='待审批' 守卫命中 0 行——不回写、不扣减，且无任何报错
 
 ## 表单设计
 使用 design_form 工具创建表单。常见表单类型：

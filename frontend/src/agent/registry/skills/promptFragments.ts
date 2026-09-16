@@ -52,7 +52,7 @@ export function getCodePageSkillSummary(): string {
 ### ⚠️ DataQuery 调用规则（详细示例请调用 get_dataquery_guide 工具）
 - **唯一正确方式**：DataQuery.queryName(params).then(fn)，返回 Promise<{rows, columns, totalCount}>
 - **查询名区分大小写，必须与 DBA 创建的查询名逐字符一致**（如查询名为 GetMeetings，就必须写 DataQuery.GetMeetings，写 getMeetings 会是 undefined 且页面静默无数据）。写代码前先核对 delegate_query 返回的真实查询名或 window.__QUERIES__
-- 写操作同样用 DataQuery，返回 Promise<{affectedRows, success}>
+- 写操作同样用 DataQuery，返回 Promise<{affectedRows, success, insertId, rows, columns}>；INSERT 的自增主键在 result.insertId（审批回写场景必须把它放进 startWorkflow 的 formData）
 - 禁止 .run() / result.data.rows / async function 声明 / JSON.stringify(row) / TODO假成功
 - 可用查询名在 window.__QUERIES__ 数组中列出
 - 写操作必须有对应 DataQuery 写查询，否则委派 DBA 创建
@@ -87,10 +87,16 @@ DataQuery.GetCustomerList(params).then(function(result) {
 });
 
 // ✅ 写操作：同样用 DataQuery，DBA 会为 INSERT/UPDATE/DELETE 创建对应查询
-// 写查询返回 Promise<{affectedRows, success}>
+// 写查询返回 Promise<{affectedRows, success, insertId, rows, columns}>
+// insertId 是 INSERT 执行后的自增主键（非自增主键时为 null）
 DataQuery.InsertCustomer(formData).then(function(result) {
   LubanUI.toast.success('保存成功');
   searchData();
+});
+// 需要新记录主键时（如发起审批流程必须携带业务记录 id）：
+DataQuery.InsertLeaveRequest(params).then(function(result) {
+  var insertId = result.insertId;   // 自增主键
+  window.__LUBAN__.startWorkflow(WORKFLOW_ID, { id: insertId /*, 其它字段 */ });
 });
 DataQuery.UpdateCustomer({ id: editId, ...formData }).then(function(result) {
   LubanUI.toast.success('更新成功');
@@ -327,7 +333,7 @@ export function getAnalysisExamples(): string {
 ├──────────────────────────────────────┤
 │ 客户列表表格                    [分页]  │
 └──────────────────────────────────────┘
-组件：PageHeader + StatsCard + FilterBar + Table + Modal(新增/编辑) + Drawer(详情) + ConfirmModal(删除)
+组件：PageHeader(stats) + Stats(统计卡) + FilterBar + Table + Modal(新增/编辑) + Modal(删除确认，用 luban-modal 实现，组件库没有独立的 ConfirmModal)
 
 ## 5. 数据字段
 #### 统计指标
@@ -431,7 +437,7 @@ export function getAnalysisExamples(): string {
 ├──────────────────────────────────────────┤
 │ 告警列表表格                                │
 └──────────────────────────────────────────┘
-组件：PageHeader + StatsCard + ECharts地图 + ECharts(饼图+柱状图) + FilterBar + Table + EmptyState
+组件：PageHeader + Stats + ECharts地图 + ECharts(饼图+柱状图) + FilterBar + Table + Empty（组件库没有 EmptyState，空状态用 Empty）
 外部库：无（ECharts 已内置，LubanUI.chart 直接使用）
 
 ## 5. 数据字段

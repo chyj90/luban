@@ -363,11 +363,11 @@ function appendWorkflowDesignSteps(
   const queryCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'QUERY');
   const toolCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'TOOL');
   const triggerSpec = (queryCallbacks.length > 0 || toolCallbacks.length > 0)
-    ? `\n完成后在对应审批节点的 data.config.triggers 中配置以下结果触发器（契约：{ triggerId: "tg_前缀加短随机串", on, target: { type: "QUERY"|"TOOL", ref: 目标ID }, paramsMapping: [{ to, from?, value? }], mode: "ASYNC", retry: { maxAttempts: 3, backoffSeconds: [30, 120, 600] } }）：\n${[...queryCallbacks, ...toolCallbacks]
+    ? `\n完成后在对应审批节点的 data.config.triggers 中配置以下结果触发器（契约：{ triggerId: "tg_前缀加短随机串", on, target: { type: "QUERY"|"TOOL", ref: 目标ID }, paramsMapping: [{ to, from?, value? }], retry: { maxAttempts: 3, backoffSeconds: [30, 120, 600] } }）：\n${[...queryCallbacks, ...toolCallbacks]
         .map((cb, i) => cb.targetType === 'TOOL'
           ? `${i + 1}. on=${cb.on} → API 工具「${cb.targetRef}」（type 填 "TOOL"，ref 为工具 ID，用 list_apis 核对；该工具未接入时在结果中明确说明缺口，禁止编造 ID）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`
           : `${i + 1}. on=${cb.on} → 查询「${cb.targetRef}」（type 填 "QUERY"，ref 为查询 ID，用 list_queries 核对）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`)
-        .join('\n')}\n范式：改业务库状态用 QUERY 目标——不同事件绑定不同查询（状态写死在 SQL 里），写 SQL 自带状态守卫；调用已有 API 工具（外部 HTTP/通知类）用 TOOL 目标；仅多步依赖才用 ORCHESTRATION 目标（独立步骤配置）。禁止设计"一次回调 + approved 布尔参数"的编排契约。paramsMapping.from 支持 form.data.字段 / instance.id / instance.initiatorId / instance.status / trigger.event / task.comment / node.id，需要传固定值时直接填 value（不同事件传不同常量用"每个事件一条触发器 + 常量"表达）`
+        .join('\n')}\n范式：改业务库状态用 QUERY 目标——不同事件绑定不同查询（状态写死在 SQL 里），写 SQL 自带状态守卫；调用已有 API 工具（外部 HTTP/通知类）用 TOOL 目标；仅多步依赖才用 ORCHESTRATION 目标（独立步骤配置）。禁止设计"一次回调 + approved 布尔参数"的编排契约。paramsMapping.from 支持 form.data.字段 / instance.id / instance.initiatorId / instance.status / trigger.event / task.comment / node.id，需要传固定值时直接填 value（不同事件传不同常量用"每个事件一条触发器 + 常量"表达）。⚠️ 若配置了"置已驳回"类触发器（INSTANCE_REJECTED），必须同时在首个审批节点配 NODE_ENTERED 触发器 + 常量把业务状态重置回"待审批"——否则驳回后重新提交的申请再通过时状态守卫命中 0 行，不回写不扣减且无报错`
     : '';
 
   items.push({

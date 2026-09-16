@@ -251,11 +251,41 @@ public class QueryService {
         };
     }
 
+    /**
+     * 声明为 required 的参数缺失时直接报错，而不是把 NULL 拼进 SQL。
+     * 否则触发器场景 paramsMapping 解析为 null（如 form.data.id 缺失）会生成
+     * WHERE id = NULL，命中 0 行还被当成派发成功——最难排查的静默断链。
+     */
+    private void assertRequiredParams(Query query, Map<String, Object> mergedParams) {
+        Map<String, Object> defs = fromJsonMap(query.getParams());
+        if (defs == null || defs.isEmpty()) return;
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : defs.entrySet()) {
+            if (!(entry.getValue() instanceof Map)) continue;
+            Object required = ((Map<?, ?>) entry.getValue()).get("required");
+            if (!Boolean.TRUE.equals(required) && !"true".equalsIgnoreCase(String.valueOf(required))) continue;
+            if (mergedParams.get(entry.getKey()) == null) missing.add(entry.getKey());
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("必填参数缺失: " + String.join(", ", missing)
+                    + "。页面调用请检查传参；触发器/编排场景通常是 paramsMapping 解析为 null"
+                    + "（如 form.data.<字段> 缺失，检查发起侧 startWorkflow 的 formData 是否携带该字段）");
+        }
+    }
+
     public Map<String, Object> update(Long id, UpdateQueryRequest request) {
         Query query = queryRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
         if (request.getName() != null) query.setName(request.getName());
-        if (request.getBody() != null) query.setBody(request.getBody());
+        if (request.getBody() != null) {
+            // 与 create 同等校验：坏 SQL（语法错误、多语句、模板占位无法解析）不允许保存，
+            // 否则页面/触发器引用的查询会到执行时才失败
+            Map<String, Object> paramsDef = request.getParams() != null
+                    ? request.getParams()
+                    : fromJsonMap(query.getParams());
+            validateSqlSyntax(query.getDatasourceId(), request.getBody(), paramsDef);
+            query.setBody(request.getBody());
+        }
         if (request.getParams() != null) query.setParams(toJson(request.getParams()));
         query = queryRepository.save(query);
         return buildQueryMap(query);
@@ -282,6 +312,8 @@ public class QueryService {
                 entry.setValue(null);
             }
         }
+
+        assertRequiredParams(query, mergedParams);
 
         Map<String, Object> authParams = new HashMap<>();
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

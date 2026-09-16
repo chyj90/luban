@@ -61,6 +61,12 @@ export type AgentExecutor = {
   resume: (command: ResumeCommand) => Promise<void>;
   isSuspended: () => boolean;
   cancel: () => void;
+  /** 刷新应用状态快照（页面列表/当前页面），同步更新 system prompt——executor 跨回合复用时由 chatRouter 转发 */
+  updateSessionOptions: (opts: {
+    allPages?: Array<{ id: number; name: string }>;
+    currentPageId?: number;
+    currentPageName?: string;
+  }) => void;
   getMessages: () => Message[];
 };
 
@@ -437,6 +443,42 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     }
   }
 
+  /**
+   * 刷新 system prompt 里的「当前应用状态」段（页面列表/当前页面）。
+   * system prompt 在工厂创建时用当时的 allPages 快照构建且冻结在对话首位，
+   * executor 跨回合复用时页面可能已被删除/重建——不刷新会导致 prompt 列出
+   * 已不存在的页面，模型据此调用 get_code_page 只会 404。
+   */
+  function refreshAppStateInPrompt(): void {
+    const sysMsg = conversation.find((m) => m.role === 'system');
+    if (!sysMsg) return;
+    const start = sysMsg.content.indexOf('## 当前应用状态');
+    if (start === -1) return;
+    const rest = sysMsg.content.slice(start);
+    const nextSection = rest.indexOf('\n## ', 1);
+    const end = nextSection === -1 ? sysMsg.content.length : start + nextSection;
+    const pageList = (promptCtx.allPages || [])
+      .map((p) => `- ${p.name} (id: ${p.id})${p.id === promptCtx.currentPageId ? ' ← 当前页面' : ''}`)
+      .join('\n');
+    const newState = `## 当前应用状态
+- 应用 ID: ${promptCtx.applicationId}
+- 当前页面: ${promptCtx.currentPageName} (id: ${promptCtx.currentPageId})
+- 所有页面:
+${pageList}`;
+    sysMsg.content = sysMsg.content.slice(0, start) + newState + sysMsg.content.slice(end);
+  }
+
+  function updateSessionOptions(opts: {
+    allPages?: Array<{ id: number; name: string }>;
+    currentPageId?: number;
+    currentPageName?: string;
+  }): void {
+    if (opts.allPages) promptCtx.allPages = opts.allPages;
+    if (opts.currentPageId != null) promptCtx.currentPageId = opts.currentPageId;
+    if (opts.currentPageName) promptCtx.currentPageName = opts.currentPageName;
+    refreshAppStateInPrompt();
+  }
+
   async function executeTurn(input: Parameters<ReturnType<typeof createKernelRuntime>['runTurn']>[number]): Promise<void> {
     setStatus('planning');
     setStreaming(true);
@@ -533,6 +575,8 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     cancel(): void {
       abortController?.abort();
     },
+
+    updateSessionOptions,
 
     getMessages: () => [...conversation],
   };

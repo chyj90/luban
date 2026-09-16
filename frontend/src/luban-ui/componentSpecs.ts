@@ -54,7 +54,7 @@ const layoutSpecs: ComponentSpec[] = [
     spec: `### DataQuery API 常见错误修复
 \`\`\`
 ❌ 错误写法                          → ✅ 正确写法
-result.success                       → 直接用 .then()/.catch()，写操作返回 { affectedRows, success }
+result.success                       → 直接用 .then()/.catch()，写操作返回 { affectedRows, success, insertId, rows, columns }
 result.data.rows                     → result.rows
 result.data.columns                  → result.columns
 var data = result.rows               → var data = result.rows || []（必须加空值保护）

@@ -11,7 +11,7 @@
  */
 import type { Message, ToolDefinition, ToolExecuteResult } from '@/types/agent';
 import type { LLMCallOptions, LLMStreamChunk } from '../core/llmClient';
-import { callLLMAPIStream, parseToolArguments } from '../core/llmClient';
+import { callLLMAPIStream, parseToolArguments, parseToolArgumentsWithReason } from '../core/llmClient';
 import { compactForApi } from '../core/contextWindow';
 import { stripThinkBlocks } from '../core/llmClient';
 import type { SessionEvent, ResumeCommand } from './events';
@@ -241,15 +241,16 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
       });
 
       for (const tc of accumulated) {
-        const args = parseToolArguments(tc.arguments);
+        const parsed = parseToolArgumentsWithReason(tc.arguments);
+        const args = parsed.args;
         const tool = tools.find((t) => t.name === tc.name);
 
         if (args === null) {
-          const reason = '参数解析失败';
+          const reason = `参数解析失败${parsed.reason ? `：${parsed.reason}` : ''}`;
           emit({ type: 'tool.call.blocked', turnId, callId: tc.id, name: tc.name, reason });
           conversation.push({
             id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, timestamp: Date.now(),
-            content: JSON.stringify({ success: false, message: `工具 "${tc.name}" 的参数不是合法 JSON，未执行。请重新调用，参数必须是完整、合法的 JSON 对象。` }),
+            content: JSON.stringify({ success: false, message: `工具 "${tc.name}" 的参数不是合法 JSON，未执行${parsed.reason ? `。解析错误：${parsed.reason}` : ''}。请重新调用，参数必须是完整、合法的 JSON 对象；注意引号/换行要正确转义，超长文本先精简再重试。` }),
           });
           continue;
         }

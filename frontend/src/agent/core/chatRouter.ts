@@ -113,6 +113,15 @@ export class ChatRouter {
 
   updateSessionOptions(options: Partial<RouterSessionOptions>): void {
     Object.assign(this.sessionOptions, options);
+    // 复用中的 executor 也要拿到最新应用状态：system prompt 的「当前应用状态」段
+    // 是创建时的快照，页面被删除/重建后不刷新会导致模型按旧列表调用 get_code_page 404
+    if (options.allPages || options.currentPageId != null || options.currentPageName) {
+      this.activeExecutor?.updateSessionOptions({
+        allPages: options.allPages,
+        currentPageId: options.currentPageId,
+        currentPageName: options.currentPageName,
+      });
+    }
   }
 
   /** 面板重挂载接管存活 router 时换绑最新实例的 callbacks（配合 createExecutor 的间接层生效） */

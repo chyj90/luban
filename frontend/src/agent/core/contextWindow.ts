@@ -24,8 +24,13 @@ export const CONTEXT_KEEP_RECENT = 24;
 export const RECENT_TAIL_UNTOUCHED = 6;
 /** 第三层：保护窗口内工具结果的裁剪上限（保留足够上下文，砍掉整页代码级别的大块） */
 export const RECENT_TRIM_MAX = 2000;
-/** 旧工具结果裁剪后保留的占位标记上限 */
-const TRIM_MARKER_MAX = 240;
+/**
+ * 旧工具结果裁剪后保留的字符数。
+ * 240 会把 get_query 这类 1-3KB 的结构化结果砍到无法使用，模型只能重新调用工具换回
+ * 同样的内容（2026-09-16 案例：同一批查询在一次任务里查了两遍）。1200 仍能裁掉
+ * 整页代码级别的大块（10KB+），同时保住查询定义/委派结论这类中型结果的可用性。
+ */
+const TRIM_MARKER_MAX = 1200;
 
 export function estimateChars(messages: LLMMessage[]): number {
   let total = 0;

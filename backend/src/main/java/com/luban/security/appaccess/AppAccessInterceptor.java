@@ -194,7 +194,8 @@ public class AppAccessInterceptor implements HandlerInterceptor {
     private void respond(HttpServletResponse response, int status, String message) {
         try {
             response.setStatus(status);
-            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            // 必须带 charset：不指定时 getWriter() 按容器默认 ISO-8859-1 编码，中文错误消息会变成问号
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE + ";charset=UTF-8");
             response.getWriter().write("{\"success\":false,\"message\":\"" + message.replace("\"", "'") + "\"}");
         } catch (Exception e) {
             log.error("[AppAccess] 写响应失败", e);

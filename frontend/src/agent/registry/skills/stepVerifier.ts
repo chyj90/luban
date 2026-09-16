@@ -76,6 +76,49 @@ const ORCH_ID_PATTERNS = [
   /编排.*?ID\s*[:：为=＝]?\s*(\d+)/i,
 ];
 
+/**
+ * 严格正则不中时的宽松兜底：提取 result 中所有"ID N"形态的裸数字候选（如"（ID 66）"、
+ * "表单已创建（ID 66）"——关键词与 ID 被其它文字隔开时严格正则会漏），再用真实 API
+ * 存在性校验筛掉误匹配（候选查不到资源即丢弃，不会产生假阳性）。
+ */
+async function resolveIdsLoosely(description: string, result: string): Promise<{ formId: number | null; processId: number | null }> {
+  const candidates = new Set<number>();
+  for (const m of result.matchAll(/(?:^|[^A-Za-z\d])ID\s*[:：为=＝]?\s*(\d{1,9})/gi)) {
+    const id = Number(m[1]);
+    if (Number.isFinite(id) && id > 0) candidates.add(id);
+  }
+  if (candidates.size === 0 || candidates.size > 5) return { formId: null, processId: null };
+  // 描述提到表单优先按表单验证，提到流程优先按流程验证；都没提则先表单
+  const formFirst = /表单|form/i.test(description) || !/流程|审批|workflow/i.test(description);
+  let formId: number | null = null;
+  let processId: number | null = null;
+  const probeForm = async (id: number): Promise<boolean> => {
+    try {
+      // API 404 会抛错进 catch；调用成功即资源存在（不依赖返回体里是否带 id 字段）
+      const form = await injectableDeps.getForm(id);
+      if (form) { formId = id; return true; }
+    } catch { /* 不是表单 */ }
+    return false;
+  };
+  const probeProcess = async (id: number): Promise<boolean> => {
+    try {
+      const def = await injectableDeps.getWorkflow(id);
+      if (def) { processId = id; return true; }
+    } catch { /* 不是流程 */ }
+    return false;
+  };
+  for (const id of candidates) {
+    if (formFirst) {
+      if (formId === null && (await probeForm(id))) continue;
+      if (processId === null) await probeProcess(id);
+    } else {
+      if (processId === null && (await probeProcess(id))) continue;
+      if (formId === null) await probeForm(id);
+    }
+  }
+  return { formId, processId };
+}
+
 async function parseJsonSafe(v: unknown): Promise<unknown> {
   if (typeof v !== 'string') return v;
   try { return JSON.parse(v); } catch { return null; }
@@ -83,13 +126,20 @@ async function parseJsonSafe(v: unknown): Promise<unknown> {
 
 /** 核验 delegate_workflow 步骤：资源存在 + 条件分支结构与描述一致 + 闭环承诺不被草稿状态糊弄 */
 async function verifyWorkflowStep(description: string, result: string): Promise<StepVerifyResult> {
-  const formId = parseId(result, FORM_ID_PATTERNS);
-  const processId = parseId(result, PROCESS_ID_PATTERNS);
+  let formId = parseId(result, FORM_ID_PATTERNS);
+  let processId = parseId(result, PROCESS_ID_PATTERNS);
+
+  if (!formId && !processId) {
+    // 严格正则不中时走宽松兜底（候选 ID 经真实 API 验证，不会误判）
+    const loose = await resolveIdsLoosely(description, result);
+    formId = loose.formId;
+    processId = loose.processId;
+  }
 
   if (!formId && !processId) {
     return {
       verified: false,
-      reason: `result 中未找到真实的资源 ID（需包含"表单ID: N"或"流程ID: N"），无法核验。请用委派返回的真实 ID 重新标记；若该步骤确实未产生任何资源，说明执行失败，不应标记为 completed`,
+      reason: `result 中未找到可核验的真实资源 ID（推荐写"表单ID: N"/"流程ID: N"，也接受真实存在的"（ID N）"）。请用委派返回的真实 ID 重新标记；若该步骤确实未产生任何资源，说明执行失败，不应标记为 completed`,
     };
   }
 

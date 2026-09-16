@@ -181,7 +181,7 @@ export const codeSkills: Record<string, SkillFactory> = {
               if (boundQueries.length > 0) {
                 queryNameHint = `\n\n⚠️ 本页面绑定的查询及正确调用方式：\n${boundQueries.map((q: any) => {
                   const isWrite = /^(insert|update|delete|create|remove|add|save)/i.test(q.name);
-                  const returnType = isWrite ? 'Promise<{affectedRows, success}>' : 'Promise<{rows, columns, totalCount}>';
+                  const returnType = isWrite ? 'Promise<{affectedRows, success, insertId, rows, columns}>' : 'Promise<{rows, columns, totalCount}>';
                   return `  - DataQuery.${q.name}(params) → 返回 ${returnType}`;
                 }).join('\n')}\n请使用 DataQuery.xxx() 调用，不要用 .run()、__前缀、QueryApi 等错误方式。`;
               }
@@ -430,7 +430,7 @@ export const codeSkills: Record<string, SkillFactory> = {
               if (boundQueries.length > 0) {
                 queryNameHint = `\n\n⚠️ 本页面绑定的查询及正确调用方式：\n${boundQueries.map((q: any) => {
                   const isWrite = /^(insert|update|delete|create|remove|add|save)/i.test(q.name);
-                  const returnType = isWrite ? 'Promise<{affectedRows, success}>' : 'Promise<{rows, columns, totalCount}>';
+                  const returnType = isWrite ? 'Promise<{affectedRows, success, insertId, rows, columns}>' : 'Promise<{rows, columns, totalCount}>';
                   return `  - DataQuery.${q.name}(params) → 返回 ${returnType}`;
                 }).join('\n')}\n请使用 DataQuery.xxx() 调用，不要用 .run()、__前缀、QueryApi 等错误方式。`;
               }
@@ -571,10 +571,13 @@ export const codeSkills: Record<string, SkillFactory> = {
           if (realColumns) {
             // 列驱动骨架：表格列/表单字段/回填/保存参数全部来自主读查询的真实列，杜绝编造字段
             const displayCols = realColumns.filter((c) => c !== 'id').slice(0, 6);
+            // 操作列依赖真实存在的 id 列 + 写查询（更新/删除）：主读查询没有 id（如余额卡、统计视图）
+            // 时强加 id 列会被自己的字段名校验判违规，也不存在可操作的业务行
+            const canOperate = realColumns.includes('id') && Boolean(updateQuery || deleteQuery);
             const editableCols = realColumns
               .filter((c) => !/^(id|created_time|updated_time|create_time|update_time|created_at|updated_at)$/i.test(c))
               .slice(0, 6);
-            const thHtml = displayCols.map((c) => `<th>${c}</th>`).join('\n        ') + '\n        <th>操作</th>';
+            const thHtml = displayCols.map((c) => `<th>${c}</th>`).join('\n        ') + (canOperate ? '\n        <th>操作</th>' : '');
             const formItems = editableCols.map((c, idx) => {
               const required = idx === 0 ? ' luban-form-label-required' : '';
               const control = /(^|_)(?:date|at)$/i.test(c) || /date$/i.test(c)
@@ -652,16 +655,16 @@ function initPage() {
     ]
   });
   table = LubanUI.table('dataTable', {
-    columns: ${JSON.stringify([...displayCols, 'id'])},
+    columns: ${JSON.stringify(canOperate ? [...displayCols, 'id'] : [...displayCols])},
     pageSize: 10,
     emptyText: '暂无数据',
-    emptyDescription: '请调整筛选条件或新增数据',
+    emptyDescription: '请调整筛选条件或新增数据',${canOperate ? `
     render: {
       id: function(v) {
         return '<button class="luban-btn luban-btn-text" onclick="openEdit(' + v + ')">编辑</button> ' +
           '<button class="luban-btn luban-btn-text luban-btn-danger" onclick="deleteData(' + v + ')">删除</button>';
       }
-    }
+    }` : ''}
   });
   searchData();
 }

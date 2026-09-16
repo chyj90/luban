@@ -970,7 +970,13 @@ public class ProcessEngine {
         List<Long> assigneeIds = resolveAssignees(approverType, config, formData, instance.getInitiatorId(), scope, defAppId);
 
         if (assigneeIds.isEmpty()) {
-            // 没有审批人，跳过该节点，继续找下一个
+            // 没有审批人，跳过该节点，继续找下一个。
+            // 跳过是静默行为，必须在历史里留痕：否则"审批节点被跳过、实例卡在 RUNNING"无从排查。
+            // leader/department_head 依赖组织架构（user_dept.leader_id / department.manager_id）已配置
+            recordHistory(instance.getId(), null, nodeId, "SKIP", null,
+                    "审批人解析为空，节点被跳过（approverType=" + approverType
+                            + "，请检查组织架构是否配置了直属上级/部门负责人）",
+                    null, nodeId, null);
             if (definition != null) {
                 createTasksForNextNodes(definition, instance, nodeId, instance.getFormData());
             }

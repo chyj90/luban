@@ -66,6 +66,8 @@ public class QueryTargetExecutor implements TargetExecutor {
         out.put("columns", response.getColumns());
         out.put("rows", response.getRows());
         out.put("totalCount", response.getTotalCount());
+        // INSERT 的自增主键必须透传：页面凭 result.insertId 把业务记录 id 放进 startWorkflow 的 formData
+        out.put("insertId", response.getInsertId());
         return InvocationResult.ok(out, 0, ctx.getTraceRowId());
     }
 }
