@@ -57,8 +57,17 @@ public class SandboxPythonClient {
 
             HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
+                String reason = extractReason(resp.body());
+                // 基础设施级失败用专用错误码：503/502/504 = 沙箱池不可用（池空/Docker 掉线/镜像缺失/熔断），
+                // 编排引擎与 agent 据此区分"沙箱挂了"与"代码错误"——此前统一 SANDBOX_HTTP_503，
+                // 池挂了 agent 只能盲目换实现，无人知道基础设施故障（2026-09-15 请假案例）
+                String code = (resp.statusCode() == 502 || resp.statusCode() == 503 || resp.statusCode() == 504)
+                        ? "SANDBOX_POOL_DOWN" : "SANDBOX_HTTP_" + resp.statusCode();
+                log.warn("Sandbox unavailable: status={} reason={}", resp.statusCode(), reason);
                 return new SandboxResult(false, Map.of(),
-                        "沙箱服务返回 " + resp.statusCode(), "SANDBOX_HTTP_" + resp.statusCode());
+                        "沙箱服务返回 " + resp.statusCode() + (reason.isEmpty() ? "" : "（" + reason + "）")
+                                + "。SANDBOX_POOL_DOWN 属基础设施故障，请上报用户或稍后重试，不要当作代码错误处理",
+                        code);
             }
             JsonNode root = objectMapper.readTree(resp.body());
             boolean success = root.path("success").asBoolean(false);
@@ -94,6 +103,13 @@ public class SandboxPythonClient {
                 + "import json as _json\n"
                 + "_result = " + entry + "(_INPUT_DATA)\n"
                 + "print(_json.dumps(_result))\n";
+    }
+
+    /** 从 embedding 503 响应体提取 reason（pool_empty/pool_exhausted/docker_down/image_missing/circuit_open） */
+    private String extractReason(String body) {
+        if (body == null || body.isBlank()) return "";
+        var m = java.util.regex.Pattern.compile("\"reason\"\\s*:\\s*\"([^\"]+)\"").matcher(body);
+        return m.find() ? m.group(1) : "";
     }
 
     private String lastJsonLine(String stdout) {

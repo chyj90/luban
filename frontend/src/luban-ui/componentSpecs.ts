@@ -105,10 +105,23 @@ export function getComponentCatalog(): string {
 export function getComponentSpecByName(names: string[]): string {
   const nameSet = new Set(names.map((n) => n.toLowerCase()));
   const matched = mergedSpecs.filter((s) => nameSet.has(s.name.toLowerCase()));
-  if (matched.length === 0) {
+  // 未命中的组件必须显式报"不存在"——静默丢弃会让模型以为拿全了，
+  // 之后凭想象写不存在的组件 API（如 StatsCard/Tag）反而多绕校验返工轮次
+  const missing = names.filter((n) => !mergedSpecs.some((s) => s.name.toLowerCase() === n.toLowerCase()));
+  const parts: string[] = [];
+  if (matched.length > 0) {
+    parts.push(matched.map((s) => s.spec).join('\n\n'));
+  }
+  if (missing.length > 0) {
+    parts.push(
+      `⚠️ 以下组件在组件库中不存在：${missing.join('、')}。可用组件：${mergedSpecs.map((s) => s.name).join('、')}。` +
+      `请从可用组件中选择等价能力（如标签用 Badge 变体、统计卡片用 pageHeader stats 或自定义 .my-* 类实现），禁止凭空使用不存在的组件 API`,
+    );
+  }
+  if (parts.length === 0) {
     return `未找到匹配的组件。可用组件：${mergedSpecs.map((s) => s.name).join('、')}`;
   }
-  return matched.map((s) => s.spec).join('\n\n');
+  return parts.join('\n\n');
 }
 
 export function buildDesignSpecFromComponents(): string {

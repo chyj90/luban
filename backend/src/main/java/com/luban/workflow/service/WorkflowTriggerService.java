@@ -54,7 +54,13 @@ public class WorkflowTriggerService {
             WorkflowDefinition definition = workflowDefinitionRepository
                     .findById(instance.getWorkflowId()).orElse(null);
             if (definition == null) return;
-            List<Map<String, Object>> triggers = triggersOfNode(definition, nodeId);
+            // 实例级事件广播：INSTANCE_COMPLETED 以 nodeId="end" 触发、INSTANCE_REJECTED 以驳回节点触发，
+            // 而触发器只允许配置在审批节点上——按节点匹配会让"整个流程完结/被驳回"的触发器永不生效
+            // （2026-09-15 请假案例：流程助手把 INSTANCE_COMPLETED 列为可配置事件，实际挂上也收不到）。
+            // 改为实例级事件广播到所有配置了该事件的节点，与前端"整个流程完结/被驳回时"的语义一致。
+            List<Map<String, Object>> triggers = isInstanceLevelEvent(event)
+                    ? triggersOfAllNodes(definition, event)
+                    : triggersOfNode(definition, nodeId);
             if (triggers.isEmpty()) return;
 
             for (Map<String, Object> trigger : triggers) {
@@ -69,7 +75,7 @@ public class WorkflowTriggerService {
                     log.warn("触发器配置缺少 target.type/ref（或 ref 非法），忽略: node={} trigger={}", nodeId, trigger);
                     continue;
                 }
-                enqueue(instance, nodeId, taskId, comment, trigger, type, refId);
+                enqueue(instance, nodeId, taskId, comment, event, trigger, type, refId);
             }
         } catch (Exception e) {
             log.error("触发器事件入队失败 instance={} node={} event={}",
@@ -77,9 +83,14 @@ public class WorkflowTriggerService {
         }
     }
 
+    /** 实例级事件：不绑定具体节点，广播到全部配置了该事件的节点 */
+    private boolean isInstanceLevelEvent(String event) {
+        return EVT_INSTANCE_COMPLETED.equals(event) || EVT_INSTANCE_REJECTED.equals(event);
+    }
+
     private void enqueue(WorkflowInstance instance, String nodeId, Long taskId, String lastComment,
-                         Map<String, Object> trigger, String targetType, Long targetRef) {
-        Map<String, Object> params = resolveParams(trigger.get("paramsMapping"), instance, taskId, nodeId, lastComment);
+                         String event, Map<String, Object> trigger, String targetType, Long targetRef) {
+        Map<String, Object> params = resolveParams(trigger.get("paramsMapping"), instance, taskId, nodeId, lastComment, event);
         Map<String, Object> retry = castMap(trigger.get("retry"));
 
         WorkflowTriggerOutbox row = new WorkflowTriggerOutbox();
@@ -106,13 +117,14 @@ public class WorkflowTriggerService {
     }
 
     /**
-     * paramsMapping 解析：from 路径支持 instance.id / instance.initiatorId / instance.status /
+     * paramsMapping 解析：条目支持常量 value（{to, value}，优先于 from）或 from 路径。
+     * from 路径支持 instance.id / instance.initiatorId / instance.status / trigger.event /
      * form.data / form.data.&lt;field&gt; / task.id / task.comment / node.id。解析失败按 null 处理。
      * 未配置 paramsMapping 时给默认入参 {instanceId, formData}。
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> resolveParams(Object mapping, WorkflowInstance instance,
-                                              Long taskId, String nodeId, String comment) {
+                                              Long taskId, String nodeId, String comment, String event) {
         Map<String, Object> form = parseJson(instance.getFormData());
         if (!(mapping instanceof List<?>) || ((List<Object>) mapping).isEmpty()) {
             Map<String, Object> defaults = new LinkedHashMap<>();
@@ -132,15 +144,21 @@ public class WorkflowTriggerService {
         taskMap.put("comment", comment);
         root.put("task", taskMap);
         root.put("node", Map.of("id", nodeId));
+        root.put("trigger", Map.of("event", event == null ? "" : event));
 
         Map<String, Object> params = new LinkedHashMap<>();
         for (Object item : (List<Object>) mapping) {
             if (!(item instanceof Map)) continue;
             Map<String, Object> m = (Map<String, Object>) item;
             String to = str(m.get("to"));
-            String from = str(m.get("from"));
             if (to.isBlank()) continue;
-            params.put(to, walk(root, from));
+            // 常量优先：不同事件绑定不同目标时，"每个事件一条触发器 + 固定状态值"可以
+            // 用常量表达，不必为每个状态单独建查询
+            if (m.containsKey("value")) {
+                params.put(to, m.get("value"));
+            } else {
+                params.put(to, walk(root, str(m.get("from"))));
+            }
         }
         return params;
     }
@@ -182,6 +200,20 @@ public class WorkflowTriggerService {
             return castList(config.get("triggers"));
         }
         return List.of();
+    }
+
+    /** 实例级事件广播：收集全部节点上配置了该事件的触发器 */
+    private List<Map<String, Object>> triggersOfAllNodes(WorkflowDefinition definition, String event) {
+        List<Map<String, Object>> matched = new ArrayList<>();
+        for (Map<String, Object> node : parseNodes(definition.getNodes())) {
+            Map<String, Object> config = castMap(castMap(node.get("data")).get("config"));
+            for (Map<String, Object> t : castList(config.get("triggers"))) {
+                if (event.equals(str(t.get("on")))) {
+                    matched.add(t);
+                }
+            }
+        }
+        return matched;
     }
 
     @SuppressWarnings("unchecked")

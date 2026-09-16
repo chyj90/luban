@@ -122,7 +122,9 @@ async function verifyWorkflowStep(description: string, result: string): Promise<
     } catch {
       return { verified: false, reason: `流程 ID ${processId} 不存在或查询失败，请核实真实 ID` };
     }
-    const nodes = (await parseJsonSafe(def.nodes)) as Array<{ nodeType?: string }> | null;
+    const nodes = (await parseJsonSafe(def.nodes)) as
+      | Array<{ nodeType?: string; data?: { config?: { triggers?: Array<{ on?: string }> } } }>
+      | null;
     if (!Array.isArray(nodes) || nodes.length === 0) {
       return { verified: false, reason: `流程 ${processId} 存在但节点为空，可能创建不完整` };
     }
@@ -133,6 +135,29 @@ async function verifyWorkflowStep(description: string, result: string): Promise<
         verified: false,
         reason: `步骤要求条件分支，但流程 ${processId} 的实际节点中没有 condition 节点（当前节点：${nodeSummary}）。这正是"汇报与实际不符"的典型场景，请勿标记完成`,
       };
+    }
+    // 触发器核验：步骤承诺配置审批结果触发器（联动/回调/扣减）时，定义里必须真的有 triggers，
+    // 且 description 中 on=XXX 声明的事件都必须已配置（2026-09-15 请假案例：联动承诺无人配置成断链）
+    const mentionsTrigger = /触发器|回调|联动|扣减|回写|置为/.test(description);
+    if (mentionsTrigger) {
+      const configuredTriggers = nodes.flatMap((n) => n?.data?.config?.triggers || []);
+      if (configuredTriggers.length === 0) {
+        return {
+          verified: false,
+          reason: `步骤要求配置审批结果触发器，但流程 ${processId} 的所有节点 data.config 中都没有 triggers 数组。请先在审批节点配置触发器再标记完成`,
+        };
+      }
+      const declaredEvents = [...description.matchAll(/on\s*=\s*(APPROVED|REJECTED|NODE_ENTERED|INSTANCE_COMPLETED|INSTANCE_REJECTED)/gi)]
+        .map((m) => m[1].toUpperCase());
+      const configuredEvents = new Set(configuredTriggers.map((t) => String(t?.on || '').toUpperCase()));
+      const missing = [...new Set(declaredEvents)].filter((e) => !configuredEvents.has(e));
+      if (missing.length > 0) {
+        const present = [...configuredEvents].join('、') || '无';
+        return {
+          verified: false,
+          reason: `触发器事件缺失：声明了 ${missing.join('、')}，但流程 ${processId} 实际只配置了 ${present}。请补配缺失事件后重新发布流程再标记完成`,
+        };
+      }
     }
   }
 

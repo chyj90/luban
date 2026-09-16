@@ -21,11 +21,19 @@ const WORKFLOW_ENGINE_SEMANTICS = `## 驳回与加签（引擎内置能力，禁
 const WORKFLOW_TRIGGER_CONTRACT = `## 节点触发器（审批节点可配，事件触发异步调用）
 用户要求"审批通过后自动 XX / 流程完结后自动 XX"时，在**审批节点**的 data.config 中加 triggers 数组：
 { "triggerId": "tg_前缀加短随机串", "on": "APPROVED", "target": { "type": "ORCHESTRATION", "ref": 编排ID }, "paramsMapping": [{ "to": "目标参数名", "from": "form.data.字段key" }], "mode": "ASYNC", "retry": { "maxAttempts": 3, "backoffSeconds": [30, 120, 600] } }
-- on：APPROVED（本节点审批通过）/ NODE_ENTERED（节点进入）/ REJECTED（本节点被驳回）/ INSTANCE_COMPLETED（流程完结）/ INSTANCE_REJECTED（流程被驳回）
+- on：APPROVED（本节点审批通过）/ NODE_ENTERED（节点进入）/ REJECTED（本节点被驳回）/ INSTANCE_COMPLETED（流程完结，广播到所有配置了该事件的节点）/ INSTANCE_REJECTED（流程被驳回退回发起人，同样广播——置"已驳回"类状态优先用它，任意节点驳回都能覆盖）
 - target.type：ORCHESTRATION（编排，必须已发布）/ QUERY（查询）/ TOOL（API 工具）；ref = 对应资源的数字 ID
-- paramsMapping.from 路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id；不配置时目标收到默认入参 {instanceId, formData}
+- paramsMapping.from 路径：form.data.<字段key>、instance.id、instance.initiatorId、instance.status、task.id、task.comment、node.id、trigger.event（本次触发的事件名）；常量直接写 \`{ "to": "参数名", "value": "常量值" }\`（不配 from）；不配置 paramsMapping 时目标收到默认入参 {instanceId, formData}
 - ref 必须是真实存在的数字 ID（编排用 list_orchestrations 查、只可用 PUBLISHED 状态；查询用 list_queries 查），禁止编造；目标尚未创建时如实说明，先完成其它步骤
-- 触发为异步派发，失败自动重试，不阻塞审批主流程`;
+- 触发为异步派发（at-least-once），失败自动重试，不阻塞审批主流程
+
+### 触发器范式（审批结果写回业务库）
+- **事件不同 → 目标不同**：APPROVED 挂"置已通过+扣减"查询、INSTANCE_REJECTED 挂"置已驳回"查询，每个状态一条独立查询（状态写死在 SQL 里），不要用一条编排 + 布尔参数区分——paramsMapping 传不了布尔常量，该契约会把方案逼向编排
+- 写查询 SQL 必须带**状态守卫**（如 \`WHERE id={{id}} AND status='待审批'\`）：重复派发命中 0 行，天然幂等
+- paramsMapping 引用的 form.data.字段 必须在发起页 startWorkflow 的 formData 中真实存在（尤其业务记录 id），否则触发器拿 null 无法定位记录
+- 多级审批的"置已驳回"触发器挂**所有**审批节点（INSTANCE_REJECTED 广播，任一节点驳回都覆盖），不要只挂最终节点`;
+// 注：INSTANCE_COMPLETED/INSTANCE_REJECTED 为实例级事件，后端广播到所有节点——
+// 挂在任意审批节点都能收到，不再要求事件恰好发生在配置节点上。
 
 /** task_type=design_form：仅设计表单 */
 const DESIGN_FORM_WORKFLOW = `## 工作流程（仅设计表单）

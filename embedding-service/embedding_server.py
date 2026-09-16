@@ -361,7 +361,7 @@ import json
 import shutil
 from datetime import datetime
 
-from sandbox_manager import sandbox_pool, SANDBOX_ENABLED
+from sandbox_manager import sandbox_pool, SANDBOX_ENABLED, SandboxUnavailable
 
 PARSE_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 os.makedirs(PARSE_LOG_DIR, exist_ok=True)
@@ -426,32 +426,14 @@ def parse_file():
         t0 = datetime.now()
 
         if SANDBOX_ENABLED:
-            container = sandbox_pool.acquire(timeout=10)
+            slot = sandbox_pool.acquire(timeout=10)
             try:
-                host_script = os.path.join(container.mount_dir, "parse.py")
+                host_script = os.path.join(slot["container"].mount_dir, "parse.py")
                 shutil.copy2(script_path, host_script)
-                exec_result = container.execute(host_script, timeout=60)
+                exec_result = slot["container"].execute(host_script, timeout=60)
+                sandbox_pool.request_ok()
             finally:
-                sandbox_pool.release(container)
-            os.unlink(script_path)
-            _parse_log(f"script_cleaned: {script_path}")
-
-            elapsed = (datetime.now() - t0).total_seconds()
-            _parse_log(f"execution_time: {elapsed:.2f}s (sandbox)")
-
-            success = exec_result.get("success", False)
-            stdout_text = exec_result.get("stdout", "")
-            stderr_text = exec_result.get("stderr", "")
-
-            if not success:
-                _parse_log(f"ERROR: Python execution failed (sandbox)")
-                _parse_log(f"stderr (last 2000 chars):\n{stderr_text[-2000:]}")
-                return jsonify({
-                    "error": "Python execution failed",
-                    "stderr": stderr_text[-2000:],
-                }), 500
-
-            stdout_trimmed = stdout_text.strip()
+                sandbox_pool.release(slot)
         else:
             proc = subprocess.run(
                 ["python3", script_path],
@@ -459,26 +441,29 @@ def parse_file():
                 text=True,
                 timeout=60,
             )
-            elapsed = (datetime.now() - t0).total_seconds()
-            _parse_log(f"execution_time: {elapsed:.2f}s")
-            _parse_log(f"returncode: {proc.returncode}")
-            _parse_log(f"stdout_length: {len(proc.stdout)} chars")
-            _parse_log(f"stderr_length: {len(proc.stderr)} chars")
+            exec_result = {"success": proc.returncode == 0,
+                           "stdout": proc.stdout, "stderr": proc.stderr}
 
+        if os.path.exists(script_path):
             os.unlink(script_path)
             _parse_log(f"script_cleaned: {script_path}")
 
-            if proc.returncode != 0:
-                _parse_log(f"ERROR: Python execution failed")
-                _parse_log(f"stderr (last 2000 chars):\n{proc.stderr[-2000:]}")
-                if proc.stdout:
-                    _parse_log(f"stdout (last 1000 chars):\n{proc.stdout[-1000:]}")
-                return jsonify({
-                    "error": "Python execution failed",
-                    "stderr": proc.stderr[-2000:],
-                }), 500
+        elapsed = (datetime.now() - t0).total_seconds()
+        _parse_log(f"execution_time: {elapsed:.2f}s ({'sandbox' if SANDBOX_ENABLED else 'subprocess'})")
 
-            stdout_trimmed = proc.stdout.strip()
+        success = exec_result.get("success", False)
+        stdout_text = exec_result.get("stdout", "")
+        stderr_text = exec_result.get("stderr", "")
+
+        if not success:
+            _parse_log(f"ERROR: Python execution failed ({'sandbox' if SANDBOX_ENABLED else 'subprocess'})")
+            _parse_log(f"stderr (last 2000 chars):\n{stderr_text[-2000:]}")
+            return jsonify({
+                "error": "Python execution failed",
+                "stderr": stderr_text[-2000:],
+            }), 500
+
+        stdout_trimmed = stdout_text.strip()
 
         _parse_log(f"stdout_trimmed (first 500 chars): {stdout_trimmed[:500]}")
 
@@ -508,6 +493,10 @@ def parse_file():
     except subprocess.TimeoutExpired:
         _parse_log("ERROR: Python execution timed out (60s)")
         return jsonify({"error": "Python execution timed out (60s)"}), 500
+    except SandboxUnavailable as e:
+        sandbox_pool.request_failed(e.reason)
+        _parse_log(f"ERROR: sandbox unavailable ({e.reason})")
+        return jsonify({"error": str(e), "reason": e.reason, "success": False}), 503
     except Exception as e:
         _parse_log(f"ERROR: Unexpected exception: {e}")
         _parse_log(f"traceback:\n{traceback.format_exc()}")
@@ -549,38 +538,47 @@ def execute_code():
             f.write(script)
             script_path = f.name
 
-        if SANDBOX_ENABLED:
-            container = sandbox_pool.acquire(timeout=10)
-            try:
-                host_script = os.path.join(container.mount_dir, "execute.py")
-                shutil.copy2(script_path, host_script)
-                result = container.execute(host_script, env=env, timeout=timeout)
-            finally:
-                sandbox_pool.release(container)
-            os.unlink(script_path)
-            return jsonify(result)
-        else:
-            full_env = os.environ.copy()
-            full_env.update(env)
-            proc = subprocess.run(
-                ["python3", script_path],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=full_env,
-            )
-            os.unlink(script_path)
-            return jsonify({
-                "success": proc.returncode == 0,
-                "stdout": proc.stdout[-5000:] if proc.stdout else "",
-                "stderr": proc.stderr[-2000:] if proc.stderr else "",
-                "exit_code": proc.returncode,
-            })
+        try:
+            if SANDBOX_ENABLED:
+                slot = sandbox_pool.acquire(timeout=10)
+                try:
+                    host_script = os.path.join(slot["container"].mount_dir, "execute.py")
+                    shutil.copy2(script_path, host_script)
+                    result = slot["container"].execute(host_script, env=env, timeout=timeout)
+                    sandbox_pool.request_ok()
+                except SandboxUnavailable:
+                    raise
+                finally:
+                    sandbox_pool.release(slot)
+                return jsonify(result)
+            else:
+                full_env = os.environ.copy()
+                full_env.update(env)
+                proc = subprocess.run(
+                    ["python3", script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=full_env,
+                )
+                return jsonify({
+                    "success": proc.returncode == 0,
+                    "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                    "stderr": proc.stderr[-2000:] if proc.stderr else "",
+                    "exit_code": proc.returncode,
+                })
+        finally:
+            # 临时脚本在所有路径上清理（此前 acquire 抛异常路径泄漏 delete=False 文件）
+            if script_path and os.path.exists(script_path):
+                os.unlink(script_path)
 
+    except SandboxUnavailable as e:
+        # 池不可用：带 reason 返回（pool_empty/pool_exhausted/docker_down/image_missing/circuit_open），
+        # 上层与编排引擎据此区分基础设施故障与代码错误；同时请求失败计数 + 唤醒巡检立即补池
+        sandbox_pool.request_failed(e.reason)
+        return jsonify({"error": str(e), "reason": e.reason, "success": False}), 503
     except subprocess.TimeoutExpired:
         return jsonify({"error": f"Code execution timed out ({timeout}s)", "success": False}), 500
-    except RuntimeError as e:
-        return jsonify({"error": str(e), "success": False}), 503
     except Exception as e:
         return jsonify({"error": f"Execution error: {e}", "success": False}), 500
 
@@ -607,13 +605,14 @@ def execute_script():
         env = {"INPUT_DATA": input_json}
 
         if SANDBOX_ENABLED:
-            container = sandbox_pool.acquire(timeout=10)
+            slot = sandbox_pool.acquire(timeout=10)
             try:
-                host_script = os.path.join(container.mount_dir, "algorithm.py")
+                host_script = os.path.join(slot["container"].mount_dir, "algorithm.py")
                 shutil.copy2(script_path, host_script)
-                result = container.execute(host_script, env=env, stdin_data=input_json, timeout=timeout)
+                result = slot["container"].execute(host_script, env=env, stdin_data=input_json, timeout=timeout)
+                sandbox_pool.request_ok()
             finally:
-                sandbox_pool.release(container)
+                sandbox_pool.release(slot)
             return jsonify(result)
         else:
             full_env = os.environ.copy()
@@ -635,10 +634,20 @@ def execute_script():
 
     except subprocess.TimeoutExpired:
         return jsonify({"error": f"Script execution timed out ({timeout}s)", "success": False}), 500
-    except RuntimeError as e:
-        return jsonify({"error": str(e), "success": False}), 503
+    except SandboxUnavailable as e:
+        sandbox_pool.request_failed(e.reason)
+        return jsonify({"error": str(e), "reason": e.reason, "success": False}), 503
     except Exception as e:
         return jsonify({"error": f"Execution error: {e}", "success": False}), 500
+
+
+@app.route("/v1/sandbox/health", methods=["GET"])
+def sandbox_health():
+    """沙箱池健康状态：池深/损坏槽位/熔断/最近错误。编排助手与运维据此判断基础设施故障，
+    取代 v1 的黑盒 503——挂了要知道，503 要自启。"""
+    status = sandbox_pool.pool_status()
+    healthy = (not status["enabled"]) or (status["docker_ok"] is not False and status["broken"] == 0)
+    return jsonify({"status": "ok" if healthy else "degraded", **status})
 
 
 @app.route("/v1/check-syntax", methods=["POST"])

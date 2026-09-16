@@ -8,8 +8,9 @@ import styles from './WorkflowDesigner.module.css';
 /**
  * 审批节点触发器配置：写入节点 config.triggers，
  * 与后端 WorkflowTriggerService / TriggerDispatcher 的契约对应：
- * { triggerId, on, target:{type, ref}, paramsMapping:[{to, from}], mode:'ASYNC', retry:{maxAttempts, backoffSeconds} }
+ * { triggerId, on, target:{type, ref}, paramsMapping:[{to, from?, value?}], mode:'ASYNC', retry:{maxAttempts, backoffSeconds} }
  * 派发为异步（outbox），打断"流程→编排→流程"环；触发目标在流程保存/发布时即固化为授权清单。
+ * INSTANCE_COMPLETED / INSTANCE_REJECTED 为实例级事件，后端广播到所有配置了该事件的节点。
  */
 
 export const TRIGGER_EVENTS = [
@@ -32,7 +33,7 @@ interface Trigger {
   triggerId: string;
   on: string;
   target: { type: string; ref: number };
-  paramsMapping?: Array<{ to: string; from: string }>;
+  paramsMapping?: Array<{ to: string; from?: string; value?: string }>;
   mode?: string;
   retry?: { maxAttempts?: number; backoffSeconds?: number[] };
 }
@@ -122,7 +123,12 @@ export default function NodeTriggerEditor({ config, onChange, appId }: NodeTrigg
     updateTriggers(triggers.filter((_, i) => i !== index));
   };
 
-  const patchMapping = (triggerIndex: number, rowIndex: number, field: 'to' | 'from', value: string) => {
+  const patchMapping = (
+    triggerIndex: number,
+    rowIndex: number,
+    field: 'to' | 'from' | 'value',
+    value: string,
+  ) => {
     const t = triggers[triggerIndex];
     const next = (t.paramsMapping || []).map((m, i) => (i === rowIndex ? { ...m, [field]: value } : m));
     patchTrigger(triggerIndex, { paramsMapping: next });
@@ -190,8 +196,9 @@ export default function NodeTriggerEditor({ config, onChange, appId }: NodeTrigg
             </div>
             <div style={{ marginTop: 8 }}>
               <div style={fieldLabelStyle}>
-                参数映射（把流程数据映射为调用入参；来源：instance.id / instance.initiatorId / form.data /
-                form.data.字段名 / task.comment / node.id）
+                参数映射（把流程数据映射为调用入参。来源路径：instance.id / instance.initiatorId /
+                instance.status / form.data / form.data.字段名 / task.comment / node.id /
+                trigger.event；填「常量值」则忽略来源路径，直接传固定值——不同事件传不同常量时用「每个事件一条触发器 + 常量」表达）
               </div>
               {(trigger.paramsMapping || []).map((m, rowIndex) => (
                 <div key={rowIndex} style={mappingRowStyle}>
@@ -204,9 +211,15 @@ export default function NodeTriggerEditor({ config, onChange, appId }: NodeTrigg
                   <span style={{ color: '#8c95a3' }}>=</span>
                   <input
                     style={inputStyle}
-                    value={m.from}
+                    value={m.from || ''}
                     onChange={(e) => patchMapping(index, rowIndex, 'from', e.target.value)}
                     placeholder="来源路径"
+                  />
+                  <input
+                    style={{ ...inputStyle, flex: 0.7 }}
+                    value={m.value || ''}
+                    onChange={(e) => patchMapping(index, rowIndex, 'value', e.target.value)}
+                    placeholder="常量值（可选）"
                   />
                   <button type="button" style={miniBtnStyle} onClick={() => removeMapping(index, rowIndex)}>
                     ✕

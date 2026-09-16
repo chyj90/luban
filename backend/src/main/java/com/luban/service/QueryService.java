@@ -432,10 +432,34 @@ public class QueryService {
                     return new RunQueryResponse(columns, rows, rows.size(), executionTime, trimmedSql);
                 }
             } else {
-                int affectedRows = stmt.executeUpdate(trimmedSql);
+                UpdateOutcome outcome = executeUpdateReturningKey(conn, trimmedSql);
                 long executionTime = System.currentTimeMillis() - startTime;
-                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime, trimmedSql);
+                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(),
+                        outcome.affectedRows(), executionTime, trimmedSql, outcome.insertId());
             }
+        }
+    }
+
+    /** 写执行结果：受影响行数 + 自增主键（非自增/无主键时 insertId 为 null） */
+    private record UpdateOutcome(long affectedRows, Long insertId) {}
+
+    /**
+     * 执行写 SQL 并取回自增主键。审批回写场景依赖 insertId：
+     * 页面拿到主键后放进 startWorkflow 的 formData，触发器才能定位业务记录。
+     */
+    private UpdateOutcome executeUpdateReturningKey(Connection conn, String sql) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            long affectedRows = ps.executeUpdate();
+            Long insertId = null;
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    insertId = keys.getLong(1);
+                    if (keys.wasNull()) {
+                        insertId = null;
+                    }
+                }
+            }
+            return new UpdateOutcome(affectedRows, insertId);
         }
     }
 
@@ -528,9 +552,10 @@ public class QueryService {
                     return new RunQueryResponse(columns, rows, rows.size(), executionTime, trimmedSql);
                 }
             } else {
-                int affectedRows = stmt.executeUpdate(trimmedSql);
+                UpdateOutcome outcome = executeUpdateReturningKey(conn, trimmedSql);
                 long executionTime = System.currentTimeMillis() - startTime;
-                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(), affectedRows, executionTime, trimmedSql);
+                return new RunQueryResponse(Collections.emptyList(), Collections.emptyList(),
+                        outcome.affectedRows(), executionTime, trimmedSql, outcome.insertId());
             }
         } catch (Exception e) {
             throw new RuntimeException("SQL 查询执行失败: " + e.getMessage());

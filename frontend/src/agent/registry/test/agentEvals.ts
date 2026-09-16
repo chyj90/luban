@@ -221,6 +221,65 @@ function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
   return evalResult('E3c-计划推导(编排排在流程发布后)', checks.length === 0, checks.length === 0 ? '查询→表单→流程→发布→编排→页面→挂接 顺序与依赖正确' : checks.join('；'));
 }
 
+/**
+ * E3d: TOOL 型回调回归——TOOL 目标（已有 API 工具）必须与 QUERY 一样折叠进流程设计步骤，
+ * 不得静默丢弃、也不得像 ORCHESTRATION 那样生成独立的"配触发器+重发布"步骤
+ * （2026-09-15 契约缺口：targetType 只有 QUERY|ORCHESTRATION，TOOL 回调被两处 filter 吞掉，联动无声断链）。
+ */
+function evalPlanDerivationWithToolCallback(): EvalResult {
+  const analysis = {
+    title: '请假审批+结果通知',
+    summary: '审批结果回写业务库并调用已有通知工具',
+    pages: [],
+    workflows: [
+      {
+        description: '请假审批',
+        hasForm: true,
+        formDescription: '请假表单：类型/起止日期/天数',
+        hasWorkflow: true,
+        workflowDescription: '请假审批流程',
+        callbacks: [
+          { on: 'APPROVED', targetType: 'QUERY' as const, targetRef: 'UpdateLeaveApproved', params: 'id←form.data.id', purpose: '置已通过' },
+          { on: 'INSTANCE_COMPLETED', targetType: 'TOOL' as const, targetRef: 'SendLeaveResultNotice', params: 'instanceId←instance.id', purpose: '推送结果通知' },
+        ],
+      },
+    ],
+  };
+  const items = derivePlanFromAnalysis(analysis);
+
+  const checks: string[] = [];
+  // 预期 5 步：回写查询 → 表单 → 设计(含触发器) → 发布 → 挂接；TOOL 不另生成步骤
+  if (items.length !== 5) checks.push(`步骤数应为 5，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  const step1 = items[0];
+  if (step1?.toolName !== 'delegate_query' || !step1.description.includes('UpdateLeaveApproved')) {
+    checks.push('步骤1 应为回写查询 UpdateLeaveApproved 的 delegate_query 步骤');
+  }
+  const design = items[2];
+  if (design?.toolName !== 'delegate_workflow' || design.toolInput.task_type !== 'design_workflow') {
+    checks.push(`步骤3 应为流程设计步骤，实际 ${design?.toolName}/${design?.toolInput.task_type}`);
+  } else {
+    const req = String(design.toolInput.requirement || '');
+    if (!req.includes('UpdateLeaveApproved') || !req.includes('type 填 "QUERY"')) {
+      checks.push('设计步骤 requirement 缺少 QUERY 型触发器配置指引');
+    }
+    if (!req.includes('SendLeaveResultNotice') || !req.includes('type 填 "TOOL"')) {
+      checks.push('设计步骤 requirement 缺少 TOOL 型触发器配置指引（TOOL 回调被丢弃）');
+    }
+    if (!req.includes('list_apis')) {
+      checks.push('TOOL 型指引应要求用 list_apis 核对工具 ID');
+    }
+  }
+  if (!design?.description.includes('on→QUERY/TOOL')) {
+    checks.push(`设计步骤描述应包含"on→QUERY/TOOL"，实际 "${design?.description}"`);
+  }
+  const wireTriggerStep = items.find((i) => i.description.includes('配置审批结果触发器'));
+  if (wireTriggerStep) {
+    checks.push(`TOOL 回调不应生成独立的触发器配置步骤（那是 ORCHESTRATION 专用）：${wireTriggerStep.description}`);
+  }
+
+  return evalResult('E3d-计划推导(TOOL回调折叠)', checks.length === 0, checks.length === 0 ? 'TOOL 回调折叠进设计步骤且未被丢弃' : checks.join('；'));
+}
+
 /** E4: 委派失败检测回归——子智能体工具报"不存在"时，delegate_workflow 不得返回成功 */
 async function evalDelegateFailureDetection(): Promise<EvalResult> {
   const failedToolContent = JSON.stringify({ success: false, message: '工具 "update_workflow" 不存在' });
@@ -954,6 +1013,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
     evalPlanDerivation(),
     evalPlanDerivationWithOrch(),
     evalPlanDerivationOrchAfterWorkflow(),
+    evalPlanDerivationWithToolCallback(),
     evalConfirmationGate(),
     evalDelegateModeIsolation(),
     evalDelegateOutcomes(),

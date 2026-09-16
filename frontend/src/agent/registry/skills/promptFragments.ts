@@ -159,7 +159,14 @@ export function getFindWorkflowSkillSummary(): string {
   - lint：代码校验（表单代码/字段Schema/流程定义/条件表达式）
   - copy_preview：复制/预览/验证/版本
   - general：通用流程问题
-- 如果用户明确说不需要表单，或页面有自己的弹窗，委派时说明「仅设计流程，不需要表单」`;
+- 如果用户明确说不需要表单，或页面有自己的弹窗，委派时说明「仅设计流程，不需要表单」
+
+### ⚠️ 审批结果写回业务库的机制选择（必须遵守）
+流程引擎**支持**在审批节点配置触发器（data.config.triggers）异步调用已保存查询（QUERY 目标，支持 UPDATE/DELETE）——**"审批通过后改状态/扣余额"这类联动默认用触发器实现，不要创建编排**：
+- 机制决策规则：联动 = "某事件 → 固定动作" → 触发器目标按动作选：改业务库状态用 QUERY 目标（每个状态一条查询，状态写死在 SQL 里，SQL 带状态守卫防重复派发）；调用已有 API 工具（外部 HTTP 调用、钉钉/企微等通知接口）用 TOOL 目标（无需新建目标）；仅多步依赖（先查再写等组合逻辑）才用编排
+- 禁止设计"一次回调 + approved 布尔参数"的编排契约——不同审批结果用不同触发器表达（每条触发器绑定一个事件；paramsMapping 支持常量 value，需要传固定值时直接填 value）
+- **formData 必须携带业务记录标识**：页面 startWorkflow 的 formData 里必须有业务记录 id（写查询返回的 insertId，或发起侧生成的业务主键），否则触发器/编排都定位不到记录，联动必然断链
+- 分析阶段在 submit_analysis 的 workflows[].callbacks 中逐条声明回调（on + 目标 + 参数映射），系统会自动生成回写查询与触发器配置步骤`;
 }
 
 export function getFindAnalysisSkillSummary(): string {
@@ -204,7 +211,8 @@ export function getPlanPromptFragment(): string {
    - 每个新增页面 → 系统自动生成 create_code_page 步骤（依赖对应查询 + 编排步骤）
    - 每个需修改的页面 → 系统自动生成 update_code_page 步骤
    - 每个流程需求 → 系统自动生成 delegate_workflow 步骤（先 form 后 workflow）
-   - 步骤依赖关系 → 系统自动推导（页面依赖查询+编排，编排依赖查询，流程依赖表单）
+   - 每条审批结果回调（workflows[].callbacks） → 系统自动生成回写查询步骤 + 触发器配置（QUERY/TOOL 型折叠进流程设计步骤；ORCHESTRATION 型独立成步并重新发布流程）
+   - 步骤依赖关系 → 系统自动推导（页面依赖查询+编排，编排依赖查询，流程依赖表单，触发器依赖回写查询）
 3. **用户确认** → 计划展示给用户，确认所有步骤
 4. **执行步骤** → 按顺序调用工具，每步用 update_plan_item 标记状态。**禁止跳过任何步骤**，一个代码更新可能覆盖多个步骤，但每个步骤都必须单独标记为 completed
 5. **完成验证** → 所有步骤标记完成后，调用 validate_plan 检查。如果 validate_plan 返回未完成的步骤，必须立即标记完成
@@ -267,6 +275,7 @@ export function getAnalysisPromptFragment(): string {
 - L3 页面改造（需新查询）：pages 中 action=update，queries 填写新增查询 → 系统自动生成 delegate_query + update_code_page
 - L3 页面改造（无需新查询）：pages 中 action=update，queries 为空 → 系统只生成 update_code_page
 - 审批流程：workflows 中 hasForm=true, hasWorkflow=true → 系统自动生成 design_form + design_workflow
+- **审批回写三问（涉及审批流必答，答案写进 workflows[].callbacks）**：①通过/驳回后各改哪些表哪些字段；②靠什么字段定位记录（业务记录 id 必须由发起页放进 startWorkflow 的 formData）；③中间节点驳回算什么状态。系统据此自动生成回写查询 + 触发器配置步骤，禁止把联动留到执行期临时补救
 - **已有查询直接绑定**：探查发现查询已存在时，在 pages[].queries 中填 queryId（同时保留 queryName/purpose）——系统只绑定页面、不生成创建步骤。禁止把已有查询留空 queries 或塞进 apis（apis 仅用于平台 API/工具，查询不是 API）
 建表 ≠ 创建查询：建表是 DDL，创建查询是 SQL SELECT。needsNewTable=true 仅表示需要新表，实际建表需人工操作，Agent 只负责创建查询。
 
@@ -536,11 +545,18 @@ export function getAnalysisExamples(): string {
       "hasForm": true,
       "formDescription": "设计请假表单，字段：请假类型(下拉选项:年假/事假/病假/调休,必填)、开始日期(日期,必填)、结束日期(日期,必填)、请假天数(数字,必填)、请假原因(多行文本,必填)",
       "hasWorkflow": true,
-      "workflowDescription": "设计请假审批流程，条件分支：请假天数≤3天→直属上级审批；>3天→直属上级审批→部门经理审批。支持驳回退回发起人、加签"
+      "workflowDescription": "设计请假审批流程，条件分支：请假天数≤3天→直属上级审批；>3天→直属上级审批→部门经理审批。支持驳回退回发起人、加签",
+      "callbacks": [
+        { "on": "APPROVED", "targetType": "QUERY", "targetRef": "UpdateLeaveApproved", "params": "id←form.data.id", "purpose": "审批通过后置请假记录为已通过（状态写死在 SQL，带 status='待审批' 守卫）" },
+        { "on": "APPROVED", "targetType": "QUERY", "targetRef": "DeductLeaveBalance", "params": "id←form.data.id", "purpose": "审批通过后按记录天数扣减休假余额（全部由 id 派生，带已通过守卫）" },
+        { "on": "INSTANCE_REJECTED", "targetType": "QUERY", "targetRef": "UpdateLeaveRejected", "params": "id←form.data.id", "purpose": "任意节点驳回后置请假记录为已驳回" },
+        { "on": "INSTANCE_COMPLETED", "targetType": "TOOL", "targetRef": "SendLeaveResultNotice", "params": "instanceId←instance.id, status←instance.status", "purpose": "整个流程完结后调用已接入的站内通知工具推送结果（TOOL 目标，无需新建）" }
+      ]
     }
   ]
 }
 \`\`\`
 
-⚠️ **审批流程至少两步**：先 design_form 设计表单，再 design_workflow 设计流程（依赖表单）。不创建页面步骤。`;
+⚠️ **审批流程至少两步**：先 design_form 设计表单，再 design_workflow 设计流程（依赖表单）。不创建页面步骤。
+⚠️ **callbacks 参数映射的 form.data.字段 必须真实存在**：发起页 startWorkflow 的 formData 必须携带这些字段（尤其业务记录 id——INSERT 查询的 insertId 或发起侧生成的业务主键），缺字段 = 联动断链。`;
 }

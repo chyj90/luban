@@ -7,6 +7,8 @@ import com.luban.service.ApplicationService;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.repository.*;
 import com.luban.repository.ApplicationRepository;
+import com.luban.repository.QueryRepository;
+import com.luban.orchestration.repository.OrchestrationDefinitionRepository;
 import com.luban.exception.BusinessException;
 import com.luban.util.AgentLogger;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -27,6 +29,8 @@ public class ProcessService {
     private final ApplicationService applicationService;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final WorkflowInstanceRepository workflowInstanceRepository;
+    private final QueryRepository queryRepository;
+    private final OrchestrationDefinitionRepository orchestrationDefinitionRepository;
     private final WorkflowTaskRepository workflowTaskRepository;
     private final WorkflowHistoryRepository workflowHistoryRepository;
     private final UserRepository userRepository;
@@ -92,7 +96,8 @@ public class ProcessService {
         if (!"DRAFT".equals(draft.getStatus())) {
             throw new BusinessException("只有草稿版本的流程定义可以发布");
         }
-        validateNodeConfig(draft.getNodes());
+        // 发布口强校验：ORCHESTRATION 触发器引用必须已发布（触发器按发布版本固化目标清单）
+        validateNodeConfig(draft.getNodes(), true);
 
         Long oldPublishedId = draft.getPublishedVersionId();
         if (oldPublishedId != null) {
@@ -557,6 +562,15 @@ public class ProcessService {
      */
     @SuppressWarnings("unchecked")
     private void validateNodeConfig(String nodesJson) {
+        validateNodeConfig(nodesJson, false);
+    }
+
+    /**
+     * 节点配置校验。requirePublishedTriggers=true（发布口）时额外要求 ORCHESTRATION 型触发器
+     * 引用已发布编排——此前校验缺失，流程助手配完触发器才发现编排是草稿，白烧一轮委派
+     * （2026-09-15 请假案例）。QUERY/ORCHESTRATION 引用不存在则在保存口即报错（fail-fast）。
+     */
+    private void validateNodeConfig(String nodesJson, boolean requirePublishedTriggers) {
         if (nodesJson == null || nodesJson.trim().isEmpty()) return;
         try {
             List<Map<String, Object>> nodes = objectMapper.readValue(nodesJson, new TypeReference<List<Map<String, Object>>>() {});
@@ -566,6 +580,17 @@ public class ProcessService {
                 String nodeType = (String) node.get("nodeType");
                 String nodeName = (String) node.getOrDefault("nodeName", node.get("nodeId"));
                 Map<String, Object> config = (Map<String, Object>) node.get("config");
+
+                // 触发器校验先于 config 判空：引擎实际读取 data.config.triggers
+                //（WorkflowTriggerService.triggersOfNode），不能因顶层 config 缺失而跳过
+                Map<String, Object> data = node.get("data") instanceof Map
+                        ? (Map<String, Object>) node.get("data") : Map.of();
+                Map<String, Object> engineConfig = data.get("config") instanceof Map
+                        ? (Map<String, Object>) data.get("config") : config;
+                String triggerNodeName = nodeName != null ? nodeName
+                        : (String) engineConfig.getOrDefault("nodeName", node.get("nodeId"));
+                validateTriggers(engineConfig.get("triggers"), triggerNodeName, requirePublishedTriggers, errors);
+
                 if (config == null) continue;
 
                 if ("approval".equals(nodeType)) {
@@ -616,6 +641,65 @@ public class ProcessService {
             throw e;
         } catch (Exception e) {
             log.warn("节点配置校验跳过（JSON 解析失败）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 触发器引用校验：事件合法、ref 存在；ORCHESTRATION 目标在发布口额外要求 PUBLISHED
+     * （触发器按发布版本固化目标清单，引用草稿编排派发必然失败）。
+     */
+    private void validateTriggers(Object triggersObj, String nodeName,
+                                  boolean requirePublished, List<String> errors) {
+        if (!(triggersObj instanceof List<?> triggers) || triggers.isEmpty()) return;
+        List<String> legalEvents = List.of("NODE_ENTERED", "APPROVED", "REJECTED",
+                "INSTANCE_COMPLETED", "INSTANCE_REJECTED");
+        for (Object tObj : triggers) {
+            if (!(tObj instanceof Map<?, ?>)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> t = (Map<String, Object>) tObj;
+            String on = String.valueOf(t.getOrDefault("on", ""));
+            if (!legalEvents.contains(on)) {
+                errors.add("节点「" + nodeName + "」触发器事件非法: " + on + "（合法值：" + legalEvents + "）");
+                continue;
+            }
+            Map<String, Object> target = t.get("target") instanceof Map
+                    ? (Map<String, Object>) t.get("target") : Map.of();
+            String type = String.valueOf(target.getOrDefault("type", ""));
+            Object ref = target.get("ref");
+            Long refId = null;
+            if (ref instanceof Number n && n.longValue() > 0) {
+                refId = n.longValue();
+            } else if (ref != null) {
+                try {
+                    long v = Long.parseLong(ref.toString().trim());
+                    if (v > 0) refId = v;
+                } catch (NumberFormatException ignored) { }
+            }
+            if (refId == null) {
+                errors.add("节点「" + nodeName + "」触发器(on=" + on + ")缺少合法的 target.ref（正整数 ID）");
+                continue;
+            }
+            switch (type) {
+                case "QUERY" -> {
+                    if (!queryRepository.existsById(refId)) {
+                        errors.add("节点「" + nodeName + "」触发器(on=" + on + ")引用的查询 ID " + refId
+                                + " 不存在，请先用 list_queries 核对真实 ID");
+                    }
+                }
+                case "ORCHESTRATION" -> {
+                    orchestrationDefinitionRepository.findById(refId).ifPresentOrElse(
+                        orch -> {
+                            if (requirePublished && !"PUBLISHED".equals(orch.getStatus())) {
+                                errors.add("节点「" + nodeName + "」触发器(on=" + on + ")引用的编排 "
+                                        + refId + "（" + orch.getName() + "）状态为 " + orch.getStatus()
+                                        + "，触发器只能引用已发布（PUBLISHED）的编排，请先发布编排并重新发布流程");
+                            }
+                        },
+                        () -> errors.add("节点「" + nodeName + "」触发器(on=" + on + ")引用的编排 ID "
+                                + refId + " 不存在，请先用 list_orchestrations 核对真实 ID"));
+                }
+                default -> { /* TOOL 等类型由派发层校验 */ }
+            }
         }
     }
 }

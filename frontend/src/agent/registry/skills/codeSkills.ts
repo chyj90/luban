@@ -34,6 +34,7 @@ async function runPageQueries(
   applicationId: number,
 ): Promise<QueryRunResult[]> {
   const results: QueryRunResult[] = [];
+  const { extractFieldNamesFromSQL } = await import('./codeValidate');
   for (const name of queryNames) {
     try {
       const { listQueries } = await import('@/api/query');
@@ -41,6 +42,19 @@ async function runPageQueries(
       const allQueries = allRes.data || [];
       const query = allQueries.find((q: { name: string }) => q.name === name);
       if (!query) continue;
+
+      // 写查询（INSERT/UPDATE/DELETE）禁止为校验而真实执行——会把测试写入业务库
+      //（2026-09-15 案例：脚手架校验把 InsertLeaveRequest 真跑了一次）。字段清单改从 SQL 文本提取。
+      const sql: string = (query as { body?: string }).body || (query as { sqlBody?: string }).sqlBody || '';
+      if (/^\s*(insert|update|delete|replace|merge)\b/i.test(sql)) {
+        results.push({
+          queryName: name,
+          columns: extractFieldNamesFromSQL(sql),
+          sampleRow: undefined,
+          totalCount: undefined,
+        });
+        continue;
+      }
 
       const res = await runQuery(query.id, { params: {} });
       const { columns, rows, totalCount } = res.data;
@@ -532,6 +546,18 @@ export const codeSkills: Record<string, SkillFactory> = {
         const queryIds = [...readQueries.map(q => q.id), ...writeQueries.map(q => q.id)];
         const toolIds = (args.toolIds as number[]) || [];
 
+        // 按主读查询的真实列生成骨架（此前模板硬编码 name/status/created_time，与查询实际列
+        // 不符，必然触发一轮"JS 字段名"返工——2026-09-15 请假案例两个脚手架各返工一次）。
+        // 读查询是 SELECT，执行取列安全；带必填参数或执行失败时回退占位模板并在返回消息中说明。
+        let realColumns: string[] | null = null;
+        if (primaryRead?.id) {
+          try {
+            const res = await runQuery(primaryRead.id, { params: {} });
+            const cols: string[] = res.data?.columns || [];
+            if (cols.length > 0) realColumns = cols;
+          } catch { /* 回退占位模板 */ }
+        }
+
         let html = '';
         let css = '';
         let js = '';
@@ -541,6 +567,167 @@ export const codeSkills: Record<string, SkillFactory> = {
           const insertName = insertQuery?.name || 'InsertData';
           const updateName = updateQuery?.name || 'UpdateData';
           const deleteName = deleteQuery?.name || 'DeleteData';
+
+          if (realColumns) {
+            // 列驱动骨架：表格列/表单字段/回填/保存参数全部来自主读查询的真实列，杜绝编造字段
+            const displayCols = realColumns.filter((c) => c !== 'id').slice(0, 6);
+            const editableCols = realColumns
+              .filter((c) => !/^(id|created_time|updated_time|create_time|update_time|created_at|updated_at)$/i.test(c))
+              .slice(0, 6);
+            const thHtml = displayCols.map((c) => `<th>${c}</th>`).join('\n        ') + '\n        <th>操作</th>';
+            const formItems = editableCols.map((c, idx) => {
+              const required = idx === 0 ? ' luban-form-label-required' : '';
+              const control = /(^|_)(?:date|at)$/i.test(c) || /date$/i.test(c)
+                ? `<input type="date" name="${c}" class="luban-datepicker">`
+                : /(?:num|count|qty|day|days|amount|price|total|age)s?$/i.test(c)
+                  ? `<input type="number" name="${c}" class="luban-input-number" step="any">`
+                  : `<input type="text" name="${c}" class="luban-input">`;
+              return `        <div class="luban-form-item">\n          <label class="luban-form-label${required}">${c}</label>\n          ${control}\n        </div>`;
+            }).join('\n');
+            const backfills = editableCols
+              .map((c) => `  document.getElementById('editForm').elements['${c}'].value = row.${c} == null ? '' : row.${c};`)
+              .join('\n');
+            const collect = editableCols
+              .map((c, idx) => {
+                const lines = [
+                  `  var ${c} = form.elements['${c}'].value.trim();`,
+                  `  if (${c} !== '') params.${c} = ${c};`,
+                ];
+                if (idx === 0) lines.push(`  if (!${c}) { LubanUI.toast.warning('${c} 为必填项'); return; }`);
+                return lines.join('\n');
+              })
+              .join('\n');
+
+            html = `<div class="page-container">
+  <div id="pageHeader"></div>
+  <div class="content-container">
+    <div class="luban-filter-bar">
+      <div class="luban-filter-item">
+        <label class="luban-filter-label">搜索</label>
+        <input type="text" id="searchInput" class="luban-input" placeholder="请输入关键词">
+      </div>
+      <div class="luban-filter-actions">
+        <button class="luban-btn luban-btn-primary" onclick="searchData()">查询</button>
+        <button class="luban-btn" onclick="resetSearch()">重置</button>
+      </div>
+    </div>
+    <table class="luban-table" id="dataTable">
+      <thead><tr>
+        ${thHtml}
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="editModal" class="luban-modal-overlay" style="display:none">
+  <div class="luban-modal">
+    <div class="luban-modal-header">
+      <h3 class="luban-modal-title" id="modalTitle">新增</h3>
+      <button class="luban-modal-close" data-modal-close onclick="LubanUI.modal.close('editModal')">&times;</button>
+    </div>
+    <div class="luban-modal-body">
+      <form id="editForm" class="luban-form">
+${formItems}
+      </form>
+    </div>
+    <div class="luban-modal-footer">
+      <button class="luban-btn luban-btn-primary" onclick="saveData()">保存</button>
+      <button class="luban-btn" onclick="LubanUI.modal.close('editModal')">取消</button>
+    </div>
+  </div>
+</div>`;
+
+            css = `.page-container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+.content-container { background: #fff; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); padding: 20px; }`;
+
+            js = `var table = null;
+var currentEditId = null;
+
+function initPage() {
+  LubanUI.pageHeader('pageHeader', {
+    title: '${name}',
+    actions: [
+      '<button class="luban-btn luban-btn-primary" onclick="openAdd()">新增</button>'
+    ]
+  });
+  table = LubanUI.table('dataTable', {
+    columns: ${JSON.stringify([...displayCols, 'id'])},
+    pageSize: 10,
+    emptyText: '暂无数据',
+    emptyDescription: '请调整筛选条件或新增数据',
+    render: {
+      id: function(v) {
+        return '<button class="luban-btn luban-btn-text" onclick="openEdit(' + v + ')">编辑</button> ' +
+          '<button class="luban-btn luban-btn-text luban-btn-danger" onclick="deleteData(' + v + ')">删除</button>';
+      }
+    }
+  });
+  searchData();
+}
+
+function searchData() {
+  var keyword = document.getElementById('searchInput').value;
+  DataQuery.${readName}({ keyword: keyword }).then(function(result) {
+    table.setData(result.rows || []);
+  });
+}
+
+function resetSearch() {
+  document.getElementById('searchInput').value = '';
+  searchData();
+}
+
+function openAdd() {
+  currentEditId = null;
+  document.getElementById('modalTitle').textContent = '新增';
+  document.getElementById('editForm').reset();
+  LubanUI.modal.open('editModal');
+}
+
+function openEdit(id) {
+  currentEditId = id;
+  document.getElementById('modalTitle').textContent = '编辑';
+  var row = table.getData().find(function(r) { return r.id === id; });
+  if (!row) return;
+${backfills}
+  LubanUI.modal.open('editModal');
+}
+
+function saveData() {
+  var form = document.getElementById('editForm');
+  var params = {};
+${collect}
+  if (currentEditId) {
+    params.id = currentEditId;
+    DataQuery.${updateName}(params).then(function(result) {
+      LubanUI.toast.success('更新成功');
+      LubanUI.modal.close('editModal');
+      searchData();
+    });
+  } else {
+    DataQuery.${insertName}(params).then(function(result) {
+      LubanUI.toast.success('新增成功');
+      LubanUI.modal.close('editModal');
+      searchData();
+    });
+  }
+}
+
+function deleteData(id) {
+  if (!confirm('确认删除？')) return;
+  DataQuery.${deleteName}({ id: id }).then(function(result) {
+    LubanUI.toast.success('删除成功');
+    searchData();
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initPage, { once: true });
+} else {
+  initPage();
+}`;
+          } else {
 
           html = `<div class="page-container">
   <div id="pageHeader"></div>
@@ -692,6 +879,7 @@ if (document.readyState === 'loading') {
 } else {
   initPage();
 }`;
+          }
 
         } else if (pageType === 'dashboard') {
           const readName = primaryRead?.name || 'GetStats';
@@ -860,9 +1048,10 @@ function loadDetail(params) {
     var rows = result.rows;
     if (rows && rows.length > 0) {
       var row = rows[0];
-      document.getElementById('detailBody').innerHTML =
-        '<div class="detail-row"><span class="detail-label">ID</span><span class="detail-value">' + (row.id || '') + '</span></div>' +
-        '<div class="detail-row"><span class="detail-label">名称</span><span class="detail-value">' + (row.name || '') + '</span></div>';
+      var cols = ${JSON.stringify((realColumns || ['id', 'name']).slice(0, 8))};
+      document.getElementById('detailBody').innerHTML = cols.map(function(c) {
+        return '<div class="detail-row"><span class="detail-label">' + c + '</span><span class="detail-value">' + (row[c] == null ? '' : row[c]) + '</span></div>';
+      }).join('');
     } else {
       document.getElementById('detailBody').innerHTML = '<p style="color:#999;">暂无数据</p>';
     }
@@ -947,10 +1136,17 @@ if (document.readyState === 'loading') {
         let msg = `✅ 页面脚手架 "${name}" 创建成功（id: ${res.data.id}）！\n\n`;
         msg += `📋 **下一步**：调用 update_code_page 补充业务逻辑：\n`;
         if (pageType === 'crud') {
-          msg += `1. 补充表格列（添加更多 <th> 和对应 <td>）\n`;
-          msg += `2. 补充表单字段（在 editForm 中添加更多输入项）\n`;
-          msg += `3. 完善 openEdit 从表格行获取数据回填表单\n`;
-          msg += `4. 调整 saveData 传递完整表单数据\n`;
+          if (realColumns) {
+            msg += `1. 表格列/表单字段已按查询 ${primaryRead?.name} 的真实列生成（${realColumns.filter((c) => c !== 'id').slice(0, 6).join('、')}），请按业务语义把列标题改为中文、调整控件类型与必填校验\n`;
+            msg += `2. 需要下拉选项的字段换用 LubanUI.select（记得 LubanUI.initSelects()）\n`;
+            msg += `3. 补充业务校验（如金额范围、日期先后）到 saveData\n`;
+            msg += `4. 如需展示关联数据，绑定更多查询后用 update_code_page 扩展\n`;
+          } else {
+            msg += `1. 补充表格列（添加更多 <th> 和对应 <td>）\n`;
+            msg += `2. 补充表单字段（在 editForm 中添加更多输入项）\n`;
+            msg += `3. 完善 openEdit 从表格行获取数据回填表单\n`;
+            msg += `4. 调整 saveData 传递完整表单数据\n`;
+          }
         } else if (pageType === 'dashboard') {
           msg += `1. 按需求分析第 4 章核对区块构成：骨架的 4KPI+三栏+中央地图只是示例排布，模块不同就用 decor.panel 重新组织布局\n`;
           msg += `2. 画布比例不是 16:9 时（超宽/竖屏/拼接屏），栅格必须按画布比例重新设计（超宽多列横排、竖屏纵向堆叠），并按画布大小配 setDensity（4K+ 优先 large，高密度小画布优先 compact）\n`;

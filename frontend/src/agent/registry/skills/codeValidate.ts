@@ -618,7 +618,8 @@ function extractSQLParamNames(sql: string): Set<string> {
   return names;
 }
 
-function extractFieldNamesFromSQL(sql: string): string[] {
+/** 从 SQL 文本提取字段名（导出供 codeSkills 校验写查询时免执行取列） */
+export function extractFieldNamesFromSQL(sql: string): string[] {
   const fields: string[] = [];
 
   const selectMatch = sql.match(/SELECT\s+(.*?)\s+FROM\s/is);
@@ -2178,25 +2179,60 @@ function validateCssComponentOverride(css: string, errors: string[]) {
     '.luban-spinner', '.luban-stat-card', '.luban-filter-bar', '.luban-chart',
   ];
 
+  // 布局/间距类属性豁免：组件规范示例本身就要求用 .luban-filter-bar 等类名搭结构，
+  // 页面对其做 margin/gap/grid 等布局定制不改变组件视觉（2026-09-15 案例：按规范写
+  // .luban-filter-bar { margin-bottom: 16px } 被判覆盖违规，属于规范自相矛盾）。
+  // 只拦截颜色/边框/字体/背景/阴影等视觉属性的重定义。
+  const LAYOUT_ONLY_PROPERTIES = new Set([
+    'display', 'position', 'top', 'right', 'bottom', 'left', 'z-index',
+    'margin', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'padding', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
+    'gap', 'row-gap', 'column-gap', 'width', 'min-width', 'max-width',
+    'height', 'min-height', 'max-height', 'box-sizing',
+    'flex', 'flex-grow', 'flex-shrink', 'flex-basis', 'flex-direction', 'flex-wrap',
+    'grid', 'grid-template', 'grid-template-columns', 'grid-template-rows', 'grid-area',
+    'grid-column', 'grid-row', 'grid-auto-flow', 'grid-auto-rows', 'grid-auto-columns',
+    'align-items', 'align-self', 'align-content', 'justify-items', 'justify-content', 'justify-self',
+    'place-items', 'place-content', 'place-self', 'order',
+    'overflow', 'overflow-x', 'overflow-y', 'object-fit',
+    'float', 'clear', 'visibility', 'pointer-events', 'content',
+  ]);
+
   const lines = css.split('\n');
   const violations: { line: number; selector: string }[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
+    let matchedSelector: string | null = null;
     for (const selector of LUBAN_COMPONENT_SELECTORS) {
       if (line === selector + '{' || line === selector + ' {' || line.startsWith(selector + ',') || line.startsWith(selector + ' ')) {
-        violations.push({ line: i + 1, selector });
+        matchedSelector = selector;
         break;
       }
+    }
+    if (!matchedSelector) continue;
+
+    // 收集声明块的属性名，纯布局属性放行
+    const properties: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const decl = lines[j].trim();
+      if (decl === '}') break;
+      const prop = decl.split(':')[0]?.trim().toLowerCase();
+      if (prop) properties.push(prop);
+    }
+    const isLayoutOnly = properties.length > 0 && properties.every((p) => LAYOUT_ONLY_PROPERTIES.has(p));
+    if (!isLayoutOnly) {
+      violations.push({ line: i + 1, selector: matchedSelector });
     }
   }
 
   if (violations.length > 0) {
     const details = violations.slice(0, 5).map((v) => `第 ${v.line} 行：${v.selector}`).join('、');
     errors.push(
-      `[CSS 组件覆盖] 禁止重新定义 LubanUI 组件样式，组件样式由组件库统一管理。` +
+      `[CSS 组件覆盖] 禁止重新定义 LubanUI 组件的视觉样式（颜色/边框/背景/字体/阴影），组件样式由组件库统一管理。` +
       `检测到 ${violations.length} 处覆盖（${details}${violations.length > 5 ? ' 等' : ''}）。` +
-      '如需定制样式，请使用自定义类名（如 .my-table），不要直接修改 .luban-table 等组件类。'
+      '如需定制视觉样式，请使用自定义类名（如 .my-table），不要直接修改 .luban-table 等组件类。' +
+      'margin/padding/gap/grid 等纯布局属性可以直接写，不会被判违规。'
     );
   }
 }

@@ -18,7 +18,7 @@ interface BridgeResponse {
   type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT' | 'WORKFLOW_RESULT';
   id: string;
   queryName?: string;
-  result?: { columns: string[]; rows: Record<string, unknown>[]; totalCount: number };
+  result?: { columns: string[]; rows: Record<string, unknown>[]; totalCount: number; insertId?: number | null };
   error?: string;
   success?: boolean;
   apiName?: string;
@@ -101,7 +101,7 @@ export function useQueryBridge(
         const res = pageId
           ? await runRuntimeQuery(pageId, query.id, { params: msg.params })
           : await runQuery(query.id, { params: msg.params });
-        const { columns, rows, totalCount } = res.data;
+        const { columns, rows, totalCount, insertId } = res.data;
         const objectRows: Record<string, unknown>[] = rows.map((row: unknown[]) => {
           const obj: Record<string, unknown> = {};
           columns.forEach((col, i) => { obj[col] = row[i]; });
@@ -111,7 +111,8 @@ export function useQueryBridge(
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
-          result: { columns, rows: objectRows, totalCount },
+          // insertId：INSERT 查询的自增主键，写查询场景透传给页面（startWorkflow formData 需要）
+          result: { columns, rows: objectRows, totalCount, insertId: insertId != null ? insertId : null },
         });
       } catch (err: unknown) {
         respond({
@@ -652,7 +653,9 @@ ${JSON.stringify(queryNames)}.forEach(function(name) {
     return window[name].run(params || {}).then(function(result) {
       var affected = result.totalCount || (result.rows ? result.rows.length : 0) || 0;
       if (isWrite) {
-        return { affectedRows: affected, success: true, rows: result.rows || [], columns: result.columns || [] };
+        // insertId：INSERT 查询返回的自增主键。审批回写场景页面必须把它放进
+        // startWorkflow 的 formData，触发器才能定位业务记录（缺它即断链）
+        return { affectedRows: affected, success: true, insertId: result.insertId != null ? result.insertId : null, rows: result.rows || [], columns: result.columns || [] };
       }
       return { rows: result.rows || [], columns: result.columns || [], totalCount: result.totalCount || 0 };
     });

@@ -27,6 +27,27 @@ interface AnalysisWorkflow {
   formDescription?: string;
   hasWorkflow: boolean;
   workflowDescription?: string;
+  /**
+   * 审批结果触发器声明（2026-09-15 请假案例）：分析期显式声明"审批通过/驳回后改哪些表、
+   * 靠什么字段定位记录"，系统据此自动生成"回写查询 + 触发器配置"步骤，
+   * 联动需求在计划第一帧就可见，不再依赖 wire 步骤执行中途兜底发现。
+   * 机制默认走审批节点触发器 + QUERY 目标（事件→固定动作，改业务库）；
+   * 外部 API 调用用 TOOL 目标（已有工具，与后端 TargetType.TOOL / UI"API 工具"同层）；
+   * 编排仅用于多步依赖。
+   */
+  callbacks?: WorkflowCallback[];
+}
+
+export interface WorkflowCallback {
+  /** 触发事件：APPROVED / REJECTED / NODE_ENTERED / INSTANCE_COMPLETED / INSTANCE_REJECTED */
+  on: string;
+  /** QUERY=执行已保存查询（推荐，状态写死在 SQL 里）；TOOL=调用已有 API 工具（外部 HTTP/通知，无需新建）；ORCHESTRATION=调用编排（须发布） */
+  targetType: 'QUERY' | 'ORCHESTRATION' | 'TOOL';
+  /** QUERY 时为查询名；ORCHESTRATION 时为编排名；TOOL 时为 API 工具名 */
+  targetRef: string;
+  /** 参数映射描述，如 "id←form.data.id, days←form.data.days" */
+  params?: string;
+  purpose?: string;
 }
 
 interface AnalysisData {
@@ -153,7 +174,40 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
   // 即使 DSL 写对也必然报"引用的流程定义不存在"。发布步骤 ID 收集后注入编排步骤依赖。
   const publishStepIds: string[] = [];
   const wireStepBuilders: Array<{ publishStepId: string; wf: AnalysisData['workflows'][number] }> = [];
+  // 所有页面声明过的查询名：callbacks 引用的回写查询若已在页面声明，不重复生成创建步骤
+  const declaredQueryNames = new Set<string>(
+    analysis.pages.flatMap((p) => p.queries.map((q) => q.queryName)),
+  );
+  // QUERY 型 callbacks 的查询步骤先行创建——流程助手在 design 阶段就要把触发器 ref 指向真实查询
+  const callbackQueryStepIdsByWf = new Map<AnalysisData['workflows'][number], string[]>();
   for (const wf of analysis.workflows) {
+    if (!wf.callbacks || wf.callbacks.length === 0) continue;
+    const pending = wf.callbacks
+      .filter((cb) => cb.targetType === 'QUERY' && !declaredQueryNames.has(cb.targetRef));
+    const uniqueQueries = [...new Map(pending.map((cb) => [cb.targetRef, cb])).values()];
+    if (uniqueQueries.length === 0) continue;
+    const stepId = nextId();
+    const desc = uniqueQueries
+      .map((cb) => `创建查询 ${cb.targetRef}${cb.purpose ? `（${cb.purpose}）` : ''}`)
+      .join('；');
+    items.push({
+      id: stepId,
+      category: 'datasource',
+      description: `${desc}（供流程「${wf.description}」审批结果触发器调用）`,
+      toolName: 'delegate_query',
+      toolInput: {
+        requirement: `为流程「${wf.description}」的审批结果触发器创建以下写查询：${uniqueQueries
+          .map((cb) => `${cb.targetRef}${cb.purpose ? `（${cb.purpose}）` : ''}${cb.params ? `，参数映射：${cb.params}` : ''}`)
+          .join('；')}。⚠️ 写 SQL 必须带状态守卫条件（如 AND status='待审批'）——触发器为异步 at-least-once 派发，状态守卫让重复派发命中 0 行，防止重复扣减/重复更新`,
+        query_name: uniqueQueries[0].targetRef,
+      },
+      dependencies: [],
+    });
+    callbackQueryStepIdsByWf.set(wf, [stepId]);
+    uniqueQueries.forEach((cb) => declaredQueryNames.add(cb.targetRef));
+  }
+  for (const wf of analysis.workflows) {
+    const callbackQueryStepIds = callbackQueryStepIdsByWf.get(wf) || [];
     if (wf.hasForm) {
       const formStepId = nextId();
       items.push({
@@ -169,12 +223,12 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
       });
 
       if (wf.hasWorkflow) {
-        const publishStepId = appendWorkflowDesignSteps(wf, nextId(), [formStepId], items, nextId);
+        const publishStepId = appendWorkflowDesignSteps(wf, nextId(), [formStepId, ...callbackQueryStepIds], items, nextId);
         publishStepIds.push(publishStepId);
         wireStepBuilders.push({ publishStepId, wf });
       }
     } else if (wf.hasWorkflow) {
-      const publishStepId = appendWorkflowDesignSteps(wf, nextId(), [], items, nextId);
+      const publishStepId = appendWorkflowDesignSteps(wf, nextId(), callbackQueryStepIds, items, nextId);
       publishStepIds.push(publishStepId);
       wireStepBuilders.push({ publishStepId, wf });
     }
@@ -184,10 +238,12 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
   // 若分析中声明了流程，编排还依赖全部流程发布步骤（编排可能经 workflow 节点发起流程，
   // 分析数据未声明编排与流程的对应关系，保守取全量依赖）
   const pageOrchStep = new Map<string, string>();
+  const allOrchStepIds: string[] = [];
   for (const page of analysis.pages) {
     if (!page.orchestrations || page.orchestrations.length === 0) continue;
     const stepId = nextId();
     pageOrchStep.set(page.name, stepId);
+    allOrchStepIds.push(stepId);
     const ownQueryStep = pageQueryStep.get(page.name);
     const queryNames = page.queries.map(q => q.queryName);
     const orchDescriptions = page.orchestrations.map(o => `${o.orchName}（${o.purpose}）`).join('；');
@@ -245,12 +301,32 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
+  // ORCHESTRATION 型 callbacks：编排必须在触发器 ref 引用前创建并发布（触发器按发布版本执行），
+  // 因此触发器配置独立成步，排在流程发布 + 编排步骤之后，并要求重新发布流程使触发器随版本固化
+  for (const { publishStepId, wf } of wireStepBuilders) {
+    const orchCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'ORCHESTRATION');
+    if (orchCallbacks.length === 0) continue;
+    items.push({
+      id: nextId(),
+      category: 'datasource',
+      description: `配置审批结果触发器（${wf.description}）→ 编排 ${orchCallbacks.map((cb) => cb.targetRef).join('、')}，完成后重新发布流程使触发器生效`,
+      toolName: 'delegate_workflow',
+      toolInput: {
+        task_type: 'design_workflow',
+        requirement: `为流程「${wf.description}」配置审批结果触发器并重新发布。回调声明：${orchCallbacks
+          .map((cb) => `on=${cb.on} → 编排「${cb.targetRef}」（须已 PUBLISHED，用 list_orchestrations 查真实 ID）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`)
+          .join('；')}。在对应审批节点的 data.config.triggers 中写入触发器数组，随后重新发布流程（触发器随发布版本固化，改完不发布不生效）`,
+      },
+      dependencies: [publishStepId, ...allOrchStepIds],
+    });
+  }
+
   // 流程发起链路接入放在最后：wire 是 update_code_page，必须等页面步骤执行完
   for (const { publishStepId } of wireStepBuilders) {
     items.push({
       id: nextId(),
       category: 'code_page',
-      description: `流程发起链路接入：在业务发起入口（表单提交/按钮）挂接 window.__LUBAN__.startWorkflow(流程ID, formData)，formData 字段必须与流程设计的发起字段契约逐字一致；并核验审批通过/驳回后的数据联动是否有实现路径（流程引擎不能写业务库时，用编排实现或向用户明确列出联动缺口），禁止留下无人处理的断链`,
+      description: `流程发起链路接入：在业务发起入口（表单提交/按钮）挂接 window.__LUBAN__.startWorkflow(流程ID, formData)。formData 必须携带业务记录标识（写查询返回的 insertId，或发起侧生成的业务主键）——审批结果触发器靠它定位业务记录，缺失即断链；字段名与流程设计的发起字段契约及触发器 paramsMapping 所需的 form.data.* 逐字一致。审批结果数据联动默认由审批节点触发器（APPROVED/REJECTED → QUERY 目标）实现，计划中未覆盖的联动缺口用 adjust_plan 补配触发器，禁止留下无人处理的断链`,
       toolName: 'update_code_page',
       toolInput: {},
       dependencies: [publishStepId],
@@ -279,14 +355,31 @@ function appendWorkflowDesignSteps(
   items: PlanItem[],
   nextId: () => string,
 ): string {
+  // QUERY/TOOL 型 callbacks 的触发器配置折叠进设计步骤：两者的目标在设计时均已存在
+  // （回写查询已在 design 前置步骤创建、API 工具本就要求已接入），流程助手设计时直接把
+  // ref 指向真实 ID，发布一次即固化，避免"先发布再补触发器再重发布"的往返。
+  // （2026-09-15 请假案例：设计→发布→事后配触发器→被迫重发布，多两轮委派且中途处于断链状态）
+  // ORCHESTRATION 目标由计划创建且须先发布才能被引用，不能折叠，走 derivePlanFromAnalysis 的独立 wire 步骤。
+  const queryCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'QUERY');
+  const toolCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'TOOL');
+  const triggerSpec = (queryCallbacks.length > 0 || toolCallbacks.length > 0)
+    ? `\n完成后在对应审批节点的 data.config.triggers 中配置以下结果触发器（契约：{ triggerId: "tg_前缀加短随机串", on, target: { type: "QUERY"|"TOOL", ref: 目标ID }, paramsMapping: [{ to, from?, value? }], mode: "ASYNC", retry: { maxAttempts: 3, backoffSeconds: [30, 120, 600] } }）：\n${[...queryCallbacks, ...toolCallbacks]
+        .map((cb, i) => cb.targetType === 'TOOL'
+          ? `${i + 1}. on=${cb.on} → API 工具「${cb.targetRef}」（type 填 "TOOL"，ref 为工具 ID，用 list_apis 核对；该工具未接入时在结果中明确说明缺口，禁止编造 ID）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`
+          : `${i + 1}. on=${cb.on} → 查询「${cb.targetRef}」（type 填 "QUERY"，ref 为查询 ID，用 list_queries 核对）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`)
+        .join('\n')}\n范式：改业务库状态用 QUERY 目标——不同事件绑定不同查询（状态写死在 SQL 里），写 SQL 自带状态守卫；调用已有 API 工具（外部 HTTP/通知类）用 TOOL 目标；仅多步依赖才用 ORCHESTRATION 目标（独立步骤配置）。禁止设计"一次回调 + approved 布尔参数"的编排契约。paramsMapping.from 支持 form.data.字段 / instance.id / instance.initiatorId / instance.status / trigger.event / task.comment / node.id，需要传固定值时直接填 value（不同事件传不同常量用"每个事件一条触发器 + 常量"表达）`
+    : '';
+
   items.push({
     id: wfStepId,
     category: 'datasource',
-    description: wf.workflowDescription || `设计流程：${wf.description}`,
+    description:
+      (wf.workflowDescription || `设计流程：${wf.description}`) +
+      (queryCallbacks.length + toolCallbacks.length > 0 ? `；并在审批节点配置结果触发器（on→QUERY/TOOL）` : ''),
     toolName: 'delegate_workflow',
     toolInput: {
       task_type: 'design_workflow',
-      requirement: wf.workflowDescription || wf.description,
+      requirement: (wf.workflowDescription || wf.description) + triggerSpec,
     },
     dependencies: extraDeps,
   });
@@ -360,6 +453,10 @@ const VALID_PLAN_TOOL_NAMES = new Set([
   'update_code_page',
   'delegate_query',
   'delegate_workflow',
+  // 与 derivePlanFromAnalysis 生成的编排步骤工具名一致：system prompt 要求
+  // "计划缺少 delegate_orchestration 步骤时用 adjust_plan 补上"，校验名单必须放行，
+  // 否则出现 2026-09-15 请假案例中 adjust_plan 被拒、编排只能在步骤 5 内裸执行的自相矛盾
+  'delegate_orchestration',
 ]);
 
 export function createPlanInternal(
@@ -416,20 +513,20 @@ function checkBusinessClosure(plan: {
   const report = plan.analysisReport || '';
   if (!report) return { blocked: [], reminders: [] };
 
-  const transitions = (report.match(/[^\n。]*?(?:通过|驳回|批准)后[^\n。]*?(?:扣减|增加|更新|修改|写入|回写|置为|变为|联动|清空)[^\n。]*/g) || [])
+  const transitions = (report.match(/[^\n。]*?(?:通过|驳回|批准)后[^\n。]*?(?:扣减|增加|更新|修改|写入|回写|置为|变为|联动|清空|调用|发送|通知)[^\n。]*/g) || [])
     .map((s) => s.trim())
     .filter((s) => s.length > 6);
 
   const linkageText = plan.steps
     .map((s) => `${s.description || ''} ${s.result || ''}`)
     .join('\n');
-  const hasLinkage = /联动|回调|扣减|回写|状态更新|编排|startWorkflow|挂接|接入/.test(linkageText);
+  const hasLinkage = /联动|回调|扣减|回写|状态更新|编排|触发器|startWorkflow|挂接|接入/.test(linkageText);
 
   if (transitions.length > 0 && !hasLinkage) {
     return {
       blocked: [
-        `分析报告承诺了审批后的数据联动（如"${transitions[0].slice(0, 90)}"），但所有步骤的描述与结果中都没有联动/回调/编排/页面挂接相关实现。` +
-        `请用 adjust_plan 追加联动实现步骤（编排或页面挂接）并执行后再验证；若平台确实无法实现该联动，必须先向用户说明缺口并获确认`,
+        `分析报告承诺了审批后的数据联动（如"${transitions[0].slice(0, 90)}"），但所有步骤的描述与结果中都没有联动/回调/触发器/页面挂接相关实现。` +
+        `请用 adjust_plan 追加联动实现步骤（默认审批节点触发器：改业务库用 QUERY 目标、调用已有 API 工具用 TOOL 目标，另加页面挂接 startWorkflow；仅多步依赖才用编排）并执行后再验证；若平台确实无法实现该联动，必须先向用户说明缺口并获确认`,
       ],
       reminders: [],
     };
@@ -523,6 +620,21 @@ export const planSkills: Record<string, SkillFactory> = {
               formDescription: { type: 'string', description: '表单设计描述（hasForm=true 时填写）' },
               hasWorkflow: { type: 'boolean', description: '是否需要设计审批流程' },
               workflowDescription: { type: 'string', description: '流程设计描述（hasWorkflow=true 时填写）' },
+              callbacks: {
+                type: 'array',
+                description: '⚠️ 审批结果触发器声明（审批通过/驳回后需要写业务库或调用外部服务时必填，如"通过后扣减休假余额"）。系统自动生成回写查询创建步骤 + 触发器配置。默认 QUERY 目标（事件→固定查询，状态写死在 SQL 里）；调用已有 API 工具（外部 HTTP/通知接口）用 TOOL；仅多步依赖才用 ORCHESTRATION（须先在 pages[].orchestrations 声明）',
+                items: {
+                  type: 'object',
+                  properties: {
+                    on: { type: 'string', enum: ['APPROVED', 'REJECTED', 'NODE_ENTERED', 'INSTANCE_COMPLETED', 'INSTANCE_REJECTED'], description: '触发事件。置"已通过"类状态用 APPROVED（挂在最终审批节点）；置"已驳回"用 INSTANCE_REJECTED（任意节点驳回退回发起人都触发）' },
+                    targetType: { type: 'string', enum: ['QUERY', 'ORCHESTRATION', 'TOOL'], description: '目标类型。QUERY=执行已保存查询（推荐，改业务库状态）；TOOL=调用已有 API 工具（外部 HTTP 调用/通知接口，无需新建）；ORCHESTRATION=调用已发布编排（须先在 pages[].orchestrations 声明，仅多步依赖场景）' },
+                    targetRef: { type: 'string', description: 'QUERY 时为查询名（如 UpdateLeaveApproved，状态写在 SQL 里）；TOOL 时为 API 工具名（须为已接入工具，流程助手会用 list_apis 核对）；ORCHESTRATION 时为编排名' },
+                    params: { type: 'string', description: '参数映射描述，如 "id←form.data.id, days←form.data.days"。⚠️ form.data 里必须真的有该字段——业务记录 id 必须由发起页在 startWorkflow 的 formData 中携带' },
+                    purpose: { type: 'string', description: '用途描述，如 "置请假记录为已通过"' },
+                  },
+                  required: ['on', 'targetType', 'targetRef'],
+                },
+              },
             },
             required: ['description', 'hasForm', 'hasWorkflow'],
           },

@@ -146,7 +146,8 @@ export const AGENTS: AgentDefinition[] = [
       '5. 用户确认后再 publish_orchestration（发布需 MANAGE 权限）',
       '',
       '## 基础设施故障快速失败',
-      '- 试运行返回 SANDBOX_HTTP_503 或类似基础设施错误时，**最多重试 1 次**；连续 2 次同类型基础设施错误即判定为服务不可用，停止重试',
+      '- 试运行返回 SANDBOX_POOL_DOWN（沙箱池不可用，可能附 reason：pool_empty/docker_down/image_missing/circuit_open）或 SANDBOX_HTTP_503 等基础设施错误时，**最多重试 1 次**；连续 2 次同类型基础设施错误即判定为服务不可用，停止重试',
+      '- ⚠️ SANDBOX_POOL_DOWN 是基础设施告警，不是代码错误：必须在回复中**显式告知用户沙箱池不可用**（池状态可查 GET /v1/sandbox/health，池会自动重建），禁止静默换实现让故障无人知晓',
       '- 处理策略：移除依赖故障服务的节点（如 python 节点依赖沙箱），用替代方案（如由 output 节点直接返回上游查询结果），或向主智能体说明缺口等待恢复',
       '- 禁止对同一基础设施错误重试 3 次以上',
       '',
@@ -175,7 +176,7 @@ export const AGENTS: AgentDefinition[] = [
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
       'workflow:lint', 'workflow:copy', 'workflow:preview', 'workflow:publish',
-      'orchestration:list', 'query:list'
+      'orchestration:list', 'query:list', 'api:list'
     ],
   },
 ];
