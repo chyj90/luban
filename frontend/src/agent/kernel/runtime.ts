@@ -14,6 +14,7 @@ import type { LLMCallOptions, LLMStreamChunk } from '../core/llmClient';
 import { callLLMAPIStream, parseToolArguments, parseToolArgumentsWithReason } from '../core/llmClient';
 import { compactForApi } from '../core/contextWindow';
 import { stripThinkBlocks } from '../core/llmClient';
+import { validateToolArgs } from '../core/argsValidator';
 import type { SessionEvent, ResumeCommand } from './events';
 import { describeInputRequest } from './events';
 
@@ -107,6 +108,18 @@ export interface KernelRuntime {
 }
 
 const MAX_TOOL_FAILURES = 3;
+/** 同一工具+完全相同参数的最大调用次数，达到即注入振荡警告（成功但无进展的循环刹车） */
+const MAX_IDENTICAL_CALLS = 3;
+/** 关键事实账本的最大条目数（超出淘汰最旧） */
+const MAX_LEDGER_ENTRIES = 50;
+/** 关键事实账本 system 消息的固定 ID（原地更新内容，压缩层永不丢弃 system 消息） */
+const FACT_LEDGER_ID = 'sys-fact-ledger';
+
+interface ToolOutcomeFact {
+  type?: string;
+  id?: number;
+  name?: string;
+}
 /** beforeComplete 注入继续指令的最大次数（迁移自旧 MAX_LOOP_EXTENSIONS） */
 const MAX_LOOP_EXTENSIONS = 5;
 let turnSeq = 0;
@@ -125,6 +138,51 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
 
   let session: SessionState = options.initialSession ? { ...options.initialSession } : createSessionState();
   const failCounts = new Map<string, number>();
+  // 键 = toolName#参数指纹。成功但无进展的循环（反复 list/query 同样参数）没有失败计数可刹车，
+  // 只能靠"相同调用必得相同结果"这一事实兜底
+  const repeatCounts = new Map<string, number>();
+  // 关键事实账本：记录委派/资源类工具结构化产出的真实资源 ID。委派结果体积大（含完整子会话
+  // 消息），必然被上下文压缩裁剪——没有账本，模型只能重新调工具找回查询名/资源 ID。
+  // 以 system 消息常驻对话（压缩四层都不丢弃 system），内容原地更新
+  const factLedger = new Map<string, string>();
+
+  const updateFactLedgerMessage = (): void => {
+    const idx = conversation.findIndex((m) => m.id === FACT_LEDGER_ID);
+    if (factLedger.size === 0) {
+      if (idx !== -1) conversation.splice(idx, 1);
+      return;
+    }
+    const content = `## 关键事实账本（系统自动记录的真实资源产出，工具结果被裁剪后仍可引用）\n${[...factLedger.values()].slice(-MAX_LEDGER_ENTRIES).join('\n')}`;
+    if (idx === -1) {
+      conversation.splice(1, 0, { id: FACT_LEDGER_ID, role: 'system', content, timestamp: Date.now() });
+    } else {
+      conversation[idx] = { ...conversation[idx], content, timestamp: Date.now() };
+    }
+  };
+
+  const recordOutcomeFacts = (result: ToolExecuteResult): void => {
+    if (!result.success) return;
+    const outcomes = (result.data as { outcomes?: ToolOutcomeFact[] } | undefined)?.outcomes;
+    if (!Array.isArray(outcomes) || outcomes.length === 0) return;
+    let changed = false;
+    for (const o of outcomes) {
+      if (!o || typeof o !== 'object') continue;
+      const type = String(o.type || '资源');
+      const key = `${type}:${o.id ?? o.name ?? ''}`;
+      const line = typeof o.id === 'number' && o.id < 0
+        ? `- ${type}「${o.name || ''}」（已删除，原 ID: ${-o.id}）`
+        : `- ${type}${o.name ? `「${o.name}」` : ''}${typeof o.id === 'number' ? ` (ID: ${o.id})` : ''}`;
+      if (factLedger.get(key) !== line) {
+        factLedger.set(key, line);
+        changed = true;
+      }
+      if (factLedger.size > MAX_LEDGER_ENTRIES) {
+        const oldest = factLedger.keys().next().value;
+        if (oldest !== undefined) factLedger.delete(oldest);
+      }
+    }
+    if (changed) updateFactLedgerMessage();
+  };
 
   const emit = (event: SessionEvent): void => {
     session = applyEvent(session, event);
@@ -263,6 +321,18 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
           continue;
         }
 
+        // Schema 预校验：形状错误（缺必填/类型/枚举）在执行前拦截并回喂具体原因，
+        // 省掉一次注定失败的工具执行 + LLM 迭代（校验器宁漏勿误，只有确定性违规才拦）
+        const schemaProblems = validateToolArgs(args, tool.parameters);
+        if (schemaProblems.length > 0) {
+          emit({ type: 'tool.call.blocked', turnId, callId: tc.id, name: tc.name, reason: `参数预校验未通过：${schemaProblems[0]}` });
+          conversation.push({
+            id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, timestamp: Date.now(),
+            content: JSON.stringify({ success: false, message: `工具 "${tc.name}" 的参数未通过预校验，本次未执行：\n${schemaProblems.map((p) => `- ${p}`).join('\n')}\n请按上述原因修正参数后重新调用。` }),
+          });
+          continue;
+        }
+
         emit({ type: 'tool.call.started', turnId, callId: tc.id, name: tc.name, args });
 
         // 确认门：预批通道放行则直接执行；否则挂起等显式命令（不查单例、不猜文本）
@@ -283,13 +353,28 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         emit({ type: 'tool.call.finished', turnId, callId: tc.id, name: tc.name, ok: result.success, message: result.message, data: result.data });
         conversation.push({ id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, content: JSON.stringify(result), timestamp: Date.now() });
 
-        // 失败重试计数（暂停不计失败）
+        // 成功的资源类产出记入关键事实账本（账本在压缩中幸存，替代被裁剪的结果原文）
+        recordOutcomeFacts(result);
+
+        // 同参振荡检测：无论成败，相同调用重复到阈值就注入警告（警告跟在本次结果之后，
+        // 模型同时看到结果与"别再这么调"的指令）
+        const repeatKey = `${tc.name}#${toolArgsKey(args)}`;
+        const repeats = (repeatCounts.get(repeatKey) || 0) + 1;
+        repeatCounts.set(repeatKey, repeats);
+        if (repeats === MAX_IDENTICAL_CALLS) {
+          pushSystemMessage(`你已用完全相同的参数第 ${repeats} 次调用 ${tc.name}。相同的调用只会得到相同的结果，禁止再次以相同参数调用该工具：请改变方法或参数思路，或把情况如实告知用户等待指导。`);
+        }
+
+        // 失败重试计数（暂停不计失败）。语义是"连续失败"：成功一次即清零；
+        // 越线只提示一次，避免同一工具反复失败时系统消息刷屏
         if (!result.success && !result._pause) {
           const n = (failCounts.get(tc.name) || 0) + 1;
           failCounts.set(tc.name, n);
-          if (n >= MAX_TOOL_FAILURES) {
+          if (n === MAX_TOOL_FAILURES) {
             pushSystemMessage(`工具 ${tc.name} 已连续失败 ${n} 次，不要再重试，将失败情况如实告知用户，等待用户指导。`);
           }
+        } else if (result.success) {
+          failCounts.delete(tc.name);
         }
 
         // 策略级工具副作用：聊天文本确认路径的执行阶段 system prompt 切换等

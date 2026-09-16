@@ -523,6 +523,111 @@ async function testCrossInstanceResume(): Promise<RuntimeTestResult> {
   return result('K17-跨实例恢复', checks);
 }
 
+/** K20: schema 预校验 —— 缺必填/枚举非法在执行前拦截并回喂具体原因；无害跨类型偏差（数字→string）放行 */
+async function testSchemaValidationBlock(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const executed: Array<Record<string, unknown>> = [];
+  const tool: ToolDefinition = {
+    name: 'update_plan_item', category: 'plan', description: '更新步骤状态',
+    parameters: {
+      type: 'object',
+      properties: {
+        plan_id: { type: 'string' },
+        status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'skipped'] },
+      },
+      required: ['plan_id', 'status'],
+    },
+    execute: async (args) => { executed.push(args); return { success: true, message: 'ok' }; },
+  };
+  // 拦截发生在 tool.call.started 之前（与坏参数路径同语义），快照不记 blocked，以事件流为准
+  const { rt, events } = makeRuntime(
+    [tool],
+    [
+      // plan_id 数字→string 属无害偏差放行，但缺 status 必拦
+      { toolCalls: [{ name: 'update_plan_item', arguments: { plan_id: 3 } }] },
+      // status 不在 enum 中，拦
+      { toolCalls: [{ name: 'update_plan_item', arguments: { plan_id: 'p1', status: 'done' } }] },
+      { content: '好的，我已修正参数。' },
+    ],
+  );
+
+  const r = await rt.runTurn({ kind: 'user-message', text: '标记步骤' });
+  if (executed.length !== 0) checks.push(`预校验未通过的工具不应执行，实际 executed=${JSON.stringify(executed)}`);
+  const toolMsgs = r.conversationMessages.filter((m) => m.role === 'tool');
+  if (toolMsgs.length !== 2) checks.push(`两次违规应各产生一条反馈，实际 ${toolMsgs.length} 条`);
+  // 工具结果是 JSON.stringify 后的文本，内层引号会被转义，断言按转义后的形态匹配
+  if (!toolMsgs.some((m) => m.content.includes('缺少必填字段'))) checks.push('应回喂缺失必填字段的具体原因');
+  if (!toolMsgs.some((m) => m.content.includes('pending') && m.content.includes('in_progress'))) checks.push('enum 违规应回喂合法取值列表');
+  if (!toolMsgs.every((m) => m.content.includes('预校验'))) checks.push('反馈应说明是预校验拦截');
+  const blockedEvents = events.filter((e) => e === 'tool.call.blocked').length;
+  if (blockedEvents !== 2) checks.push(`两次调用都应发出 blocked 事件，实际 ${blockedEvents}`);
+  if (r.suspended || r.state.status !== 'idle') checks.push('预校验拦截不应挂起，回合应正常收尾');
+  return result('K20-参数Schema预校验', checks);
+}
+
+/** K21: 关键事实账本 —— 工具产出的 outcomes 自动记入 system 账本，跨压缩可引用 */
+async function testFactLedger(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const delegateTool = plainTool('delegate_query', async () => ({
+    success: true,
+    message: '完成',
+    data: {
+      outcomes: [
+        { type: 'query', id: 66, name: 'GetOrders' },
+        { type: 'query', id: -5, name: 'deleted:OldQuery' },
+      ],
+    },
+  }));
+  const { rt } = makeRuntime(
+    [delegateTool],
+    [
+      { toolCalls: [{ name: 'delegate_query', arguments: { requirement: '创建查询' } }] },
+      { content: '委派完成。' },
+    ],
+  );
+
+  const r = await rt.runTurn({ kind: 'user-message', text: '创建查询' });
+  const ledger = r.conversationMessages.find((m) => m.role === 'system' && m.content.includes('关键事实账本'));
+  if (!ledger) {
+    checks.push('成功产出 outcomes 后应存在关键事实账本 system 消息');
+  } else {
+    if (!ledger.content.includes('GetOrders') || !ledger.content.includes('ID: 66')) checks.push('账本应记录查询名与 ID');
+    if (!ledger.content.includes('已删除')) checks.push('负数 ID（删除类产出）应渲染为已删除');
+  }
+  return result('K21-关键事实账本', checks);
+}
+
+/** K22: replan 闭环 —— 计划只剩 error 步骤时注入一次重规划指令；同一批 error 不重复；error 集合变化后重新注入 */
+async function testReplanDirective(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const plan = makePlan({
+    status: 'executing',
+    steps: [
+      { id: 's1', description: '创建查询 orders', status: 'done', order: 0 },
+      { id: 's2', description: '发布流程', status: 'error', order: 1, result: '平台接口 503' },
+    ],
+  });
+  const policy = createPlanPolicy(makeStore([plan]));
+  const idleState: SessionState = {
+    status: 'idle', turns: [], pendingInput: null, activeTurnId: null, lastError: null, eventCount: 0,
+  };
+
+  const first = policy.beforeComplete!(idleState, { content: '任务完成' });
+  if (!first?.systemMessage.includes('adjust_plan')) checks.push('有 error 步骤时应注入一次重规划指令');
+
+  const second = policy.beforeComplete!(idleState, { content: '任务完成' });
+  if (second?.systemMessage) checks.push('同一批 error 步骤不应重复注入（模型评估后要能收尾）');
+
+  // adjust_plan 替换失败步骤产生新 id → 指纹变化 → 重新注入一次
+  plan.steps[1] = { id: 's3', description: '换方式发布', status: 'error', order: 1, result: '仍 503' };
+  const third = policy.beforeComplete!(idleState, { content: '任务完成' });
+  if (!third?.systemMessage.includes('adjust_plan')) checks.push('error 集合变化后应重新注入一次');
+
+  // 失败原因应进入指令正文，供模型评估
+  if (third?.systemMessage && !third.systemMessage.includes('503')) checks.push('重规划指令应携带失败原因');
+  return result('K22-失败步骤重规划指令', checks);
+}
+
 export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
   return [
     await testNormalTurnReplay(),
@@ -538,5 +643,8 @@ export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
     await testDelegationCompleted(),
     await testDelegationSuspended(),
     await testCrossInstanceResume(),
+    await testSchemaValidationBlock(),
+    await testFactLedger(),
+    await testReplanDirective(),
   ];
 }

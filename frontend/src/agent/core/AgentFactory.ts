@@ -60,6 +60,9 @@ export type AgentExecutor = {
   /** 恢复挂起回合（UI 确认/取消/完成按钮的入口） */
   resume: (command: ResumeCommand) => Promise<void>;
   isSuspended: () => boolean;
+  /** 最近一次完成的回合是否被用户中止。委派工具据此把中断的子会话
+   *  映射为结构化取消结果，而不是把半成品记成"成功完成" */
+  wasLastRunCancelled: () => boolean;
   cancel: () => void;
   /** 刷新应用状态快照（页面列表/当前页面），同步更新 system prompt——executor 跨回合复用时由 chatRouter 转发 */
   updateSessionOptions: (opts: {
@@ -101,20 +104,32 @@ function injectActivePlanContext(
   storeReader: IStoreReader,
   conversationMessages: Message[],
 ) {
-  const executingPlan = storeReader.getPlans().find((p) => p.status === 'executing');
-  if (!executingPlan) return;
+  // stopped 计划必须展示：用户中止后说"继续"时，模型需要知道有一个停在半路的计划，
+  // 以及正确的恢复动作是 resume_plan（而不是把它当活跃计划闷头继续跑）
+  const activePlans = storeReader.getPlans().filter(
+    (p) => p.status === 'executing' || p.status === 'stopped',
+  );
+  if (activePlans.length === 0) return;
 
-  const steps = executingPlan.steps
-    .map((s) => {
-      const icon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
-      return `${icon} ${s.description}`;
+  const planSections = activePlans
+    .map((plan) => {
+      const steps = plan.steps
+        .map((s) => {
+          const icon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中]' : s.status === 'error' ? '[失败]' : '[待定]';
+          return `${icon} ${s.description}`;
+        })
+        .join('\n');
+      const stoppedHint = plan.status === 'stopped'
+        ? '\n⚠️ 该计划此前被用户手动停止。仅当用户明确要求继续该计划时，先调用 resume_plan 恢复执行；其他情况不要主动恢复，也不要擅自标记其中步骤。'
+        : '';
+      return `计划 ID: ${plan.id}\n状态: ${plan.status}\n步骤:\n${steps}${stoppedHint}`;
     })
-    .join('\n');
+    .join('\n\n');
 
   conversationMessages.push({
     id: crypto.randomUUID(),
     role: 'system',
-    content: `当前活跃计划 ID: ${executingPlan.id}\n状态: ${executingPlan.status}\n步骤:\n${steps}`,
+    content: `当前活跃/已停止的计划：\n${planSections}`,
     timestamp: Date.now(),
   });
 }
@@ -414,14 +429,17 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
   ];
   let lastSession: SessionState = createSessionState();
   let abortController: AbortController | null = null;
+  let lastRunCancelled = false;
 
   const runStartLog = (action: string, detail: string) =>
     console.log(`[AgentFactory:${name}] ${action} | ${detail}`);
 
   async function settlePlansAfterRun(suspended: boolean): Promise<void> {
     if (!isMainAgent) return;
+    // stopped 是用户主动停止的计划：不再参与收尾（此前每回合都会被重复标记
+    // stopped 并追加"任务异常结束"警告），恢复走 resume_plan
     const activePlans = storeReader.getPlans().filter(
-      (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
+      (p) => p.status === 'confirmed' || p.status === 'executing',
     );
     for (const plan of activePlans) {
       const unfinished = plan.steps.filter((s) => s.status === 'pending' || s.status === 'running');
@@ -441,6 +459,44 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         });
       }
     }
+  }
+
+  /**
+   * 用户中止回合后的计划收口：活跃计划统一置 stopped（UI 停止按钮只覆盖聚焦计划，
+   * 工厂兜底保证口径一致）。running 步骤保持原状——中止时刻产出未知，
+   * 恢复走 resume_plan，由其提示模型先核实再继续。
+   */
+  function markActivePlansStopped(): void {
+    if (!isMainAgent) return;
+    for (const plan of storeReader.getPlans().filter((p) => p.status === 'confirmed' || p.status === 'executing')) {
+      storeReader.updatePlan(plan.id, { status: 'stopped' });
+    }
+  }
+
+  /**
+   * 中止锚点：对话里写入中止时刻的事实记录（哪些调用在进行、结果如何）。
+   * 挂起有 describePendingForModel 重锚定，中止此前没有任何现场记录——下一回合
+   * 模型只能靠可能失真的工具结果重建认知，"继续"极易被误解。
+   */
+  function pushCancellationAnchor(state: SessionState): void {
+    const lastTurn = state.turns[state.turns.length - 1];
+    const callLines = (lastTurn?.toolCalls || []).map((call) => {
+      const argsSummary = JSON.stringify(call.args).slice(0, 120);
+      const statusText = call.status === 'completed'
+        ? (call.result?.ok ? '工具已返回结果' : '工具已返回结果（报告失败）')
+        : call.status === 'blocked'
+          ? `被拦截：${call.blockReason || '未知原因'}`
+          : '被中止打断，结果未知';
+      return `- ${call.name}（参数：${argsSummary}）：${statusText}`;
+    });
+    const stoppedPlan = storeReader.getPlans().find((p) => p.status === 'stopped');
+    const lines = [
+      '【回合被用户中止】上一回合被用户手动停止，以下是中止时刻的事实记录：',
+      ...(callLines.length > 0 ? callLines : ['- 本回合尚无已记录的工具调用（中止发生在模型输出阶段）']),
+      ...(stoppedPlan ? [`- 计划「${stoppedPlan.agentName}」（ID: ${stoppedPlan.id}）已置为 stopped`] : []),
+      '用户下一条消息可能是"继续"，也可能是新指示。若要继续：先核实上述操作的实际情况（必要时用 list/查询类工具重新确认平台资源），不要默认中止前的委派已成功完成；确认现状后再从中断处继续。',
+    ];
+    conversation.push({ id: crypto.randomUUID(), role: 'system', content: lines.join('\n'), timestamp: Date.now() });
   }
 
   /**
@@ -483,6 +539,7 @@ ${pageList}`;
     setStatus('planning');
     setStreaming(true);
     abortController = new AbortController();
+    lastRunCancelled = false;
     const kernel = createKernelRuntime({
       model,
       systemPrompt: conversation.find((m) => m.role === 'system')?.content || finalSystemPrompt,
@@ -507,6 +564,11 @@ ${pageList}`;
       conversation = result.conversationMessages;
       lastSession = result.state;
       lastResultSuspended = result.suspended;
+      lastRunCancelled = result.cancelled;
+      if (result.cancelled) {
+        markActivePlansStopped();
+        pushCancellationAnchor(result.state);
+      }
       if (!result.suspended && !result.cancelled) {
         await settlePlansAfterRun(false);
       }
@@ -571,6 +633,8 @@ ${pageList}`;
     },
 
     isSuspended: () => lastResultSuspended,
+
+    wasLastRunCancelled: () => lastRunCancelled,
 
     cancel(): void {
       abortController?.abort();

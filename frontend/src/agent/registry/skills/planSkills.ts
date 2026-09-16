@@ -1028,7 +1028,7 @@ export const planSkills: Record<string, SkillFactory> = {
         return { success: false, message: `toolName "${newToolName}" 无效，只能使用：${[...VALID_PLAN_TOOL_NAMES].join('、')}` };
       }
 
-      let actionMessage = '';
+      let actionMessage: string;
       let newItemId = '';
 
       switch (typedArgs.action) {
@@ -1099,6 +1099,51 @@ export const planSkills: Record<string, SkillFactory> = {
         success: true,
         message: `计划 ${typedArgs.plan_id} 调整完成。${actionMessage}${typedArgs.changes ? `\n调整内容：${typedArgs.changes}` : ''}\n\n当前完整计划：\n${summary}`,
         data: { planId: typedArgs.plan_id, newItemId: newItemId || undefined },
+      };
+    },
+  }),
+
+  'plan:resume': () => ({
+    id: 'plan:resume',
+    category: SkillCategory.PLAN,
+    name: 'resume_plan',
+    description: `恢复一个此前被用户停止（stopped）的计划。仅当用户明确要求继续该计划（如"继续""接着做"）时调用，禁止在其他情况下自行恢复。恢复后返回各步骤当前状态——处于"执行中"的步骤此前可能被中止、实际产出不完整，必须先核实再继续。`,
+    parameters: {
+      type: 'object',
+      properties: { plan_id: { type: 'string', description: '计划 ID' } },
+      required: ['plan_id'],
+    },
+    async execute(args): Promise<ToolExecuteResult> {
+      const { plan_id } = args as { plan_id: string };
+      const store = useAgentStore.getState();
+      const plan = store.plans.find((p) => p.id === plan_id);
+      if (!plan) {
+        const stoppedIds = store.plans.filter((p) => p.status === 'stopped').map((p) => p.id);
+        return { success: false, message: `未找到计划 "${plan_id}"${stoppedIds.length > 0 ? `，已停止的计划有：${stoppedIds.join(', ')}` : '，当前没有已停止的计划'}` };
+      }
+      if (plan.status === 'completed') return { success: true, message: `计划「${plan.agentName}」已全部完成，无需恢复。` };
+      if (plan.status === 'draft') return { success: false, message: `计划「${plan.agentName}」尚未经用户确认，请先展示计划等待确认（confirm_plan），而不是恢复。` };
+      if (plan.status === 'rejected') return { success: false, message: `计划「${plan.agentName}」已被用户放弃。如需重新执行请重新分析并创建新计划。` };
+
+      const allDone = plan.steps.length > 0 && plan.steps.every((s) => s.status === 'done');
+      if (allDone) {
+        store.updatePlan(plan_id, { status: 'completed' });
+        upsertPlanMessage(plan_id);
+        return { success: true, message: `计划「${plan.agentName}」的所有步骤均已完成，已标记为 completed。请调用 validate_plan 验证后向用户汇报。` };
+      }
+
+      store.updatePlan(plan_id, { status: 'executing' });
+      upsertPlanMessage(plan_id);
+      const steps = plan.steps
+        .map((s) => {
+          const icon = s.status === 'done' ? '[完成]' : s.status === 'running' ? '[执行中·可能被中止，产出未核实]' : s.status === 'error' ? '[失败]' : '[待定]';
+          return `${icon} (id=${s.id}) ${s.description}${s.result ? ` - ${s.result}` : ''}`;
+        })
+        .join('\n');
+      return {
+        success: true,
+        message: `计划「${plan.agentName}」已恢复为执行中。当前步骤状态：\n${steps}\n\n⚠️ 「执行中」步骤此前可能被中止，实际产出不完整：先用相应查询/列表工具核实资源是否真实存在，再决定继续或重做，禁止默认其已完成。之后按顺序推进剩余步骤，每完成一步调用 update_plan_item 标记。`,
+        data: { planId: plan_id, steps: plan.steps.map((s) => ({ id: s.id, status: s.status })) },
       };
     },
   }),

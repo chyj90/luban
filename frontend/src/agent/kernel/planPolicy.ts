@@ -30,6 +30,9 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
   buildExecutionPrompt?: (planId: string) => string;
 }): KernelPolicy {
   let completionExtensions = 0;
+  // 已注入过重规划指令的计划 → 注入时的 error 步骤指纹。同一批 error 不重复注入
+  // （模型评估后要能收尾汇报）；adjust_plan 替换步骤产生新 id 后指纹变化，重新注入一次
+  const replanNotified = new Map<string, string>();
 
   return {
     name: 'plan',
@@ -101,9 +104,12 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
     },
 
     beforeComplete(_state, turn) {
-      // 拦截退出：有进行中计划且步骤未完成 → 注入强制继续
+      // 拦截退出：有进行中计划且步骤未完成 → 注入强制继续。
+      // ⚠️ stopped 不算活跃：用户手动停止的计划若参与强制继续，策略无法区分用户
+      // 说"继续"还是问别的事，任何后续回合都会被"[系统提醒]请继续执行"劫持。
+      // 恢复走 resume_plan 显式工具（由模型在用户明确要求时调用）
       const activePlans = store.getPlans().filter(
-        (p) => p.status === 'confirmed' || p.status === 'executing' || p.status === 'stopped',
+        (p) => p.status === 'confirmed' || p.status === 'executing',
       );
       for (const plan of activePlans) {
         const pending = plan.steps.filter((s) => s.status === 'pending');
@@ -134,6 +140,24 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
         };
       }
       completionExtensions = 0;
+
+      // replanAfter 闭环（接线原 config.replanAfter: 'failure' 语义）：计划只剩 error 步骤、
+      // 模型想直接收尾时，先强制一次"评估失败→决定重规划还是如实汇报"。
+      // 缺了这层，被强制跳过标记 error 的步骤会被静默吞掉，模型照样汇报"全部完成"
+      const erroredPlans = store.getPlans().filter((p) => p.status === 'confirmed' || p.status === 'executing');
+      for (const plan of erroredPlans) {
+        const errored = plan.steps.filter((s) => s.status === 'error');
+        if (errored.length === 0) continue;
+        const fingerprint = errored.map((s) => s.id).join(',');
+        if (replanNotified.get(plan.id) === fingerprint) continue;
+        replanNotified.set(plan.id, fingerprint);
+        const lines = errored
+          .map((s) => `  - ${s.description}${s.result ? `（失败原因：${s.result.slice(0, 120)}）` : ''}`)
+          .join('\n');
+        return {
+          systemMessage: `[系统提示] 计划「${plan.agentName}」有 ${errored.length} 个步骤已标记为失败：\n${lines}\n\n在向用户汇报前，请先逐项评估这些失败：\n- 若可通过调整方案完成（换实现方式、拆分/替换步骤、补充配置），调用 adjust_plan 修改计划后继续执行\n- 若确实是平台能力边界（权限接口、沙箱 503 等），向用户如实说明缺口，禁止笼统汇报"全部完成"\n- 若失败步骤不影响需求主目标，说明理由后可直接汇报`,
+        };
+      }
 
       // 兜底：模型输出了完整分析报告但未调用 submit_analysis（迁移自 planCompletionChecker
       // 的 markdown 章节嗅探。这是对 prompt 协议不可靠的补偿，prompt 重构后应删除）

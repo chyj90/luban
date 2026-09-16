@@ -298,6 +298,7 @@ async function evalDelegateFailureDetection(): Promise<EvalResult> {
       run: async () => {},
       cancel: () => {},
       getMessages: () => fakeMessages,
+      wasLastRunCancelled: () => false,
     }),
   } as unknown as ChatRouter;
 
@@ -802,6 +803,7 @@ function makeFakeRouter(messages: Message[]): ChatRouter {
       run: async () => {},
       cancel: () => {},
       getMessages: () => messages,
+      wasLastRunCancelled: () => false,
     }),
   } as unknown as ChatRouter;
 }
@@ -1011,6 +1013,49 @@ async function evalScreenCapabilityReachability(): Promise<EvalResult> {
 }
 
 /** 运行全部 eval */
+/** E21: 委派取消感知 —— 用户中止时 delegate 工具必须返回结构化取消结果，
+ *  不得把半成品记成"成功完成"，也不得保存截断的委派记忆（中止→继续链路治理） */
+async function evalDelegateCancellation(): Promise<EvalResult> {
+  const factory = delegateSkills['delegate:query'];
+  if (!factory) return evalResult('E21-委派取消感知', false, 'delegate:query 技能未注册');
+
+  // 子会话已执行 create_query（部分产出是事实），随后整个任务被用户中止
+  const messages: Message[] = [
+    { id: 'u1', role: 'user', content: '创建查询 partial', timestamp: 0 },
+    {
+      id: 'a1', role: 'assistant', content: '创建查询', timestamp: 0,
+      toolCalls: [{ id: 't1', name: 'create_query', arguments: { name: 'PartialQuery' }, status: 'done' }],
+    },
+    {
+      id: 'm1', role: 'tool', toolCallId: 't1', timestamp: 0,
+      content: JSON.stringify({ success: true, message: '创建成功', data: { id: 66, name: 'PartialQuery' } }),
+    },
+  ];
+  agentMemoryModule.clearAppMemory(Number(STUB_CTX.applicationId));
+  const cancelledRouter = {
+    routeTo: async () => ({
+      run: async () => {},
+      cancel: () => {},
+      getMessages: () => messages,
+      wasLastRunCancelled: () => true,
+    }),
+  } as unknown as ChatRouter;
+
+  const skill = factory(STUB_CTX, cancelledRouter);
+  const result: ToolExecuteResult = await skill.execute({ requirement: '创建查询 partial' }, STUB_CTX);
+
+  const data = result.data as { cancelled?: boolean; partialOutcomes?: unknown[] } | undefined;
+  const memoryCount = agentMemoryModule.getAgentMemory(Number(STUB_CTX.applicationId), 'data-assistant').length;
+  const checks: string[] = [];
+  if (result.success !== false) checks.push('取消的委派必须返回 success=false（半成品不是成功）');
+  if (data?.cancelled !== true) checks.push('data.cancelled 应为 true');
+  if (!Array.isArray(data?.partialOutcomes) || data.partialOutcomes.length === 0) checks.push('partialOutcomes 应携带中止前的部分产出');
+  if (memoryCount !== 0) checks.push(`截断的子会话记忆不应被保存（当前 ${memoryCount} 条）`);
+  if (result._pause === true) checks.push('取消不是挂起，不应携带 _pause');
+
+  return evalResult('E21-委派取消感知', checks.length === 0, checks.length === 0 ? '中止委派返回结构化取消结果且不污染委派记忆' : checks.join('；'));
+}
+
 export async function runAgentEvals(): Promise<EvalResult[]> {
   const results: EvalResult[] = [
     evalConsistencyClean(),
@@ -1038,6 +1083,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
   results.push(await evalDDLInterventionPause());
   results.push(await evalDelegationMemorySlice());
   results.push(await evalScreenCapabilityReachability());
+  results.push(await evalDelegateCancellation());
   return results;
 }
 

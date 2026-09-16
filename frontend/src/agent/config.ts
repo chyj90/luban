@@ -2,19 +2,8 @@ import type { ProviderType } from '@/types/agent';
 
 export const AGENT_CONFIG = {
   maxIterations: 100,
-  maxStepsPerTask: 6,
-  maxRevisions: 3,
-  compressAfterChars: 12000,
   temperature: 0.3,
   timeout: 300000,
-  toolMode: 'native' as const,
-  replanAfter: 'failure' as const,
-  budgets: {
-    planner: 4096,
-    executor: 2048,
-    replanner: 1024,
-    synthesizer: 1024,
-  },
 } as const;
 
 export const PROVIDER_CONFIGS: Record<ProviderType, { label: string; defaultModel: string; defaultBaseUrl: string }> = {

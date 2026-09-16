@@ -796,6 +796,23 @@ export const delegateSkills: Record<string, SkillFactory> = {
           });
           const messagesAfter = executor.getMessages();
           console.log(`[delegate_query] executor.getMessages 返回 ${messagesAfter.length} 条消息 | roles: [${messagesAfter.map((m) => (m as Message).role).join(', ')}]`);
+
+          // 用户中止：子会话被切断，任务未确认完成。不保存截断记忆（污染下一次委派）、
+          // 跳过后续校验，以结构化取消结果返回——否则半成品会被记成"成功完成"，
+          // 主智能体据此标记步骤完成并跳步（中止→继续链路最主要的混乱源）
+          if (executor.wasLastRunCancelled()) {
+            console.warn(`[delegate_query] 用户中止，委派取消 | 已观察到 ${extractQueryOutcomes(messagesAfter).length} 条部分产出`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_QUERY_END',
+              payload: { requirement: typedArgs.requirement, success: false, error: '用户中止了任务' },
+            });
+            return {
+              success: false,
+              message: '数据辅助智能体的任务被用户中止：本次委派未确认完成，已执行的部分可能不完整（data.partialOutcomes 是中止前已观察到的事实，可能不全）。请勿将本步骤标记为完成；若要继续，请重新委派并在任务描述中说明此前被中止，要求子智能体先核对已有产出再补齐缺口。',
+              data: { cancelled: true, partialOutcomes: extractQueryOutcomes(messagesAfter) },
+            };
+          }
+
           saveDelegationMemory(ctx.applicationId, 'data-assistant', messagesAfter);
           console.log(`[delegate_query] data-assistant 完成 | ${Date.now() - routeStart}ms`);
 
@@ -987,6 +1004,21 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           });
 
           const messages = executor.getMessages();
+
+          // 用户中止：与 delegate_query 相同，结构化取消 + 不保存截断记忆
+          if (executor.wasLastRunCancelled()) {
+            console.warn(`[delegate_workflow] 用户中止，委派取消 | 已观察到 ${extractWorkflowOutcomes(messages).length} 条部分产出`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_WORKFLOW_END',
+              payload: { requirement, success: false, error: '用户中止了任务' },
+            });
+            return {
+              success: false,
+              message: '流程设计助手的任务被用户中止：本次委派未确认完成，已执行的部分可能不完整（data.partialOutcomes 是中止前已观察到的事实，可能不全）。请勿将本步骤标记为完成；若要继续，请重新委派并在任务描述中说明此前被中止，要求子智能体先核对已有产出再补齐缺口。',
+              data: { cancelled: true, partialOutcomes: extractWorkflowOutcomes(messages) },
+            };
+          }
+
           saveDelegationMemory(ctx.applicationId, 'workflow-assistant', messages);
 
           // 确认门暂停传播：与 delegate_query 相同，子智能体带未确认操作返回时主智能体必须暂停
@@ -1178,6 +1210,21 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
               agentContext: { requirement, context },
             });
           const messages = executor.getMessages();
+
+          // 用户中止：与 delegate_query 相同，结构化取消 + 不保存截断记忆
+          if (executor.wasLastRunCancelled()) {
+            console.warn(`[delegate_orchestration] 用户中止，委派取消 | 已观察到 ${extractOrchestrationOutcomes(messages).length} 条部分产出`);
+            ctx.dispatch?.({
+              type: 'DELEGATE_ORCHESTRATION_END',
+              payload: { requirement, success: false, error: '用户中止了任务' },
+            });
+            return {
+              success: false,
+              message: '编排设计助手的任务被用户中止：本次委派未确认完成，已执行的部分可能不完整（data.partialOutcomes 是中止前已观察到的事实，可能不全）。请勿将本步骤标记为完成；若要继续，请重新委派并在任务描述中说明此前被中止，要求子智能体先核对已有产出再补齐缺口。',
+              data: { cancelled: true, partialOutcomes: extractOrchestrationOutcomes(messages) },
+            };
+          }
+
           saveDelegationMemory(ctx.applicationId, 'orchestration-assistant', messages);
 
           // 确认门暂停传播：子智能体（如待确认的 publish_orchestration）带未确认操作返回时，
