@@ -29,7 +29,8 @@ export interface LLMResponse {
 }
 
 export interface LLMStreamChunk {
-  type: 'content' | 'tool_call' | 'done';
+  /** tool_call_pending = 模型开始生成工具调用参数（仅函数名就绪，参数未完），供 UI 提前提示 */
+  type: 'content' | 'tool_call' | 'tool_call_pending' | 'done';
   content?: string;
   reasoning?: boolean;
   toolCall?: {
@@ -310,7 +311,17 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
             const idx = tc.index ?? 0;
             const existing = toolCallsMap.get(idx) || { id: '', name: '', arguments: '' };
             if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name += tc.function.name;
+            if (tc.function?.name) {
+              // 函数名首个片段一到就上抛：参数可能还要生成数十秒（如 submit_analysis 的
+              // 大 JSON），UI 需要在这段静默期显示"正在生成提交数据"
+              if (!existing.name) {
+                pending.push({
+                  type: 'tool_call_pending',
+                  toolCall: { id: existing.id, function: { name: tc.function.name, arguments: '' } },
+                });
+              }
+              existing.name += tc.function.name;
+            }
             if (tc.function?.arguments) existing.arguments += tc.function.arguments;
             toolCallsMap.set(idx, existing);
           }

@@ -4,6 +4,7 @@ import Editor from '@monaco-editor/react';
 import type { languages, IDisposable, editor } from 'monaco-editor';
 import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource, syncTestSource } from '@/api/datasource';
 import { encryptConfigSecrets } from '@/utils/security';
+import { splitSqlStatements, containsDdlStatement } from '@/utils/sql';
 import { listDrivers, installDriver } from '@/api/driver';
 import { listApplicationDatasources } from '@/api/tool';
 import { executeSql } from '@/api/query';
@@ -45,6 +46,16 @@ const EMPTY_FORM: FormState = {
 
 const PASSWORD_PLACEHOLDER = '••••••••';
 
+/** 批量执行时后端返回的每条语句结果；单条执行归一化为长度为 1 的数组 */
+interface SqlResultItem {
+  sql?: string;
+  columns: string[];
+  rows: unknown[][];
+  totalCount: number;
+  executionTime?: number;
+  insertId?: number | null;
+}
+
 interface InstallState {
   driverName: string;
   displayName: string;
@@ -72,7 +83,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [install, setInstall] = useState<InstallState | null>(null);
   const [sqlConsoleDsId, setSqlConsoleDsId] = useState<number | null>(null);
   const [sqlInput, setSqlInput] = useState('');
-  const [sqlResult, setSqlResult] = useState<RunQueryResponse | null>(null);
+  const [sqlResults, setSqlResults] = useState<SqlResultItem[] | null>(null);
   const [sqlExecuting, setSqlExecuting] = useState(false);
   const [sqlError, setSqlError] = useState('');
   const [expandedSqlTables, setExpandedSqlTables] = useState<Set<string>>(new Set());
@@ -253,7 +264,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     if (!ok) return;
     await deleteDatasource(id);
     setDatasources(datasources.filter((d) => d.id !== id));
-    if (sqlConsoleDsId === id) { setSqlConsoleDsId(null); sqlConsoleDsIdRef.current = null; setSqlInput(''); setSqlResult(null); setSqlError(''); setStructure(null); setExpandedSqlTables(new Set()); }
+    if (sqlConsoleDsId === id) { setSqlConsoleDsId(null); sqlConsoleDsIdRef.current = null; setSqlInput(''); setSqlResults(null); setSqlError(''); setStructure(null); setExpandedSqlTables(new Set()); }
     toast('数据源已删除', 'success');
   };
 
@@ -263,7 +274,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       setSqlConsoleDsId(null);
       sqlConsoleDsIdRef.current = null;
       setSqlInput('');
-      setSqlResult(null);
+      setSqlResults(null);
       setSqlError('');
       setExpandedSqlTables(new Set());
       setStructure(null);
@@ -273,7 +284,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       setSqlConsoleDsId(dsId);
       sqlConsoleDsIdRef.current = dsId;
       setSqlInput('');
-      setSqlResult(null);
+      setSqlResults(null);
       setSqlError('');
       setExpandedSqlTables(new Set());
       setSqlStructureLoading(true);
@@ -437,17 +448,38 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
     if (!sqlInput.trim()) { toast('请输入 SQL', 'error'); return; }
     setSqlExecuting(true);
     setSqlError('');
-    setSqlResult(null);
+    setSqlResults(null);
     try {
-      const res = await executeSql(dsId, sqlInput, false, true);
+      const statements = splitSqlStatements(sqlInput);
+      const multi = statements.length > 1;
+      const res = await executeSql(dsId, sqlInput, multi, true);
       if (!res.success) {
         toast(res.message || 'SQL 执行失败', 'error');
         setSqlError(res.message || 'SQL 执行失败');
         return;
       }
-      setSqlResult(res.data);
-      const upperSql = sqlInput.trim().toUpperCase();
-      if (/^(DROP|CREATE|ALTER|TRUNCATE)\b/.test(upperSql)) {
+      // 批量返回语句结果数组；单条返回 RunQueryResponse，归一化为数组便于统一渲染
+      const items: SqlResultItem[] = multi
+        ? (res.data as SqlResultItem[]).map((item) => ({
+            sql: item.sql,
+            columns: item.columns || [],
+            rows: item.rows || [],
+            totalCount: item.totalCount ?? 0,
+            executionTime: item.executionTime,
+            insertId: item.insertId ?? null,
+          }))
+        : (() => {
+            const d = res.data as RunQueryResponse;
+            return [{
+              columns: d.columns || [],
+              rows: d.rows || [],
+              totalCount: d.totalCount ?? 0,
+              executionTime: d.executionTime,
+              insertId: d.insertId ?? null,
+            }];
+          })();
+      setSqlResults(items);
+      if (containsDdlStatement(sqlInput)) {
         try {
           const structRes = await getDatasourceStructure(dsId);
           setStructure(structRes.data);
@@ -864,7 +896,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 <div className="ds-sql-console">
                   <div className="ds-sql-console-header">
                     <span className="ds-sql-console-title">SQL 控制台</span>
-                    <span className="ds-sql-console-hint">Ctrl+Enter 执行</span>
+                    <span className="ds-sql-console-hint">Ctrl+Enter 执行 · 多条语句用分号分隔</span>
                   </div>
 
                   <div className="ds-sql-body">
@@ -948,7 +980,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                       <div className="ds-sql-actions">
                         <button
                           className="ds-sql-action-btn"
-                          onClick={() => { setSqlInput(''); setSqlResult(null); setSqlError(''); }}
+                          onClick={() => { setSqlInput(''); setSqlResults(null); setSqlError(''); }}
                         >
                           清空
                         </button>
@@ -967,45 +999,70 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                     <div className="ds-sql-error">{sqlError}</div>
                   )}
 
-                  {sqlResult && (
+                  {sqlResults && (
                     <div className="ds-sql-result">
-                      <div className="ds-sql-result-header">
-                        <span className="ds-sql-result-title">查询结果</span>
-                        <span className="ds-sql-result-meta">
-                          {sqlResult.columns.length} 列 · {sqlResult.totalCount} 行
-                          {sqlResult.executionTime != null && ` · ${sqlResult.executionTime}ms`}
-                        </span>
-                      </div>
-                      <div className="ds-sql-result-table-wrap">
-                        <table className="ds-sql-result-table">
-                          <thead>
-                            <tr>
-                              <th className="ds-sql-row-num">#</th>
-                              {sqlResult.columns.map((col) => (
-                                <th key={col}>{col}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {sqlResult.rows.length === 0 ? (
-                              <tr>
-                                <td colSpan={sqlResult.columns.length + 1} className="ds-sql-empty-row">
-                                  查询结果为空
-                                </td>
-                              </tr>
-                            ) : (
-                              sqlResult.rows.map((row, ri) => (
-                                <tr key={ri}>
-                                  <td className="ds-sql-row-num">{ri + 1}</td>
-                                  {sqlResult.columns.map((_, ci) => (
-                                    <td key={ci}>{row[ci] != null ? String(row[ci]) : <span className="ds-sql-null">NULL</span>}</td>
-                                  ))}
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
+                      {sqlResults.map((item, idx) => (
+                        <div key={idx} className="ds-sql-result-block">
+                          {sqlResults.length > 1 && (
+                            <>
+                              <div className="ds-sql-result-header">
+                                <span className="ds-sql-result-title">语句 {idx + 1}</span>
+                                <span className="ds-sql-result-meta">
+                                  {item.executionTime != null && `${item.executionTime}ms`}
+                                </span>
+                              </div>
+                              {item.sql && <div className="ds-sql-result-sql">{item.sql}</div>}
+                            </>
+                          )}
+                          {item.columns.length === 0 ? (
+                            <div className="ds-sql-result-ok">
+                              ✓ 执行成功 · 影响 {item.totalCount} 行
+                              {item.insertId != null && ` · 自增ID ${item.insertId}`}
+                              {item.executionTime != null && ` · ${item.executionTime}ms`}
+                            </div>
+                          ) : (
+                            <>
+                              <div className="ds-sql-result-header">
+                                <span className="ds-sql-result-title">查询结果</span>
+                                <span className="ds-sql-result-meta">
+                                  {item.columns.length} 列 · {item.totalCount} 行
+                                  {item.executionTime != null && ` · ${item.executionTime}ms`}
+                                </span>
+                              </div>
+                              <div className="ds-sql-result-table-wrap">
+                                <table className="ds-sql-result-table">
+                                  <thead>
+                                    <tr>
+                                      <th className="ds-sql-row-num">#</th>
+                                      {item.columns.map((col) => (
+                                        <th key={col}>{col}</th>
+                                      ))}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {item.rows.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={item.columns.length + 1} className="ds-sql-empty-row">
+                                          查询结果为空
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      item.rows.map((row, ri) => (
+                                        <tr key={ri}>
+                                          <td className="ds-sql-row-num">{ri + 1}</td>
+                                          {item.columns.map((_, ci) => (
+                                            <td key={ci}>{row[ci] != null ? String(row[ci]) : <span className="ds-sql-null">NULL</span>}</td>
+                                          ))}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

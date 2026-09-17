@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AgentState, Message, Plan, Step, SessionStatus } from '@/types/agent';
+import { planConfirmMessage } from '@/agent/kernel/planPolicy';
 
 const STORAGE_PREFIX = 'luban-agent-state';
 
@@ -49,7 +50,7 @@ interface AgentStore extends AgentState {
   rejectPlan: (planId: string) => void;
   stopPlan: (planId: string) => void;
   setError: (error: string | null) => void;
-  setPendingInput: (pending: { kind: string; message: string } | null) => void;
+  setPendingInput: (pending: { kind: string; message: string; planId?: string } | null) => void;
   setOrphanedPending: (message: string) => void;
   clearOrphanedPending: () => void;
   reset: () => void;
@@ -91,10 +92,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
     // 加载新应用状态
     const persisted = loadFromStorage(appId);
+    const persistedPlans = persisted.plans || [];
+    // pendingInput 只存内存不持久化：硬刷新后确认横幅会丢，但 draft 计划已持久化。
+    // 从最后一个 draft 重建确认横幅，让"确认计划"按钮路径（显式 ResumeCommand）在
+    // 新会话中仍然可用，而不是降级成文本猜意图——这正是 2026-09-17 请假案例的死锁根源
+    const drafts = persistedPlans.filter((p) => p.status === 'draft');
+    const lastDraft = drafts.length > 0 ? drafts[drafts.length - 1] : null;
     set({
       appId,
       messages: persisted.messages || [],
-      plans: persisted.plans || [],
+      plans: persistedPlans,
       currentPlanId: persisted.currentPlanId ?? null,
       focusPlanId: persisted.focusPlanId ?? null,
       sessionId: persisted.sessionId || '',
@@ -102,7 +109,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
       isStreaming: false,
       executingStepId: null,
       error: null,
-      pendingInput: null,
+      pendingInput: lastDraft
+        ? { kind: 'plan-confirm', planId: lastDraft.id, message: planConfirmMessage(lastDraft) }
+        : null,
       orphanedPending: null,
     });
   },
@@ -166,11 +175,23 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
     }),
 
   updatePlan: (id, updates) =>
-    set((state) => ({
-      plans: state.plans.map((p) =>
+    set((state) => {
+      const plans = state.plans.map((p) =>
         p.id === id ? { ...p, ...updates } : p,
-      ),
-    })),
+      );
+      // 计划状态变更必须落盘：确认/放弃若只改内存，硬刷新后会回退成 draft，
+      // 重建的确认横幅会诱导用户对已确认的计划再次确认
+      if (state.appId !== null) {
+        saveToStorage(state.appId, {
+          messages: state.messages,
+          plans,
+          currentPlanId: state.currentPlanId,
+          focusPlanId: state.focusPlanId,
+          sessionId: state.sessionId,
+        });
+      }
+      return { plans };
+    }),
 
   updateStep: (planId, stepId, updates) =>
     set((state) => ({
@@ -188,29 +209,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
   setFocusPlan: (planId) => set({ focusPlanId: planId }),
 
-  confirmPlan: (planId) =>
-    set((state) => ({
-      plans: state.plans.map((p) =>
-        p.id === planId ? { ...p, status: 'confirmed' } : p,
-      ),
-      status: 'idle',
-    })),
+  confirmPlan: (planId) => {
+    get().updatePlan(planId, { status: 'confirmed' });
+    set({ status: 'idle' });
+  },
 
-  rejectPlan: (planId) =>
-    set((state) => ({
-      plans: state.plans.map((p) =>
-        p.id === planId ? { ...p, status: 'rejected' } : p,
-      ),
-      status: 'idle',
-    })),
+  rejectPlan: (planId) => {
+    get().updatePlan(planId, { status: 'rejected' });
+    set({ status: 'idle' });
+  },
 
-  stopPlan: (planId) =>
-    set((state) => ({
-      plans: state.plans.map((p) =>
-        p.id === planId ? { ...p, status: 'stopped' } : p,
-      ),
-      status: 'idle',
-    })),
+  stopPlan: (planId) => {
+    get().updatePlan(planId, { status: 'stopped' });
+    set({ status: 'idle' });
+  },
 
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
   setPendingInput: (pendingInput) => set({ pendingInput }),

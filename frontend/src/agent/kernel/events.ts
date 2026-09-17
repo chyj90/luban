@@ -27,7 +27,10 @@ export type ResumeCommand =
   | { kind: 'cancel' }
   | { kind: 'complete'; note?: string }
   /** 用户不确认也不取消，给出新指示/补充意见（banner 第三选项） */
-  | { kind: 'redirect'; note: string };
+  | { kind: 'redirect'; note: string }
+  /** 会话丢失（页面刷新/面板重置）后的按钮恢复：重建的 executor 内核无挂起状态，
+   *  planId 由 UI 从持久化的计划显式携带，不受"未挂起拒绝恢复"门限制 */
+  | { kind: 'resume-orphan-plan'; planId: string; action: 'confirm' | 'cancel' };
 
 export interface ToolResultSnapshot {
   ok: boolean;
@@ -73,6 +76,9 @@ export type SessionEvent =
   | { type: 'llm.request'; turnId: string; messages: unknown }
   | { type: 'llm.delta'; turnId: string; text: string; reasoning?: boolean }
   | { type: 'llm.turn.finished'; turnId: string; content: string }
+  /** 模型开始生成工具调用参数（函数名就绪、参数未完）。reducer 忽略，仅供 UI 在
+   * 大参数生成的静默期（如 submit_analysis）显示"正在生成提交数据"提示 */
+  | { type: 'llm.tool_call.pending'; turnId: string; name: string }
   | { type: 'tool.call.started'; turnId: string; callId: string; name: string; args: Record<string, unknown> }
   | { type: 'tool.call.finished'; turnId: string; callId: string; name: string; ok: boolean; message: string; data?: unknown }
   | { type: 'tool.call.blocked'; turnId: string; callId: string; name: string; reason: string }

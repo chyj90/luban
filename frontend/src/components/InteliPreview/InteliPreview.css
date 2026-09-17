@@ -66,6 +66,14 @@
   overflow: hidden;
 }
 
+/* 设计画布缩放容器：自适应模式下无内联样式（inset 0 撑满 = 历史行为）；
+   画布模式下由组件内联 width/height/transform 接管，iframe 按画布宽渲染等比缩放 */
+.ip-frame-scaler {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
 .ip-frame {
   position: absolute;
   top: 0;

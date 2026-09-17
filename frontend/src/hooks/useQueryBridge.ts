@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { runQuery, runAppTool, runRuntimeQuery, runRuntimeTool } from '@/api';
+import { getPlatformUsers, getPlatformDepartments } from '@/api/platform';
 import type { Query } from '@/types/query';
 
 interface BridgeRequest {
@@ -36,6 +37,8 @@ export interface UserInfo {
   /** 工号：业务表通过 employee_no 与登录账号绑定的桥梁（"我的数据"需求依赖） */
   employeeNo?: string;
   mobile?: string;
+  /** 登录用户主部门名（平台组织资产，页面身份展示用） */
+  department?: string | null;
 }
 
 interface PageInfo {
@@ -84,6 +87,36 @@ export function useQueryBridge(
     };
 
     if (msg.type === 'RUN_QUERY') {
+      // 平台内置查询（PlatformUsers/PlatformDepartments）：身份与组织资产运行时直查平台，
+      // 业务表只存 user_id 绑定键，不冗余姓名/部门——单一事实源，平台侧变更自动生效
+      if (msg.queryName === 'PlatformUsers' || msg.queryName === 'PlatformDepartments') {
+        try {
+          const res = msg.queryName === 'PlatformUsers'
+            ? await getPlatformUsers((msg.params || {}) as Record<string, unknown>)
+            : await getPlatformDepartments();
+          const rows = (res.data.rows || []) as unknown as Record<string, unknown>[];
+          respond({
+            type: 'QUERY_RESULT',
+            id: msg.id,
+            queryName: msg.queryName,
+            result: {
+              columns: rows.length ? Object.keys(rows[0]) : [],
+              rows,
+              totalCount: res.data.total ?? rows.length,
+              insertId: null,
+            },
+          });
+        } catch (err: unknown) {
+          respond({
+            type: 'QUERY_RESULT',
+            id: msg.id,
+            queryName: msg.queryName,
+            error: (err as Error).message || '平台资产查询失败',
+          });
+        }
+        return;
+      }
+
       const query = queriesRef.current.find((q) => q.name === msg.queryName);
 
       if (!query) {
@@ -213,6 +246,10 @@ export function useQueryBridge(
   var _pending = {};
   var _results = {};
   var _loadedLibs = {};
+  // UPDATE_PAGE 应用顺序守卫：applyPage 异步完成（外部库/地图/DOMContentLoaded 都会延迟），
+  // 连续切页时迟到的过期消息不得把已切换的新页面再覆盖回旧页面
+  var _lastPageSeq = 0;
+  var _pageSeqSent = 0;
   // 字段名校验警告去重：跨刷新持久（每次 QUERY_RESULT 会重建 Proxy，局部去重每 10s 轮询会重复刷屏）
   var _fieldWarned = {};
   // ECharts 等第三方库会访问数据对象的内部属性（__ec_primitive__、nodeType 等），
@@ -385,6 +422,10 @@ export function useQueryBridge(
     }
 
     if (d.type === 'UPDATE_PAGE') {
+      // 过期消息直接作废（每条消息只携带一种 type，return 不影响其他分支）
+      var pageSeq = typeof d.seq === 'number' ? d.seq : ++_pageSeqSent;
+      if (pageSeq < _lastPageSeq) return;
+      _lastPageSeq = pageSeq;
       // shell 的 SHELL_READY 在 <head> 中发出，此时 body 内联的 __echarts__ 尚未执行；
       // 若立即注入外部库（如 china.js），CDN 命中缓存时可能在 echarts 全局就绪前执行
       // （报 "ECharts is not Loaded" 且地图注册失败）。统一延迟到 DOMContentLoaded，
@@ -394,6 +435,8 @@ export function useQueryBridge(
       var pending = libs.length;
 
       function applyPage() {
+        // 已被更新的页面消息取代：本次应用作废，避免旧页面覆盖新页面
+        if (pageSeq !== _lastPageSeq) return;
         // 页面热更新前先执行旧页面的清理函数（清定时器/解绑监听），避免泄漏和重复初始化
         _runPageCleanup();
 
@@ -535,7 +578,13 @@ export function useQueryBridge(
     }
   });
 
-  ${JSON.stringify(queryNames)}.forEach(function(name) {
+  // 平台内置查询（身份/组织资产运行时直查平台）与页面绑定查询一起注册；
+  // 页面绑定了同名查询时以页面查询为准（不重复注册）
+  var _names = ${JSON.stringify(queryNames)};
+  ['PlatformUsers', 'PlatformDepartments'].forEach(function(b) {
+    if (_names.indexOf(b) === -1) _names.push(b);
+  });
+  _names.forEach(function(name) {
     Object.defineProperty(window, name, {
       value: {
         run: function(params) {
@@ -626,7 +675,12 @@ window.__LUBAN__ = {
     (window.__luban_cleanup_fns__ = window.__luban_cleanup_fns__ || []).push(fn);
   }
 };
-${JSON.stringify(queryNames)}.forEach(function(name) {
+// 平台内置查询与页面绑定查询一起注册（页面绑定同名查询时以页面为准）
+var _names = ${JSON.stringify(queryNames)};
+['PlatformUsers', 'PlatformDepartments'].forEach(function(b) {
+  if (_names.indexOf(b) === -1) _names.push(b);
+});
+_names.forEach(function(name) {
   Object.defineProperty(window, name, {
     value: {
       run: function(params) {
@@ -645,9 +699,9 @@ ${JSON.stringify(queryNames)}.forEach(function(name) {
     configurable: true
   });
 });
-window.__QUERIES__ = ${JSON.stringify(queryNames)};
+window.__QUERIES__ = _names;
 window.DataQuery = {};
-${JSON.stringify(queryNames)}.forEach(function(name) {
+_names.forEach(function(name) {
   window.DataQuery[name] = function(params) {
     return window[name].run(params || {}).then(function(result) {
       var affected = result.totalCount || (result.rows ? result.rows.length : 0) || 0;

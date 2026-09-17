@@ -15,6 +15,8 @@ import com.luban.repository.ApiKeyRepository;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
+import com.luban.repository.UserDeptRepository;
+import com.luban.util.SqlUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
@@ -121,6 +123,7 @@ public class QueryService {
     private final ApplicationRepository applicationRepository;
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyDatasourceRepository apiKeyDatasourceRepository;
+    private final UserDeptRepository userDeptRepository;
     private final ObjectMapper objectMapper;
     private final DatasourceService datasourceService;
 
@@ -129,6 +132,7 @@ public class QueryService {
                         ApplicationRepository applicationRepository,
                         ApiKeyRepository apiKeyRepository,
                         ApiKeyDatasourceRepository apiKeyDatasourceRepository,
+                        UserDeptRepository userDeptRepository,
                         ObjectMapper objectMapper,
                         DatasourceService datasourceService) {
         this.queryRepository = queryRepository;
@@ -136,6 +140,7 @@ public class QueryService {
         this.applicationRepository = applicationRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyDatasourceRepository = apiKeyDatasourceRepository;
+        this.userDeptRepository = userDeptRepository;
         this.objectMapper = objectMapper;
         this.datasourceService = datasourceService;
     }
@@ -324,6 +329,9 @@ public class QueryService {
             authParams.put("userDisplayName", user.getName());
             authParams.put("userMobile", user.getMobile());
             authParams.put("userEmployeeNo", user.getEmployeeNo());
+            // 组织资产：登录人主部门（组织树见 /platform/assets），org 维度过滤/展示可直接引用
+            authParams.put("userDepartmentId", userDeptRepository.findPrimaryDeptIdByUserId(user.getId()).orElse(null));
+            authParams.put("userDepartment", userDeptRepository.findPrimaryDeptNameByUserId(user.getId()).orElse(null));
         }
 
         String finalBody = resolveTemplate(query.getBody(), mergedParams, authParams);
@@ -393,7 +401,8 @@ public class QueryService {
 
         assertApiKeyDatasourcePermission(datasourceId);
 
-        String[] statements = sql.split(";\\s*");
+        // 引号/注释感知分句：字符串值中的分号、语句前的注释都不会被误切
+        List<String> statements = SqlUtils.splitStatements(sql);
         List<Map<String, Object>> results = new ArrayList<>();
         Map<String, Object> config = fromJsonMap(ds.getConfig());
         String url = datasourceService.buildJdbcUrl(ds.getType(), config);
@@ -404,16 +413,14 @@ public class QueryService {
             conn.setAutoCommit(false);
             try {
                 for (String stmt : statements) {
-                    String trimmed = stmt.trim();
-                    if (trimmed.isEmpty()) continue;
-
-                    RunQueryResponse resp = runJdbcQueryWithConn(conn, trimmed);
+                    RunQueryResponse resp = runJdbcQueryWithConn(conn, stmt);
                     Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("sql", trimmed.length() > 200 ? trimmed.substring(0, 200) + "..." : trimmed);
+                    item.put("sql", stmt.length() > 200 ? stmt.substring(0, 200) + "..." : stmt);
                     item.put("columns", resp.getColumns());
                     item.put("rows", resp.getRows());
                     item.put("totalCount", resp.getTotalCount());
                     item.put("executionTime", resp.getExecutionTime());
+                    item.put("insertId", resp.getInsertId());
                     results.add(item);
                 }
                 conn.commit();
@@ -431,14 +438,8 @@ public class QueryService {
     private RunQueryResponse runJdbcQueryWithConn(Connection conn, String sql) throws SQLException {
         long startTime = System.currentTimeMillis();
         String trimmedSql = sql.trim();
-        String upperSql = trimmedSql.toUpperCase();
 
-        boolean isQuery = upperSql.startsWith("SELECT")
-                || upperSql.startsWith("SHOW")
-                || upperSql.startsWith("DESCRIBE")
-                || upperSql.startsWith("DESC")
-                || upperSql.startsWith("EXPLAIN")
-                || upperSql.startsWith("WITH");
+        boolean isQuery = isQueryStatement(trimmedSql);
 
         try (Statement stmt = conn.createStatement()) {
             if (isQuery) {
@@ -470,6 +471,14 @@ public class QueryService {
                         outcome.affectedRows(), executionTime, trimmedSql, outcome.insertId());
             }
         }
+    }
+
+    /** 按首关键词判断是否为查询语句（跳过前导注释，注释开头的 SELECT 不会被误判为写语句）。 */
+    private boolean isQueryStatement(String sql) {
+        return switch (SqlUtils.firstKeyword(sql)) {
+            case "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "WITH" -> true;
+            default -> false;
+        };
     }
 
     /** 写执行结果：受影响行数 + 自增主键（非自增/无主键时 insertId 为 null） */
@@ -547,14 +556,8 @@ public class QueryService {
         long startTime = System.currentTimeMillis();
 
         String trimmedSql = sql.trim();
-        String upperSql = trimmedSql.toUpperCase();
 
-        boolean isQuery = upperSql.startsWith("SELECT")
-                || upperSql.startsWith("SHOW")
-                || upperSql.startsWith("DESCRIBE")
-                || upperSql.startsWith("DESC")
-                || upperSql.startsWith("EXPLAIN")
-                || upperSql.startsWith("WITH");
+        boolean isQuery = isQueryStatement(trimmedSql);
 
         try (Connection conn = DriverManager.getConnection(url,
                 String.valueOf(config.get("username")),

@@ -23,7 +23,15 @@ export function WorkAppPageViewer() {
   const [appName, setAppName] = useState('');
   const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
 
-  const userInfo = user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
+  const userInfo = user ? {
+    id: user.id,
+    account: user.account || '',
+    email: user.email || '',
+    name: user.displayName || '',
+    employeeNo: user.employeeNo || '',
+    mobile: user.mobile || '',
+    department: user.deptName || null,
+  } : null;
   const pid = pageId ? Number(pageId) : null;
   const aid = appId ? Number(appId) : null;
   const { buildShellScript, buildBridgeContent } = useQueryBridge(

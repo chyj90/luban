@@ -399,6 +399,19 @@ async function validateFieldNames(
     }
   }
 
+  // 平台内置查询（运行时直查平台，无 SQL 可分析）：返回字段固定，直接注入白名单
+  const jsQueryNames = extractQueryNamesFromJS(js);
+  if (jsQueryNames.includes('PlatformUsers')) {
+    const fields = new Set(['id', 'name', 'account', 'deptId', 'deptName', 'leaderId']);
+    queryFieldMap.set('PlatformUsers', fields);
+    fields.forEach((f) => allFieldNames.add(f));
+  }
+  if (jsQueryNames.includes('PlatformDepartments')) {
+    const fields = new Set(['id', 'name', 'parentId', 'managerId', 'path']);
+    queryFieldMap.set('PlatformDepartments', fields);
+    fields.forEach((f) => allFieldNames.add(f));
+  }
+
   if (allFieldNames.size > 0) {
     const mismatches = findFieldNameMismatches(js, allFieldNames);
     if (mismatches.length > 0) {

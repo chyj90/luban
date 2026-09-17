@@ -74,16 +74,8 @@ public class AuthController {
 
     @GetMapping("/users/me")
     public ResponseEntity<ApiResponse<AuthResponse.UserInfo>> me(@AuthenticationPrincipal User user) {
-        boolean superAdmin = roleUserRepository.findByUserId(user.getId()).stream()
-                .map(RoleUser::getRoleId)
-                .toList()
-                .stream()
-                .anyMatch(roleId -> {
-                    var role = roleRepository.findById(roleId).orElse(null);
-                    return role != null && "super_admin".equals(role.getSlug());
-                });
-        return ResponseEntity.ok(ApiResponse.ok(
-                new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin)));
+        // 与登录/注册同一档案出口：身份 + 主部门组织信息一并下发
+        return ResponseEntity.ok(ApiResponse.ok(authService.toUserInfo(user)));
     }
 
     @GetMapping("/permissions")

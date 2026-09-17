@@ -60,14 +60,15 @@ export const AGENTS: AgentDefinition[] = [
       buildInteliSystemPrompt(ctx.applicationId, ctx.pageId, ctx.pageName, ctx.allPages),
     allowedSkills: [
       'page:delete', 'page:rename',
-      'code:create', 'code:get', 'code:update', 'code:scaffold',
-      'code:component-spec', 'code:analysis-examples', 'code:dataquery-guide',
+      'code:create', 'code:get', 'code:update', 'code:scaffold', 'code:component-spec', 'code:analysis-examples', 'code:dataquery-guide',
       'observation:list_pages', 'observation:list_queries', 'observation:record',
       'query:get',
       'plan:submit_analysis', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
       'plan:resume',
       'delegate:query', 'delegate:workflow', 'delegate:orchestration',
+      // 平台资产：用户/组织信息是低代码平台的一等数据源，建模与绑定测试数据必须用真实资产
+      'platform:users', 'platform:departments',
     ],
   },
   {
@@ -87,6 +88,8 @@ export const AGENTS: AgentDefinition[] = [
       'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
       'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
       'api:list', 'api:connect', 'api:test', 'api:delete',
+      // 平台资产：测试数据绑定 user_id 必须用真实平台用户，部门取真实组织树
+      'platform:users', 'platform:departments',
     ],
   },
   {

@@ -5,7 +5,9 @@ import com.luban.dto.ChangePasswordRequest;
 import com.luban.dto.LoginRequest;
 import com.luban.dto.RegisterRequest;
 import com.luban.entity.User;
+import com.luban.entity.UserDept;
 import com.luban.entity.UserSession;
+import com.luban.repository.UserDeptRepository;
 import com.luban.repository.UserRepository;
 import com.luban.repository.UserSessionRepository;
 import com.luban.security.JwtTokenProvider;
@@ -25,6 +27,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final UserSessionRepository userSessionRepository;
+    private final UserDeptRepository userDeptRepository;
     private final RoleUserRepository roleUserRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
@@ -34,6 +37,7 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository,
                        UserSessionRepository userSessionRepository,
+                       UserDeptRepository userDeptRepository,
                        RoleUserRepository roleUserRepository,
                        RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
@@ -42,12 +46,22 @@ public class AuthService {
                        RoleConceptPermissionService roleConceptPermissionService) {
         this.userRepository = userRepository;
         this.userSessionRepository = userSessionRepository;
+        this.userDeptRepository = userDeptRepository;
         this.roleUserRepository = roleUserRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtTokenProvider = jwtTokenProvider;
         this.rsaKeyProvider = rsaKeyProvider;
         this.roleConceptPermissionService = roleConceptPermissionService;
+    }
+
+    /** 登录用户完整档案（含主部门组织信息）：登录/注册/me 三个出口共用，保证平台身份口径一致 */
+    public AuthResponse.UserInfo toUserInfo(User user) {
+        Long deptId = userDeptRepository.findPrimaryDeptIdByUserId(user.getId()).orElse(null);
+        String deptName = userDeptRepository.findPrimaryDeptNameByUserId(user.getId()).orElse(null);
+        Long leaderId = userDeptRepository.findByUserIdAndIsPrimaryTrue(user.getId())
+                .map(UserDept::getLeaderId).orElse(null);
+        return AuthResponse.UserInfo.from(user, deptId, deptName, leaderId, isSuperAdmin(user.getId()));
     }
 
     /** 解密 rsa: 前缀密文，非密文原样返回 */
@@ -77,10 +91,13 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(plainPassword));
         userRepository.save(user);
 
+        // 新注册用户默认绑定平台“普通用户”角色，获得基础权限（工作台/应用只读）
+        roleRepository.findBySlug("user").ifPresent(role ->
+                roleUserRepository.save(new RoleUser(role.getId(), user.getId())));
+
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);
-        boolean superAdmin = isSuperAdmin(user.getId());
-        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin));
+        return new AuthResponse(token, toUserInfo(user));
     }
 
     @Transactional
@@ -94,8 +111,7 @@ public class AuthService {
 
         String token = jwtTokenProvider.generateToken(user);
         saveSession(user.getId(), token);
-        boolean superAdmin = isSuperAdmin(user.getId());
-        return new AuthResponse(token, new AuthResponse.UserInfo(user.getId(), user.getEmail(), user.getAccount(), superAdmin));
+        return new AuthResponse(token, toUserInfo(user));
     }
 
     @Transactional

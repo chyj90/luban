@@ -64,6 +64,9 @@ export function AppEditorPage() {
   const [editingFile, setEditingFile] = useState<EditingFile | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  // 预览视口：默认按 1920 设计画布渲染再缩放适配面板（与桌面端运行时结构一致）；
+  // 切"适应"则按预览面板实际宽度渲染（媒体查询断点两侧表现可能不同）
+  const [previewWidth, setPreviewWidth] = useState<number | null>(1920);
   const [dataReady, setDataReady] = useState(false);
   const [queryRunResult, setQueryRunResult] = useState<RunQueryResponse | null | undefined>(undefined);
 
@@ -77,6 +80,11 @@ export function AppEditorPage() {
           const targetPageId = (navigateToPageId && pageList.find((p) => p.id === navigateToPageId))
             ? navigateToPageId
             : (pageList.find((p) => p.isDefault) || pageList[0]).id;
+          // 当前页仍在新列表中时不再重复 fetchPage：agent 创建页面后 onPagesChange（刷新列表）
+          // 与 onPageChange（切到新页面）会接连触发，这里再拉旧页会与新页请求竞态，
+          // 把已切换的选中页/预览又拽回上一个页面
+          const livePageId = usePageStore.getState().currentPage?.id;
+          const keepCurrentPage = livePageId != null && pageList.some((p) => p.id === livePageId);
           Promise.all([
             listQueries(Number(appId)),
             listApplicationTools(Number(appId)),
@@ -85,12 +93,16 @@ export function AppEditorPage() {
               .map((t) => ({ id: t.id as number, name: (t.displayName || t.toolName || '') as string }));
             setQueries(queriesRes.data);
             setAppTools(tools);
-            fetchPage(targetPageId);
+            if (!keepCurrentPage) {
+              fetchPage(targetPageId);
+            }
             setDataReady(true);
           }).catch(() => {
             setQueries([]);
             setAppTools([]);
-            fetchPage(targetPageId);
+            if (!keepCurrentPage) {
+              fetchPage(targetPageId);
+            }
             setDataReady(true);
           });
         } else {
@@ -438,6 +450,16 @@ export function AppEditorPage() {
                   ))}
                 </div>
                 <div className="app-editor-preview-spacer" />
+                <div className="app-editor-preview-width-toggle" title="预览视口：1920 画布与桌面端运行时结构一致">
+                  <button
+                    className={`app-editor-preview-width-btn ${previewWidth === 1920 ? 'active' : ''}`}
+                    onClick={() => setPreviewWidth(1920)}
+                  >1920</button>
+                  <button
+                    className={`app-editor-preview-width-btn ${previewWidth === null ? 'active' : ''}`}
+                    onClick={() => setPreviewWidth(null)}
+                  >适应</button>
+                </div>
                 <button
                   className="app-editor-preview-fullscreen-btn"
                   onClick={() => setPreviewFullscreen(!previewFullscreen)}
@@ -463,6 +485,7 @@ export function AppEditorPage() {
               <InteliPreview
                 codePage={currentPage!.codePage}
                 queries={queries}
+                designWidth={previewWidth ?? undefined}
                 userInfo={user ? {
                   id: user.id,
                   account: user.account ?? '',
@@ -471,6 +494,8 @@ export function AppEditorPage() {
                   name: user.displayName ?? '',
                   employeeNo: user.employeeNo ?? '',
                   mobile: user.mobile ?? '',
+                  // 平台组织资产：身份展示（姓名/部门卡）运行时可用，业务表不冗余
+                  department: user.deptName ?? null,
                 } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}

@@ -17,6 +17,8 @@ export interface Message {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   isStreaming?: boolean;
+  /** 流式期提示：模型正在生成工具调用参数（正文已输出完、流未结束的静默期） */
+  streamingHint?: string;
   agentId?: string;
   agentName?: string;
   agentIcon?: string;
@@ -56,8 +58,10 @@ export interface ToolContext {
   applicationId: number;
   pageId: number;
   dispatch: (event: AgentEvent) => void;
-  /** 内核执行标记：callId 为本次调用 ID；resume=true 表示这是确认门挂起后的内核重执行（delegate 类工具消费） */
+  /** 内核执行标记：callId 为本次调用 ID；resume=true 表示这是确认门挂起后的内核重执行（delegate 类工具消费）。
+   *  turnContent 为本轮 LLM 回复正文，submit_analysis 用它缺省 analysisReport，避免模型在参数里重复生成报告全文 */
   kernelCall?: { callId: string; resume?: boolean };
+  turnContent?: string;
   onPagesChange?: () => void;
   onPageChange?: (pageId: number) => void;
   onQuerySelect?: (query: { id: number; name: string }) => void;
@@ -187,8 +191,9 @@ export interface AgentState {
   executingStepId: string | null;
   isStreaming: boolean;
   error: string | null;
-  /** 内核挂起请求（Phase 2.4）：非空时 UI 显示确认/取消按钮，点击产生显式 ResumeCommand */
-  pendingInput: { kind: string; message: string } | null;
+  /** 内核挂起请求（Phase 2.4）：非空时 UI 显示确认/取消按钮，点击产生显式 ResumeCommand。
+   *  plan-confirm 携带 planId，会话失效后按钮恢复（resume-orphan-plan）依赖它定位计划 */
+  pendingInput: { kind: string; message: string; planId?: string } | null;
   /** 会话失效时残留的挂起事项（不持久化）：AgentFactory 在下一次 run 时注入并清除 */
   orphanedPending: string | null;
 }

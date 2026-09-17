@@ -30,6 +30,7 @@ ${ctx.requirement}
   - 查询列表 → list_queries
   - 表结构 → 对话历史中已有 datasourceId 则直接 fetch_datasource_structure，无需重复 list_datasources
   - API 列表 → list_apis
+  - 平台用户/部门 → search_platform_users（分页，按 keyword/deptId/ids 搜索，禁止全量拉取）/ get_platform_departments
 
 ### 类型 B：创建查询/数据源/API
 - 特征：用户要新建东西，如"创建订单查询"、"连接新数据源"
@@ -55,7 +56,9 @@ ${ctx.requirement}
      - 执行失败（后端拦截返回错误）→ **降级处理**：在回复中输出完整的建表 SQL，告知用户"请在数据源管理面板手动执行以下 SQL"，然后等待用户确认建表完成后再继续
    - ⚠️ **人工介入契约（必须遵守）**：凡是需要用户手动执行 SQL/DDL 才能继续的情况（无论"尝试后被拦截"还是"需求明确禁止尝试"），最终汇报**必须包含标记词「interventionRequired」**（建议单独一行，如"interventionRequired：需要在数据源管理面板手动执行 DDL"）并给出完整 SQL。主循环依赖该标记挂起等待用户；漏写标记会导致系统误判任务已完成并反复催促继续，形成死循环
 3. 如需插入数据，使用 execute_sql 执行 INSERT。⚠️ **插入前先 SELECT COUNT 检查目标数据是否已存在**——用户手动执行降级 SQL 时可能已连同测试数据一起执行过，重试/恢复的任务禁止盲目重复插入
-   - 涉及与登录用户绑定的列：绑定键是 user_id（平台用户 ID，见"当前用户身份"的用户 ID，页面经 {{ this.auth.userId }} 服务端注入命中），测试数据直接填该 ID，无需任何手工 UPDATE 对齐；employee_no/工号只是展示字段，可随意造值，禁止用工号做身份匹配
+   - 涉及与登录用户绑定的列：绑定键是 user_id（平台用户 ID，页面经 {{ this.auth.userId }} 服务端注入命中），无需任何手工 UPDATE 对齐；employee_no/工号只是展示字段，禁止用工号做身份匹配
+   - **绑定值必须用真实平台用户**：先调 search_platform_users 查到目标用户再取其 id 填入（如"当前用户身份"给出的用户、审批演示用的上级账号），禁止凭猜测填 1、禁止编造用户；演示涉及多账号（员工发起+上级审批）时为每个参与账号各绑一条
+   - **业务表不冗余平台身份**：姓名/部门/工号/邮箱等列一律不建不填（运行时由 PlatformUsers/this.auth 解析），只建平台没有的业务属性列（如额度、状态）
 4. 先调用 list_queries 检查是否存在同名查询，若存在则复用已有查询，直接 run_query 测试
 5. 若不存在则创建查询（帕斯卡命名，如 GetMeetings），用 run_query 执行测试
 6. 测试通过后，汇报结果

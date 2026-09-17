@@ -25,6 +25,11 @@ const PLAN_SUBMITTING_TOOLS = new Set(['submit_analysis', 'create_plan']);
 /** 未完成步骤强制继续的最大注入次数（迁移自 MAX_LOOP_EXTENSIONS） */
 export const MAX_COMPLETION_EXTENSIONS = 5;
 
+/** 计划确认横幅文案（内核挂起与刷新后重建横幅共用，保证两种来源外观一致） */
+export function planConfirmMessage(plan: { id: string; agentName: string; steps: unknown[] }): string {
+  return `计划「${plan.agentName}」已创建（ID: ${plan.id}，共 ${plan.steps.length} 个步骤），等待用户确认执行。`;
+}
+
 export function createPlanPolicy(store: PlanStorePort, options?: {
   /** 确认计划后构建执行阶段 system prompt（迁移自旧 AgentFactory 的 buildExecutionPrompt 切换） */
   buildExecutionPrompt?: (planId: string) => string;
@@ -67,7 +72,7 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
       return {
         kind: 'plan-confirm',
         planId: draft.id,
-        message: `计划「${draft.agentName}」已创建（ID: ${draft.id}，共 ${draft.steps.length} 个步骤），等待用户确认执行。`,
+        message: planConfirmMessage(draft),
       };
     },
 
@@ -87,6 +92,28 @@ export function createPlanPolicy(store: PlanStorePort, options?: {
     },
 
     onResume(state, command) {
+      // orphan 恢复：executor 重建后内核无挂起状态，planId 由 UI 从持久化计划显式携带。
+      // 确认/放弃语义与常规路径完全一致，仅 planId 来源不同
+      if (command.kind === 'resume-orphan-plan') {
+        const plan = store.getPlans().find((p) => p.id === command.planId);
+        if (!plan) {
+          return { systemMessage: `未找到计划 ${command.planId}，无法完成恢复。请向用户说明实际情况，并建议重新提交需求分析。` };
+        }
+        // 防重复确认：横幅可能在计划已被确认/执行后因残留而点击（如刷新窗口期）
+        if (plan.status !== 'draft') {
+          return { systemMessage: `计划「${plan.agentName}」（ID: ${plan.id}）当前状态为「${plan.status}」，无需再次${command.action === 'confirm' ? '确认' : '放弃'}。请如实告知用户当前状态，不要重复执行已完成的操作。` };
+        }
+        if (command.action === 'confirm') {
+          store.confirmPlan(plan.id);
+          return {
+            systemMessage: '计划已确认，已切换到执行阶段。请按步骤顺序执行，每完成一步调用 update_plan_item 标记状态，所有步骤完成后调用 validate_plan 验证。',
+            replaceSystemPrompt: options?.buildExecutionPrompt?.(plan.id),
+          };
+        }
+        store.updatePlan(plan.id, { status: 'rejected' });
+        return { systemMessage: '用户已放弃该计划。请与用户确认下一步。' };
+      }
+
       if (state.pendingInput?.kind !== 'plan-confirm') return null;
       const planId = state.pendingInput.planId;
       if (command.kind === 'confirm') {

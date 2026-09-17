@@ -16,14 +16,15 @@ export function getPageSkillSummary(): string {
 
 /** 登录身份与"我的数据"规范：分析（数据模型/交互设计）与执行（页面代码）两阶段都必须可见 */
 export function getIdentityRulesSummary(): string {
-  return `## 身份与"我的数据"规范
-- 平台在页面注入 \`window.__LUBAN_USER__ = { id, account, name, employeeNo, mobile, email }\`，**只用于展示**当前用户（如"张三的工作台"标题、问候语），不承担身份过滤
-- **身份过滤必须用服务端变量 this.auth**：查询 SQL 里直接写 \`WHERE user_id = {{ this.auth.userId }}\`（后端 SecurityContext 注入，页面传不进来、改不了）。可用变量：userId（平台用户ID，绑定键）、userName（登录账号）、userDisplayName（姓名）、userEmail、userMobile、userEmployeeNo（工号，账号可未配置，禁止作为绑定键）
-- 数据模型设计时，凡需关联登录用户的业务表必须包含绑定列 \`user_id BIGINT\`（= 平台用户ID this.auth.userId）；工号 employee_no 若业务需要只作展示字段
+  return `## 身份与"我的数据"规范（平台资产优先）
+- 平台在页面注入 \`window.__LUBAN_USER__ = { id, account, name, employeeNo, mobile, email, department }\`（当前登录人的平台身份档案）。**身份展示用它**：姓名/部门卡、问候语、"我的XX"面板的当前用户信息直接取这里；业务绑定查不到记录时也显示 __LUBAN_USER__.name/department，禁止把"未关联"当姓名展示
+- **身份过滤必须用服务端变量 this.auth**：查询 SQL 里直接写 \`WHERE user_id = {{ this.auth.userId }}\`（后端 SecurityContext 注入，页面传不进来、改不了）。可用变量：userId（平台用户ID，绑定键）、userName（登录账号）、userDisplayName（姓名）、userDepartment（部门名）、userDepartmentId（部门ID）、userEmail、userMobile、userEmployeeNo（工号，账号可未配置，禁止作为绑定键）
+- **平台身份/组织资产不落业务库（单一事实源）**：业务表只存绑定键 user_id（BIGINT），禁止把姓名/部门/工号/邮箱复制进业务表——页面需要展示他人身份时用内置查询 \`DataQuery.PlatformUsers({ ids: [行.user_id] })\` 实时解析，部门下拉选项用 \`DataQuery.PlatformDepartments()\`。平台新增/改名/调岗用户自动对应用生效，业务库永远不需要同步
+- **平台资产工具**：数据建模、选项枚举、测试数据绑定前，先用 \`search_platform_users\`（分页，按 keyword/deptId/ids 搜索）与 \`get_platform_departments\` 获取真实平台用户与部门，禁止编造"张伟/市场部"这类平台不存在的人员与组织；只有平台没有的业务属性（如年假额度）才建业务表，且表里只放业务字段+user_id
 - "我的数据"查询（我的休假/我的订单/我的待办…）**不声明、不传任何身份筛选参数**：SQL 直接用 {{ this.auth.userId }}，页面调用时完全不传身份参数；无匹配记录时页面显示"当前账号未关联数据"提示，禁止静默空白或报错
 - **禁止**让页面通过 this.params 传身份参数（userId/employeeNo/userAccount 等一律不行）——参数来自前端内存可被篡改，属于越权漏洞
 - 需求出现"我的/当前用户/自己/登录人"字样时，**禁止**默认做"选择当前员工"的选择器——除非用户明确要求管理员切换查看对象
-- 测试数据的绑定列 user_id 必须填"当前用户身份"里给出的平台用户 ID，页面演示无需任何手工 UPDATE 对齐`;
+- 测试数据的绑定列 user_id 必须填真实平台用户 ID（用 search_platform_users 查到再填）：至少给"当前用户身份"里的用户绑一条；演示涉及多账号（如员工发起+上级审批）时为每个参与账号各绑一条，并在完成汇报中告知用户分别用哪个账号登录体验`;
 }
 
 /** 外部库与内置能力规则：分析阶段（填 libraries 时）与执行阶段都必须可见 */
@@ -141,6 +142,21 @@ function openEdit(id) {
   var row = table.getData().find(function(item) { return item.id === id; });
   // 回填表单...
 }
+
+// ✅ 平台内置查询（无需创建，每个页面自动注册，运行时直查平台——身份/组织资产的唯一事实源）
+// PlatformUsers：分页检索平台用户。参数 keyword(模糊搜姓名/账号/邮箱)、deptId(部门)、ids(按业务行的 user_id 批量解析身份)、page、pageSize
+DataQuery.PlatformUsers({ ids: [row.user_id] }).then(function(result) {
+  var u = result.rows[0] || {};
+  var displayName = u.name || '-';      // 姓名/部门等身份信息运行时从平台解析，业务表不冗余这些列
+  var dept = u.deptName || '-';
+});
+DataQuery.PlatformUsers({ keyword: '张', deptId: 2, page: 1, pageSize: 50 }).then(function(result) {
+  // result.rows: [{id, name, account, deptId, deptName, leaderId}]（最小字段集，无手机号/邮箱等 PII）
+  // 员工/审批人下拉选项、部门成员列表用这个，禁止在业务表里复制一份人员名单
+});
+DataQuery.PlatformDepartments().then(function(result) {
+  // result.rows: [{id, name, parentId, managerId, path}] —— 部门下拉选项/组织树从这里取
+});
 \`\`\`
 
 **写操作（新增/编辑/删除）必须调用对应的 DataQuery 写查询，禁止写 TODO 或假成功。如果 DataQuery 上没有写查询，说明需求分析遗漏了，应委派 DBA 创建。**`;
@@ -180,8 +196,9 @@ export function getFindAnalysisSkillSummary(): string {
 - 收到用户需求后，**自行完成需求分析**，不再委派给其他智能体
 - 分析规范详见「需求分析规范」章节，必须严格遵守 8 章节格式和内容具体化原则
 - **⚠️ 分析报告和 submit_analysis 必须在同一次回复中完成**：先输出分析报告文本，然后立即在同一个 assistant message 中调用 submit_analysis 工具，提交结构化数据+自评打分。系统会自动推导执行计划，无需手动构造步骤
-- submit_analysis 需提交分析报告的结构化数据（pages + workflows + interactions + analysisReport + score），计划步骤由系统自动推导
-- **analysisReport 为必填**：将完整分析报告文本传入，执行阶段会注入此报告作为上下文，确保每步执行能获取完整分析内容
+- submit_analysis 只需提交结构化数据（pages + workflows + score），计划步骤由系统自动推导
+- **禁止在参数中传 analysisReport 或 interactions**：报告全文写在回复正文里即可，系统自动取当轮正文作为报告；交互联动第 8 章已包含。在参数里重复报告全文会成倍拖慢提交速度（数千 token 的重复生成）
+- **同页面共用新表时 fields 只在第一个查询填写**：同一页面的多个查询使用同一张新表，fields 不必逐条重复
 - **score 为必填**，按以下评分标准自评：
   - **模块展开深度（0-25）**：每个模块有展示内容+数据来源+交互方式得满分；笼统描述（如"相关指标"）扣分；漏推断组件（如需求涉及地理但无地图）扣分
   - **交互复杂度（0-25）**：纯展示页满分；有交互按丰富度加分（筛选+联动+下钻+图表点击+跨组件刷新各+4）；无交互说明得0分

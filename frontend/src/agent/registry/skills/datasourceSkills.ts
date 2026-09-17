@@ -1,8 +1,52 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createDatasource, testDatasource, getDatasourceStructure } from '@/api';
 import { listDatasources } from '@/api/datasource';
+import { getPlatformUsers, getPlatformDepartments } from '@/api/platform';
 
 export const datasourceSkills: Record<string, SkillFactory> = {
+  'platform:users': () => ({
+    id: 'platform:users',
+    category: SkillCategory.DATASOURCE,
+    name: 'search_platform_users',
+    description: `分页检索平台用户（最小字段集：id/姓名/账号/部门/直属领导 leaderId，不含手机号邮箱等 PII）。凡需求涉及"员工/用户/审批人/负责人/部门成员"的数据建模、选项枚举、测试数据绑定，必须先用本工具获取真实平台资产：业务表只存 user_id 绑定键，姓名/部门等身份属性运行时由平台解析（页面内置查询 PlatformUsers、SQL 变量 this.auth.*），禁止在业务表冗余身份列、禁止编造平台不存在的人员。按需搜索，禁止全量拉取。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        keyword: { type: 'string', description: '按姓名/账号/邮箱模糊搜索' },
+        deptId: { type: 'number', description: '按部门 ID 精确过滤' },
+        ids: { type: 'array', items: { type: 'number' }, description: '按用户 ID 批量精确解析' },
+        page: { type: 'number', description: '页码，默认 1' },
+        pageSize: { type: 'number', description: '每页条数，默认 50，最大 200' },
+      },
+    },
+    async execute(args) {
+      const res = await getPlatformUsers({
+        keyword: args.keyword as string | undefined,
+        deptId: args.deptId as number | undefined,
+        ids: args.ids as number[] | undefined,
+        page: args.page as number | undefined,
+        pageSize: args.pageSize as number | undefined,
+      });
+      return {
+        success: true,
+        message: `平台用户共 ${res.data.total} 个，本页返回 ${res.data.rows.length} 条（第 ${res.data.page} 页）`,
+        data: res.data,
+      };
+    },
+  }),
+
+  'platform:departments': () => ({
+    id: 'platform:departments',
+    category: SkillCategory.DATASOURCE,
+    name: 'get_platform_departments',
+    description: `获取平台部门组织树（id/名称/上级部门 parentId/部门经理 managerId）。部门下拉选项、组织架构展示、"部门经理审批"等场景从这里取真实部门，禁止编造平台不存在的部门。`,
+    parameters: { type: 'object', properties: {} },
+    async execute() {
+      const res = await getPlatformDepartments();
+      return { success: true, message: `共 ${res.data.total} 个部门`, data: res.data };
+    },
+  }),
+
   'datasource:list': (ctx) => ({
     id: 'datasource:list',
     category: SkillCategory.DATASOURCE,

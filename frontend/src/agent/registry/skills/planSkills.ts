@@ -83,19 +83,24 @@ interface AnalysisScore {
   deductions: ScoreDeduction[];
 }
 
-function validateAnalysisBasics(analysis: AnalysisData): ScoreDeduction[] {
+function validateAnalysisBasics(analysis: AnalysisData, report: string): ScoreDeduction[] {
   const deductions: ScoreDeduction[] = [];
   const allPages = analysis.pages || [];
 
-  const report = analysis.analysisReport || '';
   const hasFilterFields = /筛选字段[：:]/.test(report) && !/筛选字段[：:]\s*无/.test(report);
 
   for (const page of allPages) {
+    // 同页面多个查询共用新表时，字段只在第一个查询声明即可（减少模型重复生成）——
+    // 只有整页完全没声明过 fields 的 needsNewTable 查询才算缺字段
+    let pageFieldsDeclared = false;
     for (const q of page.queries) {
-      if (q.needsNewTable && !q.fields) {
+      if (q.needsNewTable && !q.fields && !pageFieldsDeclared) {
         deductions.push({ rule: 'missing_fields', points: -8, reason: `查询 ${q.queryName} needsNewTable=true 但未填写 fields，请填写字段列表或改为 false` });
       }
-      if (hasFilterFields && !q.filterParams) {
+      if (q.fields) pageFieldsDeclared = true;
+      // 写查询（INSERT/UPDATE/DELETE 类）本就不需要筛选参数，与 schema 描述保持一致
+      const isWriteQuery = /^(insert|update|delete|deduct)/i.test(q.queryName);
+      if (hasFilterFields && !q.filterParams && !isWriteQuery) {
         deductions.push({ rule: 'missing_filter_params', points: -10, reason: `查询 ${q.queryName} 未提供 filterParams，但分析报告中存在筛选字段。请声明筛选参数，DBA 会据此生成参数化 SQL` });
       }
     }
@@ -546,10 +551,11 @@ export const planSkills: Record<string, SkillFactory> = {
     description: `提交需求分析结果并自评打分。系统会自动从分析数据推导出执行计划，无需手动构造步骤。
 
 ⚠️ 必须在输出分析报告文本的同一个 assistant message 中调用此工具。
-⚠️ interactions 必须从分析报告第 8 章逐条提取。
-⚠️ analysisReport 为必填，将完整分析报告文本传入，执行阶段会注入此报告作为上下文。
+⚠️ 禁止在参数中传 analysisReport——报告全文写在回复正文里即可，系统自动取当轮正文作为报告。在参数里把报告重复转义一遍会成倍拖慢提交速度（数千 token 的重复生成）。
+⚠️ interactions 可省略：分析报告第 8 章已包含交互联动，无需在参数里重复。
+⚠️ 同一页面多个查询共用同一张新表时，fields 只在第一个查询填写，其余查询省略。
 ⚠️ score 为必填，按评分标准自评（评分标准见系统提示词「分析评分标准」章节）。
-⚠️ 参数必须是完整、合法的 JSON（报告文本放入 analysisReport 字符串字段时正确转义换行与引号）。参数解析失败会导致整份分析重做：宁可精简文字也要保证 JSON 闭合，不要为塞入更多细节而冒解析失败的风险。`,
+⚠️ 参数必须是完整、合法的 JSON。参数解析失败会导致整份分析重做：宁可精简文字也要保证 JSON 闭合，不要为塞入更多细节而冒解析失败的风险。`,
     parameters: {
       type: 'object',
       properties: {
@@ -573,7 +579,7 @@ export const planSkills: Record<string, SkillFactory> = {
                     queryId: { type: 'number', description: '查询已存在时填写其 ID——系统只绑定到页面、不会生成创建步骤。探查发现同名查询已存在时必须填写，禁止把已有查询放到 apis（apis 仅用于平台 API/工具）' },
                     purpose: { type: 'string', description: '用途描述（如：查询客户列表 / 新增客户 / 编辑客户 / 删除客户）' },
                     needsNewTable: { type: 'boolean', description: '是否需要新表（Agent 禁止 DDL，建表需人工操作）' },
-                    fields: { type: 'string', description: '宽表字段（needsNewTable=true 时必填，逗号分隔，如 id,name,status）' },
+                    fields: { type: 'string', description: '宽表字段（needsNewTable=true 时必填，逗号分隔，如 id,name,status）。⚠️ 同一页面多个查询共用同一张新表时，只在第一个查询填写，其余查询省略' },
                     filterParams: { type: 'string', description: '筛选参数描述（来自第5章筛选字段），格式：参数名(类型,匹配方式)，逗号分隔，如 keyword(文本,模糊搜索name), level(选项,精确匹配)。仅读查询需要，写查询不需要' },
                   },
                   required: ['queryName', 'purpose'],
@@ -641,12 +647,12 @@ export const planSkills: Record<string, SkillFactory> = {
         },
         interactions: {
           type: 'array',
-          description: '交互联动列表（来自分析报告第 8 章），每条为触发→响应描述',
+          description: '交互联动列表（可选，来自分析报告第 8 章）。报告正文已包含交互联动时建议省略，避免重复生成拖慢提交',
           items: { type: 'string' },
         },
         analysisReport: {
           type: 'string',
-          description: '完整分析报告文本（必填），执行阶段会注入此报告作为上下文，确保每步执行能获取完整分析内容',
+          description: '可选，推荐省略。缺省时系统自动取本轮回复正文作为分析报告（报告全文写在回复文本里即可）。禁止把报告全文重复传入——会成倍拖慢提交速度',
         },
         score: {
           type: 'object',
@@ -672,16 +678,26 @@ export const planSkills: Record<string, SkillFactory> = {
           required: ['moduleDetail', 'interactionComplexity', 'dataCoverage', 'fieldSpecificity'],
         },
       },
-      required: ['title', 'summary', 'pages', 'workflows', 'interactions', 'analysisReport', 'score'],
+      required: ['title', 'summary', 'pages', 'workflows', 'score'],
     },
-    async execute(args): Promise<ToolExecuteResult> {
+    async execute(args, ctx): Promise<ToolExecuteResult> {
       const analysis = args as unknown as AnalysisData;
 
       if ((!analysis.pages || analysis.pages.length === 0) && (!analysis.workflows || analysis.workflows.length === 0)) {
         return { success: false, message: 'pages 和 workflows 不能同时为空，请至少提供一个页面或流程' };
       }
 
-      const basicErrors = validateAnalysisBasics(analysis);
+      // 报告取值优先级：显式 analysisReport > 当轮回复正文（runtime 经 context 注入）。
+      // 正文即报告是推荐路径——模型不再把几千字报告在参数里转义复述一遍，
+      // 这段重复生成是"提交分析 → 计划 banner 弹出"之间等待时长的大头
+      const turnContent = ctx?.turnContent || '';
+      const effectiveReport = analysis.analysisReport?.trim() ? analysis.analysisReport : turnContent;
+
+      if (!effectiveReport || effectiveReport.trim().length < 50) {
+        return { success: false, message: '未获取到分析报告：请先在本轮回复中输出完整分析报告正文，再在同一个回复里调用 submit_analysis（推荐，系统自动取正文）；或将报告文本放入 analysisReport 字段' };
+      }
+
+      const basicErrors = validateAnalysisBasics(analysis, effectiveReport);
       if (basicErrors.length > 0) {
         const errorLines = basicErrors.map(d => `  - ${d.reason}`).join('\n');
         return { success: false, message: `分析数据存在基础错误，请修正后重新提交：\n${errorLines}` };
@@ -690,10 +706,6 @@ export const planSkills: Record<string, SkillFactory> = {
       const llmScore = analysis.score;
       if (!llmScore || llmScore.moduleDetail === undefined || llmScore.interactionComplexity === undefined || llmScore.dataCoverage === undefined || llmScore.fieldSpecificity === undefined) {
         return { success: false, message: 'score 为必填，请按评分标准（模块展开深度、交互复杂度、数据覆盖度、字段具体性，各 0-25 分）自评打分后重新提交' };
-      }
-
-      if (!analysis.analysisReport || analysis.analysisReport.trim().length < 50) {
-        return { success: false, message: 'analysisReport 为必填，请将完整分析报告文本传入，执行阶段需要此报告作为上下文' };
       }
 
       const score: AnalysisScore = {
@@ -726,7 +738,7 @@ export const planSkills: Record<string, SkillFactory> = {
         return { success: false, message: '从分析数据推导出的计划步骤为空，请检查 pages 和 workflows 数据' };
       }
 
-      const { planId, message } = createPlanInternal(analysis.title, analysis.summary, items, score, analysis.analysisReport);
+      const { planId, message } = createPlanInternal(analysis.title, analysis.summary, items, score, effectiveReport);
 
       const stepSummary = items.map((item, i) => `  ${i + 1}. [${item.toolName}] ${item.description}`).join('\n');
 

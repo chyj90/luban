@@ -30,8 +30,16 @@ export function AppUserPage({ app }: AppUserPageProps) {
   const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
 
   const userInfo = useMemo(() => {
-    return user ? { id: user.id, account: user.account || '', email: user.email || '' } : null;
-  }, [user?.id, user?.account, user?.email]);
+    return user ? {
+      id: user.id,
+      account: user.account || '',
+      email: user.email || '',
+      name: user.displayName || '',
+      employeeNo: user.employeeNo || '',
+      mobile: user.mobile || '',
+      department: user.deptName || null,
+    } : null;
+  }, [user?.id, user?.account, user?.email, user?.displayName, user?.deptName]);
   const pageList = useMemo(() => pages.map(p => ({ id: p.id, name: p.name })), [pages]);
   const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, pageList, handlePageNavigate, app.id, appTools, currentPageId ?? undefined);
 

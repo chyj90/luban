@@ -164,12 +164,19 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
           )}
         </div>
       )}
+      {msg.isStreaming && msg.streamingHint && (
+        <div className="ap-streaming-hint">
+          <span className="ap-streaming-hint-dot" />
+          {msg.streamingHint}
+        </div>
+      )}
     </div>
   );
 }, (prev, next) => {
   return prev.msg.content === next.msg.content
     && prev.msg.isStreaming === next.msg.isStreaming
     && prev.msg.reasoningContent === next.msg.reasoningContent
+    && prev.msg.streamingHint === next.msg.streamingHint
     && JSON.stringify(prev.msg.toolCalls) === JSON.stringify(next.msg.toolCalls);
 });
 
@@ -345,18 +352,19 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   }, [status, isSsePending]);
 
   // 重挂载对账（兜底）：正常路径上面的接管 effect 已从 registry 恢复 router 并跳过此处。
-  // 仅当 registry 无存活 router 而 store 里仍残留 pendingInput 时，banner 会是“点了没
-  // 反应”的死横幅——转存为 orphanedPending（下次输入时降级注入新会话）并撤下 banner
+  // plan-confirm 横幅保留不撤：draft 计划已持久化，横幅按钮经 handleResume 的 orphan
+  // 恢复分支重建 executor 后仍走显式 ResumeCommand（硬刷新场景由 store.setAppId 重建横幅）。
+  // 其余类型挂起降级为 orphanedPending（下次输入时注入新会话）+ 文本提示
   useEffect(() => {
     if (chatRouterRef.current) return;
     const stale = useAgentStore.getState().pendingInput;
-    if (!stale) return;
+    if (!stale || stale.kind === 'plan-confirm') return;
     useAgentStore.getState().setOrphanedPending(stale.message);
     setPendingInput?.(null);
     addMessage({
       id: crypto.randomUUID(),
       role: 'system',
-      content: `⚠️ 页面刷新/面板重置导致挂起会话中断，以下事项未能恢复：${stale.message}\n请直接输入指示继续（已完成就回复"已完成"，有新建议直接说明）。`,
+      content: `⚠️ 页面刷新/面板重置导致挂起会话中断，以下事项未能恢复：${stale.message}\n请直接输入指示继续（回复"继续"即可接续处理，有新建议直接说明）。`,
       timestamp: Date.now(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -547,16 +555,45 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     const router = chatRouterRef.current;
     const executor = router?.getActiveExecutor();
     if (!executor) {
+      const orphan = useAgentStore.getState().pendingInput;
+      // plan-confirm 的孤儿横幅可完整恢复：draft 计划已持久化，重建 executor 后
+      // 仍走显式 ResumeCommand（planId 由命令携带，策略落账并切换执行期 prompt），
+      // 不降级为文本猜意图——2026-09-17 请假案例的 confirm_plan 死锁即源于降级路径
+      if (orphan?.kind === 'plan-confirm' && (command === 'confirm' || command === 'cancel')) {
+        const drafts = useAgentStore.getState().plans.filter((p) => p.status === 'draft');
+        const planId = orphan.planId || drafts[drafts.length - 1]?.id;
+        if (planId) {
+          let targetRouter = router;
+          if (!targetRouter) {
+            generateSessionId();
+            targetRouter = new ChatRouter(buildSessionOptions(), callbacks);
+            registerRouter(appId, targetRouter);
+            chatRouterRef.current = targetRouter;
+          }
+          targetRouter.updateCallbacks(callbacks);
+          targetRouter.updateSessionOptions(buildSessionOptions());
+          setPendingInput?.(null);
+          setIsSsePending(true);
+          try {
+            const sessionId = useAgentStore.getState().sessionId || `session_${Date.now()}`;
+            const result = await targetRouter.route({ userInput: '（恢复被中断的会话）', sessionId });
+            await result.executor.resumeOrphanPlan({ kind: 'resume-orphan-plan', planId, action: command });
+          } catch (e) {
+            setError((e as Error).message);
+            setIsSsePending(false);
+          }
+          return;
+        }
+      }
       // 兜底：executor 缺失（如应用切换销毁了 router）但 banner 还在。
       // 禁止静默返回——显式报错并把挂起事项转存，让下一次输入仍能锚定原事项
-      const orphan = useAgentStore.getState().pendingInput;
       setPendingInput?.(null);
       if (orphan) {
         useAgentStore.getState().setOrphanedPending(orphan.message);
         addMessage({
           id: crypto.randomUUID(),
           role: 'system',
-          content: `⚠️ 会话已失效，无法按按钮恢复。未完成的事项：${orphan.message}\n请直接在下方输入指示继续（已完成就回复"已完成"，有新建议直接说明）。`,
+          content: `⚠️ 会话已失效，无法按按钮恢复。未完成的事项：${orphan.message}\n请直接在下方输入指示继续（回复"继续"即可接续处理，有新建议直接说明）。`,
           timestamp: Date.now(),
         });
       } else {

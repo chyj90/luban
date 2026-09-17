@@ -210,8 +210,10 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
     }
   };
 
-  async function executeTool(tool: ToolDefinition, args: Record<string, unknown>, callId?: string, resume?: boolean): Promise<ToolExecuteResult> {
-    const context = callId ? { kernelCall: { callId, resume } } : {};
+  async function executeTool(tool: ToolDefinition, args: Record<string, unknown>, callId?: string, resume?: boolean, turnContent?: string): Promise<ToolExecuteResult> {
+    const context = callId
+      ? { kernelCall: { callId, resume }, ...(turnContent !== undefined ? { turnContent } : {}) }
+      : turnContent !== undefined ? { turnContent } : {};
     try {
       return await tool.execute(args, context as never);
     } catch (e) {
@@ -258,6 +260,8 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
             if (!chunk.reasoning) content += chunk.content;
           } else if (chunk.type === 'tool_call' && chunk.toolCall) {
             accumulated.push({ id: chunk.toolCall.id, name: chunk.toolCall.function.name, arguments: chunk.toolCall.function.arguments });
+          } else if (chunk.type === 'tool_call_pending' && chunk.toolCall) {
+            emit({ type: 'llm.tool_call.pending', turnId, name: chunk.toolCall.function.name });
           }
         }
       } catch (e) {
@@ -349,7 +353,9 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
           return makeResult(true);
         }
 
-        const result = await executeTool(tool, args, tc.id);
+        // 注入当轮正文：submit_analysis 等工具可取正文作为分析报告，模型无需在
+        // 工具参数里把报告全文再转义复述一遍（数千 token 的重复生成是挂起前等待的大头）
+        const result = await executeTool(tool, args, tc.id, undefined, visibleContent);
         emit({ type: 'tool.call.finished', turnId, callId: tc.id, name: tc.name, ok: result.success, message: result.message, data: result.data });
         conversation.push({ id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, content: JSON.stringify(result), timestamp: Date.now() });
 
@@ -426,7 +432,10 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         return makeResult(false, false, true);
       }
       const isResume = input.kind !== 'user-message';
-      if (isResume && session.status !== 'suspended') {
+      // orphan 恢复面向"executor 重建后内核无挂起状态"的场景：挂起状态随死掉的
+      // executor 丢失，planId 由 UI 从持久化计划显式携带，不受 suspended 门限制
+      const isOrphanResume = input.kind === 'resume-orphan-plan';
+      if (isResume && !isOrphanResume && session.status !== 'suspended') {
         const reason = `收到恢复命令但会话未挂起（${session.status}），操作未生效`;
         console.warn(`[KernelRuntime] ${reason}，忽略`);
         emit({ type: 'turn.rejected', reason, sessionStatus: session.status, at: Date.now() });
@@ -460,9 +469,11 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
 
       const pending = session.pendingInput;
 
-      if (input.kind === 'confirm' || input.kind === 'cancel') {
-        // danger-confirm：内核内置语义（精确重执行 / 改写取消），不经过策略
-        if (pending?.kind === 'danger-confirm') {
+      if (input.kind === 'confirm' || input.kind === 'cancel' || input.kind === 'resume-orphan-plan') {
+        const action = input.kind === 'resume-orphan-plan' ? input.action : input.kind;
+        // danger-confirm：内核内置语义（精确重执行 / 改写取消），不经过策略。
+        // orphan 恢复面向无挂起状态的新会话，不适用 danger 重执行语义
+        if (pending?.kind === 'danger-confirm' && input.kind !== 'resume-orphan-plan') {
           emit({ type: 'turn.started', turnId, input: { kind: 'resume', command: input }, at: Date.now() });
           if (input.kind === 'confirm') {
             const tool = tools.find((t) => t.name === pending.toolName);
@@ -481,7 +492,7 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         // 其余挂起（plan-confirm 等）：由策略解除并给出注入指令。
         // 注意 onResume 必须在 turn.started 之前调用——折叠器开新回合时会清空 pendingInput
         const effect = policy?.onResume?.(session, input)
-          || { systemMessage: input.kind === 'confirm' ? '用户已确认，请继续执行。' : '用户已取消上述待处理项，请继续。' };
+          || { systemMessage: action === 'confirm' ? '用户已确认，请继续执行。' : '用户已取消上述待处理项，请继续。' };
         emit({ type: 'turn.started', turnId, input: { kind: 'resume', command: input }, at: Date.now() });
         if (effect.systemMessage) pushSystemMessage(effect.systemMessage);
         applySystemPromptReplace(effect);

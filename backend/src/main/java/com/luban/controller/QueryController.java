@@ -4,6 +4,7 @@ import com.luban.dto.*;
 import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.service.QueryService;
+import com.luban.util.SqlUtils;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -60,13 +61,15 @@ public class QueryController {
 
     /**
      * SQL 执行通道：DDL 仅当 allowDdl=true 时允许（仅前端面板手动执行可传，Agent 调用不传此字段）。
+     * DDL 判定针对拆分后的每条语句（引号/注释感知），避免"注释开头 + 批量 DDL"绕过拦截。
      */
     @PostMapping("/execute")
     @AppAccess(action = AppAction.RUN, resource = "datasource", key = "datasourceId")
     public ResponseEntity<ApiResponse<Object>> execute(
             @RequestBody ExecuteSqlRequest request) {
-        String upperSql = request.getSql() != null ? request.getSql().trim().toUpperCase() : "";
-        boolean isDdl = upperSql.matches("(?s)^\\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\\b.*");
+        boolean isDdl = SqlUtils.splitStatements(request.getSql()).stream()
+                .map(SqlUtils::firstKeyword)
+                .anyMatch(SqlUtils::isDdlKeyword);
         if (isDdl && !Boolean.TRUE.equals(request.getAllowDdl())) {
             return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行（Agent 端请勿重试或换写法尝试），请生成完整 SQL 交由用户在数据源管理面板手动执行"));
         }

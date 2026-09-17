@@ -628,6 +628,54 @@ async function testReplanDirective(): Promise<RuntimeTestResult> {
   return result('K22-失败步骤重规划指令', checks);
 }
 
+/** K23: orphan 计划恢复 —— 会话丢失（页面刷新/面板重置）后重建的 executor 内核无挂起状态，
+ *  恢复命令携带 planId 直达策略落账，不受"未挂起拒绝恢复"门限制；
+ *  非 draft 计划的残留横幅点击不得重复落账 */
+async function testOrphanPlanResume(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  const makeOrphanRt = (store: TestStore, turns: ScriptedTurn[]) =>
+    createKernelRuntime({
+      model: 'test-model', systemPrompt: 'sys',
+      tools: [],
+      policy: createPlanPolicy(store, { buildExecutionPrompt: () => 'EXEC-PROMPT-MARKER' }),
+      llmStream: scriptedLLM(turns),
+    });
+
+  // draft 计划 + confirm：应确认落账并切换执行阶段 prompt（新会话是 idle，不能被未挂起门拒绝）
+  const store1 = makeStore([makePlan({ steps: [{ id: 's1', description: '创建查询 orders', status: 'pending', order: 0 }] })]);
+  const r1 = await makeOrphanRt(store1, [{ content: '计划已确认，开始执行。' }])
+    .runTurn({ kind: 'resume-orphan-plan', planId: 'plan-1', action: 'confirm' });
+  if (r1.rejected) checks.push('orphan 恢复不应被"未挂起拒绝恢复"门拦截');
+  if (!store1.confirmed.includes('plan-1')) checks.push('orphan confirm 应触发 store.confirmPlan');
+  if (!r1.conversationMessages.some((m) => m.role === 'system' && m.content === 'EXEC-PROMPT-MARKER')) {
+    checks.push('orphan confirm 应切换执行阶段 system prompt');
+  }
+  if (!r1.conversationMessages.some((m) => m.role === 'system' && m.content.includes('计划已确认'))) {
+    checks.push('orphan confirm 应注入计划已确认指令');
+  }
+
+  // 已确认计划的残留横幅再点确认：不得重复落账，模型应如实说明现状
+  const store2 = makeStore([makePlan({ status: 'confirmed' })]);
+  const r2 = await makeOrphanRt(store2, [{ content: '该计划此前已确认。' }])
+    .runTurn({ kind: 'resume-orphan-plan', planId: 'plan-1', action: 'confirm' });
+  if (store2.confirmed.length !== 0) checks.push('非 draft 计划不应重复 confirmPlan');
+  if (!r2.conversationMessages.some((m) => m.role === 'system' && m.content.includes('无需再次确认'))) {
+    checks.push('非 draft 计划应注入防重复确认指引');
+  }
+
+  // orphan cancel：放弃 draft 计划
+  const store3 = makeStore([makePlan({ steps: [{ id: 's1', description: '创建查询 orders', status: 'pending', order: 0 }] })]);
+  const r3 = await makeOrphanRt(store3, [{ content: '好的，已放弃该计划。' }])
+    .runTurn({ kind: 'resume-orphan-plan', planId: 'plan-1', action: 'cancel' });
+  if (!store3.updates.some((u) => u.id === 'plan-1' && u.updates.status === 'rejected')) {
+    checks.push('orphan cancel 应将计划置为 rejected');
+  }
+  if (!r3.conversationMessages.some((m) => m.role === 'system' && m.content.includes('用户已放弃该计划'))) {
+    checks.push('orphan cancel 应注入放弃指令');
+  }
+  return result('K23-orphan计划恢复', checks);
+}
+
 export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
   return [
     await testNormalTurnReplay(),
@@ -646,5 +694,6 @@ export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
     await testSchemaValidationBlock(),
     await testFactLedger(),
     await testReplanDirective(),
+    await testOrphanPlanResume(),
   ];
 }

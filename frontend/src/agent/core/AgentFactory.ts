@@ -39,7 +39,7 @@ export interface AgentFactoryOptions {
   setStatus: (status: string) => void;
   setStreaming: (isStreaming: boolean) => void;
   setError: (error: string) => void;
-  setPendingInput?: (pending: { kind: string; message: string } | null) => void;
+  setPendingInput?: (pending: { kind: string; message: string; planId?: string } | null) => void;
   addPlan: (plan: Plan) => void;
   updatePlan: (planId: string, updates: Partial<Plan>) => void;
   updateStep: (planId: string, stepId: string, updates: Partial<Step>) => void;
@@ -59,6 +59,8 @@ export type AgentExecutor = {
   run: (userMessage: string) => Promise<void>;
   /** 恢复挂起回合（UI 确认/取消/完成按钮的入口） */
   resume: (command: ResumeCommand) => Promise<void>;
+  /** 会话丢失后的按钮恢复：重建的 executor 无对话历史，先注入计划语境再走显式命令 */
+  resumeOrphanPlan: (command: Extract<ResumeCommand, { kind: 'resume-orphan-plan' }>) => Promise<void>;
   isSuspended: () => boolean;
   /** 最近一次完成的回合是否被用户中止。委派工具据此把中断的子会话
    *  映射为结构化取消结果，而不是把半成品记成"成功完成" */
@@ -309,9 +311,17 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         break;
       }
 
+      case 'llm.tool_call.pending': {
+        // 正文流结束、工具参数还在生成的静默期（大 JSON 工具如 submit_analysis 可达数十秒）：
+        // 在流式消息上挂提示避免误以为卡死。turn.finished 时流式占位消息整体移除，提示随之消失
+        if (streamingId) {
+          updateMessage(streamingId, { streamingHint: `正在生成 ${event.name} 的提交数据…` });
+        }
+        break;
+      }
+
       case 'tool.call.started': {
-        flushAssistantBatch();
-        batchToolCalls = [...(batchToolCalls || []), {
+        flushAssistantBatch();        batchToolCalls = [...(batchToolCalls || []), {
           id: event.callId,
           name: event.name,
           arguments: event.args,
@@ -376,6 +386,9 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
         setStatus('suspended');
         setPendingInput?.({
           kind: event.request.kind,
+          // plan-confirm 必须携带 planId：横幅在会话失效后按按钮恢复时（resume-orphan-plan）
+          // 靠它定位持久化的计划，丢失即只能降级为文本猜意图
+          ...(event.request.kind === 'plan-confirm' ? { planId: event.request.planId } : {}),
           // user-action 的 reason 本身已是完整句子（如"需要在数据源管理面板手动执行 DDL…"），
           // 直接使用；describeInputRequest 的"等待用户手动操作："前缀只保留给模型侧转述，
           // 避免横幅出现"等待用户手动操作：需要用户手动操作…"的双重冗余
@@ -615,7 +628,7 @@ ${pageList}`;
         conversation.push({
           id: crypto.randomUUID(),
           role: 'system',
-          content: `【未恢复的挂起事项】${orphanedPending}\n该事项此前点击恢复按钮时会话已失效，未被处理。请结合用户本轮消息处理：若用户表示已完成，继续后续步骤；若用户给出新指示，按新指示执行。`,
+          content: `【未恢复的挂起事项】${orphanedPending}\n该事项此前点击恢复按钮时会话已失效，未被处理。请结合用户本轮消息处理：若用户表示已完成，继续后续步骤；若用户给出新指示，按新指示执行；若挂起事项是等待确认的计划，仅在用户明确回复确认类指令（如"确认执行"）后才调用 confirm_plan，不要把"已完成"当作计划确认。`,
           timestamp: Date.now(),
         });
         storeReader.clearOrphanedPending?.();
@@ -629,6 +642,16 @@ ${pageList}`;
 
     async resume(command: ResumeCommand): Promise<void> {
       runStartLog('resume()', `command=${command.kind}`);
+      await executeTurn(command);
+    },
+
+    async resumeOrphanPlan(command): Promise<void> {
+      runStartLog('resumeOrphanPlan()', `planId=${command.planId} action=${command.action}`);
+      // 重建的 executor 没有对话历史：与 run() 相同的语境注入，保住需求主线。
+      // 此时计划还是 draft，injectActivePlanContext 注入不到它——执行上下文由
+      // policy.onResume 的 buildExecutionPrompt（含计划步骤与分析报告）补齐
+      injectRecentCompletedSummary(storeReader, conversation, isMainAgent);
+      injectRecentUserMessages(storeReader, conversation, isMainAgent);
       await executeTurn(command);
     },
 
