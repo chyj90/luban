@@ -170,7 +170,7 @@ export const fileSkills: Record<string, SkillFactory> = {
     category: SkillCategory.FILE,
     name: 'import_rows',
     description: `把用户上传的 Excel 附件批量导入数据源已存在的表（机械分批执行，LLM 只需给出映射，数据量不占用对话上下文）。
-前置：先 file_info 获取 headerRowIndex 与 headers → 确定 dataStartRow（默认 headerRowIndex+1）与 columns 映射（sheetCol 是 file_sheet 返回行数组的下标）；目标表必须已存在，建表走 execute_sql（被拦截时按降级契约输出 SQL 并标记 interventionRequired）。
+前置：先 file_info 获取 headerRowIndex 与 headers → 确定 dataStartRow（默认 headerRowIndex+1）与 columns 映射（sheetCol 是 file_sheet 返回行数组的下标）；目标表必须已存在，建表走 execute_sql 确认卡片（被取消/失败时按降级契约输出 SQL 并标记 interventionRequired）。
 dryRun=true 只渲染前 3 行 SQL 样例不执行，用于向用户确认导入方案。需要用户确认（触发危险操作确认门）。
 中断可续传：失败/中止结果里的 nextStartRow 可作为下一次的 dataStartRow（先 SELECT COUNT 防重复插入）。`,
     parameters: {

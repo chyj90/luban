@@ -110,7 +110,7 @@ ${getFindWorkflowSkillSummary()}
 ## 执行规则
 - 按计划步骤顺序执行，每步用 update_plan_item 标记状态，完成后 validate_plan
 - ⚠️ **禁止跳过执行直接标记**：必须先调用步骤对应的工具并确认成功，再用 update_plan_item 标记完成。系统会校验 completed 标记的合法性，未调用工具直接标记会被拒绝
-- **用户介入阻断**：delegate_query 返回结果的 data 中如果包含 interventionRequired: true，说明子智能体需要用户手动操作（如建表 DDL 被拦截），此时必须：
+- **用户介入阻断**：delegate_query 返回结果的 data 中如果包含 interventionRequired: true，说明子智能体需要用户手动操作（如建表 DDL 的确认被用户取消、确认后执行仍失败转人工；正常建表走确认卡片自动完成，不会触发介入），此时必须：
   1. 将子智能体的请求原样转达给用户
   2. **不要标记该步骤为 completed**
   3. **立即停止**，不要继续执行后续步骤，不要调任何工具

@@ -790,7 +790,35 @@ function evalDDLFallbackValidation(): EvalResult {
     checks.push('场景4-DDL成功：不应标记 interventionRequired');
   }
 
-  return evalResult('E13-DDL降级校验', checks.length === 0, checks.length === 0 ? '4 个场景全部通过' : checks.join('；'));
+  // 场景 5：DDL 确认门挂起（等用户批准）→ 不算被拦截，不应报警（2026-09-18 确认门改造：
+  // execute_sql 的 DDL 走 danger-confirm，挂起结果 success=false 但带 _pause+suspendRequest，
+  // 误判成"被拦截未降级"会抢在确认流程前触发人工降级，重新制造建表死循环）
+  const ddlConfirmPauseMessages = [
+    {
+      role: 'assistant',
+      content: '我来创建表，需要用户确认',
+      toolCalls: [{ id: 'call_5', name: 'execute_sql', arguments: { sql: 'CREATE TABLE leaves (id INT)', datasourceId: 1 } }],
+    },
+    {
+      role: 'tool',
+      content: JSON.stringify({
+        success: false,
+        _pause: true,
+        message: 'DDL 语句需要用户在确认卡片上批准后才会执行（本次未执行）',
+        data: { suspendRequest: { kind: 'danger-confirm', callId: 't-1', toolName: 'execute_sql', args: { sql: 'CREATE TABLE leaves (id INT)', datasourceId: 1 }, argsKey: 'k', message: '确认执行？' } },
+      }),
+      toolCallId: 'call_5',
+    },
+  ];
+  const ddlConfirmPauseCheck = validateDDLExecution(ddlConfirmPauseMessages);
+  if (ddlConfirmPauseCheck.warnings.length > 0) {
+    checks.push(`场景5-DDL确认挂起：不应产生警告但产生了: ${ddlConfirmPauseCheck.warnings.join('; ')}`);
+  }
+  if (ddlConfirmPauseCheck.interventionRequired) {
+    checks.push('场景5-DDL确认挂起：不应标记 interventionRequired');
+  }
+
+  return evalResult('E13-DDL降级校验', checks.length === 0, checks.length === 0 ? '5 个场景全部通过' : checks.join('；'));
 }
 
 /**

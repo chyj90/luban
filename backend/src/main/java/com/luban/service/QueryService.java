@@ -192,18 +192,26 @@ public class QueryService {
         query.setDescription(request.getDescription());
         query.setSource(request.getSource());
 
-        validateSqlSyntax(request.getDatasourceId(), request.getBody(), request.getParams());
+        String tableWarning = validateSqlSyntax(request.getDatasourceId(), request.getBody(), request.getParams());
 
         query = queryRepository.save(query);
-        return buildQueryMap(query);
+        Map<String, Object> result = buildQueryMap(query);
+        if (tableWarning != null) result.put("validationWarning", tableWarning);
+        return result;
     }
 
-    private void validateSqlSyntax(Long datasourceId, String body, Map<String, Object> paramsDef) {
-        if (body == null || body.isBlank()) return;
+    /**
+     * 创建时校验 SQL；返回 null 表示校验通过，非 null 为降级警告（目前仅"目标表尚不存在"）。
+     * 缺表不再阻断创建：建表（DDL 需人工/确认门）与查询创建被迫串行，曾导致介入前
+     * 全部查询创建失败、人工建表后又整批重试（2026-09-16 DAU 看板案例）。缺表查询
+     * 照常保存，真正校验发生在 run_query / 页面运行时。
+     */
+    private String validateSqlSyntax(Long datasourceId, String body, Map<String, Object> paramsDef) {
+        if (body == null || body.isBlank()) return null;
 
         Datasource ds = datasourceRepository.findById(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
-        if (!"mysql".equalsIgnoreCase(ds.getType()) && !"postgresql".equalsIgnoreCase(ds.getType())) return;
+        if (!"mysql".equalsIgnoreCase(ds.getType()) && !"postgresql".equalsIgnoreCase(ds.getType())) return null;
 
         Map<String, Object> validationParams = buildValidationParams(paramsDef);
         Map<String, Object> authParams = new HashMap<>();
@@ -220,7 +228,7 @@ public class QueryService {
         boolean isDdl = upperSql.startsWith("CREATE") || upperSql.startsWith("ALTER")
                 || upperSql.startsWith("DROP") || upperSql.startsWith("TRUNCATE")
                 || upperSql.startsWith("RENAME");
-        if (isDdl) return;
+        if (isDdl) return null;
 
         // 校验 UPDATE <set> 中的 <if> 条件必须同时检查 != null 和 != ''
         if (body.contains("<set>") || body.contains("<set ")) {
@@ -249,9 +257,32 @@ public class QueryService {
             try (ResultSet rs = stmt.getResultSet()) {
                 while (rs.next()) { /* consume result */ }
             }
+        } catch (SQLException e) {
+            if (isTableMissing(e)) {
+                return "目标表尚不存在（缺表降级，查询已保存）：" + e.getMessage()
+                        + "。表创建后无需重建查询，run_query / 页面运行时即生效";
+            }
+            throw new IllegalArgumentException("SQL 校验失败: " + e.getMessage());
         } catch (Exception e) {
             throw new IllegalArgumentException("SQL 校验失败: " + e.getMessage());
         }
+        return null;
+    }
+
+    /** 缺表判定（不阻断创建的唯一例外）：沿异常链找 MySQL ER_NO_SUCH_TABLE / SQLState 42S02、42P01，消息兜底 */
+    private static boolean isTableMissing(SQLException e) {
+        for (SQLException cur = e; cur != null; cur = cur.getNextException()) {
+            if (cur.getErrorCode() == 1146) return true; // MySQL ER_NO_SUCH_TABLE
+            String state = cur.getSQLState();
+            if ("42S02".equals(state) || "42P01".equals(state)) return true;
+            String msg = cur.getMessage();
+            if (msg != null) {
+                String lower = msg.toLowerCase();
+                if (lower.contains("doesn't exist") && lower.contains("table")) return true;
+                if (lower.contains("does not exist") && lower.contains("relation")) return true;
+            }
+        }
+        return false;
     }
 
     @SuppressWarnings("unchecked")
@@ -364,18 +395,21 @@ public class QueryService {
         Query query = queryRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
         if (request.getName() != null) query.setName(request.getName());
+        String tableWarning = null;
         if (request.getBody() != null) {
             // 与 create 同等校验：坏 SQL（语法错误、多语句、模板占位无法解析）不允许保存，
             // 否则页面/触发器引用的查询会到执行时才失败
             Map<String, Object> paramsDef = request.getParams() != null
                     ? request.getParams()
                     : fromJsonMap(query.getParams());
-            validateSqlSyntax(query.getDatasourceId(), request.getBody(), paramsDef);
+            tableWarning = validateSqlSyntax(query.getDatasourceId(), request.getBody(), paramsDef);
             query.setBody(request.getBody());
         }
         if (request.getParams() != null) query.setParams(toJson(request.getParams()));
         query = queryRepository.save(query);
-        return buildQueryMap(query);
+        Map<String, Object> result = buildQueryMap(query);
+        if (tableWarning != null) result.put("validationWarning", tableWarning);
+        return result;
     }
 
     public void delete(Long id) {

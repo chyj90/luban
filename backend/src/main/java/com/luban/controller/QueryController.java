@@ -79,8 +79,10 @@ public class QueryController {
     }
 
     /**
-     * SQL 执行通道：DDL 仅当 allowDdl=true 时允许（仅前端面板手动执行可传，Agent 调用不传此字段）。
-     * DDL 判定针对拆分后的每条语句（引号/注释感知），避免"注释开头 + 批量 DDL"绕过拦截。
+     * SQL 执行通道：DDL 仅当 allowDdl=true 时允许。allowDdl 的合法来源有两个：
+     * ① 数据源管理面板手动执行；② Agent 的 execute_sql 在用户通过危险操作确认卡片
+     * （danger-confirm）显式批准后携带——确认门在 Agent 前端内核拦截，未确认的 DDL
+     * 到不了这里。DDL 判定针对拆分后的每条语句（引号/注释感知），避免"注释开头 + 批量 DDL"绕过拦截。
      */
     @PostMapping("/execute")
     @AppAccess(action = AppAction.RUN, resource = "datasource", key = "datasourceId")
@@ -90,7 +92,7 @@ public class QueryController {
                 .map(SqlUtils::firstKeyword)
                 .anyMatch(SqlUtils::isDdlKeyword);
         if (isDdl && !Boolean.TRUE.equals(request.getAllowDdl())) {
-            return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行（Agent 端请勿重试或换写法尝试），请生成完整 SQL 交由用户在数据源管理面板手动执行"));
+            return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行（缺少 allowDdl，未经用户确认门）。Agent 端请通过 execute_sql 确认门发起，或由用户在数据源管理面板手动执行"));
         }
         if (Boolean.TRUE.equals(request.getMulti()) || Boolean.TRUE.equals(request.getRollback())) {
             // rollback=true 强制走事务批量路径（单条也在事务中执行后回滚），测试不落库

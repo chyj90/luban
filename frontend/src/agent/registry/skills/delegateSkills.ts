@@ -550,13 +550,17 @@ export interface DDLValidationResult {
 
 /**
  * DDL 执行校验（代码层兜底）：
- * 扫描子智能体消息，检查 DDL 操作是否遵循"先尝试执行 → 失败降级生成 SQL"流程。
+ * 扫描子智能体消息，检查 DDL 操作是否遵循"尝试确认门执行 → 失败才降级生成 SQL"流程。
  *
  * 校验规则：
  * 1. execute_sql 被调用且 sql 为 DDL 语句 → 检查执行结果
  * 2. DDL 被后端拦截（success=false）→ 检查 assistant 最终回复是否包含降级 SQL
  * 3. 未提供降级 SQL → 生成警告
  * 4. DDL 被拦截且提供了降级 SQL → interventionRequired=true，主智能体应停止等待用户
+ *
+ * 豁免：携带 _pause 的结果是确认门挂起（等待用户在确认卡片上批准，批准后内核会精确
+ * 重执行并成功），不是"被拦截降级"——把它当介入会抢在确认流程前面误发人工降级，
+ * 重新制造建表死循环。
  */
 export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>): DDLValidationResult {
   const warnings: string[] = [];
@@ -581,10 +585,12 @@ export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>)
     const sql = String(call.args.sql || '');
     if (!DDL_PATTERN.test(sql)) continue;
 
-    let parsed: { success?: boolean; message?: string };
+    let parsed: { success?: boolean; message?: string; _pause?: boolean };
     try { parsed = JSON.parse(String(m.content)) as typeof parsed; } catch { continue; }
 
     if (!parsed.success) {
+      // 确认门挂起（等用户批准，批准后重执行）不是被拦截：豁免，不算降级失败
+      if (parsed._pause === true) continue;
       blockedDDL.push({ sql, error: parsed.message || '未知错误' });
     }
   }

@@ -609,7 +609,7 @@ export const planSkills: Record<string, SkillFactory> = {
                     queryName: { type: 'string', description: '查询名称（英文驼峰，如 GetAlertsWide / InsertCustomer / UpdateCustomer / DeleteCustomer）' },
                     queryId: { type: 'number', description: '查询已存在时填写其 ID——系统只绑定到页面、不会生成创建步骤。探查发现同名查询已存在时必须填写，禁止把已有查询放到 apis（apis 仅用于平台 API/工具）' },
                     purpose: { type: 'string', description: '用途描述（如：查询客户列表 / 新增客户 / 编辑客户 / 删除客户）' },
-                    needsNewTable: { type: 'boolean', description: '是否需要新表（Agent 禁止 DDL，建表需人工操作）' },
+                    needsNewTable: { type: 'boolean', description: '是否需要新表（DBA 用 execute_sql 发起建表，用户在确认卡片批准后自动执行；确认被取消才转人工）' },
                     fields: { type: 'string', description: '宽表字段（needsNewTable=true 时必填，逗号分隔，如 id,name,status）。⚠️ 同一页面多个查询共用同一张新表时，只在第一个查询填写，其余查询省略' },
                     filterParams: { type: 'string', description: '筛选参数描述（来自第5章筛选字段），格式：参数名(类型,匹配方式)，逗号分隔，如 keyword(文本,模糊搜索name), level(选项,精确匹配)。仅读查询需要，写查询不需要' },
                   },

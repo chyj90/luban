@@ -3,6 +3,27 @@ import { createQuery, updateQuery, deleteQuery, runQuery, executeSql, testDataso
 import { listUnifiedDatasources } from '@/api/datasource';
 import { listQueries, listPages, getCodePage } from '@/api';
 import { lintQuery } from './queryLint';
+import { consumeApproval, approvePendingApproval } from '../../core/confirmationGuard';
+import { toolArgsKey } from '../../kernel/runtime';
+
+/** create/update_query 缺表降级时后端返回的警告字段（QueryService.validationWarning） */
+interface ValidationWarning {
+  validationWarning?: string;
+}
+
+/** DDL 确认卡片展示用：尽力解析数据源名称，失败时退回 ID（不让确认流程被辅助查询卡住） */
+async function resolveDatasourceName(
+  ctx: { applicationId: number },
+  datasourceId: number,
+): Promise<string> {
+  try {
+    const datasources = await listUnifiedDatasources(ctx.applicationId);
+    const ds = (datasources as Array<{ id: number; name?: string }>).find((d) => d.id === datasourceId);
+    return ds?.name ? `${ds.name} (ID:${datasourceId})` : `ID:${datasourceId}`;
+  } catch {
+    return `ID:${datasourceId}`;
+  }
+}
 
 export const querySkills: Record<string, SkillFactory> = {
   'query:list': (ctx) => ({
@@ -113,10 +134,15 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
           });
           ctx.onQueriesChange?.();
           ctx.onQuerySelect?.({ id: res.data.id, name: res.data.name });
+          // 缺表降级：目标表尚不存在时后端不再拒绝创建（建表与查询创建解耦），
+          // 警告透传给 DBA——查询已保存，等表就绪后 run_query 即可，禁止重复创建
+          const tableWarning = (res.data as ValidationWarning | undefined)?.validationWarning;
+          const warnings = [...lint.warnings];
+          if (tableWarning) warnings.push(tableWarning);
           return {
             success: true,
-            message: lint.warnings.length > 0
-              ? `查询 "${args.name}" 创建成功\n${lint.warnings.map((w) => `⚠️ ${w}`).join('\n')}`
+            message: warnings.length > 0
+              ? `查询 "${args.name}" 创建成功\n${warnings.map((w) => `⚠️ ${w}`).join('\n')}`
               : `查询 "${args.name}" 创建成功`,
             data: res.data,
           };
@@ -169,10 +195,13 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         });
         ctx.onQueriesChange?.();
         ctx.onQuerySelect?.({ id: args.queryId as number, name: (args.name as string) || '' });
+        const tableWarning = (res.data as ValidationWarning | undefined)?.validationWarning;
+        const warnings = lint ? [...lint.warnings] : [];
+        if (tableWarning) warnings.push(tableWarning);
         return {
           success: true,
-          message: lint && lint.warnings.length > 0
-            ? `查询更新成功\n${lint.warnings.map((w) => `⚠️ ${w}`).join('\n')}`
+          message: warnings.length > 0
+            ? `查询更新成功\n${warnings.map((w) => `⚠️ ${w}`).join('\n')}`
             : '查询更新成功',
           data: res.data,
         };
@@ -278,13 +307,13 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     },
   }),
 
-  'query:execute': () => ({
+  'query:execute': (ctx) => ({
     id: 'query:execute',
     category: SkillCategory.QUERY,
     name: 'execute_sql',
     description: `直接执行 SQL 语句，不经过模板解析。
 用于插入数据（INSERT）、更新数据（UPDATE）、删除数据（DELETE）等操作。
-⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）必定被拦截（前端预检+后端双层拦截），禁止尝试执行、禁止重试：直接生成完整 SQL 交由用户在数据源管理面板手动执行。
+⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）走用户确认门：调用本工具会挂起并弹出确认卡片，用户确认后系统自动执行并返回结果，用户取消则需降级为"输出完整 SQL 请用户在数据源管理面板手动执行"。挂起等待期间禁止重复调用或改写 SQL；任务被重新继续后，用完全相同的参数重新调用本工具执行同一条 DDL。
 ⚠️ 时间/日期时间参数值中的冒号会被模板引擎破坏（如 09:50:00 会变成 09NULLNULL）：时间请传 HHMMSS 紧凑格式（如 090000）配合 STR_TO_DATE 转换，或直接用数据库 NOW()；纯日期 YYYY-MM-DD 不受影响。
 返回查询结果（SELECT）或影响行数（DML）。
 支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
@@ -300,14 +329,38 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
       },
       required: ['datasourceId', 'sql'],
     },
-    async execute(args) {
+    async execute(args, execCtx) {
       try {
         const sql = (args.sql as string || '').trim();
-        if (/^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(sql)) {
-          return { success: false, message: 'DDL 操作不允许通过 Agent 执行（不要重试、不要换写法尝试）。请直接生成完整 SQL 交由用户在数据源管理面板手动执行' };
+        const isDdl = /^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(sql);
+        if (isDdl) {
+          // DDL 确认门：首次调用经全局确认守卫挂起（danger-confirm），用户在确认卡片
+          // 批准后内核精确重执行本调用。委派场景由 delegate_query 上浮同一张卡片，
+          // 重新委派时 approvePendingApproval 放行守卫，子智能体用相同参数重调即命中批准。
+          const kernelCall = (execCtx as { kernelCall?: { callId?: string; resume?: boolean } } | undefined)?.kernelCall;
+          if (kernelCall?.resume) approvePendingApproval();
+          const approved = kernelCall?.resume === true || consumeApproval('execute_sql', args) === 'approved';
+          if (!approved) {
+            const dsName = await resolveDatasourceName(ctx, args.datasourceId as number);
+            return {
+              success: false,
+              _pause: true,
+              message: `DDL 语句需要用户在确认卡片上批准后才会执行（本次未执行，目标数据源「${dsName}」）。请停止当前任务等待用户确认；任务被重新继续后，请用完全相同的参数重新调用 execute_sql 执行该 DDL，禁止改写 SQL、禁止改走其他方式。待确认 DDL：\n${sql}`,
+              data: {
+                suspendRequest: {
+                  kind: 'danger-confirm',
+                  callId: kernelCall?.callId || '',
+                  toolName: 'execute_sql',
+                  args,
+                  argsKey: toolArgsKey(args),
+                  message: `确认在数据源「${dsName}」执行以下 DDL？\n\n${sql}`,
+                },
+              },
+            };
+          }
         }
         const rollback = args.rollback === true;
-        const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean || rollback, undefined, rollback);
+        const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean || rollback, isDdl || undefined, rollback);
         if (args.multi || rollback) {
           const results = res.data as any[];
           const summary = results.map((r: any, i: number) => `语句${i + 1}: ${r.totalCount ?? 0} 条结果`).join('；');
