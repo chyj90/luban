@@ -517,3 +517,37 @@
   word-break: break-all;
 }
 .selftest-table th { background: #f9fafb; }
+
+/* 自检运行历史（异步运行记录：手工 / Agent 共用一份台账） */
+.selftest-history { display: flex; flex-direction: column; gap: 6px; }
+.selftest-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  width: 100%;
+}
+.selftest-history-item:hover { border-color: #69b1ff; }
+.selftest-history-item-on { border-color: #1677ff; background: #e6f4ff; }
+.selftest-history-name { color: #1f2937; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selftest-history-time { color: #9ca3af; flex: none; }
+.selftest-run-badge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #4b5563;
+  background: #f3f4f6;
+}
+.selftest-run-running { color: #1d4ed8; background: #dbeafe; }
+.selftest-run-passed { color: #059669; background: #d1fae5; }
+.selftest-run-failed { color: #dc2626; background: #fee2e2; }
+.selftest-run-aborted { color: #b45309; background: #fef3c7; }
+.selftest-run-src { color: #6b7280; background: #f3f4f6; }

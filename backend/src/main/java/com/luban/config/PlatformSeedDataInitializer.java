@@ -72,7 +72,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         }
 
         log.info("授予 user 角色基础权限...");
-        String[] userPerms = {Permissions.WORKBENCH_READ, Permissions.APPS_READ};
+        String[] userPerms = {Permissions.WORKBENCH_READ, Permissions.ASK_READ, Permissions.APPS_READ};
         for (String perm : userPerms) {
             RolePermission rp = new RolePermission();
             rp.setRoleId(userRole.getId());

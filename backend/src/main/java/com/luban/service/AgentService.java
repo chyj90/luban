@@ -179,6 +179,13 @@ public class AgentService {
                                     java.util.function.Consumer<String> onProgress,
                                     java.util.function.Consumer<String> onChunk,
                                     java.util.function.Consumer<String> onReasoning) {
+        if (!hasSessionAccess(sessionId, userId)) {
+            Map<String, Object> denied = new LinkedHashMap<>();
+            denied.put("answer", "无权访问该会话");
+            denied.put("error", true);
+            return denied;
+        }
+
         String rateLimitKey = sessionId.substring(0, Math.min(sessionId.length(), 8));
         if (!checkRateLimit(rateLimitKey)) {
             Map<String, Object> limited = new LinkedHashMap<>();
@@ -362,6 +369,50 @@ public class AgentService {
         } catch (Exception e) {
             log.warn("Failed to delete chat messages from DB for session={}: {}", sessionId, e.getMessage());
         }
+    }
+
+    /**
+     * 会话归属校验：会话尚无持久化消息（新会话）放行；
+     * 已有消息时仅允许本人或超管访问。
+     */
+    public boolean hasSessionAccess(String sessionId, Long userId) {
+        if (userId == null) {
+            return false;
+        }
+        if (sessionId == null || sessionId.isBlank()) {
+            return true;
+        }
+        return chatMessageRepository.findFirstBySessionIdOrderByIdAsc(sessionId)
+                .map(m -> roleConceptPermissionService.isSuperAdmin(userId) || userId.equals(m.getUserId()))
+                .orElse(true);
+    }
+
+    /**
+     * 当前用户的历史会话列表（分权分域：只返回本人会话）。
+     */
+    public List<Map<String, Object>> listUserSessions(Long userId) {
+        List<ChatMessageRepository.ChatSessionSummary> summaries =
+                chatMessageRepository.summarizeSessionsByUserId(userId);
+        if (summaries.isEmpty()) {
+            return List.of();
+        }
+        Map<String, String> titles = new HashMap<>();
+        for (ChatMessageRepository.ChatSessionTitle t : chatMessageRepository.findSessionTitlesByUserId(userId)) {
+            titles.put(t.getSessionId(), t.getContent());
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ChatMessageRepository.ChatSessionSummary s : summaries) {
+            String content = titles.get(s.getSessionId());
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("sessionId", s.getSessionId());
+            item.put("title", content != null && !content.isBlank()
+                    ? content.substring(0, Math.min(40, content.length()))
+                    : "新对话");
+            item.put("updatedAt", s.getUpdatedAt() != null ? s.getUpdatedAt().toString() : null);
+            item.put("messageCount", s.getMessageCount());
+            result.add(item);
+        }
+        return result;
     }
 
     private void persistChatHistory(String sessionId, Long userId, String userMessage,

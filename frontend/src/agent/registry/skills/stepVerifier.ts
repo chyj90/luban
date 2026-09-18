@@ -295,6 +295,30 @@ async function verifyRehearsalStep(_description: string, result: string): Promis
 }
 
 /**
+ * 核验 app_selfcheck（应用链路自检）步骤：
+ * ① 证据门槛——result 必须包含运行报告证据（runId/报告头），没跑过不许标完成；
+ * ② 报告为"未通过"/运行中断/仍在后台时不许标完成——修复重跑至通过，
+ *    同一用例最多 2 轮仍失败时如实上报失败原因（也不得标记完成）。
+ */
+async function verifySelfCheckStep(_description: string, result: string): Promise<StepVerifyResult> {
+  if (!/run-[A-Za-z0-9]+|链路自检报告|自检报告/.test(result)) {
+    return {
+      verified: false,
+      reason: '应用链路自检步骤的 result 中没有任何运行报告证据（runId/报告摘要）。请执行 app_selfcheck（异步运行记录，工具内部轮询至终态返回报告），把报告摘要与 runId 粘贴进 result 后重新标记 completed。禁止凭"资源已建好/预演已通过"直接标完成——本步骤验证的是真实运行链路',
+    };
+  }
+  const failure = [/未通过/, /❌/, /已中断/, /ABORTED/, /仍在后台/, /自检启动失败/, /自检执行失败/]
+    .find((p) => p.test(result));
+  if (failure) {
+    return {
+      verified: false,
+      reason: '链路自检未完成或未通过。请先修复（页面代码/触发器/查询/TestSpec 契约），重新执行 app_selfcheck 至通过（同一用例最多 2 轮；仍失败时如实上报失败原因，但不得标记 completed），并把新的报告摘要与 runId 粘贴进 result',
+    };
+  }
+  return { verified: true };
+}
+
+/**
  * 核验步骤是否真的完成。返回 verified=false 时 update_plan_item 应拒绝 completed。
  */
 export async function verifyStepCompletion(
@@ -313,6 +337,8 @@ export async function verifyStepCompletion(
         return await verifyQueryStep(applicationId, description, result);
       case 'rehearse_triggers':
         return await verifyRehearsalStep(description, result);
+      case 'app_selfcheck':
+        return await verifySelfCheckStep(description, result);
       default:
         // create_code_page / update_code_page 等暂由 validate_plan 层覆盖，此处跳过
         return { verified: true, skipped: true };

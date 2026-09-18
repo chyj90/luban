@@ -280,6 +280,9 @@ public class LintService {
 
             // 触发器契约检查：事件合法性、target 完整性、paramsMapping 的 form.data.* 字段必须存在于绑定表单。
             // 这类断链在真实运行时表现为"参数为 NULL → 必填派发失败 / 非必填静默命中 0 行"，必须建模期报出。
+            // 例外：form.data.id 是平台业务主键约定（发起侧 startWorkflow 运行时注入 Insert 查询的
+            // insertId，不在绑定表单 schema 内）——按断链报 ERROR 会制造误报风暴（2026-09-18 请假
+            // 案例 9 条 ERROR，流程助手被迫逐条口头解释），降级为每节点一条 WARNING。
             if (nodes.isArray()) {
                 lintTriggers(nodes, fieldKeys, errors, warnings);
                 lintApprovers(nodes, warnings);
@@ -322,6 +325,7 @@ public class LintService {
             String nodeName = config.has("nodeName") ? config.get("nodeName").asText() : nodeId;
 
             Map<String, Integer> perEvent = new LinkedHashMap<>();
+            boolean businessIdHintGiven = false;
             for (JsonNode t : triggers) {
                 String on = t.path("on").asText("");
                 if (!VALID_TRIGGER_EVENTS.contains(on)) {
@@ -340,10 +344,24 @@ public class LintService {
                     if (from.startsWith("form.data.")) {
                         String fieldKey = from.substring("form.data.".length());
                         if (!fieldKeys.isEmpty() && !fieldKeys.contains(fieldKey)) {
-                            errors.add(Map.of("category", "Trigger", "message",
-                                "断链：节点「" + nodeName + "」的触发器 paramsMapping 引用 form.data."
-                                    + fieldKey + "，但绑定表单不存在该字段——发起侧 formData 不携带该字段时"
-                                    + "参数为 NULL，回写查询静默命中 0 行", "severity", "ERROR"));
+                            if ("id".equals(fieldKey)) {
+                                // 业务主键约定：form.data.id 由发起侧（startWorkflowWithForm / 页面代码）
+                                // 在运行时注入业务记录主键（Insert 查询的 insertId），不在绑定表单 schema 内，
+                                // 不是断链。真断链（发起侧漏带 id）由触发器预演 / 链路自检的运行时证据兜底
+                                if (!businessIdHintGiven) {
+                                    warnings.add(Map.of("category", "Trigger", "message",
+                                        "节点「" + nodeName + "」触发器引用 form.data.id（平台业务主键约定："
+                                            + "发起侧运行时注入 insertId，不在绑定表单 schema 内，不作断链处理）。"
+                                            + "请以 rehearse_triggers / app_selfcheck 的运行时证据确认发起侧 formData 携带该字段",
+                                        "severity", "WARNING"));
+                                    businessIdHintGiven = true;
+                                }
+                            } else {
+                                errors.add(Map.of("category", "Trigger", "message",
+                                    "断链：节点「" + nodeName + "」的触发器 paramsMapping 引用 form.data."
+                                        + fieldKey + "，但绑定表单不存在该字段——发起侧 formData 不携带该字段时"
+                                        + "参数为 NULL，回写查询静默命中 0 行", "severity", "ERROR"));
+                            }
                         }
                     }
                 }

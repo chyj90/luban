@@ -14,7 +14,11 @@ import { selfTestApi } from '@/api/selfTest';
 import { listQueries } from '@/api';
 import { extractContractAndBuildSpec } from './selfTestContract';
 import type { ToolExecuteResult } from '@/types/agent';
-import type { SelfTestReport, SelfTestSpec } from '@/types/selfTest';
+import type { SelfTestReport, SelfTestRun, SelfTestSpec } from '@/types/selfTest';
+
+/** 技能内轮询：引擎总预算 60s + 清理时间，90s 内每 2.5s 回读一次运行状态 */
+const POLL_INTERVAL_MS = 2500;
+const POLL_BUDGET_MS = 90_000;
 
 /** TestSpec 字段契约速查（失败时随错误返回，模型下一轮可直接照抄修正） */
 const TESTSPEC_CONTRACT = `【TestSpec 字段契约】
@@ -203,6 +207,7 @@ export const selfTestSkills: Record<string, SkillFactory> = {
     category: SkillCategory.TEST,
     name: 'app_selfcheck',
     description: `执行应用链路自检（运行时验证）：以真实平台用户身份走"写库→发起流程→审批→触发器派发→数据断言"，引擎按写入记账自动清理测试数据。
+执行为异步运行记录：调用后自动轮询至终态并返回完整报告；报告持久化在应用编辑器「链路自检」抽屉，可随时凭 runId 回看。应用已有自检在运行时不并发，自动转而等待那次运行。
 使用约定：应用交付前（页面+流程类需求）必须执行一次并把报告摘要写进完成汇报；testSpec 缺省时自动生成主链路用例（仅链路级验证）；语义断言（余额/状态变化）必须自己构造 TestSpec（capture_sql 捕获初值、assert_sql 里对比期望，主分支+驳回分支各一份）。
 
 ## TestSpec 契约（字段名必须逐字一致，别名 queryName/processId 会被自动归一但语义断言需自查）
@@ -227,9 +232,40 @@ ${GOLDEN_SPEC}
           type: 'string',
           description: 'TestSpec JSON 字符串（可选）。缺省时自动提取应用契约生成主链路用例；需要语义断言/驳回分支时自己构造。字段契约：{testName, datasourceId:数字, actors:{"别名":平台用户ID}, steps:[{id, actor, type, ...}]}；query_run 用数字 queryId、workflow_start 用数字 definitionId（不是 queryName/processId）、assert_sql 的 expect 是对象 {"operator":"cell_eq|rows_count_eq|cell_contains|is_empty","value":"..."} 而不是数组；占位符 "${步骤id.insertId}"/"${步骤id.instanceId}"',
         },
+        runId: {
+          type: 'string',
+          description: '可选。传入已发起运行的 runId 时只回读该运行的状态/报告，不重新执行——用于轮询超时后的重查。仍在运行时返回进度，稍后再次调用即可',
+        },
       },
     },
     async execute(args): Promise<ToolExecuteResult> {
+      const appId = ctx.applicationId;
+
+      // runId 回读模式：不重跑，只查询某次运行（轮询超时/撞锁跟随后的重查入口）
+      const runIdArg = (args as { runId?: string }).runId;
+      if (runIdArg && runIdArg.trim()) {
+        try {
+          const resp = await selfTestApi.getRun(appId, runIdArg.trim());
+          const run = resp.data;
+          if (run.status === 'RUNNING') {
+            return {
+              success: false,
+              message: `自检仍在后台运行（runId=${run.runId}，当前步骤 ${run.currentStepId ?? '准备中'}）。稍后再次调用本工具并传 {"runId":"${run.runId}"} 查询；报告持久化，也可在应用编辑器「链路自检」抽屉查看。`,
+            };
+          }
+          if (!run.report) {
+            return {
+              success: false,
+              message: `运行 ${run.runId} 终态为 ${run.status}${run.summary ? `：${run.summary}` : ''}（无报告）。请重新发起自检。`,
+            };
+          }
+          const md = renderReportMarkdown(run.report, [], [`来源 ${run.source}，结束于 ${run.finishedAt ?? '-'}`]);
+          return { success: run.report.passed, message: md, data: { report: run.report } };
+        } catch (e) {
+          return { success: false, message: `查询运行记录失败: ${(e as Error).message}` };
+        }
+      }
+
       const raw = (args as { testSpec?: string }).testSpec;
       let gaps: string[] = [];
       let notes: string[] = [];
@@ -271,22 +307,46 @@ ${GOLDEN_SPEC}
           };
         }
       }
+      // ③ 启动异步运行（立即返回 RUNNING 记录），随后内部轮询至终态——对外契约仍是"调用 → 报告"
+      let run: SelfTestRun;
       try {
-        const resp = await selfTestApi.run(ctx.applicationId, spec);
-        const report = resp.data;
-        const md = renderReportMarkdown(report, gaps, notes);
-        if (!report.passed) {
-          return {
-            success: false,
-            message: `链路自检未通过，必须修复后重跑（同一用例最多 2 轮，仍失败要如实上报）：\n\n${md}`,
-            data: { report },
-          };
-        }
-        return { success: true, message: md, data: { report } };
+        const resp = await selfTestApi.start(ctx.applicationId, spec, 'AGENT');
+        run = resp.data;
       } catch (e) {
-        // 后端 400（契约不符）返回归一化错误：附契约速查与金样例，模型下一轮可自修复
-        return contractError(`自检执行失败: ${(e as Error).message}`, []);
+        return contractError(`自检启动失败: ${(e as Error).message}`, []);
       }
+      if (run.followedExisting) {
+        notes = [...notes, `该应用已有自检在运行，本次未重复发起，转而等待该运行完成（runId=${run.runId}）`];
+      }
+      const deadline = Date.now() + POLL_BUDGET_MS;
+      while (run.status === 'RUNNING' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        try {
+          const resp = await selfTestApi.getRun(ctx.applicationId, run.runId);
+          run = resp.data;
+        } catch { /* 单次轮询失败忽略，下一轮重试 */ }
+      }
+      if (run.status === 'RUNNING') {
+        return {
+          success: false,
+          message: `自检仍在后台执行（runId=${run.runId}，当前步骤 ${run.currentStepId ?? '…'}）。稍后再次调用本工具并传 {"runId":"${run.runId}"} 查询结果；报告持久化，也可在应用编辑器「链路自检」抽屉回看。`,
+        };
+      }
+      if (!run.report) {
+        return {
+          success: false,
+          message: `运行 ${run.runId} 终态为 ${run.status}${run.summary ? `：${run.summary}` : ''}（无报告）。请修复后重新发起自检。`,
+        };
+      }
+      const md = renderReportMarkdown(run.report, gaps, notes);
+      if (!run.report.passed) {
+        return {
+          success: false,
+          message: `链路自检未通过，必须修复后重跑（同一用例最多 2 轮，仍失败要如实上报）：\n\n${md}`,
+          data: { report: run.report },
+        };
+      }
+      return { success: true, message: md, data: { report: run.report } };
     },
   }),
 };

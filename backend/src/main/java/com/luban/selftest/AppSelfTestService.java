@@ -1,11 +1,13 @@
 package com.luban.selftest;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.dto.RunQueryRequest;
 import com.luban.dto.RunQueryResponse;
 import com.luban.selftest.dto.Expectation;
 import com.luban.selftest.dto.StepResult;
+import com.luban.selftest.dto.SelfTestRunView;
 import com.luban.selftest.dto.TestRunReport;
 import com.luban.selftest.dto.TestSpec;
 import com.luban.selftest.dto.TestStep;
@@ -30,8 +32,10 @@ import com.luban.workflow.repository.WorkflowTriggerOutboxRepository;
 import com.luban.workflow.service.ProcessEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -45,6 +49,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -53,8 +60,12 @@ import java.util.regex.Pattern;
  * "写库 → 发起流程 → 审批 → 触发器派发 → 数据断言"，全部复用现有服务层
  *（runPreviewAs / startProcess / completeTask），不绕过任何业务规则。
  *
+ * 执行模型（2026-09-18 升级）：异步运行记录。POST 立即返回 runId，引擎在工作线程执行，
+ * 状态/进度/终态报告持久化在 app_self_test_run —— 前端 30s 超时不再丢报告，
+ * 撞锁可跟随运行中的 run，历史构成应用回归台账。
+ *
  * 安全设计（渗透测试缓解，见设计文档威胁模型）：
- *  - owner-only（app.createdBy 强校验）；actor 必须是真实平台用户；
+ *  - owner-only（app.createdBy 强校验，读端点同语义）；actor 必须是真实平台用户；
  *  - 断言/捕获仅单条 SELECT；清理全部由引擎按写入记账生成（无用户声明 SQL）；
  *  - steps/actors/超时/并发/频次多重限额。
  */
@@ -63,6 +74,8 @@ public class AppSelfTestService {
 
     private static final Logger log = LoggerFactory.getLogger(AppSelfTestService.class);
     static final long TOTAL_TIMEOUT_MS = 60_000;
+    /** 超过该时长的 RUNNING 记录视为孤儿（服务重启/进程终止）， acquire 时清扫为 ABORTED */
+    private static final long STALE_RUN_ABORT_MS = 5 * 60_000L;
     static final int MAX_STEPS = 50;
     static final int MAX_ACTORS = 5;
     static final int DEFAULT_WAIT_SECONDS = 20;
@@ -85,10 +98,27 @@ public class AppSelfTestService {
     private final QueryService queryService;
     private final ProcessEngine processEngine;
     private final SelfTestCleanupService cleanupService;
+    private final AppSelfTestRunRepository runRepository;
     private final ObjectMapper objectMapper;
 
-    private final Map<Long, Boolean> runningApps = new ConcurrentHashMap<>();
+    /** appId → 运行中 runId（内存锁：同应用串行；DB 记录为跨重启的事实源，孤儿由清扫兜底） */
+    private final Map<Long, String> runningRunIds = new ConcurrentHashMap<>();
     private final Map<Long, Deque<Long>> userRunTimes = new ConcurrentHashMap<>();
+
+    /** 自检工作线程池：同应用已被内存锁串行，池大小决定跨应用并发度 */
+    private final ExecutorService executor = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "self-test-worker");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @PreDestroy
+    void shutdownExecutor() {
+        executor.shutdownNow();
+    }
+
+    /** 启动结果：followedExisting=true 表示应用已有自检在运行，返回的是那条运行记录（调用方应转而轮询它） */
+    public record StartOutcome(AppSelfTestRun run, boolean followedExisting) {}
 
     public AppSelfTestService(
             ApplicationRepository applicationRepository,
@@ -103,6 +133,7 @@ public class AppSelfTestService {
             QueryService queryService,
             ProcessEngine processEngine,
             SelfTestCleanupService cleanupService,
+            AppSelfTestRunRepository runRepository,
             ObjectMapper objectMapper) {
         this.applicationRepository = applicationRepository;
         this.userRepository = userRepository;
@@ -116,43 +147,166 @@ public class AppSelfTestService {
         this.queryService = queryService;
         this.processEngine = processEngine;
         this.cleanupService = cleanupService;
+        this.runRepository = runRepository;
         this.objectMapper = objectMapper;
     }
 
     // ============================================================
-    // 执行入口
+    // 执行入口（异步：立即返回运行记录，工作线程执行）
     // ============================================================
 
-    public TestRunReport execute(Long appId, TestSpec spec, User operator) {
-        Application app = applicationRepository.findById(appId)
-                .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
-        if (!app.getCreatedBy().equals(operator.getId())) {
-            // T1：owner-only，与 runPreviewAs 同语义
-            throw new IllegalArgumentException("仅应用所有者可执行链路自检");
-        }
-        if (runningApps.putIfAbsent(appId, Boolean.TRUE) != null) {
-            throw new IllegalArgumentException("该应用已有自检正在运行，请稍后再试");
-        }
-        if (!acquireRunQuota(operator.getId())) {
-            runningApps.remove(appId);
-            throw new IllegalArgumentException("运行过于频繁（每小时最多 " + MAX_RUNS_PER_USER_PER_HOUR + " 次），请稍后再试");
-        }
-        try {
-            return doExecute(appId, spec, operator);
-        } finally {
-            runningApps.remove(appId);
-        }
-    }
-
-    private TestRunReport doExecute(Long appId, TestSpec spec, User operator) {
-        TestRunReport report = new TestRunReport();
-        report.setRunId("run-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6));
-        long startMs = System.currentTimeMillis();
-        long deadline = startMs + TOTAL_TIMEOUT_MS;
-
+    public StartOutcome startRun(Long appId, TestSpec spec, User operator, String source) {
+        requireOwner(appId, operator);
+        // 快速失败：契约错误在提交前拦截，不产生运行记录
         validateSpec(spec);
         Map<String, Long> actorIds = resolveActors(spec, operator);
         validateDatasource(appId, spec.getDatasourceId());
+        if (!acquireRunQuota(operator.getId())) {
+            throw new IllegalArgumentException("运行过于频繁（每小时最多 " + MAX_RUNS_PER_USER_PER_HOUR + " 次），请稍后再试");
+        }
+        sweepStaleRuns(appId);
+
+        String runId = "run-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
+        String existingRunId = runningRunIds.putIfAbsent(appId, runId);
+        if (existingRunId != null) {
+            AppSelfTestRun busy = runRepository.findByRunId(existingRunId).orElse(null);
+            if (busy != null) {
+                log.info("[self-test] 拒绝并发运行，返回运行中记录 | appId={} busyRunId={}", appId, existingRunId);
+                return new StartOutcome(busy, true);
+            }
+            throw new IllegalArgumentException("该应用已有自检正在运行，请稍后再试");
+        }
+
+        AppSelfTestRun run = new AppSelfTestRun();
+        run.setRunId(runId);
+        run.setApplicationId(appId);
+        run.setSource("AGENT".equalsIgnoreCase(source) ? "AGENT" : "MANUAL");
+        run.setStatus("RUNNING");
+        run.setTestName(spec.getTestName());
+        try {
+            run.setSpecJson(objectMapper.writeValueAsString(spec));
+        } catch (JsonProcessingException e) {
+            log.warn("[self-test] spec 序列化失败 | runId={}", runId, e);
+        }
+        run.setOperatorId(operator.getId());
+        run.setCreatedAt(LocalDateTime.now());
+        run.setStartedAt(LocalDateTime.now());
+        AppSelfTestRun saved = runRepository.save(run);
+
+        executor.submit(() -> {
+            try {
+                TestRunReport report = doExecute(appId, spec, operator, actorIds, saved);
+                finalizeRun(saved, report);
+            } catch (Exception e) {
+                log.error("[self-test] 运行异常 | runId={}", runId, e);
+                saved.setStatus("FAILED");
+                saved.setSummary("执行异常: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                saved.setFinishedAt(LocalDateTime.now());
+                runRepository.save(saved);
+            } finally {
+                runningRunIds.remove(appId, runId);
+            }
+        });
+        return new StartOutcome(saved, false);
+    }
+
+    public AppSelfTestRun getRun(Long appId, String runId, User operator) {
+        requireOwner(appId, operator);
+        AppSelfTestRun run = runRepository.findByRunId(runId)
+                .orElseThrow(() -> new IllegalArgumentException("运行记录不存在: " + runId));
+        if (!appId.equals(run.getApplicationId())) {
+            throw new IllegalArgumentException("运行记录不属于该应用");
+        }
+        return run;
+    }
+
+    public List<AppSelfTestRun> listRuns(Long appId, User operator, int limit) {
+        requireOwner(appId, operator);
+        return runRepository.findByApplicationIdOrderByCreatedAtDesc(appId,
+                PageRequest.of(0, Math.max(1, Math.min(limit, 50))));
+    }
+
+    public SelfTestRunView toView(AppSelfTestRun run) {
+        SelfTestRunView view = new SelfTestRunView();
+        view.setId(run.getId());
+        view.setRunId(run.getRunId());
+        view.setApplicationId(run.getApplicationId());
+        view.setSource(run.getSource());
+        view.setStatus(run.getStatus());
+        view.setTestName(run.getTestName());
+        view.setSummary(run.getSummary());
+        view.setPassed(run.getPassed());
+        view.setCurrentStepId(run.getCurrentStepId());
+        view.setCreatedAt(run.getCreatedAt());
+        view.setStartedAt(run.getStartedAt());
+        view.setFinishedAt(run.getFinishedAt());
+        if (run.getReportJson() != null) {
+            try {
+                view.setReport(objectMapper.readValue(run.getReportJson(), TestRunReport.class));
+            } catch (Exception e) {
+                log.warn("[self-test] 报告反序列化失败 | runId={}", run.getRunId(), e);
+            }
+        }
+        if (run.getSpecJson() != null) {
+            try {
+                view.setSpec(objectMapper.readValue(run.getSpecJson(), TestSpec.class));
+            } catch (Exception e) {
+                log.warn("[self-test] spec 反序列化失败 | runId={}", run.getRunId(), e);
+            }
+        }
+        return view;
+    }
+
+    private void requireOwner(Long appId, User operator) {
+        Application app = applicationRepository.findById(appId)
+                .orElseThrow(() -> new IllegalArgumentException("应用不存在"));
+        if (!app.getCreatedBy().equals(operator.getId())) {
+            // T1：owner-only，与 runPreviewAs 同语义；读端点同门禁（运行记录含业务数据证据）
+            throw new IllegalArgumentException("仅应用所有者可执行链路自检");
+        }
+    }
+
+    /** 服务重启/进程终止会留下 RUNNING 孤儿记录（内存锁已随进程消失），acquire 前清扫为 ABORTED */
+    private void sweepStaleRuns(Long appId) {
+        LocalDateTime cutoff = LocalDateTime.now().minusNanos(STALE_RUN_ABORT_MS * 1_000_000);
+        for (AppSelfTestRun stale : runRepository.findByApplicationIdAndStatus(appId, "RUNNING")) {
+            if (stale.getCreatedAt().isBefore(cutoff)) {
+                stale.setStatus("ABORTED");
+                stale.setSummary((stale.getSummary() == null ? "" : stale.getSummary() + "；")
+                        + "运行中断（服务重启或进程终止），结果未知，请重新运行");
+                stale.setFinishedAt(LocalDateTime.now());
+                runRepository.save(stale);
+                log.warn("[self-test] 清扫孤儿运行记录 | runId={} createdAt={}", stale.getRunId(), stale.getCreatedAt());
+            }
+        }
+    }
+
+    private void finalizeRun(AppSelfTestRun run, TestRunReport report) {
+        try {
+            run.setReportJson(objectMapper.writeValueAsString(report));
+        } catch (JsonProcessingException e) {
+            log.warn("[self-test] 报告序列化失败 | runId={}", run.getRunId(), e);
+        }
+        run.setStatus(report.isPassed() ? "PASSED" : "FAILED");
+        run.setSummary(report.getSummary());
+        run.setPassed(report.isPassed());
+        run.setCurrentStepId(null);
+        run.setFinishedAt(LocalDateTime.now());
+        runRepository.save(run);
+    }
+
+    private TestRunReport doExecute(Long appId, TestSpec spec, User operator,
+                                    Map<String, Long> actorIds, AppSelfTestRun runRecord) {
+        TestRunReport report = new TestRunReport();
+        report.setRunId(runRecord.getRunId());
+        long startMs = System.currentTimeMillis();
+        long deadline = startMs + TOTAL_TIMEOUT_MS;
+
+        validateDatasource(appId, spec.getDatasourceId());
+        Consumer<String> progress = stepId -> {
+            runRecord.setCurrentStepId(stepId);
+            runRepository.save(runRecord);
+        };
 
         Map<String, Object> vars = new HashMap<>();
         for (Map.Entry<String, Long> e : actorIds.entrySet()) {
@@ -177,6 +331,7 @@ public class AppSelfTestService {
                     break;
                 }
                 Set<String> missing = new LinkedHashSet<>();
+                progress.accept(step.getId());
                 StepResult result = runStep(step, appId, spec.getDatasourceId(), actorIds, operator, vars, ledger, residuals, warnings, missing, deadline);
                 report.getSteps().add(result);
                 if (!result.isPassed()) allPassed = false;

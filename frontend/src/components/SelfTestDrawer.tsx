@@ -14,7 +14,7 @@ import { selfTestApi } from '@/api/selfTest';
 import { buildSpecForWorkflows, listChainCandidates, type ChainCandidate } from '@/agent/registry/skills/selfTestContract';
 import type { Page, CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
-import type { SelfTestReport, SelfTestSpec } from '@/types/selfTest';
+import type { SelfTestReport, SelfTestRun, SelfTestSpec } from '@/types/selfTest';
 
 interface SelfTestDrawerProps {
   appId: number;
@@ -40,6 +40,10 @@ interface SmokePageState {
 }
 
 const SMOKE_WAIT_MS = 5000;
+
+/** 业务链路为异步运行：start 立即返回 RUNNING 记录，随后轮询至终态（引擎预算 60s + 清理） */
+const FOLLOW_POLL_MS = 2000;
+const FOLLOW_BUDGET_MS = 90_000;
 
 /** 给页面 JS 包一层错误上报（iframe 内运行时错误/未处理 Promise 拒绝 → postMessage 给父层） */
 function wrapPageJs(js: string): string {
@@ -69,8 +73,25 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
   const [chainError, setChainError] = useState('');
   const [selectedChainIds, setSelectedChainIds] = useState<Set<number>>(new Set());
   const [smokePage, setSmokePage] = useState<SmokePageState | null>(null);
+  /** 自检运行历史（异步运行记录）；null = 加载中 */
+  const [history, setHistory] = useState<SelfTestRun[] | null>(null);
+  const [historyError, setHistoryError] = useState('');
+  /** 当前报告对应的运行（历史高亮用） */
+  const [viewingRunId, setViewingRunId] = useState<string | null>(null);
   const journalRef: MutableRefObject<BridgeJournalEntry[] | null> = useRef(null);
   const errorCollectorRef = useRef<{ pageId: number; errors: string[] } | null>(null);
+  /** 轮询令牌：重跑/切换历史/关抽屉时递增，使旧的跟随循环失效 */
+  const followTokenRef = useRef(0);
+
+  // 打开抽屉时拉取运行历史
+  useEffect(() => {
+    if (!open) return;
+    setHistory(null);
+    setHistoryError('');
+    selfTestApi.listRuns(appId, 20)
+      .then((res) => setHistory(res.data || []))
+      .catch((e) => setHistoryError((e as Error).message || '未知错误'));
+  }, [open, appId]);
 
   // 打开抽屉时拉取页面清单供勾选，默认全选（保持"整个应用"的行为）
   useEffect(() => {
@@ -112,12 +133,83 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
   }, [open, appId]);
 
   const handleClose = useCallback(() => {
+    followTokenRef.current += 1;
     setPages(null);
     setPagesError('');
     setChainCandidates(null);
     setChainError('');
+    setHistory(null);
+    setHistoryError('');
+    setReport(null);
+    setGaps([]);
+    setNotes([]);
+    setPageResults([]);
+    setErrorMsg('');
+    setViewingRunId(null);
+    setPhase('idle');
     onClose();
   }, [onClose]);
+
+  /** 轮询跟随一次运行直到终态/预算耗尽；返回 null 表示被新操作取代（调用方直接退出） */
+  const followRun = useCallback(async (runId: string, token: number): Promise<SelfTestRun | null> => {
+    setPhase('business');
+    const deadline = Date.now() + FOLLOW_BUDGET_MS;
+    let run: SelfTestRun | null = null;
+    while (Date.now() < deadline) {
+      if (followTokenRef.current !== token) return null;
+      try {
+        const resp = await selfTestApi.getRun(appId, runId);
+        run = resp.data;
+      } catch { /* 单次轮询失败忽略，下一轮重试 */ }
+      if (run && run.status !== 'RUNNING') break;
+      setProgressText(`执行业务链路（runId ${runId}${run?.currentStepId ? `，当前步骤 ${run.currentStepId}` : ''}）…`);
+      await new Promise((r) => setTimeout(r, FOLLOW_POLL_MS));
+    }
+    return run;
+  }, [appId]);
+
+  /** 终态运行落到界面：有报告展示报告，无报告（ABORTED 等）给出说明 */
+  const applyFinishedRun = useCallback((run: SelfTestRun) => {
+    if (run.status === 'RUNNING') {
+      setErrorMsg(`自检仍在后台执行（runId=${run.runId}，当前步骤 ${run.currentStepId ?? '…'}）。稍后重新打开抽屉可查看结果。`);
+      setPhase('failed');
+      return;
+    }
+    if (!run.report) {
+      setErrorMsg(`运行 ${run.runId} 终态为 ${run.status}：${run.summary ?? '无报告'}`);
+      setPhase('failed');
+      return;
+    }
+    setReport(run.report);
+    setViewingRunId(run.runId);
+    setErrorMsg('');
+    setPhase('done');
+  }, []);
+
+  /** 静默刷新历史（不改变加载态） */
+  const loadHistoryQuiet = useCallback(() => {
+    selfTestApi.listRuns(appId, 20)
+      .then((res) => setHistory(res.data || []))
+      .catch(() => { /* 历史刷新失败不打扰主流程 */ });
+  }, [appId]);
+
+  /** 回看历史运行：仍在跑的转跟随，终态的直接展示报告 */
+  const openHistoryRun = useCallback(async (runId: string) => {
+    const token = ++followTokenRef.current;
+    try {
+      let run = (await selfTestApi.getRun(appId, runId)).data;
+      if (run.status === 'RUNNING') {
+        const finalRun = await followRun(runId, token);
+        if (finalRun === null) return;
+        run = finalRun;
+      }
+      applyFinishedRun(run);
+      loadHistoryQuiet();
+    } catch (e) {
+      setErrorMsg((e as Error).message || '加载运行详情失败');
+      setPhase('failed');
+    }
+  }, [appId, followRun, applyFinishedRun, loadHistoryQuiet]);
 
   const togglePage = useCallback((pageId: number) => {
     setSelectedPageIds((prev) => {
@@ -184,9 +276,11 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
   }, []);
 
   const startRun = useCallback(async () => {
+    followTokenRef.current += 1;
     setPhase('smoking');
     setErrorMsg('');
     setReport(null);
+    setViewingRunId(null);
     setGaps([]);
     setNotes([]);
     setPageResults([]);
@@ -196,7 +290,8 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
       const smoke = await runPageSmoke(selected);
       setPageResults(smoke);
 
-      // ② 业务链路：仅勾选的流程（单/多选，默认第一条主链路）；全不选则跳过
+      // ② 业务链路：仅勾选的流程（单/多选，默认第一条主链路）；全不选则跳过。
+      //    异步运行记录模型：start 立即返回，轮询至终态（报告持久化，超时也能稍后回看）
       setPhase('business');
       const chainIds = (chainCandidates || [])
         .filter((c) => selectedChainIds.has(c.workflowId))
@@ -209,8 +304,17 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
         setGaps(extraction.gaps);
         setNotes(extraction.notes);
         if (extraction.spec.steps.length > 0) {
-          const resp = await selfTestApi.run(appId, extraction.spec as SelfTestSpec);
-          setReport(resp.data);
+          const token = ++followTokenRef.current;
+          const started = await selfTestApi.start(appId, extraction.spec as SelfTestSpec, 'MANUAL');
+          const run = started.data;
+          if (run.followedExisting) {
+            setNotes((prev) => [...prev, `该应用已有自检在运行（runId=${run.runId}），已转而显示该运行的进度与结果`]);
+          }
+          const finalRun = await followRun(run.runId, token);
+          if (finalRun === null) return;
+          applyFinishedRun(finalRun);
+          loadHistoryQuiet();
+          return;
         }
       }
       setPhase('done');
@@ -218,7 +322,7 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
       setErrorMsg((e as Error).message || '自检执行失败');
       setPhase('failed');
     }
-  }, [appId, runPageSmoke, pages, selectedPageIds, chainCandidates, selectedChainIds]);
+  }, [appId, runPageSmoke, pages, selectedPageIds, chainCandidates, selectedChainIds, followRun, applyFinishedRun, loadHistoryQuiet]);
 
   const overallPassed = pageResults.every((r) => r.jsErrors.length === 0 && r.queryCalls.every((c) => c.ok))
     && (!report || report.passed);
@@ -360,6 +464,40 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
           </div>
         )}
 
+        {(phase === 'idle' || phase === 'failed' || phase === 'done') && (
+          <div className="selftest-section">
+            <div className="selftest-select-head">
+              <h4>历史运行</h4>
+              {history !== null && !historyError && history.length > 0 && (
+                <span className="selftest-select-count">共 {history.length} 条</span>
+              )}
+            </div>
+            {history === null ? (
+              <div className="selftest-hint">历史加载中…</div>
+            ) : historyError ? (
+              <div className="selftest-hint">历史加载失败：{historyError}</div>
+            ) : history.length === 0 ? (
+              <div className="selftest-hint">暂无历史运行（含 Agent 执行的自检，报告均持久化于此）</div>
+            ) : (
+              <div className="selftest-history">
+                {history.map((r) => (
+                  <button
+                    key={r.runId}
+                    className={`selftest-history-item ${viewingRunId === r.runId ? 'selftest-history-item-on' : ''}`}
+                    onClick={() => openHistoryRun(r.runId)}
+                    title={r.summary || ''}
+                  >
+                    <span className={`selftest-run-badge selftest-run-${r.status.toLowerCase()}`}>{runStatusText(r.status)}</span>
+                    <span className="selftest-run-badge selftest-run-src">{r.source === 'AGENT' ? 'Agent' : '手工'}</span>
+                    <span className="selftest-history-name">{r.testName || '(未命名用例)'}</span>
+                    <span className="selftest-history-time">{formatTime(r.createdAt)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {errorMsg && <div className="selftest-section selftest-error">{errorMsg}</div>}
 
         {pageResults.length > 0 && (
@@ -390,7 +528,9 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
                 {report.passed ? '通过' : '未通过'}
               </span>
             </h4>
-            <div className="selftest-hint">{report.summary}</div>
+            <div className="selftest-hint">
+              {viewingRunId ? `runId: ${viewingRunId} · ` : ''}{report.summary}
+            </div>
             <table className="selftest-table">
               <thead><tr><th>步骤</th><th>类型</th><th>结果</th><th>耗时</th><th>说明</th></tr></thead>
               <tbody>
@@ -450,6 +590,21 @@ export function SelfTestDrawer({ appId, open, onClose, queries, userInfo }: Self
       )}
     </div>
   );
+}
+
+function runStatusText(status: SelfTestRun['status']): string {
+  switch (status) {
+    case 'RUNNING': return '运行中';
+    case 'PASSED': return '通过';
+    case 'FAILED': return '未通过';
+    case 'ABORTED': return '已中断';
+    default: return status;
+  }
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false });
 }
 
 function summarizeEvidence(evidence: Record<string, unknown> | null): string {

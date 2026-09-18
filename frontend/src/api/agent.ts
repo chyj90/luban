@@ -89,6 +89,17 @@ export function getSessionMessages(sessionId: string) {
   return get<{ sessionId: string; messages: ChatMessageItem[] }>(`/agent/sessions/${sessionId}/messages`);
 }
 
+export interface AgentSessionSummary {
+  sessionId: string;
+  title: string;
+  updatedAt?: string;
+  messageCount?: number;
+}
+
+export function listAgentSessions() {
+  return get<{ sessions: AgentSessionSummary[] }>('/agent/sessions');
+}
+
 /**
  * 使用 XHR 实现 SSE 流式请求。
  * 必须用 XHR.onprogress（宏任务）而非 fetch ReadableStream（微任务），

@@ -13,11 +13,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.net.URI;
@@ -74,8 +76,11 @@ public class AgentController {
             return ResponseEntity.badRequest().body(Map.of("error", "message is required"));
         }
 
-        Long userId = getCurrentUserId();
+        Long userId = requireCurrentUser();
         String userName = getCurrentUserName();
+        if (!agentService.hasSessionAccess(sessionId, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "无权访问该会话"));
+        }
         Map<String, Object> result = agentService.chat(sessionId, message, userId, userName);
         result.put("sessionId", sessionId);
         return ResponseEntity.ok(result);
@@ -86,11 +91,16 @@ public class AgentController {
                            HttpServletResponse response) {
         final String sessionId = (String) params.getOrDefault("sessionId", UUID.randomUUID().toString());
         final String message = (String) params.get("message");
-        final Long userId = getCurrentUserId();
+        final Long userId = requireCurrentUser();
         final String userName = getCurrentUserName();
 
         if (message == null || message.isEmpty()) {
             response.setStatus(400);
+            return;
+        }
+
+        if (!agentService.hasSessionAccess(sessionId, userId)) {
+            response.setStatus(403);
             return;
         }
 
@@ -252,6 +262,10 @@ public class AgentController {
     public ResponseEntity<Map<String, Object>> clearSession(@RequestBody Map<String, Object> params) {
         String sessionId = (String) params.get("sessionId");
         if (sessionId != null) {
+            Long userId = requireCurrentUser();
+            if (!agentService.hasSessionAccess(sessionId, userId)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "无权访问该会话"));
+            }
             agentService.clearSession(sessionId);
         }
         return ResponseEntity.ok(Map.of("success", true));
@@ -265,7 +279,7 @@ public class AgentController {
     @PostMapping(value = "/dev/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public void devChatStream(@RequestBody Map<String, Object> params, HttpServletRequest request,
                               HttpServletResponse response) {
-        Long userId = getCurrentUserId();
+        Long userId = requireCurrentUser();
         log.info("Dev chat stream request: userId={}", userId);
 
         try {
@@ -474,12 +488,12 @@ public class AgentController {
         });
     }
 
-    private Long getCurrentUserId() {
+    private Long requireCurrentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof com.luban.entity.User user) {
             return user.getId();
         }
-        return 1L;
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或身份缺失");
     }
 
     private String getCurrentUserName() {
@@ -491,8 +505,21 @@ public class AgentController {
         return "unknown";
     }
 
+    /**
+     * 当前用户的历史会话列表（按 updatedAt 倒序）。
+     */
+    @GetMapping("/sessions")
+    public ResponseEntity<Map<String, Object>> listSessions() {
+        Long userId = requireCurrentUser();
+        return ResponseEntity.ok(Map.of("sessions", agentService.listUserSessions(userId)));
+    }
+
     @GetMapping("/sessions/{sessionId}/messages")
     public ResponseEntity<?> getSessionMessages(@PathVariable String sessionId) {
+        Long userId = requireCurrentUser();
+        if (!agentService.hasSessionAccess(sessionId, userId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "无权访问该会话"));
+        }
         return ResponseEntity.ok(Map.of(
                 "sessionId", sessionId,
                 "messages", agentService.getSessionMessages(sessionId)

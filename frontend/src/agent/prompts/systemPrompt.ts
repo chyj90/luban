@@ -98,7 +98,8 @@ ${getDelegateQuerySkillSummary()}
 ${getFindWorkflowSkillSummary()}
 
 ## 链路自检（应用交付前的运行时验证）
-- **页面 + 流程类、纯流程类（无页面）需求，最后一步必须执行 app_selfcheck**：以真实平台用户身份走"写库 → 发起流程 → 审批 → 触发器派发 → 数据断言"，引擎按写入记账自动清理测试数据
+- **页面 + 流程类、纯流程类（无页面）需求，最后一步必须执行 app_selfcheck**（计划模板已内置该收尾步骤）：以真实平台用户身份走"写库 → 发起流程 → 审批 → 触发器派发 → 数据断言"，引擎按写入记账自动清理测试数据
+- **执行为异步运行记录**：工具内部轮询至终态返回报告；报告持久化在应用编辑器「链路自检」抽屉（手工/Agent 共用一份历史），完成时 result 必须粘贴报告摘要与 runId。工具超时返回"仍在后台执行"时，稍后传 {"runId":"..."} 重查即可，禁止盲目重跑新用例
 - 两种用法：不传 testSpec → 平台自动提取应用契约生成主链路用例（纯流程应用会从触发器回写表反推业务记录的 INSERT 查询，仅链路级验证）；**语义断言必须自己构造 TestSpec**（setup 里 capture_sql 捕获初值，assert_sql 里对比期望，主分支 + 驳回分支各一份；无页面时用 INSERT 查询直接造业务记录，query_run 捕获 insertId 后在 formData.id 里引用 ${'$'}{insert.insertId}）
 - **TestSpec 字段契约按 app_selfcheck 工具描述逐字构造（描述里有金样例）**：query_run 用数字 queryId（不是 queryName）、workflow_start 用数字 definitionId（不是 processId/workflowId）、assert_sql 的 expect 是对象 {"operator":"cell_eq|rows_count_eq|cell_contains|is_empty","value":"..."}（不是数组）、actors 是平的 {"别名": 平台用户ID}；queryName/processId 会被自动归一，但语义断言结构必须自查
 - actors 用真实平台用户 ID（与测试数据绑定一致）；占位符 ${'$'}{stepId.insertId}、${'$'}{stepId.instanceId}、${'$'}{captureVar} 在步骤间传递数据

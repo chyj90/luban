@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Database, Search, Sparkles } from 'lucide-react';
-import { fetchAgentChatStream, getSessionMessages, clearChatSession } from '@/api/agent';
+import { fetchAgentChatStream, getSessionMessages, clearChatSession, listAgentSessions, type AgentSessionSummary } from '@/api/agent';
 import { listConceptFeedback, createProblemFeedback } from '@/api/concept';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -13,7 +13,8 @@ import { InsightSaveModal } from '@/components/InsightSaveModal';
 import Select from '@/components/Select';
 import './AgentChatPage.css';
 
-const HISTORY_KEY = 'wenShu_chat_history';
+// 旧版本把会话列表存在 localStorage 固定 key（不分用户），改为后端按登录用户加载后仅用于一次性清理
+const LEGACY_HISTORY_KEY = 'wenShu_chat_history';
 
 interface ConceptTraceItem {
   type?: string;
@@ -177,18 +178,8 @@ function parseAnalysisMeta(content: string | undefined): ChatMessage['analysisMe
 }
 
 export default function AgentChatPage() {
-  const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const list = sessions.length > 0 ? sessions[0].id : '';
-    return list;
-  });
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -214,9 +205,24 @@ export default function AgentChatPage() {
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.superAdmin === true;
 
+  // 历史会话列表以后端为准（按登录用户分权分域），不再写 localStorage
   useEffect(() => {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions));
-  }, [sessions]);
+    localStorage.removeItem(LEGACY_HISTORY_KEY);
+    let cancelled = false;
+    listAgentSessions().then((res) => {
+      if (cancelled) return;
+      const list = (((res as any).sessions || []) as AgentSessionSummary[]).map((item) => ({
+        id: item.sessionId,
+        title: item.title,
+        messages: [],
+        updatedAt: item.updatedAt || new Date().toISOString(),
+      })) as ChatSession[];
+      setSessions(list);
+      // 与旧版行为一致：默认打开最近一个会话
+      setActiveSessionId((prev) => prev || list[0]?.id || '');
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId) {

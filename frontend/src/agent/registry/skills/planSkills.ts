@@ -349,6 +349,22 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
+  // 应用链路自检（运行时验证）作为计划最终收尾：与 system prompt「最后一步必须执行
+  // app_selfcheck」对齐。2026-09-18 请假案例：计划止步于 rehearse_triggers，自检只能在
+  // 计划外自跑，报告进不了任何步骤 result 也无人核验。依赖此前全部步骤（查询/表单/流程/
+  // 发布/页面/挂接/预演）；纯页面无流程的应用不生成（L2 链路自检以流程为载体）。
+  if (analysis.workflows.length > 0) {
+    const selfcheckDeps = items.map((item) => item.id);
+    items.push({
+      id: nextId(),
+      category: 'datasource',
+      description: `应用链路自检（运行时验证，最终收尾）：执行 app_selfcheck，自构造 TestSpec 语义断言用例——主分支（发起→审批通过→状态按业务语义变化，如置"已通过"+余额扣减）与驳回分支（驳回→置"已驳回"且余额不变）各一份；capture_sql 捕获初值、assert_sql 断言期望；actors 用真实平台用户且与测试数据绑定一致（先用 search_platform_users 核对）；发起步骤 formData 携带业务记录 id（\${insert.insertId}）。字段契约按工具描述逐字构造（queryId/definitionId 用数字、expect 是对象、actors 平铺）。执行为异步运行记录：工具内部轮询至终态返回报告，完成时 result 必须粘贴报告摘要（通过与否+关键步骤+触发器派发+清理/残留）与 runId；未通过先修复再重跑（同一用例最多 2 轮）。报告持久化在应用编辑器「链路自检」抽屉，可回看历史`,
+      toolName: 'app_selfcheck',
+      toolInput: {},
+      dependencies: selfcheckDeps,
+    });
+  }
+
   return items;
 }
 
@@ -475,6 +491,8 @@ const VALID_PLAN_TOOL_NAMES = new Set([
   'delegate_orchestration',
   // 链路验证步骤（触发器预演）：主智能体自查工具，计划强制收尾步骤用
   'rehearse_triggers',
+  // 应用链路自检（运行时验证）：计划最终收尾步骤，报告持久化于链路自检抽屉
+  'app_selfcheck',
 ]);
 
 export function createPlanInternal(

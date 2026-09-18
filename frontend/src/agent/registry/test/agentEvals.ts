@@ -101,8 +101,8 @@ function evalPlanDerivation(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  if (items.length !== 5) checks.push(`步骤数应为 5（表单/流程/发布/挂接/链路验证），实际 ${items.length}`);
-  const [step1, step2, step3, step4, step5] = items;
+  if (items.length !== 6) checks.push(`步骤数应为 6（表单/流程/发布/挂接/链路验证/链路自检），实际 ${items.length}`);
+  const [step1, step2, step3, step4, step5, step6] = items;
   if (step1?.toolName !== 'delegate_workflow') checks.push(`步骤1 toolName 应为 delegate_workflow，实际 ${step1?.toolName}`);
   if (step1?.toolInput.task_type !== 'design_form') checks.push(`步骤1 task_type 应为 design_form，实际 ${step1?.toolInput.task_type}`);
   if (step2?.toolName !== 'delegate_workflow') checks.push(`步骤2 toolName 应为 delegate_workflow，实际 ${step2?.toolName}`);
@@ -120,6 +120,12 @@ function evalPlanDerivation(): EvalResult {
   if (!step5 || !/链路验证|预演/.test(step5.description)) checks.push('步骤5 描述应包含"链路验证/预演"');
   if (JSON.stringify(step5?.dependencies) !== JSON.stringify([step3?.id, step4?.id])) {
     checks.push(`步骤5 依赖应为 [${step3?.id},${step4?.id}]，实际 ${JSON.stringify(step5?.dependencies)}`);
+  }
+  // 应用链路自检收尾步骤（2026-09-18 升级）：计划必须以运行时验证结束，依赖此前全部步骤
+  if (step6?.toolName !== 'app_selfcheck') checks.push(`步骤6（链路自检）toolName 应为 app_selfcheck，实际 ${step6?.toolName}`);
+  if (!step6 || !/自检/.test(step6.description)) checks.push('步骤6 描述应包含"自检"');
+  if (JSON.stringify(step6?.dependencies) !== JSON.stringify(['1', '2', '3', '4', '5'])) {
+    checks.push(`步骤6 依赖应为 ["1","2","3","4","5"]，实际 ${JSON.stringify(step6?.dependencies)}`);
   }
 
   return evalResult('E3-计划自动推导(请假审批)', checks.length === 0, checks.length === 0 ? '结构完全符合预期（含闭环步骤）' : checks.join('；'));
@@ -196,8 +202,8 @@ function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  // 预期 8 步：query → form → design → publish → orchestration → page → wire → rehearse
-  if (items.length !== 8) checks.push(`步骤数应为 8，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  // 预期 9 步：query → form → design → publish → orchestration → page → wire → rehearse → selfcheck
+  if (items.length !== 9) checks.push(`步骤数应为 9，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
   // 2026-09-14 回归：步骤 id 必须与清单序号一致（publish/wire 也要占数字 id），
   // 否则主智能体按 submit_analysis 清单序号标状态会命中错误步骤
   const idMismatchIdx = items.findIndex((it, idx) => it.id !== String(idx + 1));
@@ -238,6 +244,14 @@ function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
     }
   }
 
+  // 应用链路自检收尾：必须存在且排在预演之后（2026-09-18 升级）
+  const selfcheckIdx = toolNames.indexOf('app_selfcheck');
+  if (selfcheckIdx < 0) {
+    checks.push('缺少 app_selfcheck（链路自检）收尾步骤');
+  } else if (rehearseIdx >= 0 && selfcheckIdx < rehearseIdx) {
+    checks.push(`链路自检步骤(序号${selfcheckIdx + 1})必须排在链路验证步骤(序号${rehearseIdx + 1})之后`);
+  }
+
   return evalResult('E3c-计划推导(编排排在流程发布后)', checks.length === 0, checks.length === 0 ? '查询→表单→流程→发布→编排→页面→挂接 顺序与依赖正确' : checks.join('；'));
 }
 
@@ -268,8 +282,8 @@ function evalPlanDerivationWithToolCallback(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  // 预期 6 步：回写查询 → 表单 → 设计(含触发器) → 发布 → 挂接 → 链路验证；TOOL 不另生成步骤
-  if (items.length !== 6) checks.push(`步骤数应为 6，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  // 预期 7 步：回写查询 → 表单 → 设计(含触发器) → 发布 → 挂接 → 链路验证 → 链路自检；TOOL 不另生成步骤
+  if (items.length !== 7) checks.push(`步骤数应为 7，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
   const step1 = items[0];
   if (step1?.toolName !== 'delegate_query' || !step1.description.includes('UpdateLeaveApproved')) {
     checks.push('步骤1 应为回写查询 UpdateLeaveApproved 的 delegate_query 步骤');
