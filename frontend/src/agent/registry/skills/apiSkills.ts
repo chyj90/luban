@@ -6,7 +6,7 @@ export const apiSkills: Record<string, SkillFactory> = {
     id: 'api:list',
     category: SkillCategory.API,
     name: 'list_apis',
-    description: '列出当前应用中所有已连接的 API 工具。',
+    description: `列出当前应用可用的 API 工具（应用自有 + 已授权平台工具，按所属系统的系统权限过滤）。看不到目标平台 API 时，提示用户到应用编辑器的 API 面板「申请平台 API」（走系统权限审批）。`,
     parameters: { type: 'object', properties: {} },
     async execute() {
       const res = await listApplicationTools(ctx.applicationId);
@@ -19,7 +19,7 @@ export const apiSkills: Record<string, SkillFactory> = {
     id: 'api:connect',
     category: SkillCategory.API,
     name: 'connect_api',
-    description: `连接一个新的外部 API。API 连接后可用于页面中调用。
+    description: `列出当前应用可用的 API 工具（应用自有 + 已授权平台工具，按系统权限过滤）。连接一个新的外部 API。API 连接后可用于页面中调用。
 
 ## 参数说明
 - name: API 名称

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Key, Check, X, Pencil, Shield, Ban, RotateCcw, Trash2 } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
-import { listApiKeys, generateApiKey, deleteApiKey, deletePermanentApiKey, restoreApiKey, renameApiKey, listApplicationsByKey } from '@/api/tool';
+import { listApiKeys, generateApiKey, deleteApiKey, deletePermanentApiKey, restoreApiKey, renameApiKey } from '@/api/tool';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
 import './ApiKeyPage.css';
@@ -20,7 +20,6 @@ export default function ApiKeyPage() {
   const navigate = useNavigate();
   const [keys, setKeys] = useState<ApiKeyItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [appBindings, setAppBindings] = useState<Map<number, string[]>>(new Map());
   const [showNewKey, setShowNewKey] = useState<string | null>(null);
   const [newKeyName, setNewKeyName] = useState('');
   const [editingKeyId, setEditingKeyId] = useState<number | null>(null);
@@ -36,17 +35,6 @@ export default function ApiKeyPage() {
       const keyList = (res.data as ApiKeyItem[]) || [];
       setKeys(keyList);
 
-      const bindings = new Map<number, string[]>();
-      await Promise.all(keyList.map(async (key) => {
-        try {
-          const appRes = await listApplicationsByKey(key.id);
-          const apps = (appRes.data as { name: string }[]) || [];
-          bindings.set(key.id, apps.map((a) => a.name));
-        } catch {
-          bindings.set(key.id, []);
-        }
-      }));
-      setAppBindings(bindings);
     } catch {
       toast('加载 API Key 失败', 'error');
     } finally {
@@ -210,7 +198,6 @@ export default function ApiKeyPage() {
               <th>名称</th>
               <th>Key ID</th>
               <th>状态</th>
-              <th>绑定应用</th>
               <th>创建时间</th>
               <th>最近使用</th>
               <th>操作</th>
@@ -251,17 +238,6 @@ export default function ApiKeyPage() {
                   <td>
                     <span className={`api-key-status ${key.status === 'ACTIVE' ? 'active' : 'revoked'}`}>
                       {key.status === 'ACTIVE' ? '活跃' : '已吊销'}
-                    </span>
-                  </td>
-                  <td>
-                    <span className="api-key-app-bindings">
-                      {(() => {
-                        const apps = appBindings.get(key.id) || [];
-                        if (apps.length === 0) return <span className="api-key-app-none">未绑定</span>;
-                        return apps.map((name, i) => (
-                          <span key={i} className="api-key-app-tag">{name}</span>
-                        ));
-                      })()}
                     </span>
                   </td>
                   <td>{key.createdAt ? new Date(key.createdAt).toLocaleString() : '-'}</td>

@@ -30,6 +30,14 @@ public class Query {
     @Column(columnDefinition = "text")
     private String params;
 
+    /** 查询说明（洞察沉淀时记录原始问题） */
+    @Column(columnDefinition = "text")
+    private String description;
+
+    /** 查询来源：INSIGHT=智能洞察沉淀，空=应用开发创建 */
+    @Column(length = 20)
+    private String source;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

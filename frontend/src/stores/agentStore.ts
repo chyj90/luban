@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AgentState, Message, Plan, Step, SessionStatus } from '@/types/agent';
+import type { AgentState, AttachmentMeta, Message, Plan, Step, SessionStatus } from '@/types/agent';
 import { planConfirmMessage } from '@/agent/kernel/planPolicy';
 
 const STORAGE_PREFIX = 'luban-agent-state';
@@ -50,9 +50,13 @@ interface AgentStore extends AgentState {
   rejectPlan: (planId: string) => void;
   stopPlan: (planId: string) => void;
   setError: (error: string | null) => void;
-  setPendingInput: (pending: { kind: string; message: string; planId?: string } | null) => void;
+  setPendingInput: (pending: { kind: string; message: string; planId?: string; toolName?: string; args?: Record<string, unknown> } | null) => void;
   setOrphanedPending: (message: string) => void;
   clearOrphanedPending: () => void;
+  addPendingAttachment: (attachment: AttachmentMeta) => void;
+  updatePendingAttachment: (fileId: string, updates: Partial<AttachmentMeta>) => void;
+  removePendingAttachment: (fileId: string) => void;
+  clearPendingAttachments: () => void;
   reset: () => void;
   generateSessionId: () => void;
 }
@@ -69,6 +73,7 @@ const initialAgentState: AgentState = {
   error: null,
   pendingInput: null,
   orphanedPending: null,
+  pendingAttachments: [],
 };
 
 export const useAgentStore = create<AgentStore>()((set, get) => ({
@@ -113,6 +118,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
         ? { kind: 'plan-confirm', planId: lastDraft.id, message: planConfirmMessage(lastDraft) }
         : null,
       orphanedPending: null,
+      // 切应用即作废未发送的附件（文件本体已在服务端，可重新选择）
+      pendingAttachments: [],
     });
   },
 
@@ -229,6 +236,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
   setOrphanedPending: (message) => set({ orphanedPending: message }),
   clearOrphanedPending: () => set({ orphanedPending: null }),
+
+  addPendingAttachment: (attachment) =>
+    set((state) => ({ pendingAttachments: [...state.pendingAttachments, attachment] })),
+  updatePendingAttachment: (fileId, updates) =>
+    set((state) => ({
+      pendingAttachments: state.pendingAttachments.map((a) =>
+        a.fileId === fileId ? { ...a, ...updates } : a,
+      ),
+    })),
+  removePendingAttachment: (fileId) =>
+    set((state) => ({
+      pendingAttachments: state.pendingAttachments.filter((a) => a.fileId !== fileId),
+    })),
+  clearPendingAttachments: () => set({ pendingAttachments: [] }),
 
   reset: () => {
     const current = get();

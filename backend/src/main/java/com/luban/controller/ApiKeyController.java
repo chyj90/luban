@@ -7,7 +7,6 @@ import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyDatasource;
 import com.luban.entity.ApiKeyTool;
 import com.luban.entity.Application;
-import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.Datasource;
 import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
@@ -239,98 +238,4 @@ public class ApiKeyController {
         return ResponseEntity.ok(ApiResponse.ok(apiKeyService.rejectDatasourcePermission(id)));
     }
 
-    // ==================== Application Binding ====================
-
-    @GetMapping("/by-application/{applicationId}")
-    public ResponseEntity<ApiResponse<List<ApiKey>>> listKeysByApplication(@PathVariable Long applicationId) {
-        return ResponseEntity.ok(ApiResponse.ok(apiKeyService.listKeysByApplication(applicationId)));
-    }
-
-    @GetMapping("/{keyId}/applications")
-    public ResponseEntity<ApiResponse<List<Application>>> listApplicationsByKey(@PathVariable Long keyId) {
-        return ResponseEntity.ok(ApiResponse.ok(apiKeyService.listApplicationsByKey(keyId)));
-    }
-
-    @PostMapping("/{keyId}/bind-application")
-    public ResponseEntity<ApiResponse<ApplicationApiKey>> bindApplication(
-            @PathVariable Long keyId,
-            @RequestBody Map<String, Object> params,
-            @AuthenticationPrincipal User user) {
-        Long applicationId = ((Number) params.get("applicationId")).longValue();
-        return ResponseEntity.ok(ApiResponse.ok(
-                apiKeyService.bindApplication(keyId, applicationId, user.getId())));
-    }
-
-    @PostMapping("/{keyId}/unbind-application")
-    public ResponseEntity<ApiResponse<Map<String, String>>> unbindApplication(
-            @PathVariable Long keyId,
-            @RequestBody Map<String, Object> params,
-            @AuthenticationPrincipal User user) {
-        Long applicationId = ((Number) params.get("applicationId")).longValue();
-        apiKeyService.unbindApplication(keyId, applicationId, user.getId());
-        return ResponseEntity.ok(ApiResponse.ok(Map.of("status", "ok")));
-    }
-
-    // ==================== Application Resource Aggregation ====================
-
-    @GetMapping("/application/{applicationId}/tools")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listApplicationTools(
-            @PathVariable Long applicationId) {
-        List<ApiKeyTool> approved = apiKeyService.listApprovedToolsForApplication(applicationId);
-        List<Map<String, Object>> result = approved.stream().map(kt -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            ToolDefinition tool = toolDefinitionRepository.findById(kt.getToolId()).orElse(null);
-            item.put("id", kt.getId());
-            item.put("toolId", kt.getToolId());
-            item.put("apiKeyId", kt.getApiKeyId());
-            item.put("status", kt.getStatus());
-            item.put("toolName", tool != null ? tool.getName() : "未知工具");
-            item.put("displayName", tool != null ? tool.getDisplayName() : "未知工具");
-            item.put("description", tool != null ? tool.getDescription() : "");
-            item.put("toolType", tool != null ? tool.getToolType() : "");
-            item.put("inputSchema", tool != null ? tool.getInputSchema() : "");
-            item.put("outputSchema", tool != null ? tool.getOutputSchema() : "");
-            item.put("config", tool != null ? tool.getConfig() : "");
-            return item;
-        }).collect(Collectors.toList());
-
-        List<ToolDefinition> appTools = toolDefinitionRepository
-                .findByGroupIdAndScope(applicationId, "APPLICATION");
-        List<Map<String, Object>> appToolItems = appTools.stream()
-                .map(t -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("id", t.getId());
-                    item.put("toolId", t.getId());
-                    item.put("toolName", t.getName());
-                    item.put("displayName", t.getDisplayName());
-                    item.put("description", t.getDescription());
-                    item.put("toolType", t.getToolType());
-                    item.put("inputSchema", t.getInputSchema());
-                    item.put("outputSchema", t.getOutputSchema());
-                    item.put("config", t.getConfig());
-                    return item;
-                }).collect(Collectors.toList());
-
-        result.addAll(appToolItems);
-        return ResponseEntity.ok(ApiResponse.ok(result));
-    }
-
-    @GetMapping("/application/{applicationId}/datasources")
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listApplicationDatasources(
-            @PathVariable Long applicationId) {
-        List<ApiKeyDatasource> approved = apiKeyService.listApprovedDatasourcesForApplication(applicationId);
-        List<Map<String, Object>> result = approved.stream().map(kd -> {
-            Map<String, Object> item = new LinkedHashMap<>();
-            Datasource ds = datasourceRepository.findById(kd.getDatasourceId()).orElse(null);
-            item.put("id", kd.getId());
-            item.put("datasourceId", kd.getDatasourceId());
-            item.put("apiKeyId", kd.getApiKeyId());
-            item.put("status", kd.getStatus());
-            item.put("name", ds != null ? ds.getName() : "未知数据源");
-            item.put("type", ds != null ? ds.getType() : "");
-            item.put("config", ds != null ? ds.getConfig() : "{}");
-            return item;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(ApiResponse.ok(result));
-    }
 }

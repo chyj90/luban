@@ -66,7 +66,9 @@ const FORM_ID_PATTERNS = [
 const PROCESS_ID_PATTERNS = [
   /流程\s*ID\s*[:：为=＝]?\s*(\d+)/i,
   /[（(]\s*(?:审批)?流程\s*ID\s*[:：为=＝]?\s*(\d+)\s*[)）]/i,
-  /[（(]\s*id\s*[:：]\s*(\d+)\s*[)）]/i,
+  // 注意：不收录裸 "(ID: N)" 形态——"表单「XX」(ID: 71)" 会被误判成流程 ID，
+  // 接着 getWorkflow(71) 404 报"流程不存在"（2026-09-17 表单 71 案例）。裸形态
+  // 交给 resolveIdsLoosely：候选 ID 经表单/流程双 API 探测，按描述关键词定优先级
   /流程\s*[（(]\s*ID\s*[:：]?\s*(\d+)\s*[)）]/i,
   /流程.*?ID\s*[:：为=＝]?\s*(\d+)/i,
 ];
@@ -265,6 +267,34 @@ async function verifyOrchestrationStep(description: string, result: string): Pro
 }
 
 /**
+ * 核验 rehearse_triggers（链路验证）步骤：
+ * ① 证据门槛——result 必须包含预演摘要（路径/触发器/errors），没跑过预演不许标完成；
+ * ② 预演报出的阻断性问题（审批人解析为空/断链/必填参数缺失）必须先修复，
+ *    带"问题已修复"说明的旧预演输出也会被拦，要求重预演后贴新结果。
+ */
+async function verifyRehearsalStep(_description: string, result: string): Promise<StepVerifyResult> {
+  if (!/预演/.test(result)) {
+    return {
+      verified: false,
+      reason: '链路验证步骤的 result 中没有任何预演证据。请先用 rehearse_triggers 以贴近真实的样例表单数据（含业务记录 id）+ 真实平台用户作为样例发起人执行预演，再把预演摘要（路径、触发器、errors/warnings）粘贴进 result 后重新标记 completed。禁止凭"代码已接好"直接标完成——本步骤存在的意义就是验证链路而不只验证资源存在',
+    };
+  }
+  const blockingFindings: Array<[RegExp, string]> = [
+    [/审批人解析为空/, '审批人解析为空（真实运行时审批节点会被静默跳过）'],
+    [/断链/, '触发器参数断链'],
+    [/必填参数缺失/, '必填参数缺失'],
+  ];
+  const found = blockingFindings.filter(([p]) => p.test(result));
+  if (found.length > 0) {
+    return {
+      verified: false,
+      reason: `预演发现阻断性问题：${found.map(([, label]) => label).join('、')}。请先修复（核对平台组织架构数据 / 补齐发起侧字段 / 修正 paramsMapping），重新预演并在 result 中粘贴通过的新摘要，再标记 completed`,
+    };
+  }
+  return { verified: true };
+}
+
+/**
  * 核验步骤是否真的完成。返回 verified=false 时 update_plan_item 应拒绝 completed。
  */
 export async function verifyStepCompletion(
@@ -281,6 +311,8 @@ export async function verifyStepCompletion(
         return await verifyOrchestrationStep(description, result);
       case 'delegate_query':
         return await verifyQueryStep(applicationId, description, result);
+      case 'rehearse_triggers':
+        return await verifyRehearsalStep(description, result);
       default:
         // create_code_page / update_code_page 等暂由 validate_plan 层覆盖，此处跳过
         return { verified: true, skipped: true };

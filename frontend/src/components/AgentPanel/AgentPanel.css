@@ -127,6 +127,17 @@
   background: #ff4d4f;
 }
 
+/* 确认门拦截等待确认：琥珀色呼吸，与"失败"（红）区分 */
+.ap-tool-status-dot.blocked {
+  background: #faad14;
+  animation: ap-pulse 1.5s ease-in-out infinite;
+}
+
+/* 用户已取消：中性灰终态 */
+.ap-tool-status-dot.cancelled {
+  background: #d9d9d9;
+}
+
 .ap-tool-status-dot.pending,
 .ap-step-status-dot.pending {
   background: #d9d9d9;
@@ -889,6 +900,16 @@
   color: #ff4d4f;
 }
 
+.ap-tool-call-status.blocked {
+  background: #fffbe6;
+  color: #d48806;
+}
+
+.ap-tool-call-status.cancelled {
+  background: #f4f6f9;
+  color: #8c9cab;
+}
+
 .ap-tool-call-detail {
   padding: 5px 8px;
   background: #fff;
@@ -1647,4 +1668,143 @@
 .ap-btn-confirm:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ===== Agent 附件上传（Word/TXT/Excel） ===== */
+.ap-attachment-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 14px 0;
+  flex-shrink: 0;
+}
+
+.ap-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  color: #1f1f1f;
+}
+
+.ap-attachment-chip.pending {
+  border-color: #b8d4ff;
+  background: #f0f7ff;
+  color: #1677ff;
+}
+
+.ap-attachment-chip.failed {
+  border-color: #ffccc7;
+  background: #fff2f0;
+  color: #cf1322;
+}
+
+.ap-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ap-attachment-chip-status {
+  color: #8c9cab;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ap-attachment-chip.failed .ap-attachment-chip-status {
+  color: #cf1322;
+}
+
+.ap-attachment-chip-remove {
+  border: none;
+  background: transparent;
+  color: #8c9cab;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.ap-attachment-chip-remove:hover {
+  color: #cf1322;
+}
+
+.ap-input-area.dragover {
+  border-top-color: #1677ff;
+  background: #f0f7ff;
+}
+
+.ap-input-area.dragover::after {
+  content: '松开以添加附件';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(240, 247, 255, 0.85);
+  color: #1677ff;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.ap-btn-attach {
+  padding: 6px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.ap-btn-attach:hover {
+  border-color: #1677ff;
+  background: #f0f7ff;
+}
+
+/* 消息气泡内的附件卡 */
+.ap-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.ap-msg-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 10px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.ap-msg-attachment.failed {
+  border-color: #ffccc7;
+  background: #fff2f0;
+}
+
+.ap-msg-attachment-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-msg-attachment-summary {
+  color: #8c9cab;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

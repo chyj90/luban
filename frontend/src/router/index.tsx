@@ -1,9 +1,8 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import { ProtectedRoute, GuestRoute, PermissionGate, AppAccessGate } from './guards';
+import { ProtectedRoute, GuestRoute, PermissionGate, AnyPermissionGate, AppAccessGate, ModelingIndex } from './guards';
 import { ReactFlowProvider } from '@xyflow/react';
 import { AppLayout } from '@/pages/AppLayout';
-import { ConnectLayout } from '@/pages/ConnectLayout';
-import { ConceptLayout } from '@/pages/ConceptLayout';
+import { ModelingLayout } from '@/pages/ModelingLayout';
 import { PeopleLayout } from '@/pages/PeopleLayout';
 import { WorkLayout } from '@/pages/WorkLayout';
 import { LoginPage } from '@/pages/Login/LoginPage';
@@ -30,6 +29,7 @@ import UserListPage from '@/pages/UserListPage';
 import RoleManagementPage from '@/pages/RoleManagementPage';
 import OrgPage from '@/pages/OrgPage';
 import WorkApprovalPage from '@/pages/WorkApprovalPage';
+import WorkbenchDataPage from '@/pages/workbench/WorkbenchDataPage';
 import { WorkAppPageViewer } from '@/pages/WorkAppPageViewer';
 
 export const router = createBrowserRouter([
@@ -63,31 +63,20 @@ export const router = createBrowserRouter([
             ],
           },
           {
-            element: <PermissionGate permission="connect:systems" />,
+            // 建模中心：数据接入 + 概念图谱 + 凭据与大模型配置（原 /connect 与 /concept 合并）
+            element: <AnyPermissionGate permissions={['connect:systems', 'connect:concepts']} />,
             children: [
               {
-                path: '/connect',
-                element: <ConnectLayout />,
+                path: '/modeling',
+                element: <ModelingLayout />,
                 children: [
-                  { index: true, element: <Navigate to="/connect/systems" replace /> },
+                  { index: true, element: <ModelingIndex /> },
                   { path: 'systems', element: <SystemListPage /> },
                   { path: 'tools', element: <ToolListPage /> },
                   { path: 'gateway', element: <GatewayPage /> },
                   { path: 'keys', element: <ApiKeyPage /> },
                   { path: 'keys/:keyId/permissions', element: <ApiKeyPermissionPage /> },
                   { path: 'agent', element: <AgentConfigPage /> },
-                ],
-              },
-            ],
-          },
-          {
-            element: <PermissionGate permission="connect:concepts" />,
-            children: [
-              {
-                path: '/concept',
-                element: <ConceptLayout />,
-                children: [
-                  { index: true, element: <Navigate to="/concept/ontology-groups" replace /> },
                   { path: 'ontology-groups', element: <OntologyGroupPage /> },
                   { path: 'concepts', element: <ReactFlowProvider><ConceptEditorPage /></ReactFlowProvider> },
                   { path: 'concept-feedback', element: <ConceptFeedbackPage /> },
@@ -121,6 +110,7 @@ export const router = createBrowserRouter([
                 children: [
                   { index: true, element: <MyWorkflow /> },
                   { path: 'approvals', element: <WorkApprovalPage /> },
+                  { path: 'data', element: <WorkbenchDataPage /> },
                   { path: 'instances/:id', element: <InstanceDetail /> },
                   {
                     path: 'app',
@@ -140,15 +130,29 @@ export const router = createBrowserRouter([
       { path: '/workflow/tasks', element: <Navigate to="/work" replace /> },
       { path: '/workflow/my-workflow', element: <Navigate to="/work" replace /> },
       { path: '/workflow/*', element: <Navigate to="/work" replace /> },
-      { path: '/connect/mcp', element: <Navigate to="/connect/gateway" replace /> },
-      { path: '/connect/concepts', element: <Navigate to="/concept/concepts" replace /> },
-      { path: '/connect/ontology-groups', element: <Navigate to="/concept/ontology-groups" replace /> },
-      { path: '/connect/concept-feedback', element: <Navigate to="/concept/concept-feedback" replace /> },
-      { path: '/connect/concept-snapshots', element: <Navigate to="/concept/concept-snapshots" replace /> },
-      { path: '/connect/concept-embeddings', element: <Navigate to="/concept/concept-embeddings" replace /> },
+      // 建模中心合并后的旧路径兜底（/connect、/concept → /modeling）
+      { path: '/connect', element: <Navigate to="/modeling" replace /> },
+      { path: '/connect/systems', element: <Navigate to="/modeling/systems" replace /> },
+      { path: '/connect/tools', element: <Navigate to="/modeling/tools" replace /> },
+      { path: '/connect/gateway', element: <Navigate to="/modeling/gateway" replace /> },
+      { path: '/connect/keys', element: <Navigate to="/modeling/keys" replace /> },
+      { path: '/connect/keys/:keyId/permissions', element: <Navigate to="/modeling/keys" replace /> },
+      { path: '/connect/agent', element: <Navigate to="/modeling/agent" replace /> },
+      { path: '/connect/mcp', element: <Navigate to="/modeling/gateway" replace /> },
+      { path: '/connect/concepts', element: <Navigate to="/modeling/concepts" replace /> },
+      { path: '/connect/ontology-groups', element: <Navigate to="/modeling/ontology-groups" replace /> },
+      { path: '/connect/concept-feedback', element: <Navigate to="/modeling/concept-feedback" replace /> },
+      { path: '/connect/concept-snapshots', element: <Navigate to="/modeling/concept-snapshots" replace /> },
+      { path: '/connect/concept-embeddings', element: <Navigate to="/modeling/concept-embeddings" replace /> },
+      { path: '/concept', element: <Navigate to="/modeling" replace /> },
+      { path: '/concept/ontology-groups', element: <Navigate to="/modeling/ontology-groups" replace /> },
+      { path: '/concept/concepts', element: <Navigate to="/modeling/concepts" replace /> },
+      { path: '/concept/concept-feedback', element: <Navigate to="/modeling/concept-feedback" replace /> },
+      { path: '/concept/concept-snapshots', element: <Navigate to="/modeling/concept-snapshots" replace /> },
+      { path: '/concept/concept-embeddings', element: <Navigate to="/modeling/concept-embeddings" replace /> },
       { path: '/people/departments', element: <Navigate to="/people/org" replace /> },
-      { path: '/people/keys', element: <Navigate to="/connect/keys" replace /> },
-      { path: '/people/permissions', element: <Navigate to="/connect/keys" replace /> },
+      { path: '/people/keys', element: <Navigate to="/modeling/keys" replace /> },
+      { path: '/people/permissions', element: <Navigate to="/modeling/keys" replace /> },
       { path: '/people/approvals', element: <Navigate to="/work/approvals" replace /> },
     ],
   },

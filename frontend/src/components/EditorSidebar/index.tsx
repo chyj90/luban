@@ -15,6 +15,26 @@ import './EditorSidebar.css';
 
 type TabKey = 'pages' | 'queries' | 'workflow' | 'orchestrations' | 'datasources' | 'apis' | 'settings';
 
+export type PageFileKey = 'html' | 'css' | 'js';
+
+export const PAGE_FILE_TABS: { key: PageFileKey; label: string }[] = [
+  { key: 'html', label: 'index.html' },
+  { key: 'css', label: 'styles.css' },
+  { key: 'js', label: 'script.js' },
+];
+
+/** 页面预览工具条：渲染在「页面」面板底部，不占用右侧预览区高度，
+ *  保证开发态预览与工作台运行态的页面可见区域几何一致 */
+export interface SidebarPageTools {
+  previewWidth: number | null;
+  onPreviewWidthChange: (width: number | null) => void;
+  fullscreen: boolean;
+  onToggleFullscreen: () => void;
+  onOpenFile: (file: PageFileKey) => void;
+  /** 链路自检：一键跑完页面冒烟 + 业务链路（发起/审批/触发器/断言）并自动清理测试数据 */
+  onSelfTest?: () => void;
+}
+
 interface EditorSidebarProps {
   appId: number;
   currentPageId: number;
@@ -38,9 +58,10 @@ interface EditorSidebarProps {
   toolsVersion?: number;
   pendingApiId?: number | null;
   onPendingApiHandled?: () => void;
+  pageTools?: SidebarPageTools;
 }
 
-export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, onOrchestrationSelect, onOrchestrationCreate, selectedOrchId, selectedApi, onApiSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: EditorSidebarProps) {
+export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, activeTab: controlledActiveTab, workflowView, queries, onQueriesChange, onPageChange, onPagesChange, onQuerySelect, onWorkflowNavigate, onTabChange, onOrchestrationSelect, onOrchestrationCreate, selectedOrchId, selectedApi, onApiSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled, pageTools }: EditorSidebarProps) {
   const _navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<TabKey>(controlledActiveTab || 'pages');
   const [newPageName, setNewPageName] = useState('');
@@ -220,6 +241,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
 
       {!isCollapsed && (
       <div className="editor-sidebar-panel">
+        <div className="editor-sidebar-panel-scroll">
         {activeTab === 'pages' && (
           <div className="editor-sidebar-section">
             <div className="editor-sidebar-section-header">
@@ -455,6 +477,71 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
             pendingApiId={pendingApiId}
             onPendingApiHandled={onPendingApiHandled}
           />
+        )}
+        </div>
+
+        {activeTab === 'pages' && pageTools && (
+          <div className="editor-sidebar-page-tools">
+            <div className="editor-sidebar-page-tools-row">
+              <span className="editor-sidebar-page-tools-label">预览</span>
+              <span className="editor-sidebar-page-tools-spacer" />
+              <div className="editor-sidebar-page-tools-width" title="预览视口：1920 画布与桌面端运行时结构一致">
+                <button
+                  className={pageTools.previewWidth === 1920 ? 'active' : ''}
+                  onClick={() => pageTools.onPreviewWidthChange(1920)}
+                >1920</button>
+                <button
+                  className={pageTools.previewWidth === null ? 'active' : ''}
+                  onClick={() => pageTools.onPreviewWidthChange(null)}
+                >适应</button>
+              </div>
+              <button
+                className="editor-sidebar-page-tools-fs"
+                onClick={pageTools.onToggleFullscreen}
+                title={pageTools.fullscreen ? '退出全屏' : '全屏预览'}
+              >
+                {pageTools.fullscreen ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 14 10 14 10 20" />
+                    <polyline points="20 10 14 10 14 4" />
+                    <line x1="14" y1="10" x2="21" y2="3" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 3 21 3 21 9" />
+                    <polyline points="9 21 3 21 3 15" />
+                    <line x1="21" y1="3" x2="14" y2="10" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                )}
+              </button>
+              {pageTools.onSelfTest && (
+                <button
+                  className="editor-sidebar-page-tools-selftest"
+                  onClick={pageTools.onSelfTest}
+                  title="链路自检：自动跑完页面冒烟 + 业务链路（发起/审批/触发器/断言），测试数据自动清理"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  链路自检
+                </button>
+              )}
+            </div>
+            <div className="editor-sidebar-page-tools-row">
+              {PAGE_FILE_TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  className="editor-sidebar-page-tools-file"
+                  onClick={() => pageTools.onOpenFile(tab.key)}
+                  title={`编辑 ${tab.label}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       )}

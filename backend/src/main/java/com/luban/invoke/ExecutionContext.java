@@ -64,13 +64,13 @@ public class ExecutionContext {
                 depth, deadlineEpochMs, ancestors, selfKey, targets, idempotencyKey);
     }
 
-    /** 构造子调用上下文：深度 +1、祖先累计、超时预算继承 */
+    /** 构造子调用上下文：深度 +1、祖先累计、超时预算继承；幂等键只属于根派发，不下传 */
     public ExecutionContext child(TargetType targetType, String targetRef) {
         Set<String> next = new LinkedHashSet<>(ancestors);
         if (selfKey != null) next.add(selfKey);
         return new ExecutionContext(origin, principal, appId, chainId, null, traceRowId,
                 depth + 1, deadlineEpochMs, next, targetType.name() + ":" + targetRef,
-                allowedTargets, idempotencyKey);
+                allowedTargets, null);
     }
 
     public long remainingBudgetMs() {

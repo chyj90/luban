@@ -4,7 +4,9 @@ import com.luban.constant.TaskOperation;
 import com.luban.constant.WorkflowScope;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import com.luban.entity.User;
 import com.luban.entity.UserDept;
 import com.luban.repository.UserRepository;
@@ -23,6 +25,8 @@ import javax.script.ScriptEngine;
 import javax.script.ScriptEngineManager;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -43,6 +47,13 @@ public class ProcessEngine {
     private final DepartmentRepository departmentRepository;
     private final WorkflowTriggerService triggerService;
     private final ApproverScriptHelper approverScriptHelper;
+
+    /**
+     * 发起数据契约校验开关：formData 按绑定表单 schema 校验必填与类型。
+     * 存量应用迁移期可通过 workflow.form-validation.enabled=false 关闭。
+     */
+    @Value("${workflow.form-validation.enabled:true}")
+    private boolean formValidationEnabled;
 
     /** 审批人脚本执行池：带超时护栏（守护线程，避免阻塞 JVM 退出） */
     private final java.util.concurrent.ExecutorService approverScriptExecutor =
@@ -109,6 +120,10 @@ public class ProcessEngine {
             instance.setFormId(bindings.get(0).getFormId());
             AgentLogger.bug("bug-formId-zero.log",
                 String.format("formId set from binding: %d", bindings.get(0).getFormId()));
+            if (formValidationEnabled) {
+                formDefinitionRepository.findById(bindings.get(0).getFormId())
+                        .ifPresent(form -> validateStartFormDataAgainstForm(definition, form, formDataJson));
+            }
         } else {
             instance.setFormId(0L);
             AgentLogger.bug("bug-formId-zero.log", "WARN: no binding found, formId set to 0");
@@ -128,6 +143,87 @@ public class ProcessEngine {
         createTasksForNextNodes(definition, instance, "start", formDataJson);
 
         return instance;
+    }
+
+    /** 条件表达式两侧标识符提取（字段名 比较 数字/字符串/另一个字段名） */
+    private static final Pattern CONDITION_FIELD = Pattern.compile(
+            "([A-Za-z_][A-Za-z0-9_]*)\\s*(?:<=|>=|==|!=|<|>)\\s*(?:\\d+(?:\\.\\d+)?|'[^']*'|\"[^\"]*\"|([A-Za-z_][A-Za-z0-9_]*))");
+
+    /**
+     * 发起数据契约校验：formData 必须满足绑定表单 schema（必填/类型）。
+     * 条件分支、触发器 paramsMapping（form.data.*）、form_field 审批人引用的字段 key
+     * 必须真实携带——此前只靠"页面与表单字段一致"的约定，漏传/抄错时发起照常成功，
+     * 问题推迟到审批回写静默命中 0 行；现改为发起即拦截，错误信息自解释。
+     */
+    private void validateStartFormDataAgainstForm(WorkflowDefinition definition, FormDefinition form, String formDataJson) {
+        List<FormStartValidator.FieldSpec> fields = FormStartValidator.parseFields(form.getFields());
+        if (fields.isEmpty()) return;
+        Map<String, Object> formData;
+        try {
+            formData = objectMapper.readValue(formDataJson == null || formDataJson.isBlank() ? "{}" : formDataJson,
+                    new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new BusinessException("发起数据 formData 不是合法 JSON: " + e.getMessage());
+        }
+        List<String> violations = FormStartValidator.validate(fields, formData);
+        if (!violations.isEmpty()) {
+            List<String> keys = fields.stream().map(FormStartValidator.FieldSpec::key).toList();
+            throw new BusinessException("发起数据不符合表单「" + form.getName() + "」契约：" + String.join("；", violations)
+                    + "。表单字段 key: " + keys
+                    + "（发起侧字段名必须与表单字段 key 逐字一致；条件/触发器引用的业务字段如 id 也必须一并携带）");
+        }
+        List<String> unknown = FormStartValidator.unknownKeys(fields, formData);
+        if (!unknown.isEmpty()) {
+            Set<String> referenced = extractDefinitionReferencedKeys(definition);
+            List<String> unexplained = unknown.stream().filter(k -> !referenced.contains(k)).toList();
+            if (!unexplained.isEmpty()) {
+                log.warn("流程定义 {} 发起数据携带表单契约之外的 key {}（未被条件/触发器/审批人引用），不拦截，请确认是否漏传表单字段",
+                        definition.getId(), unexplained);
+            }
+        }
+    }
+
+    /**
+     * 收集流程定义中引用的 formData key（触发器 paramsMapping 的 form.data.*、form_field 审批人字段、
+     * 条件表达式两侧标识符），作为发起数据"表单之外合法 key"的解释集。尽力提取，异常不阻断发起。
+     */
+    private Set<String> extractDefinitionReferencedKeys(WorkflowDefinition definition) {
+        Set<String> keys = new HashSet<>();
+        try {
+            JsonNode nodes = objectMapper.readTree(definition.getNodes() == null ? "[]" : definition.getNodes());
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    JsonNode config = node.path("data").path("config");
+                    for (JsonNode trigger : config.path("triggers")) {
+                        for (JsonNode item : trigger.path("paramsMapping")) {
+                            String from = item.path("from").asText("");
+                            if (from.startsWith("form.data.") && from.length() > "form.data.".length()) {
+                                keys.add(from.substring("form.data.".length()));
+                            }
+                        }
+                    }
+                    if ("form_field".equals(config.path("approverType").asText(""))) {
+                        String fieldKey = config.path("formFieldKey").asText("");
+                        if (!fieldKey.isBlank()) keys.add(fieldKey);
+                    }
+                }
+            }
+            JsonNode edges = objectMapper.readTree(definition.getEdges() == null ? "[]" : definition.getEdges());
+            if (edges.isArray()) {
+                for (JsonNode edge : edges) {
+                    String condition = edge.path("data").path("condition").asText("");
+                    if (condition.isBlank()) condition = edge.path("condition").asText("");
+                    Matcher m = CONDITION_FIELD.matcher(condition);
+                    while (m.find()) {
+                        keys.add(m.group(1));
+                        if (m.group(2) != null) keys.add(m.group(2));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("提取流程定义引用字段失败（不阻断发起）: definitionId={}", definition.getId(), e);
+        }
+        return keys;
     }
 
     // ============================================================
@@ -970,15 +1066,35 @@ public class ProcessEngine {
         List<Long> assigneeIds = resolveAssignees(approverType, config, formData, instance.getInitiatorId(), scope, defAppId);
 
         if (assigneeIds.isEmpty()) {
-            // 没有审批人，跳过该节点，继续找下一个。
-            // 跳过是静默行为，必须在历史里留痕：否则"审批节点被跳过、实例卡在 RUNNING"无从排查。
-            // leader/department_head 依赖组织架构（user_dept.leader_id / department.manager_id）已配置
-            recordHistory(instance.getId(), null, nodeId, "SKIP", null,
-                    "审批人解析为空，节点被跳过（approverType=" + approverType
-                            + "，请检查组织架构是否配置了直属上级/部门负责人）",
-                    null, nodeId, null);
-            if (definition != null) {
-                createTasksForNextNodes(definition, instance, nodeId, instance.getFormData());
+            String emptyReason = "审批人解析为空（approverType=" + approverType
+                    + "，请检查组织架构是否配置了直属上级/部门负责人）";
+            // 解析失败策略：skip（默认，历史行为：留痕后跳过继续推进）/
+            // fail（显式失败，当前操作回滚，操作方立即看到错误）/
+            // suspend（实例挂起等待管理员处理）。依赖回写触发器的流程建议用 fail/suspend，
+            // 避免"审批被静默跳过 → 实例正常完结 → APPROVED 触发器永不执行"的静默断链
+            String policy = String.valueOf(config.getOrDefault("resolutionPolicy", "skip")).toLowerCase();
+            switch (policy) {
+                // 系统行为记录统一用 0L 操作者（operator_id 非 NULL 约束），与 AUTO_ESCALATE 惯例一致
+                case "fail" -> {
+                    recordHistory(instance.getId(), null, nodeId, "FAIL", 0L,
+                            emptyReason + "，resolutionPolicy=fail，实例推进被阻止", null, nodeId, null);
+                    throw new BusinessException("节点「"
+                            + config.getOrDefault("nodeName", nodeId) + "」" + emptyReason
+                            + "；resolutionPolicy=fail 已阻止实例推进，请先补齐组织架构数据或调整审批人配置");
+                }
+                case "suspend" -> {
+                    recordHistory(instance.getId(), null, nodeId, "SUSPENDED", 0L,
+                            emptyReason + "，resolutionPolicy=suspend，实例已挂起等待处理", null, nodeId, null);
+                    instance.setStatus("SUSPENDED");
+                    workflowInstanceRepository.save(instance);
+                }
+                default -> {
+                    recordHistory(instance.getId(), null, nodeId, "SKIP", 0L,
+                            emptyReason + "，节点被跳过（resolutionPolicy=skip）", null, nodeId, null);
+                    if (definition != null) {
+                        createTasksForNextNodes(definition, instance, nodeId, instance.getFormData());
+                    }
+                }
             }
             return;
         }
@@ -1095,6 +1211,24 @@ public class ProcessEngine {
      */
     public List<WorkflowInstance> getSubProcessInstances(Long parentInstanceId) {
         return workflowInstanceRepository.findByParentInstanceId(parentInstanceId);
+    }
+
+    /**
+     * 触发器预演用：解析指定节点在给定发起人/表单数据下的审批人（不创建任务、无副作用）。
+     * 返回空列表 = 真实运行时该节点会被静默跳过（SKIP），预演侧应报错误。
+     */
+    public List<Long> previewAssignees(Long definitionId, String nodeId, Long initiatorId,
+                                       Map<String, Object> formData) {
+        WorkflowDefinition definition = workflowDefinitionRepository.findById(definitionId).orElse(null);
+        if (definition == null || initiatorId == null) return Collections.emptyList();
+        NodeDef node = parseNodes(definition.getNodes()).stream()
+                .filter(n -> nodeId != null && nodeId.equals(n.nodeId))
+                .findFirst().orElse(null);
+        if (node == null) return Collections.emptyList();
+        Map<String, Object> config = node.config != null ? node.config : Collections.emptyMap();
+        String approverType = (String) config.getOrDefault("approverType", "member");
+        return resolveAssignees(approverType, config, formData,
+                initiatorId, definition.getScope(), definition.getApplicationId());
     }
 
     /**

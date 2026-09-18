@@ -53,3 +53,16 @@
   padding: 20px;
   background: #f5f7fa;
 }
+/* 分组侧边栏（建模中心：数据接入 / 概念图谱 / 凭据与模型） */
+.sidebar-layout-menu-group {
+  margin-bottom: 8px;
+}
+
+.sidebar-layout-menu-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 12px 4px;
+}

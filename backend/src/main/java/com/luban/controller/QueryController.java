@@ -1,6 +1,7 @@
 package com.luban.controller;
 
 import com.luban.dto.*;
+import com.luban.entity.User;
 import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.service.QueryService;
@@ -8,6 +9,7 @@ import com.luban.util.SqlUtils;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -51,11 +53,28 @@ public class QueryController {
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
+    /**
+     * 工作中心数据看板：当前用户可访问应用内的洞察沉淀查询（source=INSIGHT）
+     */
+    @GetMapping("/insight-saved")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> insightSaved(
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.ok(queryService.listInsightSaved(user.getId())));
+    }
+
     @PostMapping("/{id}/run")
     @AppAccess(action = AppAction.RUN, resource = "query", key = "id")
     public ResponseEntity<ApiResponse<RunQueryResponse>> run(
-            @PathVariable Long id, @RequestBody(required = false) RunQueryRequest request) {
+            @PathVariable Long id,
+            @RequestBody(required = false) RunQueryRequest request,
+            @RequestParam(name = "previewAsUserId", required = false) Long previewAsUserId,
+            @AuthenticationPrincipal User user) {
         if (request == null) request = new RunQueryRequest();
+        if (previewAsUserId != null) {
+            // 预览身份切换：设计者以指定平台用户身份执行（this.auth 取该用户），用于验证数据隔离；
+            // 仅应用所有者可用（校验在 service 内）
+            return ResponseEntity.ok(ApiResponse.ok(queryService.runPreviewAs(id, request, previewAsUserId, user.getId())));
+        }
         return ResponseEntity.ok(ApiResponse.ok(queryService.run(id, request)));
     }
 
@@ -73,9 +92,11 @@ public class QueryController {
         if (isDdl && !Boolean.TRUE.equals(request.getAllowDdl())) {
             return ResponseEntity.ok(ApiResponse.error("DDL 操作不允许通过该接口执行（Agent 端请勿重试或换写法尝试），请生成完整 SQL 交由用户在数据源管理面板手动执行"));
         }
-        if (Boolean.TRUE.equals(request.getMulti())) {
+        if (Boolean.TRUE.equals(request.getMulti()) || Boolean.TRUE.equals(request.getRollback())) {
+            // rollback=true 强制走事务批量路径（单条也在事务中执行后回滚），测试不落库
             return ResponseEntity.ok(ApiResponse.ok(
-                    queryService.executeSqlBatch(request.getDatasourceId(), request.getSql())));
+                    queryService.executeSqlBatch(request.getDatasourceId(), request.getSql(),
+                            Boolean.TRUE.equals(request.getRollback()))));
         }
         return ResponseEntity.ok(ApiResponse.ok(
                 queryService.executeSql(request.getDatasourceId(), request.getSql())));

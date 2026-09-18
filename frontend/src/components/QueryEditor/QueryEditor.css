@@ -553,3 +553,97 @@
   background: #4096ff;
   border-color: #4096ff;
 }
+/* 从概念生成面板 */
+.qe-concept-panel {
+  border-bottom: 1px solid #e8e8e8;
+  background: #fafbfc;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qe-concept-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.qe-concept-input {
+  flex: 1;
+  height: 30px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.qe-concept-input:focus {
+  border-color: #1677ff;
+}
+
+.qe-concept-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.qe-concept-chip {
+  background: #e6f4ff;
+  color: #1677ff;
+  border: 1px solid #91caff;
+  border-radius: 12px;
+  font-size: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.qe-concept-results {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.qe-concept-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.qe-concept-item:hover {
+  background: #f0f7ff;
+}
+
+.qe-concept-item.picked {
+  background: #e6f4ff;
+}
+
+.qe-concept-name {
+  font-weight: 600;
+  color: #1f1f1f;
+  white-space: nowrap;
+}
+
+.qe-concept-desc {
+  color: #8c8c8c;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qe-concept-meta {
+  font-size: 12px;
+  color: #1677ff;
+}
+
+.qe-concept-hint {
+  font-size: 11px;
+  color: #bfbfbf;
+}

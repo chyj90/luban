@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { listAccessibleApplications } from '@/api/application';
+import { modelingHomePath } from '@/pages/ModelingLayout/menuGroups';
 import styles from './guards.module.css';
 
 export function ProtectedRoute() {
@@ -39,6 +40,28 @@ export function PermissionGate({ permission }: { permission: string }) {
   }
 
   return <Outlet />;
+}
+
+/** 任一权限通过即可进入（用于合并后的多权限区域，如建模中心） */
+export function AnyPermissionGate({ permissions }: { permissions: string[] }) {
+  const hasPermission = usePermissionStore((s) => s.hasPermission);
+  const loaded = usePermissionStore((s) => s.loaded);
+
+  if (!loaded) {
+    return null;
+  }
+
+  if (!permissions.some((p) => hasPermission(p))) {
+    return <Navigate to="/work" replace />;
+  }
+
+  return <Outlet />;
+}
+
+/** /modeling 落地页：按权限取建模中心第一个可用页面 */
+export function ModelingIndex() {
+  const hasPermission = usePermissionStore((s) => s.hasPermission);
+  return <Navigate to={modelingHomePath(hasPermission)} replace />;
 }
 
 export function AppAccessGate() {

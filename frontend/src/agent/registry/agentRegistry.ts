@@ -62,13 +62,26 @@ export const AGENTS: AgentDefinition[] = [
       'page:delete', 'page:rename',
       'code:create', 'code:get', 'code:update', 'code:scaffold', 'code:component-spec', 'code:analysis-examples', 'code:dataquery-guide',
       'observation:list_pages', 'observation:list_queries', 'observation:record',
-      'query:get',
+      'observation:stale-resources',
+      'query:get', 'query:lint',
       'plan:submit_analysis', 'plan:update', 'plan:update_item', 'plan:confirm',
       'plan:validate', 'plan:list_unfinished', 'plan:set_focus', 'plan:adjust',
       'plan:resume',
       'delegate:query', 'delegate:workflow', 'delegate:orchestration',
+      // 链路验证：委派完成后主智能体自查——预演路径/触发器/参数，断链与审批人缺失在此暴露
+      'workflow:rehearse-triggers',
+      // 链路可观测：实例时间线（SKIP/SUSPENDED/FAIL 留痕）与触发器派发记录/死信
+      'workflow:instance-timeline', 'workflow:trigger-outbox',
+      // 流程只读：核对流程/发布状态、绑定表单用一次工具调用完成，不再为此起整个子智能体委派
+      'workflow:list', 'workflow:get_definition',
+      // 链路自检：应用交付前的运行时验证（发起→审批→触发器→断言，自动清理测试数据）
+      'test:app-selfcheck',
       // 平台资产：用户/组织信息是低代码平台的一等数据源，建模与绑定测试数据必须用真实资产
       'platform:users', 'platform:departments',
+      // 用户附件：对话中上传的 Word/TXT/Excel，按需分页读取，不要凭概要编造数据
+      'file:list', 'file:info', 'file:read', 'file:sheet',
+      // 大文件/复杂分析：LLM 自己写 Python 到沙箱跑（只解析，结果紧凑返回）
+      'file:run_python',
     ],
   },
   {
@@ -87,9 +100,19 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'datasource:list', 'datasource:test', 'datasource:structure', 'datasource:connect',
       'query:list', 'query:create', 'query:update', 'query:delete', 'query:run', 'query:get', 'query:execute', 'query:references',
+      // 静态检查存量/草稿 SQL：身份过滤缺失与回写无守卫在这里显式暴露
+      'query:lint',
+      // 概念语义层：一个平台一套，SELECT 优先按概念口径生成（与智能问数同源），概念未覆盖才裸建模
+      'concept:search', 'concept:detail', 'concept:tree', 'concept:nl2sql',
       'api:list', 'api:connect', 'api:test', 'api:delete',
       // 平台资产：测试数据绑定 user_id 必须用真实平台用户，部门取真实组织树
       'platform:users', 'platform:departments',
+      // 用户附件：Excel 样例的表头/数据行读取（file_sheet），导库与测试数据构造都以真实文件为准
+      'file:list', 'file:info', 'file:read', 'file:sheet',
+      // 附件入库执行者：主智能体委派，DBA 用 import_rows 机械分批写入（LLM 定映射，不逐行过上下文）
+      'file:import',
+      // 大文件探查/复杂清洗：LLM 自己写 Python 到沙箱跑（只解析，不碰数据库）
+      'file:run_python',
     ],
   },
   {
@@ -149,6 +172,13 @@ export const AGENTS: AgentDefinition[] = [
       '4. test_run_orchestration 试运行（构造样例输入），成功后向用户展示节点级结果',
       '5. 用户确认后再 publish_orchestration（发布需 MANAGE 权限）',
       '',
+      '## 删除编排（生命周期操作，非设计需求）',
+      '委派需求以"请设计编排："开头，但当需求实质是删除/停用编排（含清理测试残留）时按本节处理，禁止创建新编排来"替代删除"：',
+      '1. 先用 list_orchestrations 核对目标编排 ID 与名称',
+      '2. 用 delete_orchestration 删除（后端置 ARCHIVED 关停，不可恢复；会触发用户确认门，等确认后执行）',
+      '3. 批量删除逐个执行并逐条如实汇报成功/失败，删完用 list_orchestrations 复核',
+      '4. 已发布的编排删除后其平台工具/API Key 调用立即失效，汇报时必须提醒排查触发器/编排/页面里的引用点',
+      '',
       '## 基础设施故障快速失败',
       '- 试运行返回 SANDBOX_POOL_DOWN（沙箱池不可用，可能附 reason：pool_empty/docker_down/image_missing/circuit_open）或 SANDBOX_HTTP_503 等基础设施错误时，**最多重试 1 次**；连续 2 次同类型基础设施错误即判定为服务不可用，停止重试',
       '- ⚠️ SANDBOX_POOL_DOWN 是基础设施告警，不是代码错误：必须在回复中**显式告知用户沙箱池不可用**（池状态可查 GET /v1/sandbox/health，池会自动重建），禁止静默换实现让故障无人知晓',
@@ -164,6 +194,8 @@ export const AGENTS: AgentDefinition[] = [
     allowedSkills: [
       'orchestration:create', 'orchestration:get', 'orchestration:save', 'orchestration:lint',
       'orchestration:testRun', 'orchestration:publish', 'orchestration:list', 'orchestration:executions',
+      // 生命周期：删除（ARCHIVED 关停，不可恢复，触发危险操作确认门）
+      'orchestration:delete',
       'observation:list_queries', 'query:get', 'api:list',
     ],
   },
@@ -181,6 +213,12 @@ export const AGENTS: AgentDefinition[] = [
       'workflow:list_instances', 'workflow:approve', 'workflow:reject',
       'workflow:freeze', 'workflow:unfreeze', 'workflow:cancel',
       'workflow:lint', 'workflow:copy', 'workflow:preview', 'workflow:publish',
+      // 流程生命周期：下线（PUBLISHED→DRAFT，可逆）与删除（不可恢复，触发危险操作确认门）
+      'workflow:unpublish', 'workflow:delete',
+      // 触发器预演：发布前用样例数据静态推演路径/触发器/参数/SQL，暴露断链与审批人缺失
+      'workflow:rehearse-triggers',
+      // 链路可观测：实例时间线（SKIP/SUSPENDED/FAIL 留痕）与触发器派发记录/死信
+      'workflow:instance-timeline', 'workflow:trigger-outbox',
       'orchestration:list', 'query:list', 'api:list'
     ],
   },

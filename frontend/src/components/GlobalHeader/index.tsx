@@ -6,13 +6,12 @@ import { getApplication } from '@/api/application';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import './GlobalHeader.css';
 
-const NAV_ITEMS = [
+const NAV_ITEMS: { path: string; label: string; permission?: string; anyOf?: string[] }[] = [
   { path: '/work', label: '工作中心', permission: 'workbench:read' },
-  { path: '/agent-chat', label: '智能洞察', permission: 'ask:read' },
-  { path: '/apps', label: '应用开发', permission: 'apps:read' },
-  { path: '/concept', label: '概念图谱', permission: 'connect:concepts' },
-  { path: '/connect', label: '系统配置', permission: 'connect:systems' },
-  { path: '/people', label: '人员管理', permission: 'people:users' },
+  { path: '/agent-chat', label: '智能问数', permission: 'ask:read' },
+  { path: '/apps', label: '开发中心', permission: 'apps:read' },
+  { path: '/modeling', label: '建模中心', anyOf: ['connect:systems', 'connect:concepts'] },
+  { path: '/people', label: '平台管理', permission: 'people:users' },
 ];
 
 export function GlobalHeader() {
@@ -38,7 +37,9 @@ export function GlobalHeader() {
   }, []);
 
   const filteredNav = loaded
-    ? NAV_ITEMS.filter((item) => hasPermission(item.permission))
+    ? NAV_ITEMS.filter((item) =>
+        item.anyOf ? item.anyOf.some((p) => hasPermission(p)) : item.permission ? hasPermission(item.permission) : true,
+      )
     : NAV_ITEMS;
 
   const appIdMatch = location.pathname.match(/^\/apps\/(\d+)/);
@@ -59,8 +60,7 @@ export function GlobalHeader() {
 
   const isActive = (path: string) => {
     if (path === '/apps') return location.pathname === '/apps' || location.pathname.startsWith('/apps/');
-    if (path === '/connect') return location.pathname.startsWith('/connect');
-    if (path === '/concept') return location.pathname.startsWith('/concept');
+    if (path === '/modeling') return location.pathname.startsWith('/modeling') || location.pathname.startsWith('/connect') || location.pathname.startsWith('/concept');
     if (path === '/people') return location.pathname.startsWith('/people');
     if (path === '/work') return location.pathname.startsWith('/work');
     if (path === '/agent-chat') return location.pathname === '/agent-chat';

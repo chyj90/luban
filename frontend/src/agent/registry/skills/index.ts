@@ -10,10 +10,13 @@ import { observationSkills } from './observationSkills';
 import { planSkills } from './planSkills';
 import { datasourceSkills } from './datasourceSkills';
 import { querySkills } from './querySkills';
+import { conceptSkills } from './conceptSkills';
 import { apiSkills } from './apiSkills';
 import { workflowSkills } from './workflowSkills';
 import { delegateSkills } from './delegateSkills';
 import { orchestrationSkills } from './orchestrationSkills';
+import { fileSkills } from './fileSkills';
+import { selfTestSkills } from './selfTestSkills';
 
 export function registerAllSkills(): void {
   const allSkills: Record<string, SkillFactory> = {
@@ -23,10 +26,13 @@ export function registerAllSkills(): void {
     ...planSkills,
     ...datasourceSkills,
     ...querySkills,
+    ...conceptSkills,
     ...apiSkills,
     ...workflowSkills,
     ...delegateSkills,
     ...orchestrationSkills,
+    ...fileSkills,
+    ...selfTestSkills,
   };
 
   Object.entries(allSkills).forEach(([id, factory]) => {

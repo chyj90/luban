@@ -22,6 +22,14 @@
   border-color: #1677ff;
 }
 
+/* 紧凑尺寸：用于工具条/浮层等小空间场景（如预览身份切换条） */
+.triggerSmall {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
 .triggerDisabled:hover {
   border-color: #e8edf3;
 }
@@ -162,6 +170,11 @@
 
 .optionLabel {
   color: #1f1f1f;
+  /* 长标签（如“姓名（账号）”）单行展示，超出省略，不折行撑高选项 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .optionDesc {

@@ -278,6 +278,8 @@ export class ChatRouter {
       updatePlan: (planId, updates) => useAgentStore.getState().updatePlan(planId, updates),
       getOrphanedPending: () => useAgentStore.getState().orphanedPending,
       clearOrphanedPending: () => useAgentStore.getState().clearOrphanedPending(),
+      getPendingAttachments: () => useAgentStore.getState().pendingAttachments,
+      clearPendingAttachments: () => useAgentStore.getState().clearPendingAttachments(),
     };
 
     return createAgent({

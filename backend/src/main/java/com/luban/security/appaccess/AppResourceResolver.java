@@ -33,4 +33,11 @@ default boolean resourceExists(Long resourceId) { return applicationIdOf(resourc
  * - 平台级资源且本动作由服务层自行兜底（如流程发起的 canSubmitWorkflow）→ 返回 null，拦截器放行。
  */
 default String platformPermission(AppAction action) { return null; }
+
+/**
+ * 用户级授权兜底：平台级资源可按"用户持有的授权记录"放行——
+ * 如 PLATFORM 数据源按其所属系统的 APPROVED 系统权限（SystemPermission）放行 RUN。
+ * 拦截器在平台权限判定前先询问本方法；默认 false，走 platformPermission 判定。
+ */
+default boolean userGranted(Long userId, Long resourceId, AppAction action) { return false; }
 }

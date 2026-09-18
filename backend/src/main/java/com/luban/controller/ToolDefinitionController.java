@@ -38,9 +38,49 @@ public class ToolDefinitionController {
     private final HttpServletRequest request;
     private final CodeExecutorService codeExecutorService;
     private final AlgorithmExecutionLogRepository algorithmExecutionLogRepository;
+    private final com.luban.security.appaccess.AppAccessService appAccessService;
 
     @Value("${luban.algorithms.storage-path:algorithms}")
     private String algorithmsStoragePath;
+
+    /**
+     * 应用侧统一工具视图（一个平台一套）：应用自有工具 + 已授权平台工具
+     * （按工具所属系统的系统权限过滤，与数据源 /datasources/accessible 同模型）。
+     * KEY 授权不再参与内部调用——Key 只服务 X-API-Key 外部入口。
+     */
+    @GetMapping("/accessible")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> accessible(
+            @RequestParam(required = false) Long applicationId,
+            @AuthenticationPrincipal User user) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ToolDefinition t : toolDefinitionRepository.findByScope("PLATFORM")) {
+            if (appAccessService.canUseSystemAsset(user.getId(), t.getGroupId())) {
+                result.add(toolMap(t));
+            }
+        }
+        if (applicationId != null) {
+            for (ToolDefinition t : toolDefinitionRepository.findByGroupIdAndScope(applicationId, "APPLICATION")) {
+                result.add(toolMap(t));
+            }
+        }
+        return ResponseEntity.ok(ApiResponse.ok(result));
+    }
+
+    private Map<String, Object> toolMap(ToolDefinition t) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", t.getId());
+        map.put("toolId", t.getId());
+        map.put("toolName", t.getName());
+        map.put("displayName", t.getDisplayName());
+        map.put("description", t.getDescription());
+        map.put("toolType", t.getToolType());
+        map.put("inputSchema", t.getInputSchema());
+        map.put("outputSchema", t.getOutputSchema());
+        map.put("config", t.getConfig());
+        map.put("scope", t.getScope());
+        map.put("groupId", t.getGroupId());
+        return map;
+    }
 
     @GetMapping("/types")
     public ResponseEntity<ApiResponse<List<Map<String, String>>>> listToolTypes() {

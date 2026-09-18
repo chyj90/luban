@@ -37,6 +37,7 @@ public class ProcessService {
     private final RoleRepository roleRepository;
     private final DepartmentRepository departmentRepository;
     private final FormWorkflowBindingRepository formWorkflowBindingRepository;
+    private final FormDefinitionRepository formDefinitionRepository;
     private final ProcessEngine processEngine;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -131,6 +132,20 @@ public class ProcessService {
         for (FormWorkflowBinding binding : bindings) {
             binding.setWorkflowId(draft.getId());
             formWorkflowBindingRepository.save(binding);
+        }
+
+        // 表单状态语义化：流程发布 = 绑定表单进入生效态。此前表单 DRAFT/PUBLISHED 对运行时
+        // 零语义（DRAFT 照样绑定、照样渲染），用户与 agent 均无法从状态判断表单是否在用；
+        // 现约定 DRAFT 表单随流程发布自动转 PUBLISHED，删除保护（PUBLISHED 不可删）随之生效。
+        Set<Long> boundFormIds = bindings.stream().map(FormWorkflowBinding::getFormId).collect(Collectors.toSet());
+        for (Long formId : boundFormIds) {
+            formDefinitionRepository.findById(formId).ifPresent(form -> {
+                if ("DRAFT".equals(form.getStatus())) {
+                    form.setStatus("PUBLISHED");
+                    formDefinitionRepository.save(form);
+                    log.info("流程发布联动：表单 {}「{}」 DRAFT → PUBLISHED", formId, form.getName());
+                }
+            });
         }
 
         WorkflowDefinition newDraft = new WorkflowDefinition();

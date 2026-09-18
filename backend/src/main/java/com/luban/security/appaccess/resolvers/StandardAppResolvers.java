@@ -8,6 +8,7 @@ import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.PageRepository;
 import com.luban.repository.QueryRepository;
+import com.luban.repository.SystemPermissionRepository;
 import com.luban.security.appaccess.AppAction;
 import com.luban.security.appaccess.AppResourceResolver;
 import com.luban.workflow.repository.WorkflowDefinitionRepository;
@@ -89,7 +90,12 @@ public final class StandardAppResolvers {
     @Component
     public static class DatasourceResolver implements AppResourceResolver {
         private final DatasourceRepository repository;
-        public DatasourceResolver(DatasourceRepository repository) { this.repository = repository; }
+        private final com.luban.security.appaccess.AppAccessService appAccessService;
+        public DatasourceResolver(DatasourceRepository repository,
+                                  com.luban.security.appaccess.AppAccessService appAccessService) {
+            this.repository = repository;
+            this.appAccessService = appAccessService;
+        }
         @Override public String resourceType() { return "datasource"; }
         @Override public Long applicationIdOf(Long id) {
             return repository.findById(id)
@@ -99,6 +105,17 @@ public final class StandardAppResolvers {
         }
         @Override public String platformPermission(AppAction action) {
             return com.luban.constant.Permissions.CONNECT_SYSTEMS;
+        }
+        /**
+         * 平台数据源的运行（SQL 控制台/测试连接）按"所属系统的 APPROVED 系统权限"放行；
+         * 编辑/管理等动作不适用用户级授权，仍走平台权限 connect:systems。
+         */
+        @Override public boolean userGranted(Long userId, Long resourceId, AppAction action) {
+            if (action != AppAction.RUN) return false;
+            return repository.findById(resourceId)
+                    .filter(ds -> "PLATFORM".equals(ds.getEffectiveScope()))
+                    .map(ds -> appAccessService.canRunPlatformDatasource(userId, ds.getOwnerId()))
+                    .orElse(false);
         }
         @Override public boolean resourceExists(Long id) {
             return repository.existsById(id);

@@ -1,5 +1,5 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { formApi, workflowApi, instanceApi, taskApi, orgApi, bindingApi, lintApi } from '@/api/workflow';
+import { formApi, workflowApi, instanceApi, taskApi, orgApi, bindingApi, lintApi, observabilityApi } from '@/api/workflow';
 import type { WorkflowDefinition } from '@/types/workflow';
 import { listRoles, listDepartments } from '@/api/user';
 
@@ -600,7 +600,17 @@ export const workflowSkills: Record<string, SkillFactory> = {
         if (!result || result.length === 0) {
           return { success: true, message: `当前应用（ID: ${ctx.applicationId}）暂无流程定义`, data: result };
         }
-        const lines = result.map((d) => `  - ${d.id} 「${d.name}」 ${d.status}`);
+        // 发布链标注：发布时平台会保留发布版 ID 并新建一条 DRAFT 作为下一版编辑草稿
+        //（新 ID）。运行时（页面 startWorkflow/编排）必须引用已发布 ID——列表里直接说清，
+        // 避免把同名草稿副本当成可发起流程（2026-09-17 事故：发布 250 后出现草稿 258）
+        const lines = result.map((d) => {
+          const def = d as { id: number; name: string; status: string; version?: number; publishedVersionId?: number | null };
+          if (String(def.status).toUpperCase() === 'DRAFT' && def.publishedVersionId != null) {
+            return `  - ${def.id} 「${def.name}」 ${def.status}（发布版 ${def.publishedVersionId} 的下一版编辑草稿，发起/引用一律用已发布 ID ${def.publishedVersionId}，勿用本 ID）`;
+          }
+          const versionSuffix = def.version != null ? ` v${def.version}` : '';
+          return `  - ${def.id} 「${def.name}」 ${def.status}${versionSuffix}`;
+        });
         return { success: true, message: `当前应用共 ${result.length} 个流程定义：\n${lines.join('\n')}`, data: result };
       } catch (e: unknown) {
         return { success: false, message: `获取流程列表失败: ${(e as Error).message}` };
@@ -713,7 +723,7 @@ export const workflowSkills: Record<string, SkillFactory> = {
     id: 'workflow:lint',
     category: SkillCategory.WORKFLOW,
     name: 'lint_workflow',
-    description: '检查流程设计是否规范，返回问题列表。',
+    description: '检查流程设计是否规范（服务端自动装载绑定表单字段，含触发器 paramsMapping 断链、条件字段引用检查），返回问题列表。',
     parameters: {
       type: 'object',
       properties: { processId: { type: 'number', description: '流程 ID' } },
@@ -721,8 +731,15 @@ export const workflowSkills: Record<string, SkillFactory> = {
     },
     async execute(args) {
       try {
-        const def = await workflowApi.getDefinition(args.processId as number);
-        const result = await lintApi.lintWorkflow(def.nodes || '', def.edges || '', '');
+        // 定义级 lint：后端自动装载绑定表单字段（触发器断链检查生效）；
+        // 旧端点兜底（字段为空时后端跳过字段相关检查）
+        let result: unknown;
+        try {
+          result = await lintApi.lintWorkflowDefinition(args.processId as number);
+        } catch {
+          const def = await workflowApi.getDefinition(args.processId as number);
+          result = await lintApi.lintWorkflow(def.nodes || '', def.edges || '', '');
+        }
         const lintResult = result as { passed?: boolean; errors?: Array<{ category?: string; message?: string }>; warnings?: Array<{ category?: string; message?: string }>; errorCount?: number; warningCount?: number };
         const { passed, errors, warnings, errorCount, warningCount } = lintResult;
         const parts: string[] = [];
@@ -746,6 +763,89 @@ export const workflowSkills: Record<string, SkillFactory> = {
           return { success: false, message: `流程 ${args.processId} 不存在，无法检查（可能已被删除或 ID 已过期）。请用 list_workflows 核对。` };
         }
         return { success: false, message: `检查失败: ${errMsg}` };
+      }
+    },
+  }),
+
+  'workflow:rehearse-triggers': (_ctx) => ({
+    id: 'workflow:rehearse-triggers',
+    category: SkillCategory.WORKFLOW,
+    name: 'rehearse_triggers',
+    description: [
+      '触发器预演：给定样例表单数据与样例发起人，静态推演流程将走的分支路径、每个节点会触发的触发器、',
+      'paramsMapping 解析出的参数、QUERY 目标渲染后的 SQL；并报告审批人解析为空（节点会被静默跳过）、',
+      '参数断链、条件分支不命中等会导致静默失败的问题。不发起实例、不执行任何写操作。',
+      '发布流程前、或在页面挂接 startWorkflow 后必须预演一次：用贴近真实的样例数据各跑一遍主分支。',
+    ].join(''),
+    parameters: {
+      type: 'object',
+      properties: {
+        processId: { type: 'number', description: '流程 ID' },
+        sampleFormData: {
+          type: 'object',
+          description: '样例表单数据（模拟发起时 startWorkflow 的 formData，字段名与绑定表单逐字一致）',
+          additionalProperties: true,
+        },
+        sampleInitiatorId: { type: 'number', description: '样例发起人的平台用户 ID（用于审批人解析与 this.auth 渲染，强烈建议提供真实账号）' },
+      },
+      required: ['processId', 'sampleFormData'],
+    },
+    async execute(args) {
+      try {
+        const result = await lintApi.rehearseTriggers(
+          args.processId as number,
+          (args.sampleFormData as Record<string, unknown>) || {},
+          args.sampleInitiatorId as number | undefined,
+        ) as {
+          definitionName?: string; status?: string;
+          path?: Array<{ nodeId?: string; nodeType?: string; nodeName?: string; approverType?: string; previewAssignees?: number[] }>;
+          triggers?: Array<{ nodeId?: string; nodeName?: string; triggerId?: string; on?: string; fireTiming?: string; targetType?: string; targetRef?: number | string; params?: Record<string, unknown>; nullParamsFrom?: string[]; queryPreview?: { renderedSql?: string; placeholderIdentity?: boolean; missingRequiredParams?: string[]; error?: string } }>;
+          passed?: boolean;
+          errors?: Array<{ category?: string; message?: string }>;
+          warnings?: Array<{ category?: string; message?: string }>;
+          infos?: Array<{ category?: string; message?: string }>;
+        };
+        const parts: string[] = [];
+        parts.push(`流程「${result.definitionName}」（${result.status}）预演结果：${result.passed ? '未发现阻断性问题' : `发现 ${result.errors?.length || 0} 个阻断问题`}`);
+        if (result.path?.length) {
+          parts.push('路径推演：' + result.path.map((n) =>
+            `${n.nodeName || n.nodeId}[${n.nodeType}]` + (n.nodeType === 'approval'
+              ? `（审批人: ${n.previewAssignees?.length ? n.previewAssignees.join(',') : '解析为空!'})` : '')
+          ).join(' → '));
+        }
+        if (result.triggers?.length) {
+          parts.push('将触发的触发器：');
+          for (const t of result.triggers) {
+            parts.push(`- [${t.on}] ${t.nodeName || t.nodeId} → ${t.targetType}:${t.targetRef}（${t.fireTiming}），params=${JSON.stringify(t.params || {})}`);
+            if (t.queryPreview?.renderedSql) {
+              parts.push(`  渲染 SQL: ${t.queryPreview.renderedSql.replace(/\s+/g, ' ').slice(0, 300)}`);
+            }
+            if (t.queryPreview?.missingRequiredParams?.length) {
+              parts.push(`  ⚠️ 必填参数缺失: ${t.queryPreview.missingRequiredParams.join(', ')}`);
+            }
+          }
+        } else {
+          parts.push('未收集到任何会触发的触发器（检查触发器是否配置在路径节点上）');
+        }
+        if (result.errors?.length) {
+          parts.push(`${result.errors.length} 个错误：`);
+          parts.push(...result.errors.map((e) => `- [${e.category || ''}] ${e.message || ''}`));
+        }
+        if (result.warnings?.length) {
+          parts.push(`${result.warnings.length} 个警告：`);
+          parts.push(...result.warnings.map((w) => `- [${w.category || ''}] ${w.message || ''}`));
+        }
+        if (result.infos?.length) {
+          parts.push(...result.infos.map((i) => `- [${i.category || ''}] ${i.message || ''}`));
+        }
+        return { success: true, message: parts.join('\n'), data: result };
+      }
+      catch (e: unknown) {
+        const errMsg = (e as Error).message || '未知错误';
+        if (/\[HTTP 404\]/.test(errMsg)) {
+          return { success: false, message: `流程 ${args.processId} 不存在，无法预演。请用 list_workflows 核对。` };
+        }
+        return { success: false, message: `预演失败: ${errMsg}` };
       }
     },
   }),
@@ -805,6 +905,152 @@ export const workflowSkills: Record<string, SkillFactory> = {
         const result = await workflowApi.publishDefinition(args.processId as number);
         return { success: true, message: '流程已发布', data: result };
       } catch (e: unknown) { return { success: false, message: `发布失败: ${(e as Error).message}` }; }
+    },
+  }),
+
+  'workflow:unpublish': (_ctx) => ({
+    id: 'workflow:unpublish',
+    category: SkillCategory.WORKFLOW,
+    name: 'unpublish_workflow',
+    description: '下线已发布的流程定义（PUBLISHED → DRAFT）：流程不可再发起新实例，定义保留，可随时重新 publish_workflow 上线。delete_workflow 删除已发布流程前必须先执行本工具。',
+    parameters: {
+      type: 'object',
+      properties: { processId: { type: 'number', description: '要下线的流程定义 ID' } },
+      required: ['processId'],
+    },
+    async execute(args) {
+      try {
+        const result = await workflowApi.unpublishDefinition(args.processId as number);
+        return { success: true, message: `流程 ${args.processId} 已下线（PUBLISHED → DRAFT），不可再发起；如需彻底删除可继续调用 delete_workflow`, data: result };
+      } catch (e: unknown) {
+        const errMsg = (e as Error).message || '未知错误';
+        if (/\[HTTP 404\]/.test(errMsg) || /流程定义不存在/.test(errMsg)) {
+          return { success: false, message: `流程 ${args.processId} 不存在，无法下线（可能已被删除）。请用 list_workflows 核对。` };
+        }
+        if (/只能下线已发布的流程/.test(errMsg)) {
+          return { success: false, message: `流程 ${args.processId} 当前不是已发布状态（可能已是 DRAFT），无需下线；如要删除可直接调用 delete_workflow。` };
+        }
+        return { success: false, message: `下线失败: ${errMsg}` };
+      }
+    },
+  }),
+
+  'workflow:delete': (_ctx) => ({
+    id: 'workflow:delete',
+    category: SkillCategory.WORKFLOW,
+    name: 'delete_workflow',
+    description: '删除流程定义（不可恢复）。单个用 processId；批量（≥2 个）必须用 processIds 传完整 ID 数组——一次确认整批执行，禁止拆成逐个调用（确认门每次只放行一次调用，逐个删会反复打断用户）。PUBLISHED 流程会自动先下线再删除，无需预先 unpublish。删除后页面 JS 里对应 startWorkflow(流程ID) 调用点失效，汇报时必须提醒同步清理。',
+    parameters: {
+      type: 'object',
+      properties: {
+        processId: { type: 'number', description: '要删除的流程定义 ID（单个删除时用）' },
+        processIds: { type: 'array', items: { type: 'number' }, description: '要删除的流程定义 ID 数组（批量删除时用，一次确认整批执行）' },
+      },
+    },
+    isDangerous: true,
+    requiresConfirmation: true,
+    async execute(args) {
+      const ids = Array.isArray(args.processIds) && args.processIds.length > 0
+        ? Array.from(new Set((args.processIds as unknown[]).map(Number).filter((n) => Number.isFinite(n))))
+        : Number.isFinite(Number(args.processId)) ? [Number(args.processId)] : [];
+      if (!ids.length) {
+        return { success: false, message: '请提供 processId（单个）或 processIds（批量 ID 数组）之一' };
+      }
+      const deleted: number[] = [];
+      const skipped: string[] = [];
+      const failed: string[] = [];
+      for (const id of ids) {
+        try {
+          await workflowApi.deleteDefinition(id);
+          deleted.push(id);
+        } catch (e: unknown) {
+          const errMsg = (e as Error).message || '未知错误';
+          if (/已发布的流程不能删除/.test(errMsg)) {
+            // 用户已确认删除，下线是删除的前置步骤（可逆），自动完成，不再单独打断确认
+            try {
+              await workflowApi.unpublishDefinition(id);
+              await workflowApi.deleteDefinition(id);
+              deleted.push(id);
+            } catch (e2: unknown) {
+              failed.push(`${id}: 自动下线后删除仍失败 (${(e2 as Error).message})`);
+            }
+          } else if (/流程定义不存在/.test(errMsg) || /\[HTTP 404\]/.test(errMsg)) {
+            skipped.push(`${id}: 不存在（可能已删除过）`);
+          } else {
+            failed.push(`${id}: ${errMsg}`);
+          }
+        }
+      }
+      const parts: string[] = [];
+      if (deleted.length) parts.push(`已删除 ${deleted.length} 个：${deleted.join(',')}`);
+      if (skipped.length) parts.push(`跳过 ${skipped.length} 个：${skipped.join('；')}`);
+      if (failed.length) parts.push(`失败 ${failed.length} 个：${failed.join('；')}`);
+      const message = ids.length === 1 && deleted.length === 1
+        ? `流程 ${ids[0]} 已删除（不可恢复）。⚠️ 页面 JS 中 startWorkflow(${ids[0]}) 调用点已失效，需同步清理`
+        : `批量删除完成（目标 ${ids.length} 个）。⚠️ 页面 JS 中对应 startWorkflow 调用点已失效，需同步清理\n${parts.join('\n')}`;
+      return { success: failed.length === 0, message, data: { deleted, skipped, failed } };
+    },
+  }),
+
+  'workflow:instance-timeline': (_ctx) => ({
+    id: 'workflow:instance-timeline',
+    category: SkillCategory.WORKFLOW,
+    name: 'get_instance_timeline',
+    description: `查看流程实例的完整时间线（历史记录）。重点关注以下动作留痕：SKIP=审批人解析为空节点被跳过（APPROVED 触发器不会执行）、SUSPENDED=实例因审批人缺失被挂起、FAIL=解析失败阻止推进。排查"审批走完了但业务数据没回写"类问题从这里入手。`,
+    parameters: {
+      type: 'object',
+      properties: { instanceId: { type: 'number', description: '实例 ID' } },
+      required: ['instanceId'],
+    },
+    async execute(args) {
+      try {
+        const history = await instanceApi.getHistory(args.instanceId as number);
+        if (!history.length) {
+          return { success: true, message: `实例 ${args.instanceId} 暂无历史记录`, data: history };
+        }
+        const parts = history.map((h) => {
+          const action = String(h.action || '').toUpperCase();
+          const marker = action === 'SKIP' ? ' ⚠️跳过' : action === 'SUSPENDED' ? ' ⚠️挂起' : action === 'FAIL' ? ' ❌失败' : '';
+          return `- [${h.createdAt}] ${h.nodeId} ${action}${marker} ${h.comment || ''}`;
+        });
+        return { success: true, message: `实例 ${args.instanceId} 时间线（${history.length} 条）：\n${parts.join('\n')}`, data: history };
+      } catch (e: unknown) { return { success: false, message: `查询失败: ${(e as Error).message}` }; }
+    },
+  }),
+
+  'workflow:trigger-outbox': (_ctx) => ({
+    id: 'workflow:trigger-outbox',
+    category: SkillCategory.WORKFLOW,
+    name: 'list_trigger_outbox',
+    description: `查询触发器派发记录（outbox）。两种用法：① 按实例查（instanceId）：该实例每条触发器的组/顺序/状态/重试次数/最后错误；② 查死信（dead: true）：全平台重试耗尽的 DEAD 回写，需要人工介入。PENDING 停留过久=派发卡住；DEAD=回写最终失败（业务库状态与流程状态已分叉）。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        instanceId: { type: 'number', description: '实例 ID（与 dead 二选一）' },
+        dead: { type: 'boolean', description: '查最近死信（DEAD）列表' },
+      },
+      required: [],
+    },
+    async execute(args) {
+      try {
+        const rows = args.dead
+          ? await observabilityApi.deadTriggerLetters()
+          : args.instanceId
+            ? await observabilityApi.instanceTriggerOutbox(args.instanceId as number)
+            : null;
+        if (!rows) {
+          return { success: false, message: '请提供 instanceId 或 dead=true 之一' };
+        }
+        if (!rows.length) {
+          return { success: true, message: args.dead ? '当前没有死信（DEAD）记录' : `实例 ${args.instanceId} 暂无触发器派发记录`, data: rows };
+        }
+        const parts = rows.map((r) => {
+          const group = r.groupId ? ` 组=${String(r.groupId).slice(0, 8)}#${r.groupOrder}` : '';
+          return `- row=${r.id} 实例=${r.instanceId} 节点=${r.nodeId} → ${r.targetType}:${r.targetRef}${group} 状态=${r.status} 重试=${r.attempts}/${r.maxAttempts}${r.minAffectedRows != null ? ` minAffectedRows=${r.minAffectedRows}` : ''}${r.lastError ? ` 最后错误: ${r.lastError}` : ''}`;
+        });
+        const deadHint = args.dead ? '\n⚠️ 死信代表回写最终失败：流程状态与业务库状态已分叉，请人工核对业务数据后处理。' : '';
+        return { success: true, message: `共 ${rows.length} 条记录：\n${parts.join('\n')}${deadHint}`, data: rows };
+      } catch (e: unknown) { return { success: false, message: `查询失败: ${(e as Error).message}` }; }
     },
   }),
 };

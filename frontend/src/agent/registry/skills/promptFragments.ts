@@ -5,6 +5,8 @@
  * 从 tools/ 迁移至此，与 Skill 定义放在一起，统一管理。
  */
 
+import { BUILTIN_QUERY_NAMES } from '@/lib/builtinQueries';
+
 export function getPageSkillSummary(): string {
   return `## 页面管理
 - 删除/重命名页面
@@ -24,7 +26,8 @@ export function getIdentityRulesSummary(): string {
 - "我的数据"查询（我的休假/我的订单/我的待办…）**不声明、不传任何身份筛选参数**：SQL 直接用 {{ this.auth.userId }}，页面调用时完全不传身份参数；无匹配记录时页面显示"当前账号未关联数据"提示，禁止静默空白或报错
 - **禁止**让页面通过 this.params 传身份参数（userId/employeeNo/userAccount 等一律不行）——参数来自前端内存可被篡改，属于越权漏洞
 - 需求出现"我的/当前用户/自己/登录人"字样时，**禁止**默认做"选择当前员工"的选择器——除非用户明确要求管理员切换查看对象
-- 测试数据的绑定列 user_id 必须填真实平台用户 ID（用 search_platform_users 查到再填）：至少给"当前用户身份"里的用户绑一条；演示涉及多账号（如员工发起+上级审批）时为每个参与账号各绑一条，并在完成汇报中告知用户分别用哪个账号登录体验`;
+- 测试数据的绑定列 user_id 必须填真实平台用户 ID（用 search_platform_users 查到再填）：至少给"当前用户身份"里的用户绑一条；演示涉及多账号（如员工发起+上级审批）时为每个参与账号各绑一条，并在完成汇报中告知用户分别用哪个账号登录体验
+- **审批人解析只认平台组织数据**：流程节点 approverType=leader/department_head 由流程引擎从平台组织解析（成员主部门的 user_dept.leader_id / 部门的 departments.manager_id），**业务表里建的 leader_id/manager_id 等组织归属字段引擎不读**——设计审批流时禁止要求 DBA 在业务表加"直属上级/部门经理"列来支撑审批人解析；审批链演示依赖平台侧组织数据（成员 leaderId、部门 managerId）配置齐全，组织缺失会导致审批节点解析为空（挂起或被跳过）`;
 }
 
 /** 外部库与内置能力规则：分析阶段（填 libraries 时）与执行阶段都必须可见 */
@@ -76,7 +79,7 @@ export function getCodePageSkillSummary(): string {
 export function getDataQueryGuide(): string {
   return `## DataQuery 完整使用指南
 
-平台在 window.DataQuery 上自动注册了所有绑定查询的包装函数，包括读（SELECT）和写（INSERT/UPDATE/DELETE），**这是唯一正确的数据调用方式**。
+平台在 window.DataQuery 上自动注册了所有绑定查询的包装函数，包括读（SELECT）和写（INSERT/UPDATE/DELETE），**这是唯一正确的数据调用方式**。当前平台内置查询清单（无需创建、无需绑定，每个页面自动注册）：${BUILTIN_QUERY_NAMES.join('、')}。
 
 ⚠️ **查询名区分大小写**：DataQuery 后面的名字必须与查询名逐字符一致（DBA 创建的查询通常是帕斯卡命名，如 GetMeetings、InsertSignin）。写错大小写不会报"查询不存在"，而是静默失败、页面无数据。动手前先核对 delegate_query 返回的真实查询名或 window.__QUERIES__ 数组。
 
@@ -97,8 +100,15 @@ DataQuery.InsertCustomer(formData).then(function(result) {
 // 需要新记录主键时（如发起审批流程必须携带业务记录 id）：
 DataQuery.InsertLeaveRequest(params).then(function(result) {
   var insertId = result.insertId;   // 自增主键
-  window.__LUBAN__.startWorkflow(WORKFLOW_ID, { id: insertId /*, 其它字段 */ });
+  // startWorkflow 的 formData 会被服务端按流程绑定表单校验（必填/类型，key 与表单逐字一致）
+  window.__LUBAN__.startWorkflow(WORKFLOW_ID, { id: insertId /*, 其它表单字段 */ });
 });
+// ⭐ 页面发起流程首选平台表单弹窗（表单 UI 由平台按绑定表单真实渲染——支持 excel 上传解析、
+// detail_table 等全部控件，页面零表单代码，字段变更随表单设计自动生效，禁止手写表单弹窗）：
+window.__LUBAN__.startWorkflowWithForm(WORKFLOW_ID, { formId: 表单ID, insertQueryName: 'InsertLeaveRecord' })
+  .then(function(res) { /* res.id=流程实例，res.insertId=业务记录 */ })
+  .catch(function(err) { if (err && err.cancelled) return; /* 用户关闭弹窗不是错误 */ });
+// 原语 openWorkflowForm(formId)：只收集表单数据（Promise<formData>），落库与发起由页面自行编排
 DataQuery.UpdateCustomer({ id: editId, ...formData }).then(function(result) {
   LubanUI.toast.success('更新成功');
   searchData();
@@ -170,8 +180,9 @@ export function getDelegateQuerySkillSummary(): string {
 
 export function getFindWorkflowSkillSummary(): string {
   return `## 流程管理
-- 你**不直接**操作流程、表单、组织架构，全部委派给流程设计助手
-- 任何流程相关的需求，调用 delegate_workflow 工具，用自然语言描述需求
+- 流程的**创建/修改**（表单、流程、绑定、发布）你不直接操作，全部委派给流程设计助手
+- **只读核对直接用工具**：确认流程是否存在/是否已发布/引用哪个流程 ID，用 \`list_workflows\`（含发布链标注：发布版 ID 与其下一版编辑草稿一目了然）与 \`get_definition\` 一次调用完成，**禁止为只读核对起委派**（一次委派是一整个子智能体会话，成本高且没必要）
+- 任何流程的创建/修改需求，调用 delegate_workflow 工具，用自然语言描述需求
 - 支持的任务类型：
   - design_form：设计表单
   - design_workflow：设计审批流程（可仅设计流程，不设计表单，页面通过弹窗发起）
@@ -188,6 +199,7 @@ export function getFindWorkflowSkillSummary(): string {
 - 机制决策规则：联动 = "某事件 → 固定动作" → 触发器目标按动作选：改业务库状态用 QUERY 目标（每个状态一条查询，状态写死在 SQL 里，SQL 带状态守卫防重复派发）；调用已有 API 工具（外部 HTTP 调用、钉钉/企微等通知接口）用 TOOL 目标（无需新建目标）；仅多步依赖（先查再写等组合逻辑）才用编排
 - 禁止设计"一次回调 + approved 布尔参数"的编排契约——不同审批结果用不同触发器表达（每条触发器绑定一个事件；paramsMapping 支持常量 value，需要传固定值时直接填 value）
 - **formData 必须携带业务记录标识**：页面 startWorkflow 的 formData 里必须有业务记录 id（写查询返回的 insertId，或发起侧生成的业务主键），否则触发器/编排都定位不到记录，联动必然断链
+- **formData 按绑定表单 schema 服务端校验**：startWorkflow 时引擎校验 formData 的必填字段与类型（字段 key 与表单逐字一致），缺字段发起即报错——发起 UI 不要在页面重做：首选 window.__LUBAN__.startWorkflowWithForm(流程ID, { formId, insertQueryName }) 平台表单弹窗（create_page_scaffold 传 launchWorkflow 自动生成调用代码），表单由平台真实渲染、字段随设计自动生效；页面手写表单弹窗是历史事故源
 - 分析阶段在 submit_analysis 的 workflows[].callbacks 中逐条声明回调（on + 目标 + 参数映射），系统会自动生成回写查询与触发器配置步骤`;
 }
 

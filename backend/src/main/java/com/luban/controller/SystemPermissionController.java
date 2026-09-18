@@ -52,6 +52,7 @@ public class SystemPermissionController {
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final com.luban.security.appaccess.AppAccessService appAccessService;
 
     @GetMapping("/systems")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listSystems(@AuthenticationPrincipal User user) {
@@ -102,6 +103,30 @@ public class SystemPermissionController {
             ToolGroup group = toolGroupRepository.findById(groupId).orElse(null);
             if (group == null) {
                 result.put("error", "系统不存在");
+                return ResponseEntity.ok(ApiResponse.ok(result));
+            }
+
+            // 超管持有全部平台权限且通常没有上级审批人，申请直接生效，不再走审批工作流
+            if (appAccessService.isSuperAdmin(user.getId())) {
+                SystemPermission perm = systemPermissionRepository
+                        .findByUserIdAndGroupId(user.getId(), groupId)
+                        .orElseGet(() -> {
+                            SystemPermission p = new SystemPermission();
+                            p.setUserId(user.getId());
+                            p.setUserName(user.getAccount());
+                            p.setGroupId(groupId);
+                            p.setGroupName(group.getName());
+                            p.setCreatedAt(LocalDateTime.now());
+                            return p;
+                        });
+                perm.setStatus("APPROVED");
+                perm.setReason(reason);
+                perm.setApprovedAt(LocalDateTime.now());
+                perm.setRejectReason(null);
+                perm.setRejectedAt(null);
+                systemPermissionRepository.save(perm);
+                result.put("status", "APPROVED");
+                result.put("message", "超管账号无需审批，已直接授权");
                 return ResponseEntity.ok(ApiResponse.ok(result));
             }
 

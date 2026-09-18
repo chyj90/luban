@@ -1,7 +1,11 @@
-import { useEffect, useRef, useMemo, useCallback, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useMemo, useCallback, useState, type CSSProperties, type MutableRefObject } from 'react';
 import type { CodePageData } from '@/types/page';
 import type { Query } from '@/types/query';
-import { useQueryBridge, type UserInfo } from '@/hooks/useQueryBridge';
+import { useQueryBridge, type UserInfo, type BridgeJournalEntry } from '@/hooks/useQueryBridge';
+import { getPlatformUsers } from '@/api/platform';
+import { taskApi } from '@/api/workflow';
+import type { WorkflowTask } from '@/types/workflow';
+import Select from '@/components/Select';
 import { LUBAN_UI_CSS, LUBAN_UI_JS, ECHARTS_SOURCE, ECHARTS_GL_SOURCE, LEAFLET_SOURCE } from '@/luban-ui';
 import './InteliPreview.css';
 
@@ -19,9 +23,13 @@ interface InteliPreviewProps {
    * 不传则按面板实际宽度渲染（历史行为）。
    */
   designWidth?: number;
+  /** 桥接调用记账（链路自检页面冒烟层用；普通预览不传即零开销） */
+  journalRef?: MutableRefObject<BridgeJournalEntry[] | null>;
+  /** 预览 iframe 内按下 Esc 时回调（iframe 聚焦时键盘事件不会到达父窗口，需由此转发） */
+  onEscape?: () => void;
 }
 
-export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigate, applicationId, appTools, designWidth }: InteliPreviewProps) {
+export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigate, applicationId, appTools, designWidth, journalRef, onEscape }: InteliPreviewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const shellReadyRef = useRef(false);
   const shellBuiltRef = useRef(false);
@@ -29,7 +37,79 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
   const pageMsgSeqRef = useRef(0);
   const codePageRef = useRef(codePage);
   codePageRef.current = codePage;
-  const { buildShellScript, buildBridgeContent } = useQueryBridge(queries, userInfo, allPages, onNavigate, applicationId, appTools);
+
+  // 预览身份切换（preview-as）：以指定平台用户身份渲染页面与执行查询，
+  // 验证"我的数据"类查询在不同账号下返回不同结果集（root 与员工看到同一份数据即此处应暴露的问题）
+  const [previewUser, setPreviewUser] = useState<UserInfo | null>(null);
+  const [previewOptions, setPreviewOptions] = useState<Array<{ id: number; label: string; name: string; account: string }>>([]);
+  const effectiveUser: UserInfo | null = previewUser ?? userInfo ?? null;
+  const identityKey = effectiveUser ? `u${effectiveUser.id}` : 'anon';
+  const identityKeyRef = useRef(identityKey);
+
+  const loadPreviewOptions = useCallback(async () => {
+    if (previewOptions.length > 0) return;
+    try {
+      const res = await getPlatformUsers({ page: 1, pageSize: 50 });
+      setPreviewOptions((res.data.rows || []).map((u) => ({
+        id: u.id,
+        label: `${u.name || u.account}（${u.account}）`,
+        name: u.name || u.account,
+        account: u.account,
+      })));
+    } catch {
+      // 平台用户不可用时身份切换退化为本人预览
+    }
+  }, [previewOptions.length]);
+
+  const { buildShellScript, buildBridgeContent } = useQueryBridge(
+    queries, effectiveUser, allPages, onNavigate, applicationId, appTools,
+    undefined, previewUser ? previewUser.id : undefined,
+    journalRef,
+  );
+
+  // 身份预览待办面板：显示当前预览身份（未切换时为登录人本人）在本应用内的待办审批，
+  // 发起/审批全程免切账号（后端 preview-as 仅应用所有者可用 + 审计）
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [pendingTasks, setPendingTasks] = useState<WorkflowTask[] | null>(null);
+  const loadPendingTasks = useCallback(async () => {
+    if (!applicationId) return;
+    try {
+      setPendingTasks(await taskApi.list({
+        status: 'pending', applicationId,
+        previewAsUserId: previewUser ? previewUser.id : undefined,
+      }));
+    } catch {
+      setPendingTasks([]);
+    }
+  }, [previewUser, applicationId]);
+  useEffect(() => {
+    // 不论面板开合都拉一次，按钮上直接显示待办数量；切换身份后自动刷新
+    loadPendingTasks();
+  }, [loadPendingTasks]);
+
+  const handleTaskAction = useCallback(async (taskId: number, action: 'approve' | 'reject') => {
+    const comment = action === 'reject' ? (window.prompt('驳回意见（可选）') || '') : '同意';
+    try {
+      if (action === 'approve') await taskApi.approve(taskId, comment, previewUser ? previewUser.id : undefined);
+      else await taskApi.reject(taskId, comment, previewUser ? previewUser.id : undefined);
+      await loadPendingTasks();
+    } catch (e) {
+      window.alert((e as Error).message || '操作失败');
+    }
+  }, [previewUser, loadPendingTasks]);
+
+  // iframe 内按 Esc → 通知父层（AppEditorPage 用它退出全屏预览）
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'PREVIEW_ESCAPE' && e.source === iframeRef.current?.contentWindow) {
+        onEscapeRef.current?.();
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
 
   const queryNames = useMemo(() => queries.map((q) => q.name), [queries]);
   const queryNamesRef = useRef(queryNames);
@@ -62,8 +142,9 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
     const prevNames = lastQueryNamesRef.current;
     const namesChanged = prevNames.length !== queryNames.length ||
       prevNames.some((n, i) => n !== queryNames[i]);
+    const identityChanged = identityKeyRef.current !== identityKey;
 
-    if (shellBuiltRef.current && !namesChanged) return;
+    if (shellBuiltRef.current && !namesChanged && !identityChanged) return;
 
     const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -87,7 +168,8 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
     iframe.srcdoc = html;
     shellBuiltRef.current = true;
     lastQueryNamesRef.current = [...queryNames];
-  }, [buildShellScript, queryNames]);
+    identityKeyRef.current = identityKey;
+  }, [buildShellScript, queryNames, identityKey]);
 
   // Listen for SHELL_READY from the iframe, send initial page on first ready
   useEffect(() => {
@@ -162,6 +244,65 @@ export function InteliPreview({ codePage, queries, userInfo, allPages, onNavigat
 
   return (
     <div className="ip-frame-wrap" ref={wrapRef}>
+      <div className="ip-identity-bar">
+        <span className="ip-identity-label">身份预览</span>
+        <Select
+          className="ip-identity-select"
+          small
+          value={previewUser ? String(previewUser.id) : ''}
+          placeholder="本人（登录账号）"
+          onOpen={loadPreviewOptions}
+          options={[
+            { value: '', label: '本人（登录账号）' },
+            ...previewOptions.map((o) => ({ value: String(o.id), label: o.label })),
+          ]}
+          onChange={(v) => {
+            if (!v) { setPreviewUser(null); setTasksOpen(false); return; }
+            const found = previewOptions.find((o) => String(o.id) === v);
+            if (found) {
+              setPreviewUser({ id: found.id, account: found.account, email: '', name: found.name });
+            }
+          }}
+        />
+        {applicationId ? (
+          <button
+            className="ip-todo-toggle"
+            style={{
+              marginLeft: 'auto', border: '1px solid #d1d5db', background: tasksOpen ? '#eef2ff' : '#fff',
+              color: '#374151', borderRadius: 6, padding: '2px 10px', fontSize: 12, cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+            onClick={() => setTasksOpen((v) => !v)}
+          >
+            我的待办{pendingTasks ? `（${pendingTasks.length}）` : ''}
+          </button>
+        ) : null}
+      </div>
+      {tasksOpen && applicationId ? (
+        <div style={{ borderBottom: '1px solid #e5e7eb', padding: '6px 12px', fontSize: 12, background: '#fafafa' }}>
+          {pendingTasks === null ? (
+            <span style={{ color: '#6b7280' }}>加载中…</span>
+          ) : pendingTasks.length === 0 ? (
+            <span style={{ color: '#6b7280' }}>当前身份在本应用内没有待办审批</span>
+          ) : (
+            pendingTasks.map((t) => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                <span style={{ color: '#374151' }}>
+                  #{t.id} {t.nodeName || t.nodeId} · 实例 {t.instanceId}
+                </span>
+                <button
+                  style={{ border: '1px solid #059669', background: '#ecfdf5', color: '#059669', borderRadius: 4, padding: '1px 8px', cursor: 'pointer', fontSize: 12 }}
+                  onClick={() => handleTaskAction(t.id, 'approve')}
+                >通过</button>
+                <button
+                  style={{ border: '1px solid #dc2626', background: '#fef2f2', color: '#dc2626', borderRadius: 4, padding: '1px 8px', cursor: 'pointer', fontSize: 12 }}
+                  onClick={() => handleTaskAction(t.id, 'reject')}
+                >驳回</button>
+              </div>
+            ))
+          )}
+        </div>
+      ) : null}
       <div className="ip-frame-scaler" style={scalerStyle}>
         <iframe
           ref={iframeRef}

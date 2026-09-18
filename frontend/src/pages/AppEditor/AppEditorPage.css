@@ -3,7 +3,6 @@
   display: flex;
   flex-direction: column;
   background: #f4f6f9;
-  padding-bottom: 36px;
 }
 
 .app-editor-header {
@@ -198,49 +197,8 @@
   }
 }
 
-.app-editor-preview-header {
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
-  height: 40px;
-  background: #fff;
-  border-bottom: 1px solid #e8edf3;
-  flex-shrink: 0;
-  gap: 12px;
-}
-
-.app-editor-preview-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1f1f1f;
-}
-
-.app-editor-preview-tabs {
-  display: flex;
-  gap: 4px;
-}
-
-.app-editor-preview-file-btn {
-  padding: 3px 10px;
-  font-size: 11px;
-  border: 1px solid #e8edf3;
-  border-radius: 4px;
-  background: #fff;
-  color: #5a6a7e;
-  cursor: pointer;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  transition: all 0.15s;
-}
-
-.app-editor-preview-file-btn:hover {
-  background: transparent;
-  color: #1677ff;
-  border-color: #1677ff;
-}
-
-.app-editor-preview-spacer {
-  flex: 1;
-}
+/* 预览工具条（预览标签/文件入口/视口切换/全屏）在左侧栏「页面」面板底部，
+   这里不再放头部，保证预览区与工作台运行态的页面可见区域一致 */
 
 /* Code editor panel */
 .app-editor-code-panel {
@@ -309,57 +267,30 @@
   overflow: hidden;
 }
 
-.app-editor-preview-fullscreen-btn {
+/* 全屏预览下的悬浮退出入口（工具条已移入左侧栏，面板内需保留退出 affordance） */
+.app-editor-preview-exit-fullscreen {
+  position: absolute;
+  /* 左上角：右上角被身份预览栏（z-index 20，同 top-right）覆盖，全屏时会找不到退出按钮 */
+  top: 12px;
+  left: 12px;
+  z-index: 30;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #e8edf3;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid rgba(232, 237, 243, 0.9);
   border-radius: 6px;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.92);
   color: #5a6a7e;
+  font-size: 12px;
   cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   transition: all 0.15s ease;
-  padding: 0;
 }
 
-.app-editor-preview-fullscreen-btn:hover {
-  background: transparent;
+.app-editor-preview-exit-fullscreen:hover {
   color: #1677ff;
   border-color: #1677ff;
-}
-
-/* 预览视口切换：1920 画布（等比缩放，与运行时结构一致）/ 适应面板 */
-.app-editor-preview-width-toggle {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  background: #f0f2f5;
-  border-radius: 6px;
-  margin-right: 8px;
-}
-
-.app-editor-preview-width-btn {
-  padding: 2px 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  font-size: 12px;
-  color: #5a6a7e;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.app-editor-preview-width-btn:hover {
-  color: #1677ff;
-}
-
-.app-editor-preview-width-btn.active {
-  background: #fff;
-  color: #1677ff;
-  font-weight: 500;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 /* 全屏预览：直接放大同一个预览面板（保持同一 iframe 实例，不重挂 InteliPreview） */
@@ -438,3 +369,151 @@
   overflow-y: auto;
   padding: 20px 24px;
 }
+/* ── 链路自检：抽屉（入口在左侧「预览」工具栏的"链路自检"按钮） ── */
+
+.selftest-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  justify-content: flex-end;
+}
+.selftest-drawer {
+  width: min(680px, 92vw);
+  height: 100%;
+  background: #fff;
+  box-shadow: -8px 0 30px rgba(15, 23, 42, 0.18);
+  overflow-y: auto;
+  padding: 20px 24px 40px;
+}
+.selftest-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.selftest-drawer-header h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+}
+.selftest-drawer-header h3 svg { color: #1677ff; flex: none; }
+.selftest-btn {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.selftest-btn-primary {
+  background: #1677ff;
+  border-color: #1677ff;
+  color: #fff;
+}
+/* 显式 hover 态：全局 button:hover 会把背景置透明，必须用更高优先级覆盖 */
+.selftest-btn:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #374151;
+}
+.selftest-btn-primary:hover {
+  background: #4096ff;
+  border-color: #4096ff;
+  color: #fff;
+}
+.selftest-btn:disabled {
+  cursor: not-allowed;
+}
+.selftest-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.selftest-section h4 { margin: 0 0 8px; }
+.selftest-section ol { margin: 6px 0; padding-left: 20px; }
+.selftest-pass { color: #059669; }
+.selftest-fail { color: #dc2626; }
+.selftest-hint { color: #6b7280; font-size: 12px; }
+.selftest-running { color: #1677ff; font-size: 13px; margin-right: 8px; }
+.selftest-error { border-color: #fecaca; background: #fef2f2; }
+.selftest-overall { font-size: 15px; font-weight: 600; }
+.selftest-page-result { margin-bottom: 8px; }
+.selftest-btn-mini {
+  font-size: 12px;
+  padding: 3px 12px;
+}
+/* 选择区头部：标题居左，计数与全选/清空按钮统一靠右，两个区块按钮位置一致 */
+.selftest-select-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.selftest-select-head h4 { margin: 0; font-size: 13px; }
+.selftest-select-count { margin-left: auto; color: #6b7280; font-size: 12px; }
+.selftest-select-hint { color: #9ca3af; font-size: 12px; margin-bottom: 8px; }
+/* 选项用等宽栅格对齐，长名截断显示 */
+.selftest-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 8px;
+  max-height: 184px;
+  overflow-y: auto;
+  padding: 2px;
+}
+.selftest-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.selftest-chip:hover { border-color: #69b1ff; }
+.selftest-chip input { margin: 0; accent-color: #1677ff; flex: none; }
+.selftest-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selftest-chip-on { border-color: #1677ff; background: #e6f4ff; }
+.selftest-chip-on > span { color: #0958d9; font-weight: 600; }
+/* 通过/失败状态点（替代 emoji） */
+.selftest-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.selftest-dot-pass { background: #10b981; }
+.selftest-dot-fail { background: #ef4444; }
+.selftest-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.selftest-table th, .selftest-table td {
+  border: 1px solid #e5e7eb;
+  padding: 5px 8px;
+  text-align: left;
+  word-break: break-all;
+}
+.selftest-table th { background: #f9fafb; }

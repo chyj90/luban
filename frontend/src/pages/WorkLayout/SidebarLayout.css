@@ -6,7 +6,8 @@
 }
 
 .sidebar-layout-sidebar {
-  width: 200px;
+  /* 与开发态左侧栏(editor-sidebar)同宽：保证开发/运行两个状态右侧页面可见区域宽度一致 */
+  width: 340px;
   flex-shrink: 0;
   background: #fff;
   border-right: 1px solid #e8edf3;
@@ -52,6 +53,13 @@
   overflow-y: auto;
   padding: 20px;
   background: #f5f7fa;
+}
+
+/* 应用页面查看(/work/app/...)：去掉内边距完全撑满，
+   使运行态页面可见区域与开发态预览区几何一致（左栏同宽、上下不留白） */
+.sidebar-layout-content--flush {
+  padding: 0;
+  overflow: hidden;
 }
 
 .sidebar-layout-section {

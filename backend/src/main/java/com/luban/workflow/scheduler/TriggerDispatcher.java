@@ -23,7 +23,10 @@ import java.util.Map;
 /**
  * 触发器派发器：轮询 outbox → 经统一漏斗调用目标（编排/Query/工具）。
  * at-least-once：失败按退避序列重试，超过 maxAttempts 置 DEAD（死信）并告警日志；
- * 幂等键 = "otb-"+outbox.id，目标侧重复派发由漏斗/调用方按幂等键去重。
+ * 幂等键 = "otb-"+outbox.id（确定性），漏斗按该键对已成功的调用去重，
+ * "目标已成功但响应丢失"的重发不会重复执行。
+ * 组门槛：同组（同一来源节点同一事件的多个触发器）按 group_order 顺序派发，
+ * 前序成员未成功时后续成员不派发——配置声明的执行顺序在重试场景下依然成立。
  */
 @Slf4j
 @Service
@@ -41,8 +44,30 @@ public class TriggerDispatcher {
         List<WorkflowTriggerOutbox> batch = outboxRepository
                 .findTop20ByStatusAndNextRetryAtBeforeOrderByIdAsc("PENDING", LocalDateTime.now());
         for (WorkflowTriggerOutbox row : batch) {
+            if (!groupReady(row)) continue;
             dispatch(row);
         }
+    }
+
+    /**
+     * 组门槛：组内更早的成员尚未 DISPATCHED（含退避重试中/已 DEAD）时，本行不得执行。
+     * 历史数据（groupId 为 null）与单触发器组直接放行。
+     */
+    private boolean groupReady(WorkflowTriggerOutbox row) {
+        if (row.getGroupId() == null || row.getGroupOrder() == null) return true;
+        List<WorkflowTriggerOutbox> group = outboxRepository
+                .findByGroupIdOrderByGroupOrderAsc(row.getGroupId());
+        for (WorkflowTriggerOutbox member : group) {
+            if (member.getGroupOrder() == null) continue;
+            if (member.getGroupOrder() >= row.getGroupOrder()) break;
+            if (!"DISPATCHED".equals(member.getStatus())) {
+                log.info("触发器组门槛拦截: row={} group={} order={} 前序成员 row={} 状态={}",
+                        row.getId(), row.getGroupId(), row.getGroupOrder(),
+                        member.getId(), member.getStatus());
+                return false;
+            }
+        }
+        return true;
     }
 
     void dispatch(WorkflowTriggerOutbox row) {
@@ -74,12 +99,31 @@ public class TriggerDispatcher {
                         + (result.getErrorCode() != null ? result.getErrorCode() + " " : "")
                         + result.getErrorMessage());
             }
+            // minAffectedRows（仅 QUERY）：实际影响行数低于声明值视为失败——
+            // "必命中"回写命中 0 行（守卫未命中/记录不存在）不再被当成派发成功
+            if ("QUERY".equals(row.getTargetType()) && row.getMinAffectedRows() != null) {
+                long affected = affectedRows(result);
+                if (affected < row.getMinAffectedRows()) {
+                    throw new IllegalStateException("QUERY 影响行数 " + affected
+                            + " 低于声明的 minAffectedRows=" + row.getMinAffectedRows()
+                            + "（守卫未命中或记录不存在），按失败重试/死信处理");
+                }
+            }
             markDispatched(row);
             log.info("触发器派发成功: row={} target={}:{} ({}ms)", row.getId(),
                     row.getTargetType(), row.getTargetRef(), System.currentTimeMillis() - start);
         } catch (Exception e) {
             scheduleRetry(row, e);
         }
+    }
+
+    /** QUERY 目标的实际影响行数：执行器把 UPDATE/DELETE 的 affectedRows 放在 totalCount */
+    private long affectedRows(InvocationResult result) {
+        Object data = result.getData();
+        if (data instanceof Map<?, ?> m && m.get("totalCount") instanceof Number n) {
+            return n.longValue();
+        }
+        return 0;
     }
 
     private void markDispatched(WorkflowTriggerOutbox row) {

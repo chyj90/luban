@@ -66,6 +66,12 @@ luban-image.tar
 # ====== JDBC Drivers ======
 backend/drivers/
 
+# ====== 上传文件存储 ======
+backend/luban-files/
+
+# ====== 日志目录 ======
+logs/
+
 # ====== Python ======
 __pycache__/
 *.pyc

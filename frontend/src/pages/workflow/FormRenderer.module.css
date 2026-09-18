@@ -122,11 +122,22 @@
 
 .formActions {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   gap: 12px;
   margin-top: 32px;
   padding-top: 20px;
   border-top: 1px solid #e8edf3;
+}
+
+.formError {
+  align-self: stretch;
+  font-size: 13px;
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 12px;
 }
 
 .cancelBtn {

@@ -2,10 +2,12 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import type { languages, IDisposable, editor } from 'monaco-editor';
 import { updateQuery, runQuery } from '@/api';
-import { listDatasources, getDatasourceStructure } from '@/api/datasource';
+import { listUnifiedDatasources, getDatasourceStructure } from '@/api/datasource';
+import { listConcepts, generateNl2Sql } from '@/api/concept';
 import { toast } from '@/stores/toastStore';
 import type { Query, RunQueryResponse } from '@/types/query';
 import type { Datasource, DatasourceStructure } from '@/types/datasource';
+import type { Concept } from '@/types/concept';
 import './QueryEditor.css';
 
 interface QueryEditorProps {
@@ -113,6 +115,14 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [paramsText, setParamsText] = useState('');
   const [showParams, setShowParams] = useState(false);
+  // 从概念生成：按平台概念口径生成基准 SQL（与智能问数同源），避免裸写口径漂移
+  const [showConceptPanel, setShowConceptPanel] = useState(false);
+  const [conceptKeyword, setConceptKeyword] = useState('');
+  const [conceptResults, setConceptResults] = useState<Concept[]>([]);
+  const [conceptSearching, setConceptSearching] = useState(false);
+  const [selectedConcepts, setSelectedConcepts] = useState<Concept[]>([]);
+  const [conceptGenerating, setConceptGenerating] = useState(false);
+  const [conceptMeta, setConceptMeta] = useState<string>('');
   const structureRef = useRef<DatasourceStructure | null>(null);
   const providerRef = useRef<IDisposable | null>(null);
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
@@ -126,7 +136,8 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
 
   useEffect(() => {
     if (applicationId) {
-      listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
+      // 一个平台一套：查询可引用平台系统数据源，也可引用本应用自建业务库
+      listUnifiedDatasources(applicationId).then((list) => setDatasources(list));
     }
   }, [applicationId]);
 
@@ -304,6 +315,60 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
     }
   };
 
+  const handleConceptSearch = async () => {
+    if (!conceptKeyword.trim()) return;
+    setConceptSearching(true);
+    try {
+      const res = await listConcepts(undefined, conceptKeyword.trim());
+      setConceptResults(res.data);
+      if (res.data.length === 0) toast.info('未找到匹配概念，可到「建模中心 → 概念编辑器」补建');
+    } catch {
+      toast.error('概念搜索失败');
+    } finally {
+      setConceptSearching(false);
+    }
+  };
+
+  const toggleConcept = (c: Concept) => {
+    setSelectedConcepts((prev) => {
+      const exists = prev.find((p) => p.id === c.id);
+      if (exists) return prev.filter((p) => p.id !== c.id);
+      if (prev.length >= 5) {
+        toast.warning('最多选择 5 个概念');
+        return prev;
+      }
+      return [...prev, c];
+    });
+  };
+
+  const handleConceptGenerate = async () => {
+    if (selectedConcepts.length === 0) {
+      toast.error('请先选择概念');
+      return;
+    }
+    setConceptGenerating(true);
+    try {
+      const res = await generateNl2Sql({ conceptIds: selectedConcepts.map((c) => c.id) });
+      const d = res.data;
+      if (!d.valid) {
+        toast.error(`校验未通过：${(d.errors || []).join('；')}`);
+        return;
+      }
+      const body = d.sql;
+      onQueryUpdate({ ...query, body });
+      updateQuery(query.id, { body }).catch(() => {});
+      setConceptMeta(
+        `已按概念口径生成：主表 ${d.mainTable} · ${d.mappings.length} 个字段映射 · ${d.joins.length} 个 JOIN` +
+          ((d.warnings || []).length ? ` · 警告：${d.warnings.join('；')}` : ''),
+      );
+      toast.success('SQL 已按概念口径生成');
+    } catch {
+      toast.error('概念生成 SQL 失败');
+    } finally {
+      setConceptGenerating(false);
+    }
+  };
+
   const handleBodyChange = (value: string | undefined) => {
     const body = value || '';
     onQueryUpdate({ ...query, body });
@@ -355,6 +420,13 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
         </div>
         <div className="qe-header-actions">
           <button
+            className={`qe-btn qe-params-btn ${showConceptPanel ? 'active' : ''}`}
+            onClick={() => setShowConceptPanel(!showConceptPanel)}
+            title="按平台概念口径生成 SQL，与智能问数同源"
+          >
+            从概念生成
+          </button>
+          <button
             className={`qe-btn qe-params-btn ${showParams ? 'active' : ''}`}
             onClick={() => setShowParams(!showParams)}
           >
@@ -366,6 +438,60 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
           </button>
         </div>
       </div>
+
+      {showConceptPanel && (
+        <div className="qe-concept-panel">
+          <div className="qe-concept-search-row">
+            <input
+              className="qe-concept-input"
+              value={conceptKeyword}
+              onChange={(e) => setConceptKeyword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleConceptSearch(); }}
+              placeholder="搜索概念，如：客户、订单、请假"
+            />
+            <button className="qe-btn qe-params-btn" onClick={handleConceptSearch} disabled={conceptSearching}>
+              {conceptSearching ? '搜索中...' : '搜索'}
+            </button>
+            <button
+              className="qe-btn qe-run-btn"
+              onClick={handleConceptGenerate}
+              disabled={conceptGenerating || selectedConcepts.length === 0}
+            >
+              {conceptGenerating ? '生成中...' : `生成 SQL（已选 ${selectedConcepts.length}）`}
+            </button>
+          </div>
+          {selectedConcepts.length > 0 && (
+            <div className="qe-concept-selected">
+              {selectedConcepts.map((c) => (
+                <span key={c.id} className="qe-concept-chip" onClick={() => toggleConcept(c)}>
+                  {c.name} ×
+                </span>
+              ))}
+            </div>
+          )}
+          {conceptResults.length > 0 && (
+            <div className="qe-concept-results">
+              {conceptResults.map((c) => {
+                const picked = selectedConcepts.some((p) => p.id === c.id);
+                return (
+                  <div
+                    key={c.id}
+                    className={`qe-concept-item ${picked ? 'picked' : ''}`}
+                    onClick={() => toggleConcept(c)}
+                  >
+                    <span className="qe-concept-name">{c.name}</span>
+                    <span className="qe-concept-desc">{c.description || '—'}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {conceptMeta && <div className="qe-concept-meta">{conceptMeta}</div>}
+          <div className="qe-concept-hint">
+            概念映射由「建模中心 → 概念图谱」统一维护；生成后可继续编辑补参数绑定。
+          </div>
+        </div>
+      )}
 
       {showParams && (
         <div className="qe-params">

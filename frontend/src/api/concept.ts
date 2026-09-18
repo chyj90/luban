@@ -435,3 +435,38 @@ export function batchRejectOntologyChanges(changeIds: number[]) {
 export function fetchBuiltinRelationTypes() {
   return get<RelationTypeMeta[]>('/ontology-groups/builtin-relation-types');
 }
+export interface Nl2SqlMapping {
+  tableName: string;
+  columnName: string;
+  attributeName: string;
+  mappingType: string;
+  computedExpr?: string;
+}
+
+export interface Nl2SqlJoin {
+  joinType: string;
+  joinTable: string;
+  joinCondition: string;
+}
+
+export interface Nl2SqlGenerateResult {
+  sql: string;
+  mainTable: string;
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  mappings: Nl2SqlMapping[];
+  joins: Nl2SqlJoin[];
+}
+
+/** 按概念口径生成基准 SQL（表/列/JOIN 全部来自概念映射，与智能问数同源） */
+export function generateNl2Sql(data: { conceptIds: number[]; filters?: Record<string, unknown> }) {
+  return post<Nl2SqlGenerateResult>('/nl2sql/generate', data);
+}
+
+export function validateNl2Sql(sql: string, datasourceId?: number) {
+  return post<{ valid: boolean; errors: string[]; warnings: string[] }>('/nl2sql/validate', {
+    sql,
+    datasourceId,
+  });
+}

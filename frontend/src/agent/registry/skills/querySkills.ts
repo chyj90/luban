@@ -1,7 +1,8 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createQuery, updateQuery, deleteQuery, runQuery, executeSql, testDatasource } from '@/api';
-import { listDatasources } from '@/api/datasource';
+import { listUnifiedDatasources } from '@/api/datasource';
 import { listQueries, listPages, getCodePage } from '@/api';
+import { lintQuery } from './queryLint';
 
 export const querySkills: Record<string, SkillFactory> = {
   'query:list': (ctx) => ({
@@ -39,7 +40,7 @@ export const querySkills: Record<string, SkillFactory> = {
         testedDatasources.add(datasourceId);
         return null;
       } catch (e) {
-        const datasources = await listDatasources('APPLICATION', ctx.applicationId).then(r => r.data).catch(() => []);
+        const datasources = await listUnifiedDatasources(ctx.applicationId).catch(() => []);
         const ds = datasources.find((d: { id: number; name?: string }) => d.id === datasourceId);
         const dsName = ds ? `「${ds.name}」` : `ID:${datasourceId}`;
         return `数据源 ${dsName} 连接失败，请先在「数据源管理」中检查连接配置并确保测试通过后再继续。`;
@@ -88,6 +89,12 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
           return { success: false, message: quoteError };
         }
 
+        // 身份/守卫 lint：身份域查询缺 this.auth 过滤直接阻断（错数据比报错贵得多）
+        const lint = lintQuery({ name: args.name as string, body, description: args.description as string, params: args.params as Array<{ name?: string; description?: string }> | undefined });
+        if (lint.errors.length > 0) {
+          return { success: false, message: `查询未通过静态检查，未创建：\n${lint.errors.map((e) => `- ${e}`).join('\n')}` };
+        }
+
         const connError = await ensureConnected(datasourceId);
         if (connError) return { success: false, message: connError, _pause: true };
         try {
@@ -106,7 +113,13 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
           });
           ctx.onQueriesChange?.();
           ctx.onQuerySelect?.({ id: res.data.id, name: res.data.name });
-          return { success: true, message: `查询 "${args.name}" 创建成功`, data: res.data };
+          return {
+            success: true,
+            message: lint.warnings.length > 0
+              ? `查询 "${args.name}" 创建成功\n${lint.warnings.map((w) => `⚠️ ${w}`).join('\n')}`
+              : `查询 "${args.name}" 创建成功`,
+            data: res.data,
+          };
         } catch (e) {
           return { success: false, message: `创建查询失败: ${(e as Error).message}` };
         }
@@ -139,6 +152,15 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
           ? undefined
           : Object.fromEntries((args.params as unknown[]).map((p: any) => [p.name || p.key, p]));
 
+        // 身份/守卫 lint：与 create 同标准，改坏身份过滤同样阻断
+        let lint: ReturnType<typeof lintQuery> | null = null;
+        if (args.body) {
+          lint = lintQuery({ name: args.name as string, body: args.body as string, description: args.description as string, params: args.params as Array<{ name?: string; description?: string }> | undefined });
+          if (lint.errors.length > 0) {
+            return { success: false, message: `查询未通过静态检查，未更新：\n${lint.errors.map((e) => `- ${e}`).join('\n')}` };
+          }
+        }
+
         const res = await updateQuery(args.queryId as number, {
           body: args.body as string | undefined,
           name: args.name as string | undefined,
@@ -147,7 +169,13 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         });
         ctx.onQueriesChange?.();
         ctx.onQuerySelect?.({ id: args.queryId as number, name: (args.name as string) || '' });
-        return { success: true, message: '查询更新成功', data: res.data };
+        return {
+          success: true,
+          message: lint && lint.warnings.length > 0
+            ? `查询更新成功\n${lint.warnings.map((w) => `⚠️ ${w}`).join('\n')}`
+            : '查询更新成功',
+          data: res.data,
+        };
       } catch (e) {
         return { success: false, message: `更新查询失败: ${(e as Error).message}` };
       }
@@ -256,17 +284,19 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
     name: 'execute_sql',
     description: `直接执行 SQL 语句，不经过模板解析。
 用于插入数据（INSERT）、更新数据（UPDATE）、删除数据（DELETE）等操作。
-⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）必定被拦截（前端预检+后端双层拦截），禁止尝试执行、禁止重试：直接生成完整 SQL 交给用户在数据源管理面板手动执行。
+⚠️ DDL 语句（CREATE/ALTER/DROP/TRUNCATE/RENAME）必定被拦截（前端预检+后端双层拦截），禁止尝试执行、禁止重试：直接生成完整 SQL 交由用户在数据源管理面板手动执行。
 ⚠️ 时间/日期时间参数值中的冒号会被模板引擎破坏（如 09:50:00 会变成 09NULLNULL）：时间请传 HHMMSS 紧凑格式（如 090000）配合 STR_TO_DATE 转换，或直接用数据库 NOW()；纯日期 YYYY-MM-DD 不受影响。
 返回查询结果（SELECT）或影响行数（DML）。
 支持批量执行：传入 multi=true 时，sql 中可用分号分隔多条语句，在同一事务中依次执行，全部成功则提交，任一失败则全部回滚。
-批量模式返回每条语句的执行结果数组。`,
+批量模式返回每条语句的执行结果数组。
+测试回滚模式：rollback=true 时语句在同一事务中执行后回滚（结果里每条带 rolledBack=true），用于验证写 SQL 效果（守卫是否命中、影响行数是否符合预期）而不污染数据——测试触发器回写/扣减语义必须用此模式，禁止用真实演示数据做测试后手工恢复。`,
     parameters: {
       type: 'object',
       properties: {
         datasourceId: { type: 'number', description: '数据源 ID' },
         sql: { type: 'string', description: '要执行的 SQL 语句。multi=true 时可用分号分隔多条语句' },
         multi: { type: 'boolean', description: '是否批量执行模式。true 时按分号分隔多条语句，在同一事务中执行' },
+        rollback: { type: 'boolean', description: '测试回滚模式：执行后回滚不落库（验证写 SQL 效果专用）' },
       },
       required: ['datasourceId', 'sql'],
     },
@@ -276,11 +306,18 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
         if (/^\s*(CREATE|ALTER|DROP|TRUNCATE|RENAME)\b/i.test(sql)) {
           return { success: false, message: 'DDL 操作不允许通过 Agent 执行（不要重试、不要换写法尝试）。请直接生成完整 SQL 交由用户在数据源管理面板手动执行' };
         }
-        const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean);
-        if (args.multi) {
+        const rollback = args.rollback === true;
+        const res = await executeSql(args.datasourceId as number, sql, args.multi as boolean || rollback, undefined, rollback);
+        if (args.multi || rollback) {
           const results = res.data as any[];
           const summary = results.map((r: any, i: number) => `语句${i + 1}: ${r.totalCount ?? 0} 条结果`).join('；');
-          return { success: true, message: `批量 SQL 执行成功（${results.length} 条语句）：${summary}`, data: res.data };
+          return {
+            success: true,
+            message: rollback
+              ? `回滚模式执行成功（${results.length} 条语句，已回滚不落库）：${summary}`
+              : `批量 SQL 执行成功（${results.length} 条语句）：${summary}`,
+            data: res.data,
+          };
         }
         return { success: true, message: `SQL 执行成功，${res.data?.totalCount ?? 0} 条结果`, data: res.data };
       } catch (e) {
@@ -342,6 +379,45 @@ OGNL 运算符：and、or、!、==、!=、<、>、<=、>=（不能用 &&、||，
       } catch (e) {
         return { success: false, message: `查询引用分析失败: ${(e as Error).message}` };
       }
+    },
+  }),
+
+  'query:lint': (_ctx) => ({
+    id: 'query:lint',
+    category: SkillCategory.QUERY,
+    name: 'lint_query',
+    description: `对查询做静态检查（不执行）：身份域检查（"我的XX/当前用户"类查询必须用 {{ this.auth.* }} 过滤，禁止 this.params 传身份——否则所有账号看到同一份数据）与回写守卫检查（UPDATE/DELETE 建议带状态守卫防触发器重复派发重复执行）。
+create_query/update_query 已自动执行 errors 级检查；本工具用于复核存量查询或检查委派产出的 SQL 草稿。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: '查询名称' },
+        body: { type: 'string', description: 'SQL 语句' },
+        description: { type: 'string', description: '查询用途描述' },
+        params: { type: 'array', items: { type: 'object' }, description: '参数定义列表（含 name/description），写查询的 [业务绑定] 参数据此豁免身份检查' },
+      },
+      required: ['body'],
+    },
+    async execute(args) {
+      const lint = lintQuery({
+        name: args.name as string | undefined,
+        body: args.body as string,
+        description: args.description as string | undefined,
+        params: args.params as Array<{ name?: string; description?: string }> | undefined,
+      });
+      if (lint.errors.length === 0 && lint.warnings.length === 0) {
+        return { success: true, message: '静态检查通过：无身份过滤问题，无回写守卫缺口' };
+      }
+      const parts: string[] = [];
+      if (lint.errors.length > 0) {
+        parts.push(`${lint.errors.length} 个错误：`);
+        parts.push(...lint.errors.map((e) => `- ${e}`));
+      }
+      if (lint.warnings.length > 0) {
+        parts.push(`${lint.warnings.length} 个警告：`);
+        parts.push(...lint.warnings.map((w) => `- ${w}`));
+      }
+      return { success: lint.errors.length === 0, message: parts.join('\n'), data: lint };
     },
   }),
 };

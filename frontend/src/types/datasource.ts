@@ -55,6 +55,8 @@ export interface Datasource {
   type: DatasourceType;
   config: DatasourceConfig;
   status: 'pending' | 'connected' | 'error';
+  /** 平台数据源在应用侧的授权状态：APPROVED=可用，PENDING=申请中（不可执行） */
+  accessStatus?: 'APPROVED' | 'PENDING';
   createdAt: string;
 }
 

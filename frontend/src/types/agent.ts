@@ -2,6 +2,29 @@ export type ProviderType = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'cus
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool' | 'plan';
 
+/** Agent 附件（Word/TXT/Excel）元信息，与后端 AgentFileService.toResponse 对齐 */
+export interface AttachmentMeta {
+  /** 后端 agent_file.file_key，API/Skill 读取均用它 */
+  fileId: string;
+  name: string;
+  ext: string;
+  fileType: 'word' | 'text' | 'excel';
+  size: number;
+  parseStatus: 'pending' | 'success' | 'failed';
+  parseError?: string;
+  /** 上传进度 0-100（仅上传中展示） */
+  progress?: number;
+  /** 提取文本长度（判断内联注入阈值用） */
+  contentChars?: number;
+  truncated?: boolean;
+  /** 一句话概要（excel: 工作表/维度；word: 字数/表格数） */
+  summary?: string;
+  /** 结构化元信息（excel: sheets/headers/previewRows） */
+  meta?: Record<string, unknown>;
+  /** ≤ 阈值时后端随上传响应返回的提取文本，发送时直接内联进对话 */
+  previewText?: string | null;
+}
+
 export type SessionStatus = 'idle' | 'planning' | 'executing' | 'streaming' | 'completed' | 'error' | 'cancelled' | 'suspended';
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error';
@@ -23,6 +46,8 @@ export interface Message {
   agentName?: string;
   agentIcon?: string;
   planId?: string;
+  /** 本条消息携带的附件（仅 UI 渲染附件卡；LLM 侧以注入块进 content） */
+  attachments?: AttachmentMeta[];
 }
 
 export interface ToolCall {
@@ -30,7 +55,8 @@ export interface ToolCall {
   name: string;
   arguments: Record<string, unknown>;
   result?: string;
-  status: 'pending' | 'running' | 'done' | 'error';
+  /** blocked：被确认门拦截等待用户确认（非失败），确认重执行后回到 running；cancelled：用户已取消，终态 */
+  status: 'pending' | 'running' | 'done' | 'error' | 'blocked' | 'cancelled';
 }
 
 export interface ToolDefinition {
@@ -192,10 +218,13 @@ export interface AgentState {
   isStreaming: boolean;
   error: string | null;
   /** 内核挂起请求（Phase 2.4）：非空时 UI 显示确认/取消按钮，点击产生显式 ResumeCommand。
-   *  plan-confirm 携带 planId，会话失效后按钮恢复（resume-orphan-plan）依赖它定位计划 */
-  pendingInput: { kind: string; message: string; planId?: string } | null;
+   *  plan-confirm 携带 planId，会话失效后按钮恢复（resume-orphan-plan）依赖它定位计划；
+   *  danger-confirm 携带 toolName/args，孤儿恢复（resumeOrphanDanger）依赖原参数原样重发 */
+  pendingInput: { kind: string; message: string; planId?: string; toolName?: string; args?: Record<string, unknown> } | null;
   /** 会话失效时残留的挂起事项（不持久化）：AgentFactory 在下一次 run 时注入并清除 */
   orphanedPending: string | null;
+  /** 待发送附件（不持久化）：AgentPanel 上传后入列，AgentFactory 在下一次 run 时注入并清除 */
+  pendingAttachments: AttachmentMeta[];
 }
 
 export interface LLMConfig {

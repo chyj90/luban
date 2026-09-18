@@ -19,6 +19,7 @@ import java.util.Map;
 public class ProcessController {
 
     private final ProcessService processService;
+    private final com.luban.workflow.service.WorkflowRehearsalService rehearsalService;
     private final com.luban.security.appaccess.AppAccessService appAccessService;
 
     @GetMapping
@@ -77,6 +78,21 @@ public class ProcessController {
     @AppAccess(action = AppAction.VIEW, resource = "process", key = "id")
     public Map<String, Object> validateDefinition(@PathVariable Long id) {
         return processService.validateWorkflow(id);
+    }
+
+    /**
+     * 触发器预演：给定样例表单数据/发起人，静态推演路径、触发器、参数与 SQL 渲染，
+     * 不发起实例、不执行写操作。发布前/接入后验证链路用。
+     */
+    @PostMapping("/{id}/rehearse-triggers")
+    @AppAccess(action = AppAction.VIEW, resource = "process", key = "id")
+    public Map<String, Object> rehearseTriggers(@PathVariable Long id,
+                                                @RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> sampleFormData = body != null && body.get("sampleFormData") instanceof Map<?, ?> m
+                ? (Map<String, Object>) m : Map.of();
+        Long sampleInitiatorId = body != null && body.get("sampleInitiatorId") instanceof Number n
+                ? n.longValue() : null;
+        return rehearsalService.rehearse(id, sampleFormData, sampleInitiatorId);
     }
 
     @PostMapping("/{id}/copy")

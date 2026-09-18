@@ -19,6 +19,7 @@ interface SelectProps {
   className?: string;
   disabled?: boolean;
   searchable?: boolean;
+  small?: boolean;
   multiple?: false;
   multiValue?: never;
   onMultiChange?: never;
@@ -33,6 +34,7 @@ interface MultiSelectProps {
   className?: string;
   disabled?: boolean;
   searchable?: boolean;
+  small?: boolean;
   multiple: true;
   multiValue: string[];
   onMultiChange: (value: string[]) => void;
@@ -66,7 +68,7 @@ function matchSearch(label: string, query: string): boolean {
 }
 
 export default function Select(props: Props) {
-  const { value, options, onChange, placeholder, onOpen, className, disabled } = props;
+  const { value, options, onChange, placeholder, onOpen, className, disabled, small } = props;
   const searchable = props.searchable === true;
   const multiple = props.multiple === true;
   const multiValue: string[] = multiple ? props.multiValue : [];
@@ -239,7 +241,7 @@ export default function Select(props: Props) {
   return (
     <div className={`${styles.select} ${className || ''}`} ref={containerRef}>
       <div
-        className={`${styles.trigger} ${open ? styles.triggerOpen : ''} ${disabled ? styles.triggerDisabled : ''}`}
+        className={`${styles.trigger} ${small ? styles.triggerSmall : ''} ${open ? styles.triggerOpen : ''} ${disabled ? styles.triggerDisabled : ''}`}
         onClick={toggleOpen}
       >
         {multiple ? (

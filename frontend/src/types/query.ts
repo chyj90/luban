@@ -6,6 +6,9 @@ export interface Query {
   body: string;
   sqlBody?: string;
   params: Record<string, unknown>;
+  description?: string;
+  /** INSIGHT=智能洞察沉淀，空=应用开发创建 */
+  source?: string;
   createdAt: string;
 }
 
@@ -16,6 +19,7 @@ export interface CreateQueryRequest {
   body?: string;
   params?: Record<string, unknown>;
   description?: string;
+  source?: string;
 }
 
 export interface UpdateQueryRequest {

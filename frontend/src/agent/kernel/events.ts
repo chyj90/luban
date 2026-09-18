@@ -81,7 +81,7 @@ export type SessionEvent =
   | { type: 'llm.tool_call.pending'; turnId: string; name: string }
   | { type: 'tool.call.started'; turnId: string; callId: string; name: string; args: Record<string, unknown> }
   | { type: 'tool.call.finished'; turnId: string; callId: string; name: string; ok: boolean; message: string; data?: unknown }
-  | { type: 'tool.call.blocked'; turnId: string; callId: string; name: string; reason: string }
+  | { type: 'tool.call.blocked'; turnId: string; callId: string; name: string; reason: string; waitConfirmation?: boolean; cancelled?: boolean }
   | { type: 'turn.suspended'; turnId: string; request: InputRequest }
   | { type: 'turn.completed'; turnId: string; response: string; at: number }
   | { type: 'turn.failed'; turnId: string; error: string; at: number }

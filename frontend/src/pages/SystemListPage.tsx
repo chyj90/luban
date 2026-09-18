@@ -128,7 +128,7 @@ export default function SystemListPage() {
               <button
                 className="system-card-btn"
                 title="查看工具"
-                onClick={() => navigate(`/connect/tools?groupId=${group.id}`)}
+                onClick={() => navigate(`/modeling/tools?groupId=${group.id}`)}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />

@@ -5,6 +5,7 @@ import com.luban.entity.Datasource;
 import com.luban.entity.Query;
 import com.luban.invoke.ExecutionContext;
 import com.luban.invoke.InvocationException;
+import com.luban.invoke.InvocationPrincipal;
 import com.luban.invoke.InvocationRequest;
 import com.luban.invoke.InvocationResult;
 import com.luban.invoke.InvocationOrigin;
@@ -31,7 +32,6 @@ public class QueryTargetExecutor implements TargetExecutor {
 
     private final QueryRepository queryRepository;
     private final DatasourceRepository datasourceRepository;
-    private final ApiKeyService apiKeyService;
     private final QueryService queryService;
 
     @Override
@@ -48,19 +48,20 @@ public class QueryTargetExecutor implements TargetExecutor {
             if (ctx.getAppId() == null || !query.getApplicationId().equals(ctx.getAppId())) {
                 throw new InvocationException(InvocationException.FORBIDDEN, "无权在当前页面执行此查询");
             }
-            Datasource ds = datasourceRepository.findById(query.getDatasourceId())
-                    .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
-            if ("PLATFORM".equals(ds.getEffectiveScope())
-                    && !apiKeyService.hasApplicationDatasourcePermission(ctx.getAppId(), ds.getId())) {
-                throw new InvocationException(InvocationException.FORBIDDEN,
-                        "应用未获此数据源访问授权，请先申请并完成审批");
-            }
+            // 平台数据源不再经 KEY 绑定判定：设计期可见性（canUseSystemAsset）已约束开发者能绑什么，
+            // 运行时由页面权限管辖——与"页面运行时不重复判数据源"的入口分域原则一致
         }
 
         RunQueryRequest runRequest = new RunQueryRequest();
         Map<String, Object> params = request.getParams();
         if (params != null && !params.isEmpty()) runRequest.setParams(params);
-        var response = queryService.run(query.getId(), runRequest);
+        // 无会话上下文的系统调用（触发器派发 on-behalf-of 发起人）以发起人身份解析 this.auth，
+        // 回写类查询因此可以安全使用 {{ this.auth.userId }} 做数据归属
+        var response = (ctx.getPrincipal() != null
+                        && ctx.getPrincipal().getKind() == InvocationPrincipal.Kind.SYSTEM
+                        && ctx.getPrincipal().getUserId() != null)
+                ? queryService.runAsUser(query.getId(), runRequest, ctx.getPrincipal().getUserId())
+                : queryService.run(query.getId(), runRequest);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("columns", response.getColumns());

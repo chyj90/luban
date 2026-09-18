@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import type { WorkflowInstance, WorkflowHistory, WorkflowTask } from '../../types/workflow';
 import { instanceApi, formApi, workflowApi, taskApi } from '../../api/workflow';
 import FormRenderer from './FormRenderer';
+import FormDataView from './FormDataView';
 import styles from './InstanceDetail.module.css';
 
 interface InstanceDetailProps {
@@ -147,12 +148,17 @@ export default function InstanceDetail({ instanceId: propInstanceId, onBack }: I
       </div>
 
       <div className={styles.section}>
-        <h2 className={styles.sectionTitle}>{formDef?.name || '表单数据'}</h2>
+        <h2 className={styles.sectionTitle}>{formDef?.name || (instance.formId > 0 ? '表单数据' : '发起数据')}</h2>
         {formDef?.description && (
           <p className={styles.sectionDesc}>{formDef.description}</p>
         )}
         <div className={styles.formDataCard}>
-          <FormRenderer formId={instance.formId} mode="view" initialData={initialData} hideHeader />
+          {instance.formId > 0 ? (
+            <FormRenderer formId={instance.formId} mode="view" initialData={initialData} hideHeader />
+          ) : (
+            /* 无绑定表单的流程（业务页面发起）：平铺展示 formData，替代"表单不存在"死端 */
+            <FormDataView formData={instance.formData || ''} fields="" />
+          )}
         </div>
       </div>
 

@@ -24,10 +24,13 @@ export const SkillCategory = {
   PLAN: 'plan',
   DATASOURCE: 'datasource',
   QUERY: 'query',
+  CONCEPT: 'concept',
   API: 'api',
+  FILE: 'file',
   WORKFLOW: 'workflow',
   DELEGATE: 'delegate',
   ORCHESTRATION: 'orchestration',
+  TEST: 'test',
 } as const;
 
 export type SkillCategory = (typeof SkillCategory)[keyof typeof SkillCategory];

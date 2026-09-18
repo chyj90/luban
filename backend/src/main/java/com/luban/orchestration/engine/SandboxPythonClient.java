@@ -41,11 +41,30 @@ public class SandboxPythonClient {
     public record SandboxResult(boolean ok, Map<String, Object> result, String stderr, String errorCode) {}
 
     public SandboxResult execute(String source, String entry, Map<String, Object> ctxInputs, int timeoutSec) {
+        return doExecute(source, entry, ctxInputs, null, timeoutSec);
+    }
+
+    /**
+     * 带文件绑定的执行：filePaths 为宿主机上平台文件目录内的绝对路径，
+     * embedding 会复制进沙箱并经 ctx['_files'][文件名] 暴露给代码（详见 /v1/execute-code 契约）。
+     * 代码仍须定义 def main(ctx)，结果经 stdout JSON 返回（≤5000 字符，须紧凑；
+     * 超限被截断时返回 SANDBOX_RESULT_TRUNCATED，而非笼统的"未返回结果"）。
+     */
+    public SandboxResult executeWithFiles(String source, Map<String, Object> ctxInputs,
+                                          java.util.List<String> filePaths, int timeoutSec) {
+        return doExecute(source, "main", ctxInputs, filePaths, timeoutSec);
+    }
+
+    private SandboxResult doExecute(String source, String entry, Map<String, Object> ctxInputs,
+                                    java.util.List<String> filePaths, int timeoutSec) {
         try {
             String driver = buildDriver(source, entry);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("code", driver);
             body.put("input_data", ctxInputs == null ? Map.of() : ctxInputs);
+            if (filePaths != null && !filePaths.isEmpty()) {
+                body.put("file_paths", filePaths);
+            }
             body.put("timeout", Math.min(timeoutSec, 60));
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -83,6 +102,17 @@ public class SandboxPythonClient {
             // 协议：stdout 最后一行是 main(ctx) 的 JSON 结果
             String resultJson = lastJsonLine(stdout);
             if (resultJson == null) {
+                // embedding 侧 stdout 只保留末尾 5000 字符并带 stdout_truncated 标记（sandbox_manager.py）。
+                // 被截断时结果 JSON 从头被切掉，无法拼出完整 {…} 行——此前误报"main 未返回 JSON 结果"，
+                // agent 只能靠猜；显式报超长，指引精简返回值（2026-09-17 Excel 全量明细案例）
+                if (root.path("stdout_truncated").asBoolean(false)) {
+                    log.warn("Sandbox result truncated: stdout kept at {} chars", stdout.length());
+                    return new SandboxResult(false, Map.of(),
+                            "main 的返回值序列化后超过沙箱 stdout 上限（5000 字符），已被截断，结果 JSON 不完整。"
+                                    + "请大幅精简返回值：只保留聚合统计 / 抽样（head/iloc[:20]）/ 关键行，禁止全量明细；"
+                                    + "确需明细时分批多次执行",
+                            "SANDBOX_RESULT_TRUNCATED");
+                }
                 return new SandboxResult(false, Map.of(), "main 未返回 JSON 结果", "SANDBOX_NO_RESULT");
             }
             JsonNode resultNode = objectMapper.readTree(resultJson);
@@ -92,6 +122,14 @@ public class SandboxPythonClient {
             return new SandboxResult(true, objectMapper.convertValue(resultNode, Map.class), stderr, null);
         } catch (java.net.http.HttpTimeoutException e) {
             return new SandboxResult(false, Map.of(), "沙箱执行超时", "SANDBOX_TIMEOUT");
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            // 请求/结果 JSON 不合法（如返回值残留 NaN/Inf）是数据问题，不是基础设施故障——
+            // 归为 SANDBOX_UNAVAILABLE 会误导 agent 以为沙箱挂了而盲目重试
+            log.warn("Sandbox JSON codec failed: {}", e.getMessage());
+            return new SandboxResult(false, Map.of(),
+                    "沙箱结果 JSON 编解码失败：" + e.getMessage()
+                            + "。请清洗 main 的返回值（NaN/Inf 转 None、numpy/日期转原生类型）后修改代码重试",
+                    "SANDBOX_RESULT_PARSE");
         } catch (Exception e) {
             log.warn("Sandbox client error: {}", e.getMessage());
             return new SandboxResult(false, Map.of(), e.getMessage(), "SANDBOX_UNAVAILABLE");
@@ -99,10 +137,47 @@ public class SandboxPythonClient {
     }
 
     private String buildDriver(String source, String entry) {
+        // 返回值消毒：pandas/numpy 结果里的 NaN/Inf 是非标准 JSON 字面量，numpy 标量/日期不可直接序列化，
+        // 原样 dumps 会导致 Java 侧 readTree 失败（此前被误报为 SANDBOX_UNAVAILABLE，agent 无法定位）
+        // dumps 必须 ensure_ascii=False：默认转义会把每个中文变成 6 字符的 Unicode 转义序列，
+        // 5000 字符的 stdout 预算下中文内容实际容量缩水 6 倍，全量明细类返回极易触发截断；
+        // reconfigure 固定容器内 stdout 为 UTF-8，不依赖镜像 locale（slim 镜像 C locale 下 print 中文会 UnicodeEncodeError）
         return source + "\n\n"
-                + "import json as _json\n"
-                + "_result = " + entry + "(_INPUT_DATA)\n"
-                + "print(_json.dumps(_result))\n";
+                + "import sys as _sys, json as _json, math as _math\n"
+                + "try:\n"
+                + "    _sys.stdout.reconfigure(encoding='utf-8')\n"
+                + "except Exception:\n"
+                + "    pass\n"
+                + "def _luban_safe(v):\n"
+                + "    if isinstance(v, float):\n"
+                + "        return v if _math.isfinite(v) else None\n"
+                + "    if isinstance(v, dict):\n"
+                + "        return {str(k): _luban_safe(x) for k, x in v.items()}\n"
+                + "    if isinstance(v, (list, tuple)):\n"
+                + "        return [_luban_safe(x) for x in v]\n"
+                + "    return v\n"
+                + "def _luban_json_default(o):\n"
+                + "    import datetime as _dt\n"
+                + "    if isinstance(o, (_dt.date, _dt.datetime, _dt.time)):\n"
+                + "        return o.isoformat()\n"
+                + "    try:\n"
+                + "        import numpy as _np\n"
+                + "    except ImportError:\n"
+                + "        raise TypeError('返回值含不可 JSON 序列化对象 %s，请先转为原生类型' % type(o).__name__)\n"
+                + "    if isinstance(o, _np.integer):\n"
+                + "        return int(o)\n"
+                + "    if isinstance(o, _np.bool_):\n"
+                + "        return bool(o)\n"
+                + "    if isinstance(o, _np.floating):\n"
+                + "        f = float(o)\n"
+                + "        return f if _math.isfinite(f) else None\n"
+                + "    if isinstance(o, _np.ndarray):\n"
+                + "        return _luban_safe(o.tolist())\n"
+                + "    if hasattr(o, 'to_dict'):\n"
+                + "        return _luban_safe(o.to_dict())\n"
+                + "    raise TypeError('返回值含不可 JSON 序列化对象 %s，请先转为原生类型' % type(o).__name__)\n"
+                + "_result = _luban_safe(" + entry + "(_INPUT_DATA))\n"
+                + "print(_json.dumps(_result, ensure_ascii=False, default=_luban_json_default))\n";
     }
 
     /** 从 embedding 503 响应体提取 reason（pool_empty/pool_exhausted/docker_down/image_missing/circuit_open） */

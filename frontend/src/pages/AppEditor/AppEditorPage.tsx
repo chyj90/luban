@@ -4,7 +4,7 @@ import { usePageStore } from '@/stores/pageStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useLoadingStore } from '@/stores/loadingStore';
 import { useAgentStore } from '@/stores/agentStore';
-import { EditorSidebar } from '@/components/EditorSidebar';
+import { EditorSidebar, PAGE_FILE_TABS } from '@/components/EditorSidebar';
 import { InteliPreview } from '@/components/InteliPreview';
 import { InteliEditor } from '@/components/InteliEditor';
 import { QueryEditor } from '@/components/QueryEditor';
@@ -12,6 +12,7 @@ import { ApiDetail } from '@/components/ApiDetail';
 import type { SelectedApi } from '@/components/ApiDetail';
 import { DatasourcePanel } from '@/components/DatasourcePanel';
 import { AgentPanel } from '@/components/AgentPanel';
+import { SelfTestDrawer } from '@/components/SelfTestDrawer';
 import ProcessList from '@/pages/workflow/ProcessList';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import FormList from '@/pages/workflow/FormList';
@@ -40,12 +41,6 @@ export type OrchView =
   | { view: 'new' }
   | { view: 'edit'; orchId: number };
 
-const FILE_TABS: { key: EditingFile; label: string }[] = [
-  { key: 'html', label: 'index.html' },
-  { key: 'css', label: 'styles.css' },
-  { key: 'js', label: 'script.js' },
-];
-
 export function AppEditorPage() {
   const { appId } = useParams<{ appId: string }>();
   const { currentPage, loading, fetchPage } = usePageStore();
@@ -53,6 +48,7 @@ export function AppEditorPage() {
   const user = useAuthStore((s) => s.user);
   const [pages, setPages] = useState<Page[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [selfTestOpen, setSelfTestOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
   const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
   const [appTools, setAppTools] = useState<Array<{ id: number; name: string }>>([]);
@@ -257,7 +253,9 @@ export function AppEditorPage() {
 
   if (!dataReady || !appId) return null;
 
-  if (!currentPage && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources' && sidebarTab !== 'queries') return null;
+  // 「页面」标签在零页面应用（纯流程应用）下也要渲染：否则整个设计器白屏，
+  // 底部预览工具栏里的「链路自检」入口也随之消失
+  if (!currentPage && sidebarTab !== 'pages' && sidebarTab !== 'workflow' && sidebarTab !== 'apis' && sidebarTab !== 'datasources' && sidebarTab !== 'queries') return null;
 
   return (
     <div className="app-editor">
@@ -300,6 +298,14 @@ export function AppEditorPage() {
           toolsVersion={toolsVersion}
           pendingApiId={pendingApiId}
           onPendingApiHandled={() => setPendingApiId(null)}
+          pageTools={!editingFile && !selectedQuery ? {
+            previewWidth,
+            onPreviewWidthChange: setPreviewWidth,
+            fullscreen: previewFullscreen,
+            onToggleFullscreen: () => setPreviewFullscreen((v) => !v),
+            onOpenFile: (file) => { setEditingFile(file); setPreviewFullscreen(false); },
+            onSelfTest: () => setSelfTestOpen(true),
+          } : undefined}
         />
 
         <div className="app-editor-main">
@@ -402,7 +408,7 @@ export function AppEditorPage() {
           ) : editingFile ? (
             <div className="app-editor-code-panel">
               <div className="app-editor-code-header">
-                {FILE_TABS.map((tab) => (
+                {PAGE_FILE_TABS.map((tab) => (
                   <div
                     key={tab.key}
                     className={`app-editor-file-tab ${editingFile === tab.key ? 'active' : ''}`}
@@ -434,54 +440,8 @@ export function AppEditorPage() {
                 />
               </div>
             </div>
-          ) : (
+          ) : currentPage ? (
             <div className={`app-editor-preview-panel ${previewFullscreen ? 'app-editor-preview-panel--fullscreen' : ''}`}>
-              <div className="app-editor-preview-header">
-                <span className="app-editor-preview-label">预览</span>
-                <div className="app-editor-preview-tabs">
-                  {FILE_TABS.map((tab) => (
-                    <button
-                      key={tab.key}
-                      className="app-editor-preview-file-btn"
-                      onClick={() => { setEditingFile(tab.key); setPreviewFullscreen(false); }}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="app-editor-preview-spacer" />
-                <div className="app-editor-preview-width-toggle" title="预览视口：1920 画布与桌面端运行时结构一致">
-                  <button
-                    className={`app-editor-preview-width-btn ${previewWidth === 1920 ? 'active' : ''}`}
-                    onClick={() => setPreviewWidth(1920)}
-                  >1920</button>
-                  <button
-                    className={`app-editor-preview-width-btn ${previewWidth === null ? 'active' : ''}`}
-                    onClick={() => setPreviewWidth(null)}
-                  >适应</button>
-                </div>
-                <button
-                  className="app-editor-preview-fullscreen-btn"
-                  onClick={() => setPreviewFullscreen(!previewFullscreen)}
-                  title={previewFullscreen ? '退出全屏' : '全屏预览'}
-                >
-                  {previewFullscreen ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="4 14 10 14 10 20" />
-                      <polyline points="20 10 14 10 14 4" />
-                      <line x1="14" y1="10" x2="21" y2="3" />
-                      <line x1="3" y1="21" x2="10" y2="14" />
-                    </svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="15 3 21 3 21 9" />
-                      <polyline points="9 21 3 21 3 15" />
-                      <line x1="21" y1="3" x2="14" y2="10" />
-                      <line x1="3" y1="21" x2="10" y2="14" />
-                    </svg>
-                  )}
-                </button>
-              </div>
               <InteliPreview
                 codePage={currentPage!.codePage}
                 queries={queries}
@@ -499,9 +459,39 @@ export function AppEditorPage() {
                 } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}
+                onEscape={() => setPreviewFullscreen(false)}
                 applicationId={Number(appId)}
                 appTools={appTools}
               />
+              {previewFullscreen && (
+                <button
+                  className="app-editor-preview-exit-fullscreen"
+                  onClick={() => setPreviewFullscreen(false)}
+                  title="退出全屏 (Esc)"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 14 10 14 10 20" />
+                    <polyline points="20 10 14 10 14 4" />
+                    <line x1="14" y1="10" x2="21" y2="3" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                  退出全屏
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="app-editor-preview-panel">
+              <div className="app-editor-query-empty">
+                <div className="app-editor-query-empty-icon">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                </div>
+                <span className="app-editor-query-empty-text">本应用还没有页面</span>
+                <span className="app-editor-query-empty-hint">在左侧「+」创建页面；纯流程应用可直接点下方「链路自检」验证审批链路</span>
+              </div>
             </div>
           )}
         </div>
@@ -516,6 +506,21 @@ export function AppEditorPage() {
           <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
         </svg>
       </button>
+
+      {appId && (
+        <SelfTestDrawer
+          appId={Number(appId)}
+          open={selfTestOpen}
+          onClose={() => setSelfTestOpen(false)}
+          queries={queries}
+          userInfo={user ? {
+            id: user.id,
+            account: user.account ?? '',
+            email: user.email,
+            name: user.displayName ?? '',
+          } : null}
+        />
+      )}
 
       {currentPage && (
         <>

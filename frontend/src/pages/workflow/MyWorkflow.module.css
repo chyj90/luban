@@ -569,6 +569,12 @@
   white-space: nowrap;
 }
 
+.startWorkflowWarning {
+  font-size: 12px;
+  color: #b45309;
+  margin-top: 4px;
+}
+
 .startBtn {
   display: inline-flex;
   align-items: center;

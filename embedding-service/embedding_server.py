@@ -506,10 +506,13 @@ def parse_file():
 @app.route("/v1/execute-code", methods=["POST"])
 def execute_code():
     """Execute LLM-generated Python code for data analysis.
-    Request: { "code": "import pandas as pd\\n...", "input_data": { "sql": "SELECT ...", "concept_ids": [1, 2] } }
+    Request: { "code": "import pandas as pd\\n...", "input_data": { "sql": "SELECT ...", "concept_ids": [1, 2] },
+               "file_paths": ["/app/files/xx.xlsx"] }
     Response: { "stdout": "...", "stderr": "...", "success": true }
     The SQL result is passed as a JSON string via INPUT_DATA environment variable.
-    """
+    file_paths（可选）：把平台文件目录下的文件绑定进沙箱，代码经 ctx['_files'][文件名] 取可打开路径。
+    沙箱模式复制到容器 /mnt/files/ 下；降级（subprocess）模式直接用宿主机路径。仅此一个通用绑定，
+    不引入任何解析协议——代码怎么读、怎么算、返回什么，全部由调用方 LLM 决定。"""
     data = request.get_json()
     if not data or "code" not in data:
         return jsonify({"error": "Missing 'code' field"}), 400
@@ -517,6 +520,24 @@ def execute_code():
     code = data["code"]
     input_data = data.get("input_data", {})
     timeout = min(data.get("timeout", 30), 120)
+    file_paths = data.get("file_paths") or []
+    if not isinstance(file_paths, list) or len(file_paths) > 5:
+        return jsonify({"error": "file_paths 最多 5 个"}), 400
+
+    root_env = os.environ.get("LUBAN_FILES_ROOT")
+    if root_env:
+        # 部署环境（compose/all-in-one 已显式配置）：严格限制在平台文件卷内
+        root = os.path.realpath(root_env)
+        for fp in file_paths:
+            real = os.path.realpath(fp)
+            if not real.startswith(root + os.sep):
+                return jsonify({"error": f"file_path 越出允许目录: {fp}"}), 400
+    else:
+        # 本地裸跑 dev（未配置文件卷根）：放行并警告，避免后端存储路径被误拒
+        print("[execute-code] WARNING: LUBAN_FILES_ROOT 未设置，file_paths 不做目录限制", flush=True)
+    for fp in file_paths:
+        if not os.path.exists(fp):
+            return jsonify({"error": f"file_path 不存在: {fp}"}), 400
 
     script = (
         "import sys, json, traceback, os\n"
@@ -542,7 +563,17 @@ def execute_code():
             if SANDBOX_ENABLED:
                 slot = sandbox_pool.acquire(timeout=10)
                 try:
-                    host_script = os.path.join(slot["container"].mount_dir, "execute.py")
+                    mount = slot["container"].mount_dir
+                    file_binding = {}
+                    for fp in file_paths:
+                        dest_name = os.path.basename(fp)
+                        os.makedirs(os.path.join(mount, "files"), exist_ok=True)
+                        shutil.copy2(fp, os.path.join(mount, "files", dest_name))
+                        file_binding[dest_name] = "/mnt/files/" + dest_name
+                    if file_binding:
+                        # 保留键约定：input_data 顶层以 '_' 开头的键为平台保留（调用方勿用）
+                        env["INPUT_DATA"] = json.dumps({**input_data, "_files": file_binding})
+                    host_script = os.path.join(mount, "execute.py")
                     shutil.copy2(script_path, host_script)
                     result = slot["container"].execute(host_script, env=env, timeout=timeout)
                     sandbox_pool.request_ok()
@@ -552,6 +583,9 @@ def execute_code():
                     sandbox_pool.release(slot)
                 return jsonify(result)
             else:
+                if file_paths:
+                    file_binding = {os.path.basename(fp): os.path.realpath(fp) for fp in file_paths}
+                    env["INPUT_DATA"] = json.dumps({**input_data, "_files": file_binding})
                 full_env = os.environ.copy()
                 full_env.update(env)
                 proc = subprocess.run(
@@ -561,9 +595,11 @@ def execute_code():
                     timeout=timeout,
                     env=full_env,
                 )
+                stdout = proc.stdout or ""
                 return jsonify({
                     "success": proc.returncode == 0,
-                    "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                    "stdout": stdout[-5000:],
+                    "stdout_truncated": len(stdout) > 5000,
                     "stderr": proc.stderr[-2000:] if proc.stderr else "",
                     "exit_code": proc.returncode,
                 })
@@ -625,9 +661,11 @@ def execute_script():
                 timeout=timeout,
                 env=full_env,
             )
+            stdout = proc.stdout or ""
             return jsonify({
                 "success": proc.returncode == 0,
-                "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                "stdout": stdout[-5000:],
+                "stdout_truncated": len(stdout) > 5000,
                 "stderr": proc.stderr[-2000:] if proc.stderr else "",
                 "exit_code": proc.returncode,
             })

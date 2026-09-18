@@ -96,7 +96,11 @@ public class AppAccessInterceptor implements HandlerInterceptor {
                 if (!resolver.resourceExists(resourceId)) {
                     throw new AppAccessService.AppAccessDeniedException("资源不存在", 404);
                 }
-                // 平台级共享资源：按动作决定平台权限或放行（交由服务层兜底）
+                // 平台级共享资源：用户级授权（如数据源所属系统的 APPROVED 系统权限）优先，
+                // 其次按动作决定平台权限或放行（交由服务层兜底）
+                if (resolver.userGranted(userId, resourceId, annotation.action())) {
+                    return true;
+                }
                 String platformPerm = resolver.platformPermission(annotation.action());
                 if (platformPerm != null) {
                     appAccessService.assertPlatformPermission(userId, platformPerm);

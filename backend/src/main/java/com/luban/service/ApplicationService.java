@@ -9,7 +9,6 @@ import com.luban.repository.CodePageRepository;
 import com.luban.repository.PageRepository;
 import com.luban.repository.QueryRepository;
 import com.luban.repository.ToolDefinitionRepository;
-import com.luban.repository.ApplicationApiKeyRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.JsFunctionRepository;
 import com.luban.workflow.entity.FormWorkflowBinding;
@@ -40,7 +39,6 @@ public class ApplicationService {
     private final JsFunctionRepository jsFunctionRepository;
     private final QueryRepository queryRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
-    private final ApplicationApiKeyRepository applicationApiKeyRepository;
     private final DatasourceRepository datasourceRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final WorkflowInstanceRepository workflowInstanceRepository;
@@ -58,7 +56,6 @@ public class ApplicationService {
                               JsFunctionRepository jsFunctionRepository,
                               QueryRepository queryRepository,
                               ToolDefinitionRepository toolDefinitionRepository,
-                              ApplicationApiKeyRepository applicationApiKeyRepository,
                               DatasourceRepository datasourceRepository,
                               WorkflowDefinitionRepository workflowDefinitionRepository,
                               WorkflowInstanceRepository workflowInstanceRepository,
@@ -75,7 +72,6 @@ public class ApplicationService {
         this.jsFunctionRepository = jsFunctionRepository;
         this.queryRepository = queryRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
-        this.applicationApiKeyRepository = applicationApiKeyRepository;
         this.datasourceRepository = datasourceRepository;
         this.workflowDefinitionRepository = workflowDefinitionRepository;
         this.workflowInstanceRepository = workflowInstanceRepository;
@@ -269,7 +265,6 @@ public class ApplicationService {
         roleRepository.deleteByApplicationId(id);
 
         // 7. 删除 API KEY 绑定
-        applicationApiKeyRepository.deleteByApplicationId(id);
 
         // 8. 删除应用
         applicationRepository.deleteById(id);

@@ -7,6 +7,7 @@ import './SidebarLayout.css';
 
 const MENU_ITEMS = [
   { key: '/work', label: '我的工作', path: '/work', permission: 'workbench:read' },
+  { key: '/work/data', label: '数据看板', path: '/work/data', permission: 'workbench:read' },
   { key: '/work/approvals', label: '平台审核', path: '/work/approvals', permission: 'workbench:read' },
 ];
 
@@ -100,7 +101,7 @@ export function WorkLayout() {
           ))}
         </nav>
       </aside>
-      <main className="sidebar-layout-content">
+      <main className={`sidebar-layout-content ${isWorkAppPage ? 'sidebar-layout-content--flush' : ''}`}>
         <Outlet />
       </main>
     </div>

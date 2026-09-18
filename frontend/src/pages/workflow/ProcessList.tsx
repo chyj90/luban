@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { WorkflowDefinition, FormWorkflowBinding } from '../../types/workflow';
@@ -35,16 +35,21 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
     }
   };
 
-  useEffect(() => {
-    workflowApi.listDefinitions(appId ? { applicationId: Number(appId) } : undefined)
+  // 发布/下线/删除都会影响关联版本（如清空草稿的 publishedVersionId、发布时新建草稿），
+  // 本地手工补丁会漏改关联行，必须整体重新拉取
+  const loadDefinitions = useCallback(() => {
+    return workflowApi.listDefinitions(appId ? { applicationId: Number(appId) } : undefined)
       .then(setDefinitions)
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      .catch(console.error);
+  }, [appId]);
+
+  useEffect(() => {
+    loadDefinitions().finally(() => setLoading(false));
     bindingApi.list(appId ? { applicationId: Number(appId) } : undefined).then(setBindings).catch(() => {});
     formApi.list(appId ? { applicationId: Number(appId) } : undefined)
       .then((list) => setForms(list.map((f) => ({ id: f.id, name: f.name }))))
       .catch(() => {});
-  }, [appId]);
+  }, [loadDefinitions]);
 
   const filtered = definitions.filter((d) =>
     !search || d.name.toLowerCase().includes(search.toLowerCase())
@@ -250,13 +255,7 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                             });
                             if (!confirmed) return;
                             workflowApi.publishDefinition(def.id)
-                              .then(() => {
-                                setDefinitions((prev) =>
-                                  prev.map((d) =>
-                                    d.id === def.id ? { ...d, status: 'PUBLISHED' as const } : d,
-                                  ),
-                                );
-                              })
+                              .then(loadDefinitions)
                               .catch((e: unknown) => {
                                 toast.error(e instanceof Error ? e.message : '发布失败');
                               });
@@ -270,13 +269,7 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                           className={styles.actionBtn}
                           onClick={() => {
                             workflowApi.unpublishDefinition(def.id)
-                              .then(() => {
-                                setDefinitions((prev) =>
-                                  prev.map((d) =>
-                                    d.id === def.id ? { ...d, status: 'DRAFT' as const } : d,
-                                  ),
-                                );
-                              })
+                              .then(loadDefinitions)
                               .catch((e: unknown) => {
                                 toast.error(e instanceof Error ? e.message : '下线失败');
                               });
@@ -296,9 +289,7 @@ export default function ProcessList({ appId: propAppId, onNavigate }: ProcessLis
                           });
                           if (confirmed) {
                             workflowApi.deleteDefinition(def.id)
-                              .then(() => {
-                                setDefinitions((prev) => prev.filter((d) => d.id !== def.id));
-                              })
+                              .then(loadDefinitions)
                               .catch((e: unknown) => {
                                 toast.error(e instanceof Error ? e.message : '删除失败');
                               });

@@ -45,7 +45,8 @@ class InvocationServiceTest {
     }
 
     private InvocationService service(TargetExecutor... executors) {
-        return new InvocationService(List.of(executors), recorderWithIds());
+        InvocationTraceRepository traceRepo = mock(InvocationTraceRepository.class);
+        return new InvocationService(List.of(executors), recorderWithIds(), traceRepo);
     }
 
     private ExecutionContext rootCtx() {

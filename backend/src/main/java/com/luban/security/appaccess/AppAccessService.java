@@ -38,17 +38,45 @@ public class AppAccessService {
     private final RoleUserRepository roleUserRepository;
     private final RolePermissionRepository rolePermissionRepository;
     private final RoleConceptPermissionService roleConceptPermissionService;
+    private final com.luban.repository.SystemPermissionRepository systemPermissionRepository;
 
     public AppAccessService(ApplicationRepository applicationRepository,
                             RoleRepository roleRepository,
                             RoleUserRepository roleUserRepository,
                             RolePermissionRepository rolePermissionRepository,
-                            RoleConceptPermissionService roleConceptPermissionService) {
+                            RoleConceptPermissionService roleConceptPermissionService,
+                            com.luban.repository.SystemPermissionRepository systemPermissionRepository) {
         this.applicationRepository = applicationRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
         this.rolePermissionRepository = rolePermissionRepository;
         this.roleConceptPermissionService = roleConceptPermissionService;
+        this.systemPermissionRepository = systemPermissionRepository;
+    }
+
+    /**
+     * 系统资产使用判定的唯一事实源（"人"这个主体）：超管 / 平台管理员(connect:systems) /
+     * 持有该系统 APPROVED 系统权限。适用于系统名下的一切平台资产——数据源、工具(API)、后续编排，
+     * 保证"可见"与"可执行"永不漂移。API Key（机器主体）的授权另行走
+     * api_key_datasource / api_key_tool，只服务 X-API-Key 外部入口，与本判定无关。
+     */
+    public boolean canUseSystemAsset(Long userId, Long systemGroupId) {
+        if (isSuperAdmin(userId)) return true;
+        try {
+            assertPlatformPermission(userId, com.luban.constant.Permissions.CONNECT_SYSTEMS);
+            return true;
+        } catch (Exception ignored) {
+        }
+        return systemGroupId != null && systemPermissionRepository
+                .findByUserIdAndGroupId(userId, systemGroupId)
+                .map(p -> "APPROVED".equals(p.getStatus()))
+                .orElse(false);
+    }
+
+    /** @deprecated 使用 {@link #canUseSystemAsset}（系统资产不止数据源） */
+    @Deprecated
+    public boolean canRunPlatformDatasource(Long userId, Long systemGroupId) {
+        return canUseSystemAsset(userId, systemGroupId);
     }
 
     /** 判定入口：不满足时抛 AppAccessDeniedException（由全局异常处理转 403） */

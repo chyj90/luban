@@ -638,6 +638,7 @@ export default function ConceptEditorPage() {
   useEffect(() => { fetchIndustries(); }, [fetchIndustries]);
 
   useEffect(() => {
+    // 建模中心视角：概念映射面向全量平台数据源（应用侧可见性由系统权限另行控制）
     listDatasources('PLATFORM').then((res) => setDatasources(res.data)).catch(() => {});
   }, []);
 

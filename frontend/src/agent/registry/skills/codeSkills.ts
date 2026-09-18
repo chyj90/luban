@@ -4,6 +4,8 @@ import { workflowApi } from '@/api/workflow';
 import { validateCode, type QueryRunResult, type ApiRunResult } from './codeValidate';
 import { getComponentSpecByName, getComponentCatalog } from '@/luban-ui/componentSpecs';
 import { getAnalysisExamples, getDataQueryGuide } from './promptFragments';
+import { buildLaunchBridgeSnippet, fetchFormFields } from './launchModalGenerator';
+import { isBuiltinQueryName } from '@/lib/builtinQueries';
 import type { ToolExecuteResult } from '@/types/agent';
 
 function extractQueryNamesFromJS(js: string): string[] {
@@ -225,10 +227,12 @@ export const codeSkills: Record<string, SkillFactory> = {
 
         const queryIds = (args.queryIds as number[]) || [];
         const toolIds = (args.toolIds as number[]) || [];
-        if (queryNames.length > 0 && queryIds.length === 0) {
+        // 内置查询（PlatformUsers 等）每个页面自动注册、无需绑定，不触发 queryIds 闸门
+        const nonBuiltinQueryNames = queryNames.filter((n) => !isBuiltinQueryName(n));
+        if (nonBuiltinQueryNames.length > 0 && queryIds.length === 0) {
           return {
             success: false,
-            message: `JS 代码中使用了查询（${queryNames.join('、')}），但 queryIds 为空。` +
+            message: `JS 代码中使用了查询（${nonBuiltinQueryNames.join('、')}），但 queryIds 为空。` +
               '请先通过 delegate_query 创建查询，获取查询 ID 后填入 queryIds 参数。' +
               '如果查询已存在，请从已有查询列表中获取 ID。',
           };
@@ -473,10 +477,12 @@ export const codeSkills: Record<string, SkillFactory> = {
           console.warn('[code:update]', validation.warnings.join('\n'));
         }
 
-        if (queryNames.length > 0 && effectiveQueryIds.length === 0) {
+        // 内置查询（PlatformUsers 等）每个页面自动注册、无需绑定，不触发 queryIds 闸门
+        const nonBuiltinQueryNames = queryNames.filter((n) => !isBuiltinQueryName(n));
+        if (nonBuiltinQueryNames.length > 0 && effectiveQueryIds.length === 0) {
           return {
             success: false,
-            message: `JS 代码中使用了查询（${queryNames.join('、')}），但 queryIds 为空。` +
+            message: `JS 代码中使用了查询（${nonBuiltinQueryNames.join('、')}），但 queryIds 为空。` +
               '请填入对应的查询 ID。如果查询已存在，请从已有查询列表中获取 ID。',
           };
         }
@@ -554,6 +560,17 @@ export const codeSkills: Record<string, SkillFactory> = {
         canvasHeight: { type: 'number', description: '画布高度 px（可选，默认 1080）。与 canvasWidth 成对传入' },
         readQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' } } }, description: '读查询列表（SELECT），如 [{name:"GetList", id:1}]' },
         writeQueries: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, id: { type: 'number' }, operation: { type: 'string', enum: ['insert', 'update', 'delete'] } } }, description: '写查询列表（INSERT/UPDATE/DELETE），如 [{name:"InsertData", id:2, operation:"insert"}]' },
+        launchWorkflow: {
+          type: 'object',
+          properties: {
+            workflowId: { type: 'number', description: '流程定义 ID（须已发布）' },
+            formId: { type: 'number', description: '流程绑定的表单 ID' },
+            insertQueryName: { type: 'string', description: '业务记录落库的 INSERT 查询名（如 InsertLeaveRecord）：提交后执行落库，insertId 自动写入 formData.id。触发器回写引用 form.data.id 的流程必传' },
+            insertQueryId: { type: 'number', description: '该 INSERT 查询的数字 ID（自动加入页面 queryIds 绑定）' },
+          },
+          required: ['workflowId', 'formId'],
+          description: '【页面发起流程必传】生成 startWorkflowWithForm 调用代码：表单 UI 由平台按绑定表单真实渲染（支持 excel 上传解析、detail_table 等全部控件，页面零表单代码、不重复设计表单），提交后按需 INSERT 落库并以 insertId 发起流程。传 {workflowId, formId, insertQueryName?, insertQueryId?}',
+        },
         toolIds: { type: 'array', items: { type: 'number' }, description: '关联的 API 工具 ID 列表' },
         libraries: { type: 'array', items: { type: 'string' }, description: 'CDN 库 URL 列表' },
       },
@@ -593,6 +610,34 @@ export const codeSkills: Record<string, SkillFactory> = {
         let html = '';
         let css = '';
         let js = '';
+
+        // 发起流程（表单契约模式）：页面调 window.__LUBAN__.startWorkflowWithForm，表单 UI 由
+        // 父窗口的真实 FormRenderer 渲染（excel 上传解析/detail_table 等全部控件，页面零表单代码），
+        // 提交后按需 INSERT 落库并以 insertId 发起流程；服务端同时按表单 schema 校验 formData
+        const launch = (args.launchWorkflow || null) as
+          { workflowId?: number; formId?: number; insertQueryName?: string; insertQueryId?: number } | null;
+        let launchNotes: string[] = [];
+        if (launch?.workflowId && launch?.formId) {
+          try {
+            const { definition, fields } = await fetchFormFields(Number(launch.formId));
+            const snippet = buildLaunchBridgeSnippet({
+              workflowId: Number(launch.workflowId),
+              formId: Number(launch.formId),
+              formName: String(definition.name || `表单 ${launch.formId}`),
+              insertQueryName: launch.insertQueryName,
+              insertQueryId: launch.insertQueryId ? Number(launch.insertQueryId) : undefined,
+            });
+            js += '\n\n' + snippet.js;
+            if (launch.insertQueryId) queryIds.push(Number(launch.insertQueryId));
+            const requiredFields = fields.filter((f) => f.required).map((f) => f.label || f.key);
+            launchNotes = [
+              ...snippet.notes,
+              requiredFields.length > 0 ? `表单必填字段（弹窗内已由 FormRenderer 校验）：${requiredFields.join('、')}` : '',
+            ].filter(Boolean);
+          } catch (e) {
+            launchNotes = [`发起链路生成失败（表单 ${launch.formId} 获取失败？），请确认 formId 后重试: ${(e as Error).message}`];
+          }
+        }
 
         if (pageType === 'crud') {
           const readName = primaryRead?.name || 'GetList';
@@ -1192,6 +1237,9 @@ if (document.readyState === 'loading') {
         } else if (pageType === 'detail') {
           msg += `1. 补充详情字段（添加更多 detail-row）\n`;
           msg += `2. 完善数据映射逻辑\n`;
+        }
+        if (launchNotes.length > 0) {
+          msg += `\n🔗 **发起流程链路**：\n${launchNotes.map(n => `- ${n}`).join('\n')}\n`;
         }
         if (validation.fixable.length > 0) {
           msg += `\n⚠️ 有 ${validation.fixable.length} 个待修问题，请逐步修复：\n`;

@@ -50,6 +50,16 @@ public class FormService {
     }
 
     @Transactional
+    public FormDefinition unpublish(Long id) {
+        FormDefinition form = getById(id);
+        if (!"PUBLISHED".equals(form.getStatus())) {
+            throw new BusinessException("只能下线已发布的表单");
+        }
+        form.setStatus("DRAFT");
+        return formDefinitionRepository.save(form);
+    }
+
+    @Transactional
     public void delete(Long id) {
         FormDefinition form = getById(id);
         if ("PUBLISHED".equals(form.getStatus())) {

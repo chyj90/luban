@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { runQuery, runAppTool, runRuntimeQuery, runRuntimeTool } from '@/api';
 import { getPlatformUsers, getPlatformDepartments } from '@/api/platform';
+import { BUILTIN_QUERY_NAMES, isBuiltinQueryName } from '@/lib/builtinQueries';
 import type { Query } from '@/types/query';
 
 interface BridgeRequest {
-  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME' | 'CALL_API' | 'START_WORKFLOW';
+  type: 'RUN_QUERY' | 'NAVIGATE_TO_PAGE' | 'NAVIGATE_TO_PAGE_BY_NAME' | 'CALL_API' | 'START_WORKFLOW'
+    | 'OPEN_WORKFLOW_FORM' | 'START_WORKFLOW_WITH_FORM';
   id: string;
   queryName?: string;
   params?: Record<string, unknown>;
@@ -13,10 +15,15 @@ interface BridgeRequest {
   apiName?: string;
   definitionId?: number;
   formData?: string;
+  /** OPEN_WORKFLOW_FORM / START_WORKFLOW_WITH_FORM：流程表单 ID（缺省时按流程绑定关系解析） */
+  formId?: number;
+  /** START_WORKFLOW_WITH_FORM：提交后先执行该 INSERT 查询落库，insertId 写入 formData.id */
+  insertQueryName?: string;
+  insertQueryId?: number;
 }
 
 interface BridgeResponse {
-  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT' | 'WORKFLOW_RESULT';
+  type: 'QUERY_RESULT' | 'NAVIGATE_RESULT' | 'API_RESULT' | 'WORKFLOW_RESULT' | 'WORKFLOW_FORM_RESULT';
   id: string;
   queryName?: string;
   result?: { columns: string[]; rows: Record<string, unknown>[]; totalCount: number; insertId?: number | null };
@@ -26,6 +33,14 @@ interface BridgeResponse {
   apiResult?: unknown;
   instanceId?: number;
   instance?: unknown;
+  /** START_WORKFLOW_WITH_FORM：INSERT 落库返回的业务记录 id（已写入 formData.id） */
+  insertId?: number | null;
+  /** 用户关闭了表单弹窗（页面侧 Promise 以 cancelled 错误拒绝，区别于真实失败） */
+  cancelled?: boolean;
+  /** 非致命链路缺口提示（如触发器引用 form.data.id 但未提供 INSERT 注入点） */
+  warning?: string;
+  /** WORKFLOW_FORM_RESULT：平台表单弹窗收集的数据 */
+  formData?: Record<string, unknown>;
 }
 
 export interface UserInfo {
@@ -51,6 +66,19 @@ interface AppToolInfo {
   name: string;
 }
 
+/** 桥接调用记账条目（链路自检的页面冒烟层用；普通预览不传 journalRef 即零开销） */
+export interface BridgeJournalEntry {
+  kind: 'query' | 'workflow' | 'api';
+  /** 查询名 / API 名 / 流程定义 ID */
+  name: string;
+  params?: unknown;
+  ok: boolean;
+  insertId?: number | null;
+  instanceId?: number;
+  error?: string;
+  at: number;
+}
+
 export function useQueryBridge(
   queries: Query[],
   userInfo?: UserInfo | null,
@@ -59,9 +87,21 @@ export function useQueryBridge(
   applicationId?: number,
   appTools?: AppToolInfo[],
   currentPageId?: number,
+  /** 预览身份切换：设计预览里以指定平台用户执行查询（this.auth 服务端按该用户解析） */
+  previewAsUserId?: number,
+  /** 桥接调用记账（链路自检页面冒烟层）：传入时每次查询/发起流程/调用 API 都记录一条 */
+  journalRef?: { current: BridgeJournalEntry[] | null },
 ) {
   const queriesRef = useRef<Query[]>(queries);
   queriesRef.current = queries;
+
+  const journalRefRef = useRef<{ current: BridgeJournalEntry[] | null } | undefined>(journalRef);
+  journalRefRef.current = journalRef;
+
+  const pushJournal = (entry: Omit<BridgeJournalEntry, 'at'>) => {
+    const j = journalRefRef.current?.current;
+    if (j) j.push({ ...entry, at: Date.now() });
+  };
 
   const onNavigateRef = useRef(onNavigate);
   onNavigateRef.current = onNavigate;
@@ -78,6 +118,9 @@ export function useQueryBridge(
   const pageIdRef = useRef<number | undefined>(currentPageId);
   pageIdRef.current = currentPageId;
 
+  const previewAsUserIdRef = useRef<number | undefined>(previewAsUserId);
+  previewAsUserIdRef.current = previewAsUserId;
+
   const handleMessage = useCallback(async (event: MessageEvent) => {
     const msg = event.data as BridgeRequest;
     if (!msg) return;
@@ -85,17 +128,32 @@ export function useQueryBridge(
     const respond = (response: BridgeResponse) => {
       (event.source as Window).postMessage(response, '*');
     };
+    // 记账响应：先正常回包，再写入冒烟记账（journalRef 未传时零开销）
+    const respondJ = (response: BridgeResponse) => {
+      respond(response);
+      if (response.type === 'QUERY_RESULT') {
+        pushJournal({
+          kind: 'query', name: response.queryName || '', ok: !response.error,
+          insertId: response.result?.insertId ?? null, error: response.error,
+        });
+      } else if (response.type === 'WORKFLOW_RESULT') {
+        pushJournal({
+          kind: 'workflow', name: String(msg.definitionId || ''), ok: !!response.success,
+          instanceId: response.instanceId, error: response.error,
+        });
+      }
+    };
 
     if (msg.type === 'RUN_QUERY') {
-      // 平台内置查询（PlatformUsers/PlatformDepartments）：身份与组织资产运行时直查平台，
-      // 业务表只存 user_id 绑定键，不冗余姓名/部门——单一事实源，平台侧变更自动生效
-      if (msg.queryName === 'PlatformUsers' || msg.queryName === 'PlatformDepartments') {
+      // 平台内置查询：身份与组织资产运行时直查平台，业务表只存 user_id 绑定键，
+      // 不冗余姓名/部门——单一事实源，平台侧变更自动生效。内置名单见 lib/builtinQueries
+      if (isBuiltinQueryName(msg.queryName || '')) {
         try {
           const res = msg.queryName === 'PlatformUsers'
             ? await getPlatformUsers((msg.params || {}) as Record<string, unknown>)
             : await getPlatformDepartments();
           const rows = (res.data.rows || []) as unknown as Record<string, unknown>[];
-          respond({
+          respondJ({
             type: 'QUERY_RESULT',
             id: msg.id,
             queryName: msg.queryName,
@@ -107,7 +165,7 @@ export function useQueryBridge(
             },
           });
         } catch (err: unknown) {
-          respond({
+          respondJ({
             type: 'QUERY_RESULT',
             id: msg.id,
             queryName: msg.queryName,
@@ -120,7 +178,7 @@ export function useQueryBridge(
       const query = queriesRef.current.find((q) => q.name === msg.queryName);
 
       if (!query) {
-        respond({
+        respondJ({
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
@@ -133,14 +191,14 @@ export function useQueryBridge(
         const pageId = pageIdRef.current;
         const res = pageId
           ? await runRuntimeQuery(pageId, query.id, { params: msg.params })
-          : await runQuery(query.id, { params: msg.params });
+          : await runQuery(query.id, { params: msg.params }, previewAsUserIdRef.current);
         const { columns, rows, totalCount, insertId } = res.data;
         const objectRows: Record<string, unknown>[] = rows.map((row: unknown[]) => {
           const obj: Record<string, unknown> = {};
           columns.forEach((col, i) => { obj[col] = row[i]; });
           return obj;
         });
-        respond({
+        respondJ({
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
@@ -148,7 +206,7 @@ export function useQueryBridge(
           result: { columns, rows: objectRows, totalCount, insertId: insertId != null ? insertId : null },
         });
       } catch (err: unknown) {
-        respond({
+        respondJ({
           type: 'QUERY_RESULT',
           id: msg.id,
           queryName: msg.queryName,
@@ -205,16 +263,18 @@ export function useQueryBridge(
       }
     } else if (msg.type === 'START_WORKFLOW') {
       if (!msg.definitionId) {
-        respond({ type: 'WORKFLOW_RESULT', id: msg.id, success: false, error: '缺少 definitionId 参数' });
+        respondJ({ type: 'WORKFLOW_RESULT', id: msg.id, success: false, error: '缺少 definitionId 参数' });
         return;
       }
       try {
         const { instanceApi } = await import('@/api/workflow');
+        // 身份预览时以预览用户为发起人（仅应用所有者可用，后端校验+审计）——
+        // 审批人按其组织关系真实解析，人工验收免切账号
         const instance = await instanceApi.start({
           definitionId: msg.definitionId,
           formData: msg.formData || '{}',
-        });
-        respond({
+        }, previewAsUserIdRef.current);
+        respondJ({
           type: 'WORKFLOW_RESULT',
           id: msg.id,
           success: true,
@@ -222,13 +282,113 @@ export function useQueryBridge(
           instance,
         });
       } catch (e: unknown) {
-        respond({
+        respondJ({
           type: 'WORKFLOW_RESULT',
           id: msg.id,
           success: false,
           error: (e as Error).message,
         });
       }
+    } else if (msg.type === 'OPEN_WORKFLOW_FORM' || msg.type === 'START_WORKFLOW_WITH_FORM') {
+      void runWorkflowFormFlow(msg, respond, respondJ);
+    }
+  }, []);
+
+  /**
+   * 平台表单弹窗发起链路（OPEN_WORKFLOW_FORM / START_WORKFLOW_WITH_FORM）：
+   * 表单 UI 由父窗口的真实 FormRenderer 渲染（表单设计器的运行时渲染器，含 excel 上传
+   * 解析、detail_table 等全部控件），页面零表单代码——字段/必填随表单设计自动生效。
+   * START_WORKFLOW_WITH_FORM 在提交后按需执行 INSERT 落库（insertId 写入 formData.id），
+   * 再发起流程——触发器 form.data.id 回写由此获得业务记录定位键。
+   */
+  const runWorkflowFormFlow = useCallback(async (
+    msg: BridgeRequest,
+    respond: (r: BridgeResponse) => void,
+    respondJ: (r: BridgeResponse) => void,
+  ) => {
+    const isStart = msg.type === 'START_WORKFLOW_WITH_FORM';
+    try {
+      const { formApi, bindingApi, workflowApi, instanceApi } = await import('@/api/workflow');
+      const { openWorkflowFormModal } = await import('@/components/WorkflowFormModal');
+
+      // 解析表单：显式 formId 优先；否则按流程定义的绑定关系取（DRAFT id 兜底其发布版）
+      let formId = msg.formId;
+      if (!formId && msg.definitionId) {
+        let bindings = await bindingApi.list({ workflowId: msg.definitionId });
+        if (!bindings || bindings.length === 0) {
+          try {
+            const def = await workflowApi.getDefinition(msg.definitionId);
+            if (def.publishedVersionId && def.publishedVersionId !== msg.definitionId) {
+              bindings = await bindingApi.list({ workflowId: def.publishedVersionId });
+            }
+          } catch { /* 定义拉取失败按无绑定处理 */ }
+        }
+        formId = (bindings || [])[0]?.formId;
+      }
+      if (!formId) {
+        const error = '未找到流程绑定的表单（未传 formId 且流程无绑定关系）';
+        respond(isStart
+          ? { type: 'WORKFLOW_RESULT', id: msg.id, success: false, error }
+          : { type: 'WORKFLOW_FORM_RESULT', id: msg.id, error });
+        return;
+      }
+      const form = await formApi.get(formId);
+
+      const submitted = await new Promise<{ cancelled: true } | { cancelled: false; formData: Record<string, unknown> }>((resolve) => {
+        openWorkflowFormModal({ formId, formName: form.name, onDone: resolve });
+      });
+      if (submitted.cancelled) {
+        respond(isStart
+          ? { type: 'WORKFLOW_RESULT', id: msg.id, success: false, cancelled: true, error: '用户取消提交' }
+          : { type: 'WORKFLOW_FORM_RESULT', id: msg.id, cancelled: true });
+        return;
+      }
+      let formData: Record<string, unknown> = submitted.formData;
+
+      if (!isStart) {
+        respondJ({ type: 'WORKFLOW_FORM_RESULT', id: msg.id, formData });
+        return;
+      }
+
+      // INSERT 落库（业务记录注入点）：身份语义与 RUN_QUERY 一致（运行时按 pageId，预览按预览用户）
+      let insertId: number | null = null;
+      let warning: string | undefined;
+      const insertQuery = msg.insertQueryId
+        ? { id: msg.insertQueryId, name: msg.insertQueryName || `查询 ${msg.insertQueryId}` }
+        : msg.insertQueryName
+          ? queriesRef.current.find((q) => q.name === msg.insertQueryName) || null
+          : null;
+      if (insertQuery) {
+        const pageId = pageIdRef.current;
+        const res = pageId
+          ? await runRuntimeQuery(pageId, insertQuery.id, { params: formData })
+          : await runQuery(insertQuery.id, { params: formData }, previewAsUserIdRef.current);
+        insertId = res.data.insertId ?? null;
+        if (insertId != null) formData = { ...formData, id: insertId };
+      } else {
+        // 脑裂守卫：触发器按 form.data.id 定位业务记录，缺注入点时审批回写命中 0 行
+        try {
+          const def = await workflowApi.getDefinition(msg.definitionId!);
+          const nodesStr = typeof def.nodes === 'string' ? def.nodes : JSON.stringify(def.nodes || []);
+          if (/form\.data\.id\b/.test(nodesStr)) {
+            warning = '流程触发器引用 form.data.id，但未提供 insertQueryName/insertQueryId——审批回写将命中 0 行（断链）';
+          }
+        } catch { /* 定义拉取失败忽略 */ }
+      }
+
+      const instance = await instanceApi.start(
+        { definitionId: msg.definitionId!, formData: JSON.stringify(formData) },
+        previewAsUserIdRef.current,
+      );
+      respondJ({
+        type: 'WORKFLOW_RESULT', id: msg.id, success: true,
+        instanceId: instance.id, instance, insertId, warning,
+      });
+    } catch (e: unknown) {
+      const error = (e as Error).message || '流程表单提交失败';
+      respondJ(isStart
+        ? { type: 'WORKFLOW_RESULT', id: msg.id, success: false, error }
+        : { type: 'WORKFLOW_FORM_RESULT', id: msg.id, error });
     }
   }, []);
 
@@ -258,6 +418,14 @@ export function useQueryBridge(
 
   window.__bridge_pending = _pending;
   window.__bridge_results = _results;
+
+  // Esc 转发：页面内的键盘事件不会传到设计器父窗口（iframe 聚焦），全屏预览的
+  // "Esc 退出"必须由这里转发，否则用户在全屏预览里点过页面后就无法退出了
+  window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      try { window.parent.postMessage({ type: 'PREVIEW_ESCAPE' }, '*'); } catch (err) {}
+    }
+  });
 
   var _origAddEventListener = document.addEventListener;
   var _origRemoveEventListener = document.removeEventListener;
@@ -336,6 +504,28 @@ export function useQueryBridge(
         }, '*');
       });
     },
+    // 平台表单弹窗：表单 UI 由父窗口按流程表单真实渲染（含 excel 上传/detail_table 等全部
+    // 控件），页面零表单代码。resolve(表单数据) / reject（取消时 err.cancelled === true）
+    openWorkflowForm: function(formId) {
+      return new Promise(function(resolve, reject) {
+        var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        _pending[id] = { resolve: resolve, reject: reject };
+        window.parent.postMessage({ type: 'OPEN_WORKFLOW_FORM', id: id, formId: formId }, '*');
+      });
+    },
+    // 表单弹窗发起流程一条链：平台渲染绑定表单 → 提交后（可选）INSERT 落库 → 以 insertId 发起流程。
+    // options: { formId?, insertQueryName?, insertQueryId? }；formId 缺省自动解析流程默认绑定表单
+    startWorkflowWithForm: function(definitionId, options) {
+      options = options || {};
+      return new Promise(function(resolve, reject) {
+        var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+        _pending[id] = { resolve: resolve, reject: reject };
+        window.parent.postMessage({
+          type: 'START_WORKFLOW_WITH_FORM', id: id, definitionId: definitionId,
+          formId: options.formId, insertQueryName: options.insertQueryName, insertQueryId: options.insertQueryId
+        }, '*');
+      });
+    },
     // 页面卸载钩子：页面脚本用 setInterval/addEventListener 后必须在此注册清理函数，
     // 页面热更新（UPDATE_PAGE）和 iframe 卸载时平台会自动调用
     onPageUnload: function(fn) {
@@ -410,8 +600,24 @@ export function useQueryBridge(
     if (d.type === 'WORKFLOW_RESULT') {
       var cb = _pending[d.id];
       if (cb) {
-        if (d.error) { cb.reject(new Error(d.error)); }
-        else { cb.resolve(d.instance || { success: true, instanceId: d.instanceId }); }
+        if (d.error) {
+          var we = new Error(d.error);
+          if (d.cancelled) we.cancelled = true;
+          cb.reject(we);
+        } else {
+          if (d.warning) console.warn('[知行] ' + d.warning);
+          if (d.instance) { d.instance.insertId = d.insertId; cb.resolve(d.instance); }
+          else { cb.resolve({ success: true, instanceId: d.instanceId, insertId: d.insertId }); }
+        }
+        delete _pending[d.id];
+      }
+    }
+    if (d.type === 'WORKFLOW_FORM_RESULT') {
+      var cbf = _pending[d.id];
+      if (cbf) {
+        if (d.error) { cbf.reject(new Error(d.error)); }
+        else if (d.cancelled) { var ce = new Error('已取消'); ce.cancelled = true; cbf.reject(ce); }
+        else { cbf.resolve(d.formData || {}); }
         delete _pending[d.id];
       }
     }
@@ -581,7 +787,7 @@ export function useQueryBridge(
   // 平台内置查询（身份/组织资产运行时直查平台）与页面绑定查询一起注册；
   // 页面绑定了同名查询时以页面查询为准（不重复注册）
   var _names = ${JSON.stringify(queryNames)};
-  ['PlatformUsers', 'PlatformDepartments'].forEach(function(b) {
+  ${JSON.stringify(BUILTIN_QUERY_NAMES)}.forEach(function(b) {
     if (_names.indexOf(b) === -1) _names.push(b);
   });
   _names.forEach(function(name) {
@@ -670,6 +876,28 @@ window.__LUBAN__ = {
       }, '*');
     });
   },
+  // 平台表单弹窗（与 shell 中的定义一致）：表单 UI 由父窗口真实渲染，页面零表单代码
+  openWorkflowForm: function(formId) {
+    return new Promise(function(resolve, reject) {
+      var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      var pending = window.__bridge_pending || {};
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({ type: 'OPEN_WORKFLOW_FORM', id: id, formId: formId }, '*');
+    });
+  },
+  // 表单弹窗发起流程一条链：渲染绑定表单 → 提交后（可选）INSERT 落库 → 以 insertId 发起流程
+  startWorkflowWithForm: function(definitionId, options) {
+    options = options || {};
+    return new Promise(function(resolve, reject) {
+      var id = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      var pending = window.__bridge_pending || {};
+      pending[id] = { resolve: resolve, reject: reject };
+      window.parent.postMessage({
+        type: 'START_WORKFLOW_WITH_FORM', id: id, definitionId: definitionId,
+        formId: options.formId, insertQueryName: options.insertQueryName, insertQueryId: options.insertQueryId
+      }, '*');
+    });
+  },
   // 页面卸载钩子（与 shell 中的定义一致：清理函数列表挂在 window 上，__LUBAN__ 被本脚本覆盖不影响已注册的清理函数）
   onPageUnload: function(fn) {
     (window.__luban_cleanup_fns__ = window.__luban_cleanup_fns__ || []).push(fn);
@@ -677,7 +905,7 @@ window.__LUBAN__ = {
 };
 // 平台内置查询与页面绑定查询一起注册（页面绑定同名查询时以页面为准）
 var _names = ${JSON.stringify(queryNames)};
-['PlatformUsers', 'PlatformDepartments'].forEach(function(b) {
+${JSON.stringify(BUILTIN_QUERY_NAMES)}.forEach(function(b) {
   if (_names.indexOf(b) === -1) _names.push(b);
 });
 _names.forEach(function(name) {

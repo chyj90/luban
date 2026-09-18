@@ -1,4 +1,4 @@
-import type { Message, Plan } from '@/types/agent';
+import type { AttachmentMeta, Message, Plan } from '@/types/agent';
 
 export interface IStoreReader {
   getPlans(): Plan[];
@@ -10,4 +10,7 @@ export interface IStoreReader {
   /** 会话失效时残留的挂起事项描述（降级注入用；AgentFactory 在下一次 run 时消费并清除） */
   getOrphanedPending?(): string | null;
   clearOrphanedPending?(): void;
+  /** 待发送附件（AgentPanel 上传后入列；AgentFactory 在下一次 run 时注入并清除） */
+  getPendingAttachments?(): AttachmentMeta[];
+  clearPendingAttachments?(): void;
 }

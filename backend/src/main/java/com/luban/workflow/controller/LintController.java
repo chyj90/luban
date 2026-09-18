@@ -34,6 +34,15 @@ public class LintController {
         return lintService.lintWorkflow(nodes, edges, fields);
     }
 
+    /**
+     * 按流程定义 lint：服务端自动装载绑定表单字段，
+     * 触发器 paramsMapping 断链、条件字段引用检查据此生效。
+     */
+    @PostMapping("/workflow-definition/{processId}")
+    public Map<String, Object> lintWorkflowDefinition(@PathVariable Long processId) {
+        return lintService.lintWorkflowDefinition(processId);
+    }
+
     @PostMapping("/condition")
     public Map<String, Object> lintCondition(@RequestBody Map<String, Object> params) {
         String expression = params.getOrDefault("expression", "").toString();

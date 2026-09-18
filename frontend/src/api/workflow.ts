@@ -28,6 +28,9 @@ export const formApi = {
   publish: (id: number) =>
     api.post<FormDefinition>(`/forms/${id}/publish`).then(r => r.data),
 
+  unpublish: (id: number) =>
+    api.post<FormDefinition>(`/forms/${id}/unpublish`).then(r => r.data),
+
   delete: (id: number) =>
     api.delete(`/forms/${id}`).then(r => r.data),
 
@@ -80,8 +83,11 @@ export const instanceApi = {
   getHistory: (id: number) =>
     api.get<WorkflowHistory[]>(`/workflow-instances/${id}/history`).then(r => r.data),
 
-  start: (params: { definitionId: number; formData: string }) =>
-    api.post<WorkflowInstance>('/workflow-instances', params).then(r => r.data),
+  start: (params: { definitionId: number; formData: string }, previewAsUserId?: number) =>
+    // previewAsUserId：设计器身份预览（仅应用所有者，后端校验+审计）——流程以该用户为发起人，
+    // 审批人按其组织关系真实解析，人工验收免切账号
+    api.post<WorkflowInstance>('/workflow-instances', params,
+      previewAsUserId != null ? { params: { previewAsUserId } } : undefined).then(r => r.data),
 
   cancel: (id: number) =>
     api.put(`/workflow-instances/${id}/cancel`),
@@ -106,7 +112,7 @@ export const instanceApi = {
 };
 
 export const taskApi = {
-  list: (params?: { status?: string }) =>
+  list: (params?: { status?: string; applicationId?: number; previewAsUserId?: number }) =>
     api.get<WorkflowTask[]>('/tasks', { params }).then(r => r.data),
 
   get: (id: number) =>
@@ -115,11 +121,13 @@ export const taskApi = {
   getByInstance: (instanceId: number) =>
     api.get<WorkflowTask>(`/tasks/by-instance/${instanceId}`).then(r => r.data),
 
-  approve: (id: number, comment: string) =>
-    api.put<WorkflowTask>(`/tasks/${id}/approve`, { comment }).then(r => r.data),
+  approve: (id: number, comment: string, previewAsUserId?: number) =>
+    api.put<WorkflowTask>(`/tasks/${id}/approve`, { comment },
+      previewAsUserId != null ? { params: { previewAsUserId } } : undefined).then(r => r.data),
 
-  reject: (id: number, comment: string) =>
-    api.put<WorkflowTask>(`/tasks/${id}/reject`, { comment }).then(r => r.data),
+  reject: (id: number, comment: string, previewAsUserId?: number) =>
+    api.put<WorkflowTask>(`/tasks/${id}/reject`, { comment },
+      previewAsUserId != null ? { params: { previewAsUserId } } : undefined).then(r => r.data),
 
   transfer: (id: number, targetUserId: number, targetUserName: string, comment: string) =>
     api.put<WorkflowTask>(`/tasks/${id}/transfer`, { targetUserId, targetUserName, comment }).then(r => r.data),
@@ -198,8 +206,22 @@ export const lintApi = {
   lintWorkflow: (nodes: string, edges: string, fields: string) =>
     api.post('/lint/workflow', { nodes, edges, fields }).then(r => r.data),
 
+  /** 按流程定义 lint：服务端自动装载绑定表单字段（触发器断链/条件字段检查生效） */
+  lintWorkflowDefinition: (processId: number) =>
+    api.post(`/lint/workflow-definition/${processId}`).then(r => r.data),
+
   lintCondition: (expression: string, fields: string) =>
     api.post('/lint/condition', { expression, fields }).then(r => r.data),
+
+  /**
+   * 触发器预演：给定样例表单数据/发起人，静态推演路径、触发器、参数与 SQL 渲染。
+   * 不发起实例、不执行写操作。
+   */
+  rehearseTriggers: (processId: number, sampleFormData: Record<string, unknown>, sampleInitiatorId?: number) =>
+    api.post(`/workflows/${processId}/rehearse-triggers`, {
+      sampleFormData,
+      sampleInitiatorId,
+    }).then(r => r.data),
 };
 
 export const bindingApi = {
@@ -220,4 +242,13 @@ export const bindingApi = {
 
   unbind: (id: number) =>
     api.delete(`/form-workflow-bindings/${id}`),
+};
+
+/** 触发器链路可观测：outbox 派发记录（PENDING/DISPATCHED/DEAD + 重试/最后错误） */
+export const observabilityApi = {
+  instanceTriggerOutbox: (instanceId: number) =>
+    api.get<Array<Record<string, unknown>>>(`/workflow-observability/instances/${instanceId}/trigger-outbox`).then(r => r.data),
+
+  deadTriggerLetters: () =>
+    api.get<Array<Record<string, unknown>>>('/workflow-observability/trigger-outbox/dead').then(r => r.data),
 };

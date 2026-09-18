@@ -31,6 +31,7 @@ import { resolveSkills } from '../skillRegistry';
 import { consumeApproval, onUserMessage, resetConfirmationGuard, hasPending } from '../../core/confirmationGuard';
 import { buildInteliSystemPrompt } from '../../prompts/systemPrompt';
 import { getComponentCatalog, getComponentSpecByName } from '@/luban-ui/componentSpecs';
+import { lintQuery } from '../skills/queryLint';
 
 export interface EvalResult {
   name: string;
@@ -100,8 +101,8 @@ function evalPlanDerivation(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  if (items.length !== 4) checks.push(`步骤数应为 4（表单/流程/发布/挂接），实际 ${items.length}`);
-  const [step1, step2, step3, step4] = items;
+  if (items.length !== 5) checks.push(`步骤数应为 5（表单/流程/发布/挂接/链路验证），实际 ${items.length}`);
+  const [step1, step2, step3, step4, step5] = items;
   if (step1?.toolName !== 'delegate_workflow') checks.push(`步骤1 toolName 应为 delegate_workflow，实际 ${step1?.toolName}`);
   if (step1?.toolInput.task_type !== 'design_form') checks.push(`步骤1 task_type 应为 design_form，实际 ${step1?.toolInput.task_type}`);
   if (step2?.toolName !== 'delegate_workflow') checks.push(`步骤2 toolName 应为 delegate_workflow，实际 ${step2?.toolName}`);
@@ -114,6 +115,12 @@ function evalPlanDerivation(): EvalResult {
   if (step4?.toolName !== 'update_code_page') checks.push(`步骤4（发起链路接入）toolName 应为 update_code_page，实际 ${step4?.toolName}`);
   if (!step4 || !/发起链路接入|startWorkflow/.test(step4.description)) checks.push('步骤4 描述应包含"发起链路接入/startWorkflow"');
   if (JSON.stringify(step4?.dependencies) !== JSON.stringify([step3?.id])) checks.push(`步骤4 依赖应为 [${step3?.id}]，实际 ${JSON.stringify(step4?.dependencies)}`);
+  // 链路验证收尾步骤（触发器预演）：完成定义是预演通过而非资源创建成功
+  if (step5?.toolName !== 'rehearse_triggers') checks.push(`步骤5（链路验证）toolName 应为 rehearse_triggers，实际 ${step5?.toolName}`);
+  if (!step5 || !/链路验证|预演/.test(step5.description)) checks.push('步骤5 描述应包含"链路验证/预演"');
+  if (JSON.stringify(step5?.dependencies) !== JSON.stringify([step3?.id, step4?.id])) {
+    checks.push(`步骤5 依赖应为 [${step3?.id},${step4?.id}]，实际 ${JSON.stringify(step5?.dependencies)}`);
+  }
 
   return evalResult('E3-计划自动推导(请假审批)', checks.length === 0, checks.length === 0 ? '结构完全符合预期（含闭环步骤）' : checks.join('；'));
 }
@@ -189,8 +196,8 @@ function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  // 预期 7 步：query → form → design → publish → orchestration → page → wire
-  if (items.length !== 7) checks.push(`步骤数应为 7，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  // 预期 8 步：query → form → design → publish → orchestration → page → wire → rehearse
+  if (items.length !== 8) checks.push(`步骤数应为 8，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
   // 2026-09-14 回归：步骤 id 必须与清单序号一致（publish/wire 也要占数字 id），
   // 否则主智能体按 submit_analysis 清单序号标状态会命中错误步骤
   const idMismatchIdx = items.findIndex((it, idx) => it.id !== String(idx + 1));
@@ -216,6 +223,19 @@ function evalPlanDerivationOrchAfterWorkflow(): EvalResult {
   const wire = items[wireIdx];
   if (wire && publishId && !wire.dependencies.includes(publishId)) {
     checks.push(`流程挂接步骤应依赖发布流程步骤 ${publishId}，实际 ${JSON.stringify(wire.dependencies)}`);
+  }
+  // 链路验证（触发器预演）收尾：必须存在、排在 wire 之后、依赖 publish+wire
+  const rehearseIdx = toolNames.indexOf('rehearse_triggers');
+  if (rehearseIdx < 0) {
+    checks.push('缺少 rehearse_triggers（链路验证）步骤');
+  } else if (wireIdx >= 0 && rehearseIdx < wireIdx) {
+    checks.push(`链路验证步骤(序号${rehearseIdx + 1})必须排在流程挂接步骤(序号${wireIdx + 1})之后`);
+  } else {
+    const rehearse = items[rehearseIdx];
+    const wireId = items[wireIdx]?.id;
+    if (wireId && !rehearse.dependencies.includes(wireId)) {
+      checks.push(`链路验证步骤应依赖流程挂接步骤 ${wireId}，实际 ${JSON.stringify(rehearse.dependencies)}`);
+    }
   }
 
   return evalResult('E3c-计划推导(编排排在流程发布后)', checks.length === 0, checks.length === 0 ? '查询→表单→流程→发布→编排→页面→挂接 顺序与依赖正确' : checks.join('；'));
@@ -248,8 +268,8 @@ function evalPlanDerivationWithToolCallback(): EvalResult {
   const items = derivePlanFromAnalysis(analysis);
 
   const checks: string[] = [];
-  // 预期 5 步：回写查询 → 表单 → 设计(含触发器) → 发布 → 挂接；TOOL 不另生成步骤
-  if (items.length !== 5) checks.push(`步骤数应为 5，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
+  // 预期 6 步：回写查询 → 表单 → 设计(含触发器) → 发布 → 挂接 → 链路验证；TOOL 不另生成步骤
+  if (items.length !== 6) checks.push(`步骤数应为 6，实际 ${items.length}: ${items.map(i => i.toolName).join(', ')}`);
   const step1 = items[0];
   if (step1?.toolName !== 'delegate_query' || !step1.description.includes('UpdateLeaveApproved')) {
     checks.push('步骤1 应为回写查询 UpdateLeaveApproved 的 delegate_query 步骤');
@@ -448,6 +468,16 @@ async function evalStepVerifier(): Promise<EvalResult> {
   // 表单ID 用 = 连接的变体也应可解析（2026-09-14 案例中 "表单ID=64" 被误判为无资源 ID）
   const formEq = await verifyStepCompletion('delegate_workflow', 1, '设计请假表单', '表单创建成功，表单ID=21');
   if (!formEq.verified) checks.push(`"表单ID=21" 变体应放行，实际拦截: ${formEq.reason}`);
+
+  // 2026-09-17 表单 71 案例回归：result 只写 "表单「XX」(ID: 71)"（裸 ID 形态），此前被
+  // PROCESS_ID_PATTERNS 的裸 (ID: N) 正则误判成流程 ID → getWorkflow(71) 404 误报"流程不存在"。
+  // 现在裸形态走宽松探测，按描述关键词优先按表单核验 → 放行
+  const bareFormId = await verifyStepCompletion('delegate_workflow', 1, '设计请假表单', '表单「请假申请单」(ID: 21) 创建完成，字段：leaveDays(number)');
+  if (!bareFormId.verified) checks.push(`裸 (ID: N) 表单形态应按表单核验放行，实际拦截: ${bareFormId.reason}`);
+
+  // 对照：裸 ID 实际是流程（描述只提流程不提表单）→ 宽松探测按流程核验放行
+  const bareProcessId = await verifyStepCompletion('delegate_workflow', 1, '设计请假审批流程', '流程创建完成（ID: 17）');
+  if (!bareProcessId.verified) checks.push(`裸 (ID: N) 流程形态应按流程核验放行，实际拦截: ${bareProcessId.reason}`);
 
   setStepVerifierDeps(); // 恢复真实 API 依赖
   return evalResult('E7-步骤完成核验(grounding)', checks.length === 0, checks.length === 0 ? '伪造完成被拦截、真实完成被放行' : checks.join('；'));
@@ -789,7 +819,47 @@ function evalManualInterventionDetection(): EvalResult {
     checks.push('场景4-历史操作提及：不应识别为介入');
   }
 
-  return evalResult('E13b-文本介入检测', checks.length === 0, checks.length === 0 ? '显式标记/契约措辞可识别，正常完成与历史提及不误报' : checks.join('；'));
+  // 场景 5（2026-09-17 事故原文）：按汇报纪律在【风险与残留】写否定式"无 interventionRequired"
+  // → 散文子串匹配曾误判为介入请求。修复后：剔除否定式后不得误报
+  const negationReport = [
+    '【结论】三条审批触发器查询复核全部符合规范，无需修改；测试数据已修正补齐。',
+    '【证据】employees 8 条绑定就位，守卫语义回滚验证通过（重复派发命中 0 行）。',
+    '【风险与残留】- 其他：employees 中原 id=3 王强（user_id=5）未在需求清单中，保留未动。无 interventionRequired。',
+  ].join('\n');
+  const negation = detectManualInterventionRequest(negationReport);
+  if (negation.required) {
+    checks.push(`场景5-否定式残留：不应识别为介入，实际: ${negation.reason}`);
+  }
+
+  // 场景 6：状态行 JSON（协议行）为 false，但散文里另有显式标记 → JSON 为权威，不得误报
+  const jsonFalseReport = [
+    '## 汇报',
+    '查询单已创建（表单ID: 70）。',
+    '注意：interventionRequired 相关字段已在迁移中处理。',
+    '{"interventionRequired": false, "reason": ""}',
+  ].join('\n');
+  const jsonFalse = detectManualInterventionRequest(jsonFalseReport);
+  if (jsonFalse.required) {
+    checks.push('场景6-状态行false：JSON 为权威信号，不应识别为介入');
+  }
+
+  // 场景 7：状态行 JSON 为 true（带围栏）→ 必须识别介入，reason 取 JSON 的 reason
+  const jsonTrueReport = [
+    '## 汇报',
+    '需要用户手动操作：请在数据源管理面板执行以下 DDL。',
+    '```json',
+    '{"interventionRequired": true, "reason": "leave_requests 表缺 user_id 列，需手动补列"}',
+    '```',
+  ].join('\n');
+  const jsonTrue = detectManualInterventionRequest(jsonTrueReport);
+  if (!jsonTrue.required) {
+    checks.push('场景7-状态行true：应识别为介入但未识别');
+  }
+  if (jsonTrue.required && jsonTrue.reason !== 'leave_requests 表缺 user_id 列，需手动补列') {
+    checks.push(`场景7-状态行true：reason 应取 JSON 的 reason，实际: ${jsonTrue.reason}`);
+  }
+
+  return evalResult('E13b-文本介入检测', checks.length === 0, checks.length === 0 ? '显式标记/契约措辞/状态行JSON可识别，否定式残留/正常完成/历史提及/状态行false不误报' : checks.join('；'));
 }
 
 // ============================================================================
@@ -1056,6 +1126,52 @@ async function evalDelegateCancellation(): Promise<EvalResult> {
   return evalResult('E21-委派取消感知', checks.length === 0, checks.length === 0 ? '中止委派返回结构化取消结果且不污染委派记忆' : checks.join('；'));
 }
 
+/** E22: 查询静态检查的业务绑定豁免 —— 2026-09-17 员工管理案例：
+ *  管理端写查询绑定业务归属用户（InsertEmployee 的 userId 参数）被身份检查误伤，
+ *  DBA 被迫改名 empUserId 规避。规范机制：参数 description 标注 [业务绑定] 且仅
+ *  INSERT/UPDATE 的顶层 WHERE 之外使用时豁免；SELECT / WHERE 中的身份用法仍必须拦截 */
+function evalQueryLintBusinessBinding(): EvalResult {
+  const checks: string[] = [];
+
+  const insertBody = "INSERT INTO employees (user_id, employee_no) VALUES ({{ this.params.userId }}, {{ this.params.employee_no }})";
+  const bindingParam = { name: 'userId', description: '平台用户ID [业务绑定]，管理端选择的员工归属' };
+
+  // 1. INSERT + [业务绑定] 标注 → 放行
+  const exempt = lintQuery({ name: 'InsertEmployee', body: insertBody, params: [bindingParam] });
+  if (exempt.errors.length > 0) checks.push(`标注 [业务绑定] 的 INSERT 写参数应放行，实际: ${exempt.errors[0]}`);
+
+  // 2. 同样 SQL 不标注 → 拦截，且错误信息教逃生通道
+  const blocked = lintQuery({ name: 'InsertEmployee', body: insertBody, params: [{ name: 'userId', description: '平台用户ID' }] });
+  if (blocked.errors.length === 0) checks.push('未标注 [业务绑定] 的 this.params.userId 仍应拦截');
+  if (blocked.errors.length > 0 && !blocked.errors[0].includes('[业务绑定]')) {
+    checks.push('拦截信息应提示 [业务绑定] 逃生通道');
+  }
+
+  // 3. UPDATE SET 段使用标注参数 → 放行
+  const updateSet = "UPDATE employees <set><if test=\"this.params.userId != null\">user_id = {{ this.params.userId }},</if></set> WHERE id = {{ this.params.id }}";
+  const updateExempt = lintQuery({ name: 'UpdateEmployee', body: updateSet, params: [bindingParam] });
+  if (updateExempt.errors.length > 0) checks.push(`UPDATE SET 段的标注参数应放行，实际: ${updateExempt.errors[0]}`);
+
+  // 4. 标注参数出现在 WHERE 段（当身份过滤用）→ 仍拦截
+  const updateWhere = "UPDATE employees SET status = '离职' WHERE user_id = {{ this.params.userId }}";
+  const whereBlocked = lintQuery({ name: 'ResignByUser', body: updateWhere, params: [bindingParam] });
+  if (whereBlocked.errors.length === 0) checks.push('标注参数出现在 WHERE 中应仍拦截（身份过滤风险不变）');
+
+  // 5. SELECT 中即使用标注参数 → 仍拦截（豁免仅限 INSERT/UPDATE）
+  const selectBlocked = lintQuery({ name: 'GetEmployeeList', body: 'SELECT * FROM employees WHERE user_id = {{ this.params.userId }}', params: [bindingParam] });
+  if (selectBlocked.errors.length === 0) checks.push('SELECT 中的 this.params.userId 应仍拦截（豁免仅限写查询）');
+
+  // 6. 原有身份域检查不受影响：名字表明"我的XX"但缺 this.auth → 拦截
+  const myScoped = lintQuery({ name: 'MyLeaveRecords', body: 'SELECT * FROM leave_records WHERE user_id = 1' });
+  if (myScoped.errors.length === 0) checks.push('身份域查询缺 this.auth 过滤应仍拦截');
+
+  // 7. 无 params 输入（旧调用方/存量查询 lint_query）→ 行为与原来一致
+  const legacy = lintQuery({ name: 'InsertEmployee', body: insertBody });
+  if (legacy.errors.length === 0) checks.push('不传 params 时应维持原拦截行为');
+
+  return evalResult('E22-查询静态检查业务绑定豁免', checks.length === 0, checks.length === 0 ? '豁免/拦截边界全部正确（写查询+标注+WHERE 之外）' : checks.join('；'));
+}
+
 export async function runAgentEvals(): Promise<EvalResult[]> {
   const results: EvalResult[] = [
     evalConsistencyClean(),
@@ -1074,6 +1190,7 @@ export async function runAgentEvals(): Promise<EvalResult[]> {
     evalManualInterventionDetection(),
     evalConfirmationGuardTightening(),
     evalParseToolArgumentsStrictness(),
+    evalQueryLintBusinessBinding(),
   ];
   results.push(await evalDelegateFailureDetection());
   results.push(await evalStepVerifier());

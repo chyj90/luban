@@ -15,9 +15,11 @@ import { AGENT_CONFIG } from '../config';
 import {
   onUserMessage as onConfirmGateUserMessage,
   consumeApproval,
+  approvePendingApproval,
 } from './confirmationGuard';
 import type { ChatRouter } from './chatRouter';
 import type { IStoreReader } from './ports';
+import { buildAttachmentInjection } from './attachmentInjection';
 import { buildAnalysisPrompt, buildExecutionPrompt, type PromptBuildContext } from './promptBuilder';
 import { createKernelRuntime } from '../kernel/runtime';
 import { createPlanPolicy } from '../kernel/planPolicy';
@@ -39,7 +41,7 @@ export interface AgentFactoryOptions {
   setStatus: (status: string) => void;
   setStreaming: (isStreaming: boolean) => void;
   setError: (error: string) => void;
-  setPendingInput?: (pending: { kind: string; message: string; planId?: string } | null) => void;
+  setPendingInput?: (pending: { kind: string; message: string; planId?: string; toolName?: string; args?: Record<string, unknown> } | null) => void;
   addPlan: (plan: Plan) => void;
   updatePlan: (planId: string, updates: Partial<Plan>) => void;
   updateStep: (planId: string, stepId: string, updates: Partial<Step>) => void;
@@ -61,6 +63,8 @@ export type AgentExecutor = {
   resume: (command: ResumeCommand) => Promise<void>;
   /** 会话丢失后的按钮恢复：重建的 executor 无对话历史，先注入计划语境再走显式命令 */
   resumeOrphanPlan: (command: Extract<ResumeCommand, { kind: 'resume-orphan-plan' }>) => Promise<void>;
+  /** 危险操作确认的孤儿恢复：executor 丢失后重建，携带原参数走"预批放行 + 模型原样重发"链路 */
+  resumeOrphanDanger: (command: { toolName: string; args: Record<string, unknown>; action: 'confirm' | 'cancel' }) => Promise<void>;
   isSuspended: () => boolean;
   /** 最近一次完成的回合是否被用户中止。委派工具据此把中断的子会话
    *  映射为结构化取消结果，而不是把半成品记成"成功完成" */
@@ -321,13 +325,20 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
       }
 
       case 'tool.call.started': {
-        flushAssistantBatch();        batchToolCalls = [...(batchToolCalls || []), {
-          id: event.callId,
-          name: event.name,
-          arguments: event.args,
-          status: 'running' as const,
-        }];
-        updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
+        flushAssistantBatch();
+        // 确认门挂起恢复后，内核会对同一 callId 二次 started（blocked → running 精确重执行）：
+        // 必须原地复活已有标签，追加会产生"失败 + 执行中"两个重复标签
+        if (batchToolCalls?.some((tc) => tc.id === event.callId)) {
+          updateBatchToolCall(event.callId, { status: 'running', arguments: event.args, result: undefined });
+        } else {
+          batchToolCalls = [...(batchToolCalls || []), {
+            id: event.callId,
+            name: event.name,
+            arguments: event.args,
+            status: 'running' as const,
+          }];
+          updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
+        }
         break;
       }
 
@@ -341,17 +352,22 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
       case 'tool.call.blocked': {
         flushAssistantBatch();
+        // 确认门拦截是"等待用户确认"而非失败：用 blocked 态展示，确认后原标签回到执行中；
+        // 用户点取消则落到 cancelled 终态
+        const status = event.cancelled
+          ? ('cancelled' as const)
+          : event.waitConfirmation ? ('blocked' as const) : ('error' as const);
         if (!batchToolCalls?.some((tc) => tc.id === event.callId)) {
           batchToolCalls = [...(batchToolCalls || []), {
             id: event.callId,
             name: event.name,
             arguments: {},
-            status: 'error' as const,
+            status,
             result: event.reason,
           }];
           updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
         } else {
-          updateBatchToolCall(event.callId, { status: 'error', result: event.reason });
+          updateBatchToolCall(event.callId, { status, result: event.reason });
         }
         break;
       }
@@ -389,6 +405,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           // plan-confirm 必须携带 planId：横幅在会话失效后按按钮恢复时（resume-orphan-plan）
           // 靠它定位持久化的计划，丢失即只能降级为文本猜意图
           ...(event.request.kind === 'plan-confirm' ? { planId: event.request.planId } : {}),
+          // danger-confirm 携带工具与原参数：executor 丢失后按按钮恢复（resumeOrphanDanger）
+          // 需要原参数让模型原样重发，缺了就只能退化成"会话已失效"
+          ...(event.request.kind === 'danger-confirm'
+            ? { toolName: event.request.toolName, args: event.request.args }
+            : {}),
           // user-action 的 reason 本身已是完整句子（如"需要在数据源管理面板手动执行 DDL…"），
           // 直接使用；describeInputRequest 的"等待用户手动操作："前缀只保留给模型侧转述，
           // 避免横幅出现"等待用户手动操作：需要用户手动操作…"的双重冗余
@@ -603,6 +624,16 @@ ${pageList}`;
       // 委派批准接力：用户文本确认（兼容旧链路）经确认门放行子会话操作
       onConfirmGateUserMessage(userMessage);
 
+      // 待发送附件本轮消费：UI 消息挂附件卡（content 保持干净），LLM 对话注入注入块。
+      // 立即清除，避免委派/后续轮次重复注入；会话失效重放（injectRecentUserMessages）
+      // 只回放干净正文，文件深读靠 file_* 技能兜底
+      const pendingAttachments = storeReader.getPendingAttachments?.() ?? [];
+      if (pendingAttachments.length > 0) {
+        storeReader.clearPendingAttachments?.();
+      }
+      const attachmentBlock = buildAttachmentInjection(pendingAttachments);
+      const llmText = attachmentBlock ? `${attachmentBlock}\n\n${userMessage}` : userMessage;
+
       const userMsg: Message = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -611,6 +642,7 @@ ${pageList}`;
         agentId: agentIdFinal,
         agentName: name,
         agentIcon: icon,
+        attachments: pendingAttachments.length > 0 ? [...pendingAttachments] : undefined,
       };
       if (!isDelegated) {
         addMessage(userMsg);
@@ -637,7 +669,7 @@ ${pageList}`;
       // 全新 executor 没有对话历史：回放最近的用户指令，避免需求主线丢失
       injectRecentUserMessages(storeReader, conversation, isMainAgent);
 
-      await executeTurn({ kind: 'user-message', text: userMessage });
+      await executeTurn({ kind: 'user-message', text: llmText });
     },
 
     async resume(command: ResumeCommand): Promise<void> {
@@ -653,6 +685,34 @@ ${pageList}`;
       injectRecentCompletedSummary(storeReader, conversation, isMainAgent);
       injectRecentUserMessages(storeReader, conversation, isMainAgent);
       await executeTurn(command);
+    },
+
+    async resumeOrphanDanger(command): Promise<void> {
+      runStartLog('resumeOrphanDanger()', `tool=${command.toolName} action=${command.action}`);
+      injectRecentUserMessages(storeReader, conversation, isMainAgent);
+      if (command.action === 'confirm') {
+        // 预批放行一次：确认门单例仍持有被拦截操作的 toolName+argsKey（consumeApproval
+        // 在挂起时已登记），模型按原参数重发即可直接执行。若单例已清空（硬刷新/超 10 分钟），
+        // 重发会再次挂起出横幅——此时 executor 已存活，用户再点一次确认即可，不会死锁
+        approvePendingApproval();
+        conversation.push({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `【恢复被中断的确认】用户点击了确认按钮，确认执行此前被确认门拦截的危险操作「${command.toolName}」。\n` +
+            `请立即用与下面完全相同的参数重新调用 ${command.toolName}（参数一字不改，禁止自行改写或重新生成代码），拿到结果后继续原任务。\n` +
+            `参数原文：\n${JSON.stringify(command.args)}`,
+          timestamp: Date.now(),
+        });
+      } else {
+        conversation.push({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `【恢复被中断的取消】用户取消了此前被拦截的危险操作「${command.toolName}」，该操作未执行。` +
+            `不要再调用该工具；简要说明当前状态并等待用户进一步指示。`,
+          timestamp: Date.now(),
+        });
+      }
+      await executeTurn({ kind: 'user-message', text: command.action === 'confirm' ? '确认' : '取消' });
     },
 
     isSuspended: () => lastResultSuspended,

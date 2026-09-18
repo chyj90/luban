@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, memo } from 'react';
-import type { Message } from '@/types/agent';
+import type { AttachmentMeta, Message } from '@/types/agent';
 import { useAgentStore } from '@/stores/agentStore';
 
 import { toast } from '@/stores/toastStore';
@@ -9,9 +9,40 @@ import { AGENTS } from '@/agent/registry/agentRegistry';
 import { upsertPlanMessage } from '@/agent/registry/skills/planSkills';
 import { setAgentMemory, clearAppMemory } from '@/agent/registry/agentMemory';
 import { listPages } from '@/api';
+import { uploadAgentFile, AGENT_FILE_ACCEPT } from '@/api/agentFile';
 import type { SessionStatus } from '@/types/agent';
 import ReactMarkdown from 'react-markdown';
 import './AgentPanel.css';
+
+/** 按扩展名归类附件（与后端 fileTypeOf 一致） */
+function guessFileType(name: string): AttachmentMeta['fileType'] {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'docx') return 'word';
+  if (ext === 'xlsx' || ext === 'xls') return 'excel';
+  return 'text';
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${bytes}B`;
+}
+
+const ATTACHMENT_ICON: Record<AttachmentMeta['fileType'], string> = {
+  word: '📄',
+  text: '📃',
+  excel: '📊',
+};
+
+/** 工具标签状态中文文案（blocked = 确认门拦截等待确认，不是失败） */
+const TOOL_STATUS_TEXT: Record<string, string> = {
+  pending: '待执行',
+  running: '执行中',
+  done: '已完成',
+  error: '失败',
+  blocked: '待确认',
+  cancelled: '已取消',
+};
 
 function formatTableResult(text: string): string {
   const lines = text.split('\n');
@@ -105,6 +136,23 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
           {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
+      {msg.attachments && msg.attachments.length > 0 && (
+        <div className="ap-msg-attachments">
+          {msg.attachments.map((att) => (
+            <div
+              key={att.fileId}
+              className={`ap-msg-attachment ap-att-${att.fileType}${att.parseStatus === 'failed' ? ' failed' : ''}`}
+              title={att.parseStatus === 'failed' ? (att.parseError || '解析失败') : (att.summary || att.name)}
+            >
+              <span className="ap-msg-attachment-icon">{ATTACHMENT_ICON[att.fileType] || '📎'}</span>
+              <span className="ap-msg-attachment-name">{att.name}</span>
+              <span className="ap-msg-attachment-summary">
+                {att.parseStatus === 'failed' ? '解析失败' : att.summary || formatBytes(att.size)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {msg.reasoningContent && (
         <details className="ap-reasoning">
           <summary className="ap-reasoning-summary">
@@ -129,7 +177,7 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
             <summary className="ap-tool-call-summary">
               <span className="ap-tool-call-icon">{statusIcon}</span>
               <span className="ap-tool-call-name">{tc.name}</span>
-              <span className={`ap-tool-call-status ${tc.status}`}>{tc.status}</span>
+              <span className={`ap-tool-call-status ${tc.status}`}>{TOOL_STATUS_TEXT[tc.status] ?? tc.status}</span>
             </summary>
             <div className="ap-tool-call-detail">
               <div className="ap-tool-call-section">
@@ -177,6 +225,7 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
     && prev.msg.isStreaming === next.msg.isStreaming
     && prev.msg.reasoningContent === next.msg.reasoningContent
     && prev.msg.streamingHint === next.msg.streamingHint
+    && prev.msg.attachments === next.msg.attachments
     && JSON.stringify(prev.msg.toolCalls) === JSON.stringify(next.msg.toolCalls);
 });
 
@@ -267,6 +316,8 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
   const lastScrollTimeRef = useRef(0);
   const chatRouterRef = useRef<ChatRouter | null>(null);
   const lastApiMessagesRef = useRef<unknown[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const getDebugLogKey = () => `debug_chat_log_${appId}`;
 
@@ -301,6 +352,10 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     rejectPlan,
     stopPlan,
     reset,
+    pendingAttachments,
+    addPendingAttachment,
+    updatePendingAttachment,
+    removePendingAttachment,
   } = useAgentStore();
 
   useEffect(() => {
@@ -585,6 +640,35 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
           return;
         }
       }
+      // danger-confirm 孤儿恢复：重建 executor 后走"预批放行 + 模型按原参数重发"链路
+      // （resumeOrphanDanger）。2026-09-17 案例：run_python_code 确认横幅点击时 executor
+      // 已丢失（面板重挂/HMR），直接退化为"会话已失效"，用户只能重新描述需求重写代码
+      if (orphan?.kind === 'danger-confirm' && orphan.toolName && (command === 'confirm' || command === 'cancel')) {
+        let targetRouter = router;
+        if (!targetRouter) {
+          generateSessionId();
+          targetRouter = new ChatRouter(buildSessionOptions(), callbacks);
+          registerRouter(appId, targetRouter);
+          chatRouterRef.current = targetRouter;
+        }
+        targetRouter.updateCallbacks(callbacks);
+        targetRouter.updateSessionOptions(buildSessionOptions());
+        setPendingInput?.(null);
+        setIsSsePending(true);
+        try {
+          const sessionId = useAgentStore.getState().sessionId || `session_${Date.now()}`;
+          const result = await targetRouter.route({ userInput: '（恢复被中断的确认操作）', sessionId });
+          await result.executor.resumeOrphanDanger({
+            toolName: orphan.toolName,
+            args: orphan.args || {},
+            action: command,
+          });
+        } catch (e) {
+          setError((e as Error).message);
+          setIsSsePending(false);
+        }
+        return;
+      }
       // 兜底：executor 缺失（如应用切换销毁了 router）但 banner 还在。
       // 禁止静默返回——显式报错并把挂起事项转存，让下一次输入仍能锚定原事项
       setPendingInput?.(null);
@@ -613,11 +697,46 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
     }
   };
 
+  /** 上传选中/拖入/粘贴的文件：先入列占位（pending），成功后用后端返回的真实元信息覆盖 */
+  const handleFiles = async (fileList: FileList | File[] | null) => {
+    if (!fileList) return;
+    const files = Array.from(fileList);
+    for (const f of files) {
+      const tempId = `upload-${crypto.randomUUID()}`;
+      addPendingAttachment({
+        fileId: tempId,
+        name: f.name,
+        ext: f.name.split('.').pop()?.toLowerCase() || '',
+        fileType: guessFileType(f.name),
+        size: f.size,
+        parseStatus: 'pending',
+        progress: 0,
+      });
+      try {
+        const res = await uploadAgentFile(f, Number(appId), (pct) => {
+          updatePendingAttachment(tempId, { progress: pct });
+        });
+        if (res.success && res.data) {
+          updatePendingAttachment(tempId, res.data);
+        } else {
+          updatePendingAttachment(tempId, { parseStatus: 'failed', parseError: res.message || '解析失败' });
+        }
+      } catch (e) {
+        updatePendingAttachment(tempId, { parseStatus: 'failed', parseError: (e as Error).message });
+      }
+    }
+  };
+
   const handleSend = async () => {
-    if (!input.trim()) return;
+    if (!input.trim() && pendingAttachments.length === 0) return;
+    if (pendingAttachments.some((a) => a.parseStatus === 'pending')) {
+      setError('附件上传/解析中，请稍候再发送');
+      return;
+    }
 
     setError(null);
-    const userMsg = input;
+    // 只有附件没有正文时补一个占位语，让消息和对话主线可读
+    const userMsg = input.trim() || (pendingAttachments.length > 0 ? '请分析我上传的附件' : '');
     setInput('');
 
     // 发送后立即恢复 textarea 高度（否则要等下次输入才会恢复）
@@ -958,13 +1077,55 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               );
             })()}
 
-            <div className="ap-input-area">
+            {pendingAttachments.length > 0 && (
+              <div className="ap-attachment-bar">
+                {pendingAttachments.map((att) => (
+                  <div
+                    key={att.fileId}
+                    className={`ap-attachment-chip ${att.parseStatus}`}
+                    title={att.parseStatus === 'failed' ? (att.parseError || '解析失败') : att.summary || att.name}
+                  >
+                    <span className="ap-attachment-chip-icon">{ATTACHMENT_ICON[att.fileType] || '📎'}</span>
+                    <span className="ap-attachment-chip-name">{att.name}</span>
+                    <span className="ap-attachment-chip-status">
+                      {att.parseStatus === 'pending' && `${att.progress ?? 0}%`}
+                      {att.parseStatus === 'failed' && '失败'}
+                      {att.parseStatus === 'success' && formatBytes(att.size)}
+                    </span>
+                    <button
+                      className="ap-attachment-chip-remove"
+                      title={att.parseStatus === 'pending' ? '取消（文件不会发送）' : '移除'}
+                      onClick={() => removePendingAttachment(att.fileId)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div
+              className={`ap-input-area${isDragOver ? ' dragover' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
+              }}
+            >
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder="描述你想要创建的应用... 输入 @ 可以指定智能体，Shift+Enter 换行"
+                onPaste={(e) => {
+                  const files = e.clipboardData?.files;
+                  if (files && files.length > 0) {
+                    e.preventDefault();
+                    handleFiles(files);
+                  }
+                }}
+                placeholder="描述你想要创建的应用... 输入 @ 可以指定智能体，Shift+Enter 换行，可拖拽/粘贴文件"
                 rows={2}
                 className="ap-input"
               />
@@ -984,6 +1145,24 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
                 </div>
               )}
               <div className="ap-input-actions">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={AGENT_FILE_ACCEPT}
+                  hidden
+                  onChange={(e) => {
+                    handleFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  className="ap-btn-attach"
+                  title="上传附件（Word/TXT/Excel）"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  📎
+                </button>
                 {isRunning ? (
                   <button className="ap-btn-stop" onClick={handleCancel}>停止</button>
                 ) : (

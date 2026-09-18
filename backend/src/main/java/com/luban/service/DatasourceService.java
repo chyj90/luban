@@ -36,6 +36,8 @@ public class DatasourceService {
 
     private final DatasourceRepository datasourceRepository;
     private final ApplicationRepository applicationRepository;
+    private final com.luban.repository.SystemPermissionRepository systemPermissionRepository;
+    private final com.luban.security.appaccess.AppAccessService appAccessService;
     private final ObjectMapper objectMapper;
     private final JdbcDriverService jdbcDriverService;
     private final CryptoUtil cryptoUtil;
@@ -52,12 +54,16 @@ public class DatasourceService {
 
     public DatasourceService(DatasourceRepository datasourceRepository,
                              ApplicationRepository applicationRepository,
+                             com.luban.repository.SystemPermissionRepository systemPermissionRepository,
+                             com.luban.security.appaccess.AppAccessService appAccessService,
                              ObjectMapper objectMapper,
                              JdbcDriverService jdbcDriverService,
                              CryptoUtil cryptoUtil,
                              RsaKeyProvider rsaKeyProvider) {
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
+        this.systemPermissionRepository = systemPermissionRepository;
+        this.appAccessService = appAccessService;
         this.objectMapper = objectMapper;
         this.jdbcDriverService = jdbcDriverService;
         this.cryptoUtil = cryptoUtil;
@@ -84,6 +90,59 @@ public class DatasourceService {
                 ? datasourceRepository.findBySlugAndOwnerId(slug, ownerId)
                 : datasourceRepository.findBySlug(slug);
         return buildDatasourceList(datasources);
+    }
+
+    /**
+     * 一个平台一套 · 应用侧视图：应用自建数据源 + 已授权的平台数据源。
+     * 平台数据源按"所属系统的系统权限（SystemPermission）"授权：
+     * APPROVED 可用（SQL 控制台/测试）；includePending 时附带申请中的（accessStatus=PENDING，不可用）。
+     * 平台管理员（connect:systems / 超管）可见全部平台数据源。
+     */
+    public List<Map<String, Object>> listAccessible(Long applicationId, Long userId, boolean includePending) {
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        Set<Long> approvedGroups = new HashSet<>();
+        Set<Long> pendingGroups = new HashSet<>();
+        for (com.luban.entity.SystemPermission p : systemPermissionRepository.findByUserId(userId)) {
+            if ("APPROVED".equals(p.getStatus())) approvedGroups.add(p.getGroupId());
+            else if ("PENDING".equals(p.getStatus())) pendingGroups.add(p.getGroupId());
+        }
+        boolean platformAdmin = appAccessService.isSuperAdmin(userId);
+        if (!platformAdmin) {
+            try {
+                appAccessService.assertPlatformPermission(userId, com.luban.constant.Permissions.CONNECT_SYSTEMS);
+                platformAdmin = true;
+            } catch (Exception ignored) {
+            }
+        }
+
+        for (Datasource ds : datasourceRepository.findBySlug("PLATFORM")) {
+            Long groupId = ds.getOwnerId();
+            if (groupId == null) continue;
+            String accessStatus;
+            if (platformAdmin || approvedGroups.contains(groupId)) {
+                accessStatus = "APPROVED";
+            } else if (includePending && pendingGroups.contains(groupId)) {
+                accessStatus = "PENDING";
+            } else {
+                continue;
+            }
+            Map<String, Object> map = buildDatasourceMap(ds);
+            map.put("accessStatus", accessStatus);
+            result.add(map);
+        }
+
+        if (applicationId != null) {
+            try {
+                appAccessService.assertAccess(userId, applicationId, com.luban.security.appaccess.AppAction.VIEW);
+            } catch (Exception e) {
+                throw new RuntimeException("无权访问该应用的数据源");
+            }
+            for (Datasource ds : datasourceRepository.findBySlugAndOwnerId("APPLICATION", applicationId)) {
+                result.add(buildDatasourceMap(ds));
+            }
+        }
+        return result;
     }
 
     private List<Map<String, Object>> buildDatasourceList(List<Datasource> datasources) {

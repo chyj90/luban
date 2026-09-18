@@ -5,13 +5,11 @@ import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyDatasource;
 import com.luban.entity.ApiKeyTool;
 import com.luban.entity.Application;
-import com.luban.entity.ApplicationApiKey;
 import com.luban.entity.Datasource;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ApiKeyDatasourceRepository;
 import com.luban.repository.ApiKeyRepository;
 import com.luban.repository.ApiKeyToolRepository;
-import com.luban.repository.ApplicationApiKeyRepository;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.ToolDefinitionRepository;
@@ -38,7 +36,6 @@ public class ApiKeyService {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyToolRepository apiKeyToolRepository;
     private final ApiKeyDatasourceRepository apiKeyDatasourceRepository;
-    private final ApplicationApiKeyRepository applicationApiKeyRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final DatasourceRepository datasourceRepository;
     private final ApplicationRepository applicationRepository;
@@ -48,7 +45,6 @@ public class ApiKeyService {
     public ApiKeyService(ApiKeyRepository apiKeyRepository,
                          ApiKeyToolRepository apiKeyToolRepository,
                          ApiKeyDatasourceRepository apiKeyDatasourceRepository,
-                         ApplicationApiKeyRepository applicationApiKeyRepository,
                          ToolDefinitionRepository toolDefinitionRepository,
                          DatasourceRepository datasourceRepository,
                          ApplicationRepository applicationRepository,
@@ -57,7 +53,6 @@ public class ApiKeyService {
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyToolRepository = apiKeyToolRepository;
         this.apiKeyDatasourceRepository = apiKeyDatasourceRepository;
-        this.applicationApiKeyRepository = applicationApiKeyRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
@@ -176,12 +171,6 @@ public class ApiKeyService {
         }
         apiKey.setStatus("REVOKED");
         apiKeyRepository.save(apiKey);
-        // 级联停用应用绑定，使运行态消费（runTool 等）立即失效；restore 时重新激活
-        applicationApiKeyRepository.findByApiKeyId(apiKeyId)
-                .forEach(b -> {
-                    b.setStatus("INACTIVE");
-                    applicationApiKeyRepository.save(b);
-                });
     }
 
     /** 轮换 Key：生成新密钥值，绑定关系与已审批权限保持不变；新密钥仅本次返回 */
@@ -214,11 +203,6 @@ public class ApiKeyService {
         }
         apiKey.setStatus("ACTIVE");
         apiKeyRepository.save(apiKey);
-        applicationApiKeyRepository.findByApiKeyId(apiKeyId)
-                .forEach(b -> {
-                    b.setStatus("ACTIVE");
-                    applicationApiKeyRepository.save(b);
-                });
     }
 
     @Transactional
@@ -233,7 +217,6 @@ public class ApiKeyService {
         }
         apiKeyToolRepository.deleteByApiKeyId(apiKeyId);
         apiKeyDatasourceRepository.deleteByApiKeyId(apiKeyId);
-        applicationApiKeyRepository.deleteByApiKeyId(apiKeyId);
         apiKeyRepository.delete(apiKey);
     }
 
@@ -321,95 +304,6 @@ public class ApiKeyService {
         return apiKeyDatasourceRepository.findByApiKeyIdAndDatasourceId(apiKeyId, datasourceId)
                 .map(kd -> "APPROVED".equals(kd.getStatus()))
                 .orElse(false);
-    }
-
-    /** 应用运行态门禁：应用绑定的 ACTIVE Key 中，是否存在对本数据源 APPROVED 的授权 */
-    public boolean hasApplicationDatasourcePermission(Long applicationId, Long datasourceId) {
-        return applicationApiKeyRepository
-                .findByApplicationIdAndStatus(applicationId, "ACTIVE").stream()
-                .anyMatch(b -> hasDatasourcePermission(b.getApiKeyId(), datasourceId));
-    }
-
-    // ==================== Application Binding ====================
-
-    public List<ApiKey> listKeysByApplication(Long applicationId) {
-        List<ApplicationApiKey> bindings = applicationApiKeyRepository.findByApplicationIdAndStatus(applicationId, "ACTIVE");
-        return bindings.stream()
-                .map(b -> apiKeyRepository.findById(b.getApiKeyId()).orElse(null))
-                .filter(k -> k != null)
-                .collect(Collectors.toList());
-    }
-
-    public List<Application> listApplicationsByKey(Long apiKeyId) {
-        List<ApplicationApiKey> bindings = applicationApiKeyRepository.findByApiKeyId(apiKeyId);
-        return bindings.stream()
-                .filter(b -> "ACTIVE".equals(b.getStatus()))
-                .map(b -> applicationRepository.findById(b.getApplicationId()).orElse(null))
-                .filter(a -> a != null)
-                .collect(Collectors.toList());
-    }
-
-    @Transactional
-    public ApplicationApiKey bindApplication(Long apiKeyId, Long applicationId, Long userId) {
-        ApiKey apiKey = apiKeyRepository.findById(apiKeyId)
-                .orElseThrow(() -> new RuntimeException("API Key 不存在"));
-        if (!apiKey.getOwnerId().equals(userId)) {
-            throw new RuntimeException("无权操作该 Key");
-        }
-
-        Application app = applicationRepository.findById(applicationId)
-                .orElseThrow(() -> new RuntimeException("应用不存在"));
-        if (!app.getCreatedBy().equals(userId)) {
-            throw new RuntimeException("无权操作该应用");
-        }
-
-        if (applicationApiKeyRepository.findByApplicationIdAndApiKeyId(applicationId, apiKeyId).isPresent()) {
-            throw new RuntimeException("该 Key 已绑定到此应用");
-        }
-
-        ApplicationApiKey binding = new ApplicationApiKey();
-        binding.setApplicationId(applicationId);
-        binding.setApiKeyId(apiKeyId);
-        binding.setStatus("ACTIVE");
-        return applicationApiKeyRepository.save(binding);
-    }
-
-    @Transactional
-    public void unbindApplication(Long apiKeyId, Long applicationId, Long userId) {
-        ApiKey apiKey = apiKeyRepository.findById(apiKeyId)
-                .orElseThrow(() -> new RuntimeException("API Key 不存在"));
-        if (!apiKey.getOwnerId().equals(userId)) {
-            throw new RuntimeException("无权操作该 Key");
-        }
-
-        ApplicationApiKey binding = applicationApiKeyRepository
-                .findByApplicationIdAndApiKeyId(applicationId, apiKeyId)
-                .orElseThrow(() -> new RuntimeException("绑定关系不存在"));
-
-        binding.setStatus("INACTIVE");
-        applicationApiKeyRepository.save(binding);
-    }
-
-    public List<ApiKeyTool> listApprovedToolsForApplication(Long applicationId) {
-        List<ApplicationApiKey> bindings = applicationApiKeyRepository
-                .findByApplicationIdAndStatus(applicationId, "ACTIVE");
-        if (bindings.isEmpty()) return Collections.emptyList();
-
-        List<Long> keyIds = bindings.stream().map(ApplicationApiKey::getApiKeyId).collect(Collectors.toList());
-        return keyIds.stream()
-                .flatMap(keyId -> apiKeyToolRepository.findByApiKeyIdAndStatus(keyId, "APPROVED").stream())
-                .collect(Collectors.toList());
-    }
-
-    public List<ApiKeyDatasource> listApprovedDatasourcesForApplication(Long applicationId) {
-        List<ApplicationApiKey> bindings = applicationApiKeyRepository
-                .findByApplicationIdAndStatus(applicationId, "ACTIVE");
-        if (bindings.isEmpty()) return Collections.emptyList();
-
-        List<Long> keyIds = bindings.stream().map(ApplicationApiKey::getApiKeyId).collect(Collectors.toList());
-        return keyIds.stream()
-                .flatMap(keyId -> apiKeyDatasourceRepository.findByApiKeyIdAndStatus(keyId, "APPROVED").stream())
-                .collect(Collectors.toList());
     }
 
     public void recordUsage(Long apiKeyId) {

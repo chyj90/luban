@@ -202,30 +202,12 @@ export function requestDatasourcePermission(apiKeyId: number, datasourceId: numb
   return post<unknown>(`/api-keys/${apiKeyId}/request-datasource`, { datasourceId });
 }
 
-// Application binding
-export function listKeysByApplication(applicationId: number) {
-  return get<unknown[]>(`/api-keys/by-application/${applicationId}`);
-}
-
-export function listApplicationsByKey(apiKeyId: number) {
-  return get<unknown[]>(`/api-keys/${apiKeyId}/applications`);
-}
-
-export function bindApplicationToKey(apiKeyId: number, applicationId: number) {
-  return post<unknown>(`/api-keys/${apiKeyId}/bind-application`, { applicationId });
-}
-
-export function unbindApplicationFromKey(apiKeyId: number, applicationId: number) {
-  return post<unknown>(`/api-keys/${apiKeyId}/unbind-application`, { applicationId });
-}
-
-// Application resource aggregation
+/**
+ * 应用侧统一工具视图（一个平台一套）：应用自有工具 + 已授权平台工具
+ * （按工具所属系统的系统权限过滤，与数据源 /datasources/accessible 同模型）。
+ */
 export function listApplicationTools(applicationId: number) {
-  return get<unknown[]>(`/api-keys/application/${applicationId}/tools`);
-}
-
-export function listApplicationDatasources(applicationId: number) {
-  return get<unknown[]>(`/api-keys/application/${applicationId}/datasources`);
+  return get<unknown[]>(`/tools/accessible`, { params: { applicationId } });
 }
 
 // List all APPLICATION-scoped tools (orchestration, app HTTP tools) with pagination

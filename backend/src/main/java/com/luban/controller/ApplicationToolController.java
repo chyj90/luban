@@ -7,12 +7,8 @@ import com.luban.entity.ToolDefinition;
 import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.entity.User;
-import com.luban.entity.ApplicationApiKey;
-import com.luban.entity.ApiKeyTool;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.ToolDefinitionRepository;
-import com.luban.repository.ApplicationApiKeyRepository;
-import com.luban.repository.ApiKeyToolRepository;
 import com.luban.repository.UserRepository;
 import com.luban.service.PageService;
 import com.luban.workflow.entity.Role;
@@ -47,31 +43,28 @@ public class ApplicationToolController {
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final RoleRepository roleRepository;
     private final RoleUserRepository roleUserRepository;
-    private final ApplicationApiKeyRepository applicationApiKeyRepository;
-    private final ApiKeyToolRepository apiKeyToolRepository;
     private final UserRepository userRepository;
     private final PageService pageService;
     private final ApplicationRepository applicationRepository;
+    private final com.luban.security.appaccess.AppAccessService appAccessService;
 
     public ApplicationToolController(ToolDefinitionRepository toolDefinitionRepository,
                                      RoleRepository roleRepository,
                                      RoleUserRepository roleUserRepository,
-                                     ApplicationApiKeyRepository applicationApiKeyRepository,
-                                     ApiKeyToolRepository apiKeyToolRepository,
                                      UserRepository userRepository,
                                      PageService pageService,
                                      ApplicationRepository applicationRepository,
+                                     com.luban.security.appaccess.AppAccessService appAccessService,
             com.luban.orchestration.service.OrchestrationService orchestrationService,
             com.luban.service.ToolExecutionService toolExecutionService,
             com.luban.orchestration.service.OrchestrationToolInvoker orchestrationToolInvoker) {
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.roleRepository = roleRepository;
         this.roleUserRepository = roleUserRepository;
-        this.applicationApiKeyRepository = applicationApiKeyRepository;
-        this.apiKeyToolRepository = apiKeyToolRepository;
         this.userRepository = userRepository;
         this.pageService = pageService;
         this.applicationRepository = applicationRepository;
+        this.appAccessService = appAccessService;
         this.orchestrationService = orchestrationService;
         this.toolExecutionService = toolExecutionService;
         this.orchestrationToolInvoker = orchestrationToolInvoker;
@@ -239,7 +232,7 @@ public class ApplicationToolController {
             return ResponseEntity.ok(ApiResponse.ok(orchestrationToolInvoker.invoke(orchDefId, user.getId(), orchParams)));
         }
 
-        // 授权 API（PLATFORM scope）额外校验：白名单 + KEY 绑定权限
+        // 授权 API（PLATFORM scope）额外校验：白名单 + 系统权限（KEY 绑定不参与内部调用）
         if ("PLATFORM".equals(scope)) {
             List<Role> appRoles = roleRepository.findByApplicationId(applicationId);
             List<Long> appRoleIds = appRoles.stream().map(Role::getId).toList();
@@ -250,21 +243,9 @@ public class ApplicationToolController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
                         .body(ApiResponse.error("无权访问此应用，请联系管理员"));
             }
-
-            List<ApplicationApiKey> bindings = applicationApiKeyRepository
-                    .findByApplicationIdAndStatus(applicationId, "ACTIVE");
-            if (bindings.isEmpty()) {
+            if (!appAccessService.canUseSystemAsset(user.getId(), tool.getGroupId())) {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("应用未绑定有效 API KEY"));
-            }
-            boolean hasKeyPermission = bindings.stream().anyMatch(binding -> {
-                return apiKeyToolRepository.findByApiKeyIdAndToolId(binding.getApiKeyId(), tool.getId())
-                        .map(akt -> "APPROVED".equals(akt.getStatus()))
-                        .orElse(false);
-            });
-            if (!hasKeyPermission) {
-                return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                        .body(ApiResponse.error("API KEY 无权调用此工具"));
+                        .body(ApiResponse.error("无权调用此系统的 API：请先申请该系统的数据访问权限"));
             }
         }
 

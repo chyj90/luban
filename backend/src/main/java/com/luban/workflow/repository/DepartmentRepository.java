@@ -9,4 +9,7 @@ public interface DepartmentRepository extends JpaRepository<Department, Long> {
     List<Department> findByParentIdIsNull();
     List<Department> findByProvider(String provider);
     List<Department> findByManagerId(Long managerId);
+
+    /** 组织架构前置数据检查（lint 用）：至少存在一个配置了负责人的部门 */
+    boolean existsByManagerIdIsNotNull();
 }

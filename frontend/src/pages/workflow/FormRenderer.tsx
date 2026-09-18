@@ -23,6 +23,7 @@ export default function FormRenderer({
   const [form, setForm] = useState<FormDefinition | null>(null);
   const [formData, setFormData] = useState<Record<string, unknown>>(initialData);
   const [loading, setLoading] = useState(true);
+  const [errorText, setErrorText] = useState('');
 
   useEffect(() => {
     formApi.get(formId)
@@ -36,6 +37,21 @@ export default function FormRenderer({
   }, []);
 
   const handleSubmit = () => {
+    // 必填校验：表单字段 required 是发起数据契约的一部分（服务端 startWorkflow 也会按
+    // 表单 schema 校验）——提交前在 UI 层先拦截，缺字段不再静默交给后端报错
+    const missing = schema.filter((f) => {
+      if (!f.required) return false;
+      const v = formData[f.key];
+      if (v == null) return true;
+      if (typeof v === 'string') return v.trim() === '';
+      if (Array.isArray(v)) return v.length === 0;
+      return false;
+    });
+    if (missing.length > 0) {
+      setErrorText(`请填写必填项：${missing.map((f) => f.label || f.key).join('、')}`);
+      return;
+    }
+    setErrorText('');
     onSubmit?.(formData);
   };
 
@@ -332,6 +348,7 @@ export default function FormRenderer({
 
       {mode !== 'view' && (
         <div className={styles.formActions}>
+          {errorText && <div className={styles.formError}>{errorText}</div>}
           {onCancel && (
             <button className={styles.cancelBtn} onClick={onCancel}>
               取消

@@ -16,6 +16,7 @@ import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
 import com.luban.repository.UserDeptRepository;
+import com.luban.repository.UserRepository;
 import com.luban.util.SqlUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -60,6 +61,8 @@ import net.sf.jsqlparser.expression.operators.conditional.AndExpression;
 import net.sf.jsqlparser.expression.operators.conditional.OrExpression;
 import net.sf.jsqlparser.expression.Parenthesis;
 
+import com.luban.security.appaccess.AppAccessService;
+import com.luban.security.appaccess.AppAction;
 import com.luban.util.CryptoUtil;
 import com.luban.util.AgentLogger;
 
@@ -124,8 +127,10 @@ public class QueryService {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiKeyDatasourceRepository apiKeyDatasourceRepository;
     private final UserDeptRepository userDeptRepository;
+    private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
     private final DatasourceService datasourceService;
+    private final AppAccessService appAccessService;
 
     public QueryService(QueryRepository queryRepository,
                         DatasourceRepository datasourceRepository,
@@ -133,22 +138,44 @@ public class QueryService {
                         ApiKeyRepository apiKeyRepository,
                         ApiKeyDatasourceRepository apiKeyDatasourceRepository,
                         UserDeptRepository userDeptRepository,
+                        UserRepository userRepository,
                         ObjectMapper objectMapper,
-                        DatasourceService datasourceService) {
+                        DatasourceService datasourceService,
+                        AppAccessService appAccessService) {
         this.queryRepository = queryRepository;
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
         this.apiKeyRepository = apiKeyRepository;
         this.apiKeyDatasourceRepository = apiKeyDatasourceRepository;
         this.userDeptRepository = userDeptRepository;
+        this.userRepository = userRepository;
         this.objectMapper = objectMapper;
         this.datasourceService = datasourceService;
+        this.appAccessService = appAccessService;
     }
 
     public List<Map<String, Object>> listByApplication(Long applicationId) {
         List<Query> queries = queryRepository.findByApplicationId(applicationId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (Query q : queries) {
+            result.add(buildQueryMap(q));
+        }
+        return result;
+    }
+
+    /**
+     * 工作中心数据看板：列出洞察沉淀的查询（source=INSIGHT），
+     * 仅返回当前用户可访问应用（owner/成员/超管）下的记录。
+     */
+    public List<Map<String, Object>> listInsightSaved(Long userId) {
+        List<Query> queries = queryRepository.findBySourceOrderByCreatedAtDesc("INSIGHT");
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Query q : queries) {
+            try {
+                appAccessService.assertAccess(userId, q.getApplicationId(), AppAction.VIEW);
+            } catch (Exception e) {
+                continue;
+            }
             result.add(buildQueryMap(q));
         }
         return result;
@@ -162,6 +189,8 @@ public class QueryService {
         query.setName(request.getName());
         query.setBody(request.getBody());
         query.setParams(toJson(request.getParams()));
+        query.setDescription(request.getDescription());
+        query.setSource(request.getSource());
 
         validateSqlSyntax(request.getDatasourceId(), request.getBody(), request.getParams());
 
@@ -262,20 +291,73 @@ public class QueryService {
      * WHERE id = NULL，命中 0 行还被当成派发成功——最难排查的静默断链。
      */
     private void assertRequiredParams(Query query, Map<String, Object> mergedParams) {
+        List<String> missing = findMissingRequiredParams(query, mergedParams);
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("必填参数缺失: " + String.join(", ", missing)
+                    + "。页面调用请检查传参；触发器/编排场景通常是 paramsMapping 解析为 null"
+                    + "（如 form.data.<字段> 缺失，检查发起侧 startWorkflow 的 formData 是否携带该字段）");
+        }
+    }
+
+    /** 声明为 required 且当前值为 null 的参数清单（预演场景只报告不抛错） */
+    private List<String> findMissingRequiredParams(Query query, Map<String, Object> mergedParams) {
         Map<String, Object> defs = fromJsonMap(query.getParams());
-        if (defs == null || defs.isEmpty()) return;
         List<String> missing = new ArrayList<>();
+        if (defs == null || defs.isEmpty()) return missing;
         for (Map.Entry<String, Object> entry : defs.entrySet()) {
             if (!(entry.getValue() instanceof Map)) continue;
             Object required = ((Map<?, ?>) entry.getValue()).get("required");
             if (!Boolean.TRUE.equals(required) && !"true".equalsIgnoreCase(String.valueOf(required))) continue;
             if (mergedParams.get(entry.getKey()) == null) missing.add(entry.getKey());
         }
-        if (!missing.isEmpty()) {
-            throw new IllegalArgumentException("必填参数缺失: " + String.join(", ", missing)
-                    + "。页面调用请检查传参；触发器/编排场景通常是 paramsMapping 解析为 null"
-                    + "（如 form.data.<字段> 缺失，检查发起侧 startWorkflow 的 formData 是否携带该字段）");
+        return missing;
+    }
+
+    /**
+     * 触发器预演用：渲染查询模板（{{ this.auth.* }} 按样例用户身份解析），不执行。
+     * sampleUserId 为空或用户不存在时用占位身份渲染，并在结果中标记 placeholderIdentity，
+     * 提醒预演方"真实运行时身份由流程发起人决定"。
+     */
+    public Map<String, Object> previewRenderedSql(Long queryId, Map<String, Object> params, Long sampleUserId) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("queryId", queryId);
+        Query query = queryRepository.findById(queryId).orElse(null);
+        if (query == null) {
+            out.put("error", "查询不存在: " + queryId);
+            return out;
         }
+        Map<String, Object> mergedParams = new HashMap<>();
+        Map<String, Object> defaultParams = fromJsonMap(query.getParams());
+        if (defaultParams != null) mergedParams.putAll(defaultParams);
+        if (params != null) mergedParams.putAll(params);
+        for (Map.Entry<String, Object> entry : mergedParams.entrySet()) {
+            if (entry.getValue() instanceof Map) entry.setValue(null);
+        }
+        Map<String, Object> authParams = new HashMap<>();
+        if (sampleUserId != null) {
+            userRepository.findById(sampleUserId).ifPresent(user -> fillAuthParams(authParams, user));
+        }
+        boolean placeholderIdentity = authParams.isEmpty();
+        if (placeholderIdentity) {
+            authParams.put("userId", 0);
+            authParams.put("userName", "rehearsal");
+            authParams.put("userEmail", "rehearsal@local");
+            authParams.put("userDisplayName", "rehearsal");
+            authParams.put("userMobile", "rehearsal");
+            authParams.put("userEmployeeNo", "rehearsal");
+        }
+        try {
+            out.put("renderedSql", resolveTemplate(query.getBody(), mergedParams, authParams));
+        } catch (Exception e) {
+            out.put("error", e.getMessage());
+            return out;
+        }
+        out.put("name", query.getName());
+        out.put("datasourceId", query.getDatasourceId());
+        out.put("resolvedParams", mergedParams);
+        out.put("placeholderIdentity", placeholderIdentity);
+        out.put("missingRequiredParams", findMissingRequiredParams(query, mergedParams));
+        return out;
     }
 
     public Map<String, Object> update(Long id, UpdateQueryRequest request) {
@@ -302,6 +384,22 @@ public class QueryService {
 
     @SuppressWarnings("unchecked")
     public RunQueryResponse run(Long id, RunQueryRequest request) {
+        return executeQuery(id, request, null);
+    }
+
+    /**
+     * 以指定平台用户身份执行：this.auth 取该用户的账号与主部门，而非 HTTP 会话。
+     * 供触发器派发等无会话上下文的系统调用使用（on-behalf-of 流程发起人），
+     * 让回写类查询也能安全使用 {{ this.auth.* }} 做数据归属。
+     * userId 对应的用户不存在时按无身份执行；此时模板若引用 this.auth 会被硬失败拦截。
+     */
+    @SuppressWarnings("unchecked")
+    public RunQueryResponse runAsUser(Long id, RunQueryRequest request, Long onBehalfOfUserId) {
+        return executeQuery(id, request, onBehalfOfUserId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private RunQueryResponse executeQuery(Long id, RunQueryRequest request, Long onBehalfOfUserId) {
         Query query = queryRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
         Datasource ds = datasourceRepository.findById(query.getDatasourceId())
@@ -321,17 +419,13 @@ public class QueryService {
         assertRequiredParams(query, mergedParams);
 
         Map<String, Object> authParams = new HashMap<>();
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof User user) {
-            authParams.put("userId", user.getId());
-            authParams.put("userName", user.getAccount());
-            authParams.put("userEmail", user.getEmail());
-            authParams.put("userDisplayName", user.getName());
-            authParams.put("userMobile", user.getMobile());
-            authParams.put("userEmployeeNo", user.getEmployeeNo());
-            // 组织资产：登录人主部门（组织树见 /platform/assets），org 维度过滤/展示可直接引用
-            authParams.put("userDepartmentId", userDeptRepository.findPrimaryDeptIdByUserId(user.getId()).orElse(null));
-            authParams.put("userDepartment", userDeptRepository.findPrimaryDeptNameByUserId(user.getId()).orElse(null));
+        if (onBehalfOfUserId != null) {
+            userRepository.findById(onBehalfOfUserId).ifPresent(user -> fillAuthParams(authParams, user));
+        } else {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getPrincipal() instanceof User user) {
+                fillAuthParams(authParams, user);
+            }
         }
 
         String finalBody = resolveTemplate(query.getBody(), mergedParams, authParams);
@@ -344,6 +438,35 @@ public class QueryService {
         };
     }
 
+    /** 平台用户 → this.auth 字段（账号 8 件套 + 主部门，组织资产见 /platform/assets） */
+    private void fillAuthParams(Map<String, Object> authParams, User user) {
+        authParams.put("userId", user.getId());
+        authParams.put("userName", user.getAccount());
+        authParams.put("userEmail", user.getEmail());
+        authParams.put("userDisplayName", user.getName());
+        authParams.put("userMobile", user.getMobile());
+        authParams.put("userEmployeeNo", user.getEmployeeNo());
+        // 组织资产：登录人主部门，org 维度过滤/展示可直接引用
+        authParams.put("userDepartmentId", userDeptRepository.findPrimaryDeptIdByUserId(user.getId()).orElse(null));
+        authParams.put("userDepartment", userDeptRepository.findPrimaryDeptNameByUserId(user.getId()).orElse(null));
+    }
+
+    /**
+     * 预览身份切换（preview-as）：设计者以指定平台用户身份执行查询（this.auth 取该用户），
+     * 用于验证"我的数据"类查询的数据隔离——不同账号预览必须得到不同结果集。
+     * 仅限应用所有者使用：预览是设计期能力，不向普通使用者开放身份代理。
+     */
+    public RunQueryResponse runPreviewAs(Long id, RunQueryRequest request, Long targetUserId, Long operatorId) {
+        Query query = queryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
+        Application app = applicationRepository.findById(query.getApplicationId())
+                .orElseThrow(() -> new IllegalArgumentException("查询所属应用不存在"));
+        if (!app.getCreatedBy().equals(operatorId)) {
+            throw new IllegalArgumentException("仅应用所有者可使用预览身份切换");
+        }
+        return executeQuery(id, request, targetUserId);
+    }
+
     public RunQueryResponse executeSql(Long datasourceId, String sql) {
         Datasource ds = datasourceRepository.findById(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
@@ -353,10 +476,18 @@ public class QueryService {
             throw new IllegalArgumentException("未登录或登录已过期");
         }
 
-        Application app = applicationRepository.findById(ds.getOwnerId())
-                .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
-        if (!app.getCreatedBy().equals(user.getId())) {
-            throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+        // 按数据源 scope 分流：平台数据源走"用户系统权限"判定（Key 授权是外部机器调用的事，不管人）；
+        // 应用自建数据源保持原归属校验
+        if ("PLATFORM".equals(ds.getEffectiveScope())) {
+            if (!appAccessService.canRunPlatformDatasource(user.getId(), ds.getOwnerId())) {
+                throw new IllegalArgumentException("无权访问该平台数据源：请先申请所属系统的数据访问权限");
+            }
+        } else {
+            Application app = applicationRepository.findById(ds.getOwnerId())
+                    .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
+            if (!app.getCreatedBy().equals(user.getId())) {
+                throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+            }
         }
 
         assertApiKeyDatasourcePermission(datasourceId);
@@ -385,6 +516,15 @@ public class QueryService {
 
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> executeSqlBatch(Long datasourceId, String sql) {
+        return executeSqlBatch(datasourceId, sql, false);
+    }
+
+    /**
+     * 批量 SQL：默认同一事务提交；rollback=true 时执行后回滚——测试写 SQL（触发器回写、
+     * 状态守卫、扣减语义）不污染数据，替代"直接改演示数据"的测试方式。
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> executeSqlBatch(Long datasourceId, String sql, boolean rollback) {
         Datasource ds = datasourceRepository.findById(datasourceId)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
 
@@ -393,10 +533,18 @@ public class QueryService {
             throw new IllegalArgumentException("未登录或登录已过期");
         }
 
-        Application app = applicationRepository.findById(ds.getOwnerId())
-                .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
-        if (!app.getCreatedBy().equals(user.getId())) {
-            throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+        // 按数据源 scope 分流：平台数据源走"用户系统权限"判定（Key 授权是外部机器调用的事，不管人）；
+        // 应用自建数据源保持原归属校验
+        if ("PLATFORM".equals(ds.getEffectiveScope())) {
+            if (!appAccessService.canRunPlatformDatasource(user.getId(), ds.getOwnerId())) {
+                throw new IllegalArgumentException("无权访问该平台数据源：请先申请所属系统的数据访问权限");
+            }
+        } else {
+            Application app = applicationRepository.findById(ds.getOwnerId())
+                    .orElseThrow(() -> new IllegalArgumentException("数据源所属应用不存在"));
+            if (!app.getCreatedBy().equals(user.getId())) {
+                throw new IllegalArgumentException("无权操作该数据源：数据源不属于当前用户创建的应用");
+            }
         }
 
         assertApiKeyDatasourcePermission(datasourceId);
@@ -423,15 +571,22 @@ public class QueryService {
                     item.put("insertId", resp.getInsertId());
                     results.add(item);
                 }
-                conn.commit();
+                if (rollback) {
+                    conn.rollback();
+                } else {
+                    conn.commit();
+                }
             } catch (Exception e) {
                 conn.rollback();
                 throw e;
             }
         } catch (Exception e) {
-            throw new RuntimeException("批量 SQL 执行失败: " + e.getMessage());
+            throw new RuntimeException((rollback ? "回滚模式 SQL 执行失败: " : "批量 SQL 执行失败: ") + e.getMessage());
         }
 
+        if (rollback) {
+            results.forEach(item -> item.put("rolledBack", true));
+        }
         return results;
     }
 
@@ -716,6 +871,14 @@ public class QueryService {
 
     private String resolveTemplate(String body, Map<String, Object> params, Map<String, Object> authParams) {
         if (body == null) return "";
+        // 硬失败：模板引用了 this.auth 但当前上下文没有任何用户身份。
+        // 绝不能静默渲染成 NULL——"WHERE user_id = NULL 命中 0 行还被当成执行成功"
+        // 是最危险的静默断链（无会话的系统调用必须以发起人身份执行）。
+        if ((authParams == null || authParams.isEmpty()) && body.contains("this.auth.")) {
+            throw new IllegalArgumentException(
+                    "查询模板使用了 {{ this.auth.* }}，但当前执行上下文没有用户身份（无会话的"
+                    + "系统调用必须以发起人身份执行，请检查调用路径的身份注入）");
+        }
         String resolved = resolveDynamicTags(body, params);
         resolved = resolveAuthVariables(resolved, authParams);
         return resolveVariables(resolved, params);
@@ -965,6 +1128,8 @@ public class QueryService {
         map.put("name", q.getName());
         map.put("body", q.getBody());
         map.put("params", fromJsonMap(q.getParams()));
+        map.put("description", q.getDescription());
+        map.put("source", q.getSource());
         map.put("createdAt", q.getCreatedAt());
         return map;
     }

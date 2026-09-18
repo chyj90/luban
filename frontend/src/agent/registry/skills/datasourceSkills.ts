@@ -1,6 +1,6 @@
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import { createDatasource, testDatasource, getDatasourceStructure } from '@/api';
-import { listDatasources } from '@/api/datasource';
+import { listUnifiedDatasources } from '@/api/datasource';
 import { getPlatformUsers, getPlatformDepartments } from '@/api/platform';
 
 export const datasourceSkills: Record<string, SkillFactory> = {
@@ -51,11 +51,16 @@ export const datasourceSkills: Record<string, SkillFactory> = {
     id: 'datasource:list',
     category: SkillCategory.DATASOURCE,
     name: 'list_datasources',
-    description: '列出当前工作区中所有数据源，包含每个数据源的连接状态（connected/error/pending）。',
+    description: `列出当前可用的数据源清单（一个平台一套）：slug=PLATFORM 的平台系统数据源（按所属系统的系统权限授权可见，accessStatus=PENDING 的申请中不可执行）+ slug=APPLICATION 的应用自建业务库。含连接状态（connected/error/pending）。SQL 建模时优先复用已有数据源，禁止为已连接的系统重复建库；看不到目标平台数据源时提示用户到数据源面板「申请平台数据源」。`,
     parameters: { type: 'object', properties: {} },
     async execute() {
-      const res = await listDatasources('APPLICATION', ctx.applicationId);
-      return { success: true, message: `共 ${res.data.length} 个数据源`, data: res.data };
+      const data = await listUnifiedDatasources(ctx.applicationId);
+      const platformCount = data.filter((d) => d.slug === 'PLATFORM').length;
+      return {
+        success: true,
+        message: `共 ${data.length} 个数据源（平台系统 ${platformCount} 个、应用自建 ${data.length - platformCount} 个）`,
+        data,
+      };
     },
   }),
 

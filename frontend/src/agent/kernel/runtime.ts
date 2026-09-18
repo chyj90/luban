@@ -341,7 +341,8 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
 
         // 确认门：预批通道放行则直接执行；否则挂起等显式命令（不查单例、不猜文本）
         if (tool.requiresConfirmation && confirmGate?.(tc.name, args) !== 'execute') {
-          emit({ type: 'tool.call.blocked', turnId, callId: tc.id, name: tc.name, reason: '等待用户确认危险操作' });
+          // waitConfirmation：UI 适配层据此把标签渲染为"待确认"而非"失败"（等待不是失败）
+          emit({ type: 'tool.call.blocked', turnId, callId: tc.id, name: tc.name, reason: '等待用户确认危险操作', waitConfirmation: true });
           conversation.push({
             id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, timestamp: Date.now(),
             content: JSON.stringify({ success: false, _pause: true, message: `⚠️ 危险操作待确认：「${tc.name}」。本次未执行，等待用户确认。` }),
@@ -484,8 +485,22 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
               : { success: false, message: `工具 "${pending.toolName}" 不存在` };
             emit({ type: 'tool.call.finished', turnId, callId: pending.callId, name: pending.toolName, ok: result.success, message: result.message, data: result.data });
             rewriteToolResult(pending.callId, JSON.stringify(result));
+            // 重执行仍带 _pause（委派类工具的子会话在下一个危险操作上再次挂起）：
+            // 必须重新挂起，禁止把 _pause 当普通工具结果交给模型续跑——否则模型只会
+            // 复述"等待确认"，回合以 completed 结束、挂起横幅被清空，用户再点确认
+            // 就撞"收到恢复命令但会话未挂起（idle）"拒绝（2026-09-17 批量删除事故）
+            if (result._pause) {
+              const suspendRequest = (result.data as { suspendRequest?: import('./events').InputRequest } | undefined)?.suspendRequest;
+              emit({
+                type: 'turn.suspended', turnId,
+                request: suspendRequest || { kind: 'user-action', reason: interventionReason(result) },
+              });
+              return makeResult(true);
+            }
           } else {
             rewriteToolResult(pending.callId, JSON.stringify({ success: false, message: `用户已取消危险操作「${pending.toolName}」，本次未执行。` }));
+            // 补发 blocked 事件：UI 标签从"待确认"落到"已取消"终态，账本 blockReason 同步更新
+            emit({ type: 'tool.call.blocked', turnId, callId: pending.callId, name: pending.toolName, reason: `用户已取消危险操作「${pending.toolName}」，本次未执行`, cancelled: true });
           }
           return runLlmLoop(turnId);
         }

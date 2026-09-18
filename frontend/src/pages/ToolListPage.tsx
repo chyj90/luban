@@ -828,7 +828,7 @@ export default function ToolListPage() {
   return (
     <div className="tool-list">
       <div className="tool-list-system-header">
-        <button className="tool-list-back-btn" onClick={() => navigate('/connect/systems')}>
+        <button className="tool-list-back-btn" onClick={() => navigate('/modeling/systems')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
           </svg>

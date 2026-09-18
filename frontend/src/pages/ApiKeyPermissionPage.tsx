@@ -432,7 +432,7 @@ export default function ApiKeyPermissionPage() {
     <div className="perm-page">
       <div className="perm-page-header">
         <div className="perm-page-header-left">
-          <button className="perm-page-back" onClick={() => navigate('/connect/keys')}>
+          <button className="perm-page-back" onClick={() => navigate('/modeling/keys')}>
             <ArrowLeft size={18} />
           </button>
           <h2>权限申请</h2>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { listQueries, createQuery, deleteQuery } from '@/api';
-import { listDatasources } from '@/api/datasource';
+import { listUnifiedDatasources } from '@/api/datasource';
 import { toast } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import Select from '@/components/Select';
@@ -31,7 +31,8 @@ export function QueryPanel({ applicationId, selectedQuery, onQuerySelect, querie
 
   useEffect(() => {
     if (applicationId) {
-      listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
+      // 一个平台一套：查询数据源可选平台系统库或本应用自建业务库
+      listUnifiedDatasources(applicationId).then((list) => setDatasources(list));
     }
   }, [applicationId]);
 

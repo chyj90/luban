@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { FormDefinition } from '../../types/workflow';
 import { formApi } from '../../api/workflow';
 import { confirm } from '../../stores/confirmStore';
+import { toast } from '../../stores/toastStore';
 import type { WorkflowView } from '../AppEditor/AppEditorPage';
 import styles from './FormList.module.css';
 
@@ -44,15 +45,34 @@ export default function FormList({ appId: propAppId, onNavigate }: FormListProps
       variant: 'danger',
     });
     if (!confirmed) return;
-    await formApi.delete(id);
-    setForms((prev) => prev.filter((f) => f.id !== id));
+    try {
+      await formApi.delete(id);
+      setForms((prev) => prev.filter((f) => f.id !== id));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '删除失败');
+    }
   };
 
   const handlePublish = async (id: number) => {
-    await formApi.publish(id);
-    setForms((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, status: 'PUBLISHED' } : f)),
-    );
+    try {
+      await formApi.publish(id);
+      setForms((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, status: 'PUBLISHED' } : f)),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '发布失败');
+    }
+  };
+
+  const handleUnpublish = async (id: number) => {
+    try {
+      await formApi.unpublish(id);
+      setForms((prev) =>
+        prev.map((f) => (f.id === id ? { ...f, status: 'DRAFT' } : f)),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '下线失败');
+    }
   };
 
   const statusBadge = (status: string) => {
@@ -141,6 +161,14 @@ export default function FormList({ appId: propAppId, onNavigate }: FormListProps
                           onClick={() => handlePublish(form.id)}
                         >
                           发布
+                        </button>
+                      )}
+                      {form.status === 'PUBLISHED' && (
+                        <button
+                          className={styles.actionBtn}
+                          onClick={() => handleUnpublish(form.id)}
+                        >
+                          下线
                         </button>
                       )}
                       <button

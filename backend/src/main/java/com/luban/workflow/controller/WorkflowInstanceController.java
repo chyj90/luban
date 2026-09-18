@@ -5,6 +5,7 @@ import com.luban.security.appaccess.AppAccess;
 import com.luban.security.appaccess.AppAction;
 import com.luban.workflow.entity.*;
 import com.luban.workflow.service.ProcessService;
+import com.luban.workflow.service.PreviewAsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,12 +19,20 @@ import java.util.Map;
 public class WorkflowInstanceController {
 
     private final ProcessService processService;
+    private final PreviewAsService previewAsService;
 
     @PostMapping
     @AppAccess(action = AppAction.RUN, resource = "process", key = "definitionId")
-    public WorkflowInstance start(@RequestBody Map<String, Object> params, @AuthenticationPrincipal User user) {
+    public WorkflowInstance start(@RequestBody Map<String, Object> params, @AuthenticationPrincipal User user,
+                                  @RequestParam(required = false) Long previewAsUserId) {
         Long definitionId = Long.valueOf(params.get("definitionId").toString());
         String formData = params.getOrDefault("formData", "{}").toString();
+        // 身份预览：设计器切到指定平台用户发起流程（审批人按其 leaderId 等真实解析），
+        // 仅应用所有者可用（校验与审计在 PreviewAsService）
+        if (previewAsUserId != null) {
+            User preview = previewAsService.resolveForDefinition(definitionId, previewAsUserId, user);
+            return processService.startProcess(definitionId, formData, preview.getId(), preview.getAccount());
+        }
         return processService.startProcess(definitionId, formData, user.getId(), user.getAccount());
     }
 

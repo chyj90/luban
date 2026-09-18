@@ -132,6 +132,59 @@ async function testConfirmResumeReplay(): Promise<RuntimeTestResult> {
   return result('K8-Runtime确认门恢复执行', checks);
 }
 
+/** K8b: danger-confirm 重执行再遇 _pause —— 内核必须重新挂起，禁止把 _pause 当普通
+ * 结果交给模型续跑（2026-09-17 批量删除事故）：委派类工具重执行后子会话在下一个
+ * 危险操作上再次挂起，若交给模型只会复述"等待确认"，回合以 completed 结束、挂起
+ * 横幅被清空，用户再点确认就撞"收到恢复命令但会话未挂起（idle）"拒绝 */
+async function testConfirmResumeRepauseReplay(): Promise<RuntimeTestResult> {
+  const checks: string[] = [];
+  let executions = 0;
+  const delegateTool = plainTool('delegate_workflow', async () => {
+    executions++;
+    if (executions <= 2) {
+      return {
+        success: false,
+        _pause: true,
+        message: `子智能体危险操作待确认（第 ${executions} 次）`,
+        data: {
+          suspendRequest: {
+            kind: 'danger-confirm' as const,
+            callId: `sub-call-${executions}`,
+            toolName: 'delegate_workflow',
+            args: { requirement: '批量删除' },
+            argsKey: '{"requirement":"批量删除"}',
+            message: `子智能体危险操作待确认（第 ${executions} 次）`,
+          },
+        },
+      };
+    }
+    return { success: true, message: '批量删除完成' };
+  });
+  const { rt } = makeRuntime(
+    [delegateTool],
+    [
+      { toolCalls: [{ name: 'delegate_workflow', arguments: { requirement: '批量删除' } }] },
+      { content: '批量删除完成。' },
+    ],
+  );
+
+  const r1 = await rt.runTurn({ kind: 'user-message', text: '删除所有流程' });
+  if (!r1.suspended) checks.push('首次 _pause 应挂起');
+
+  // 第一次确认：重执行仍带 _pause（子会话下一个危险操作再次挂起）→ 必须重新挂起
+  const r2 = await rt.runTurn({ kind: 'confirm' });
+  if (!r2.suspended || r2.state.status !== 'suspended') checks.push('重执行再遇 _pause 应重新挂起而非完成回合');
+  if (r2.state.pendingInput?.kind !== 'danger-confirm' || r2.state.pendingInput.callId !== 'sub-call-2') {
+    checks.push(`重新挂起应携带新的 danger-confirm 请求，实际 ${JSON.stringify(r2.state.pendingInput)}`);
+  }
+
+  // 第二次确认：子会话不再挂起 → 正常收尾 idle
+  const r3 = await rt.runTurn({ kind: 'confirm' });
+  if (r3.suspended || r3.state.status !== 'idle') checks.push('子会话通过后应正常完成');
+  if (executions !== 3) checks.push(`应执行三次（1 次挂起 + 2 次确认重执行），实际 ${executions}`);
+  return result('K8b-确认门重执行再挂起', checks);
+}
+
 /** K9: cancel 恢复 —— 工具不执行，占位结果改写为取消，模型收尾 */
 async function testCancelResumeReplay(): Promise<RuntimeTestResult> {
   const checks: string[] = [];
@@ -680,6 +733,7 @@ export async function runRuntimeTests(): Promise<RuntimeTestResult[]> {
   return [
     await testNormalTurnReplay(),
     await testConfirmResumeReplay(),
+    await testConfirmResumeRepauseReplay(),
     await testCancelResumeReplay(),
     await testUserActionResumeReplay(),
     await testParseFailureFeedbackReplay(),

@@ -238,6 +238,11 @@ export default function MyWorkflow({ embedded, onNavigate }: MyWorkflowProps = {
                                 {wf.description && (
                                   <div className={styles.startWorkflowDesc}>{wf.description}</div>
                                 )}
+                                {!defaultForm && (
+                                  <div className={styles.startWorkflowWarning}>
+                                    该流程未绑定表单，请在业务页面发起
+                                  </div>
+                                )}
                               </div>
                               <button
                                 className={styles.startBtn}

@@ -15,6 +15,9 @@ public interface UserDeptRepository extends JpaRepository<UserDept, Long> {
     Optional<UserDept> findByUserIdAndDepartmentId(Long userId, Long departmentId);
     List<UserDept> findByDepartmentId(Long departmentId);
 
+    /** 组织架构前置数据检查（lint 用）：至少存在一个配置了直属上级的主部门 */
+    boolean existsByIsPrimaryTrueAndLeaderIdIsNotNull();
+
     /** 用户主部门 ID（组织资产：this.auth.userDepartmentId 的注入源） */
     @Query(value = "SELECT ud.department_id FROM user_dept ud WHERE ud.user_id = :userId AND ud.is_primary = TRUE ORDER BY ud.id LIMIT 1", nativeQuery = true)
     Optional<Long> findPrimaryDeptIdByUserId(@Param("userId") Long userId);

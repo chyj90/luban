@@ -2,6 +2,7 @@ import { parse as acornParse } from 'acorn';
 import type { Node as AcornNode } from 'acorn';
 import { listQueries } from '@/api/query';
 import { LIBRARY_RULES } from './libraryRules';
+import { BUILTIN_QUERY_NAMES, getBuiltinQueryFields } from '@/lib/builtinQueries';
 
 interface QueryInfo {
   id: number;
@@ -36,6 +37,7 @@ const BLOCKING_ERROR_PATTERNS = [
   /^\[JS\] 第.*第.*列/,
   /^\[DataQuery 名称\]/,
   /async function.*is not defined/,
+  /^\[startWorkflow 断链\]/,
 ];
 
 function isBlockingError(msg: string): boolean {
@@ -89,6 +91,7 @@ export async function validateCode(
   try { if (css) validateCssComponentOverride(css, errors); } catch (e: any) { errors.push(`[CSS组件覆盖] 校验异常: ${e?.message || e}`); }
   try { if (html && js) validateFormContainer(html, js, errors); } catch (e: any) { errors.push(`[表单容器] 校验异常: ${e?.message || e}`); }
   try { if (js) validateFetchCalls(js, errors, warnings); } catch (e: any) { errors.push(`[网络请求] 校验异常: ${e?.message || e}`); }
+  try { if (js) validateStartWorkflowContract(js, errors, warnings); } catch (e: any) { errors.push(`[startWorkflow 断链] 校验异常: ${e?.message || e}`); }
   try { if (validateOptions?.libraries) validateLibraries(validateOptions.libraries, warnings); } catch (e: any) { errors.push(`[libraries] 校验异常: ${e?.message || e}`); }
   try { if (html && js) validateDashboardIntegrity(html, js, errors, fixable); } catch (e: any) { errors.push(`[大屏完整性] 校验异常: ${e?.message || e}`); }
 
@@ -399,16 +402,14 @@ async function validateFieldNames(
     }
   }
 
-  // 平台内置查询（运行时直查平台，无 SQL 可分析）：返回字段固定，直接注入白名单
+  // 平台内置查询（运行时直查平台，无 SQL 可分析）：返回字段固定，直接注入白名单。
+  // 清单与字段集来自 lib/builtinQueries 单一事实源
   const jsQueryNames = extractQueryNamesFromJS(js);
-  if (jsQueryNames.includes('PlatformUsers')) {
-    const fields = new Set(['id', 'name', 'account', 'deptId', 'deptName', 'leaderId']);
-    queryFieldMap.set('PlatformUsers', fields);
-    fields.forEach((f) => allFieldNames.add(f));
-  }
-  if (jsQueryNames.includes('PlatformDepartments')) {
-    const fields = new Set(['id', 'name', 'parentId', 'managerId', 'path']);
-    queryFieldMap.set('PlatformDepartments', fields);
+  for (const jsName of jsQueryNames) {
+    const builtinFields = getBuiltinQueryFields(jsName);
+    if (!builtinFields) continue;
+    const fields = new Set(builtinFields);
+    queryFieldMap.set(jsName, fields);
     fields.forEach((f) => allFieldNames.add(f));
   }
 
@@ -525,6 +526,9 @@ async function validateDataQueryCallNames(
   if (actualQueries.length === 0) return;
 
   const byExact = new Set(actualQueries.map((q) => q.name));
+  // 平台内置查询（PlatformUsers 等）不在应用查询列表里，但运行时每个页面都注册——
+  // 必须并入白名单，否则按官方指南写的合法代码会被拒（2026-09-17 事故根因）
+  for (const builtin of BUILTIN_QUERY_NAMES) byExact.add(builtin);
   const byLower = new Map<string, string>();
   for (const q of actualQueries) byLower.set(q.name.toLowerCase(), q.name);
 
@@ -2396,4 +2400,131 @@ function validateLibraries(libraries: string[], warnings: string[]) {
       );
     }
   }
+}
+/**
+ * startWorkflow 断链校验：
+ * 页面 JS 里 window.__LUBAN__.startWorkflow(流程ID, formData) 的 formData 是审批结果
+ * 触发器 paramsMapping（form.data.*）的唯一数据来源。缺参数、空对象、缺业务 id 都意味着
+ * "审批能走完、回写静默 0 行"的断链。校验在页面保存时进行：
+ * ① 未传 formData 或 formData 为空对象 → 阻断性错误；
+ * ② formData 以变量传入无法静态核对 → 警告并提示字段契约；
+ * ③ 字面量缺 id → 警告（回写触发器通常靠 form.data.id 定位业务记录）；
+ * ④ 回显字段清单，要求与绑定表单字段逐字一致，并建议 rehearse_triggers 预演。
+ */
+function validateStartWorkflowContract(js: string, errors: string[], warnings: string[]) {
+  const callPattern = /(?:window\.__LUBAN__\.)?startWorkflow\s*\(/g;
+  let match: RegExpExecArray | null;
+  let callsSeen = 0;
+  while ((match = callPattern.exec(js)) !== null) {
+    const openIdx = match.index + match[0].length - 1; // 指向 "("
+    const argsText = extractBalancedText(js, openIdx, '(', ')');
+    if (argsText === null) continue;
+    callsSeen++;
+    const argParts = splitTopLevelArgs(argsText);
+    if (argParts.length < 2) {
+      errors.push(
+        `[startWorkflow 断链] startWorkflow 需要两个参数 (流程ID, formData)，检测到只传了 ${argParts.length} 个参数。` +
+        '缺 formData 时触发器的 paramsMapping（form.data.*）全部解析为 NULL，审批回写静默断链'
+      );
+      continue;
+    }
+    const formDataArg = argParts[1].trim();
+    if (/^[A-Za-z_$][\w$]*(\.[\w$]+)*$/.test(formDataArg) && !formDataArg.startsWith('{')) {
+      warnings.push(
+        `[startWorkflow 断链] formData 以变量 ${formDataArg} 传入，无法静态核对字段契约——` +
+        '请确认该变量包含绑定表单的全部发起字段（尤其业务记录 id，触发器靠 form.data.id 定位业务记录）'
+      );
+      continue;
+    }
+    const keys = extractObjectLiteralKeys(formDataArg);
+    if (keys === null) {
+      warnings.push(
+        '[startWorkflow 断链] formData 参数含展开运算/计算属性，无法静态解析字段清单，' +
+        '请人工确认与绑定表单的发起字段契约逐字一致'
+      );
+      continue;
+    }
+    if (keys.length === 0) {
+      errors.push(
+        '[startWorkflow 断链] formData 为空对象 {}——触发器的 paramsMapping（form.data.*）全部解析为 NULL，' +
+        '审批回写静默断链。请携带绑定表单的全部字段（含业务记录 id）'
+      );
+      continue;
+    }
+    if (!keys.includes('id')) {
+      warnings.push(
+        '[startWorkflow 断链] formData 未包含业务记录 id（写查询返回的 insertId）。' +
+        '审批结果触发器靠 form.data.id 定位业务记录，缺 id = 回写断链（若该流程不回写业务库可忽略）'
+      );
+    }
+    warnings.push(
+      `[startWorkflow 契约] formData 字段: ${keys.join(', ')}——必须与绑定表单字段及触发器 ` +
+      'paramsMapping 所需的 form.data.* 逐字一致；发布流程前建议用 rehearse_triggers 以同结构样例数据预演一次'
+    );
+  }
+  void callsSeen;
+}
+
+/** 提取 open 起始的配对括号内文本（感知字符串/模板字面量），无配对返回 null */
+function extractBalancedText(text: string, openIdx: number, open: string, close: string): string | null {
+  if (text[openIdx] !== open) return null;
+  let depth = 0;
+  let inSingle = false, inDouble = false, inTemplate = false;
+  for (let i = openIdx; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && (inSingle || inDouble || inTemplate)) { i++; continue; }
+    if (ch === "'" && !inDouble && !inTemplate) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle && !inTemplate) inDouble = !inDouble;
+    else if (ch === '`' && !inSingle && !inDouble) inTemplate = !inTemplate;
+    if (inSingle || inDouble || inTemplate) continue;
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return text.slice(openIdx + 1, i);
+    }
+  }
+  return null;
+}
+
+/** 按顶层逗号切分参数文本（感知嵌套括号与字符串） */
+function splitTopLevelArgs(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, current = '';
+  let inSingle = false, inDouble = false, inTemplate = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && (inSingle || inDouble || inTemplate)) { current += ch + (text[i + 1] || ''); i++; continue; }
+    if (ch === "'" && !inDouble && !inTemplate) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle && !inTemplate) inDouble = !inDouble;
+    else if (ch === '`' && !inSingle && !inDouble) inTemplate = !inTemplate;
+    const isString = inSingle || inDouble || inTemplate;
+    if (!isString) {
+      if (ch === '(' || ch === '[' || ch === '{') depth++;
+      if (ch === ')' || ch === ']' || ch === '}') depth--;
+      if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+    }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current);
+  return parts;
+}
+
+/** 提取对象字面量的顶层 key 清单；含展开运算/计算属性返回 null */
+function extractObjectLiteralKeys(text: string): string[] | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return null;
+  const body = extractBalancedText(trimmed, 0, '{', '}');
+  if (body === null) return null;
+  const keys: string[] = [];
+  for (const part of splitTopLevelArgs(body)) {
+    const seg = part.trim();
+    if (!seg) continue;
+    if (seg.startsWith('...')) return null; // 展开运算：字段清单不可知
+    const computed = seg.match(/^\[/);
+    if (computed) return null;
+    const keyMatch = seg.match(/^(?:'([^']*)'|"([^"]*)"|([A-Za-z_$][\w$]*))\s*(?::|,|$)/);
+    if (!keyMatch) continue;
+    keys.push(keyMatch[1] || keyMatch[2] || keyMatch[3]);
+  }
+  return keys;
 }

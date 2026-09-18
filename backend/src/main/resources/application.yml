@@ -38,6 +38,13 @@ app:
 luban:
   mock-mes:
     enabled: true
+  sandbox:
+    # 编排 python 节点与附件解析代码共用的沙箱服务；compose 里经 LUBAN_EMBEDDING_BASE_URL 指向 embedding 容器
+    base-url: ${LUBAN_EMBEDDING_BASE_URL:http://127.0.0.1:8765}
+  file:
+    # Agent 附件文件存储目录（Word/TXT/Excel），Docker 部署必须挂 volume 持久化；
+    # embedding-service 需挂同一卷（LUBAN_FILES_ROOT）才能把文件绑定进沙箱
+    storage-dir: ${LUBAN_FILE_STORAGE_DIR:./luban-files}
   agent:
     rate-limit:
       max-requests: 30
@@ -55,3 +62,10 @@ luban:
       max-retries: 3
   datasource:
     secret: ${LUBAN_DATASOURCE_SECRET:s5NHFCgkA7ju+WVrOFtZzG/0SQZRnaMggynl9q9fze4=}
+
+# 工作流引擎
+workflow:
+  form-validation:
+    # 发起数据契约校验：formData 按绑定表单 schema 校验必填与类型，
+    # 缺字段发起即报错（此前漏传只在审批回写时静默断链）。存量应用迁移期可置 false 关闭
+    enabled: true

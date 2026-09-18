@@ -9,6 +9,7 @@ import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { fixMarkdownTable } from '@/lib/markdown';
 import ConceptTracePanel from '@/components/ConceptTracePanel';
+import { InsightSaveModal } from '@/components/InsightSaveModal';
 import Select from '@/components/Select';
 import './AgentChatPage.css';
 
@@ -193,6 +194,14 @@ export default function AgentChatPage() {
   const [sending, setSending] = useState(false);
   const [expandedSection, setExpandedSection] = useState<Record<string, string | null>>({});
   const [feedbackState, setFeedbackState] = useState<Record<string, 'idle' | 'feedback_form' | 'submitted'>>({});
+  // 洞察沉淀：点击时固化的上下文快照（SQL/问题/候选数据源），避免父组件重渲染重置弹窗输入
+  const [saveInsightCtx, setSaveInsightCtx] = useState<{
+    key: string;
+    sql: string;
+    question: string;
+    datasourceIds: number[];
+  } | null>(null);
+  const [savedInsightIds, setSavedInsightIds] = useState<Set<string>>(new Set());
   const [feedbackDescription, setFeedbackDescription] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackUserQuestion, setFeedbackUserQuestion] = useState<string | null>(null);
@@ -1051,6 +1060,35 @@ export default function AgentChatPage() {
                         )}
                       </div>
                       <div className="agent-chat-actions-right">
+                        {msg.nl2sql?.sql && !msg.isStreaming && (() => {
+                          const msgKey = msg.messageId || msg.id;
+                          const saved = savedInsightIds.has(msgKey);
+                          return (
+                            <button
+                              className="agent-chat-action-btn"
+                              title={saved ? '已沉淀为应用查询' : '把本次分析的 SQL 固化为应用内查询资产'}
+                              onClick={() => {
+                                if (saved) return;
+                                const idx = messages.indexOf(msg);
+                                const prevMsg = idx > 0 ? messages[idx - 1] : null;
+                                setSaveInsightCtx({
+                                  key: msgKey,
+                                  sql: msg.nl2sql!.sql,
+                                  question: prevMsg?.role === 'user' ? prevMsg.content : '',
+                                  datasourceIds: msg.selectDatasources?.map((d) => d.id) || [],
+                                });
+                              }}
+                              disabled={saved}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                <polyline points="17 21 17 13 7 13 7 21" />
+                                <polyline points="7 3 7 8 15 8" />
+                              </svg>
+                              {saved ? '已沉淀' : '沉淀'}
+                            </button>
+                          );
+                        })()}
                         {msg.messageId && (
                           <>
                       <button
@@ -1339,6 +1377,17 @@ export default function AgentChatPage() {
           </div>
         </div>
       </div>
+      {saveInsightCtx && (
+        <InsightSaveModal
+          onClose={() => setSaveInsightCtx(null)}
+          sql={saveInsightCtx.sql}
+          question={saveInsightCtx.question}
+          candidateDatasourceIds={saveInsightCtx.datasourceIds}
+          onSaved={() => {
+            setSavedInsightIds((prev) => new Set(prev).add(saveInsightCtx.key));
+          }}
+        />
+      )}
     </div>
   );
 }

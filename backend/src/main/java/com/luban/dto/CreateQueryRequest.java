@@ -18,4 +18,7 @@ public class CreateQueryRequest {
 
     private String body;
     private Map<String, Object> params;
+    private String description;
+    /** 查询来源：INSIGHT=智能洞察沉淀 */
+    private String source;
 }

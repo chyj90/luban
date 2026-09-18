@@ -139,6 +139,33 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         log.info("超管账号 root 初始化完成");
     }
 
+
+    /**
+     * 种子升级：早期版本种下的平台审批流程没有 resolutionPolicy（默认 skip 会静默跳过，
+     * 权限审批会卡在 PENDING 无人处理）。仅升级系统种子（createdBy=0）的节点定义，
+     * 不触碰管理员自建/改过的流程。
+     */
+    private void upgradeSeedWorkflowResolutionPolicy() {
+        List<WorkflowDefinition> platformDefs = workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM);
+        for (WorkflowDefinition def : platformDefs) {
+            if (!Long.valueOf(0L).equals(def.getCreatedBy())) continue;
+            String nodes = def.getNodes();
+            if (nodes == null || nodes.contains("resolutionPolicy")) continue;
+            String upgraded = nodes
+                    .replace("\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\"}",
+                             "\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}")
+                    .replace("\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\"}",
+                             "\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}")
+                    .replace("\"approverType\":\"role\",\"roleSlugs\":[\"system_admin\"],\"collaborationMode\":\"any_pass\"}",
+                             "\"approverType\":\"role\",\"roleSlugs\":[\"system_admin\"],\"collaborationMode\":\"any_pass\",\"resolutionPolicy\":\"fail\"}");
+            if (!upgraded.equals(nodes)) {
+                def.setNodes(upgraded);
+                workflowDefinitionRepository.save(def);
+                log.info("种子流程「{}」审批节点已升级 resolutionPolicy=fail", def.getName());
+            }
+        }
+    }
+
     private void initPlatformWorkflows() {
         if (workflowDefinitionRepository.findByScope(WorkflowScope.PLATFORM).isEmpty()) {
             log.info("初始化平台工作流...");
@@ -152,8 +179,8 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             systemPermWf.setCreatedBy(0L);
             systemPermWf.setNodes("[" +
                     "{\"nodeId\":\"start\",\"nodeType\":\"start\",\"label\":\"开始\"}," +
-                    "{\"nodeId\":\"leader_approve\",\"nodeType\":\"approve\",\"label\":\"直属领导审批\",\"config\":{\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\"}}," +
-                    "{\"nodeId\":\"dept_head_approve\",\"nodeType\":\"approve\",\"label\":\"部门负责人审批\",\"config\":{\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\"}}," +
+                    "{\"nodeId\":\"leader_approve\",\"nodeType\":\"approve\",\"label\":\"直属领导审批\",\"config\":{\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}}," +
+                    "{\"nodeId\":\"dept_head_approve\",\"nodeType\":\"approve\",\"label\":\"部门负责人审批\",\"config\":{\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}}," +
                     "{\"nodeId\":\"end\",\"nodeType\":\"end\",\"label\":\"结束\"}" +
                     "]");
             systemPermWf.setEdges("[" +
@@ -172,7 +199,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             toolPermWf.setCreatedBy(0L);
             toolPermWf.setNodes("[" +
                     "{\"nodeId\":\"start\",\"nodeType\":\"start\",\"label\":\"开始\"}," +
-                    "{\"nodeId\":\"admin_approve\",\"nodeType\":\"approve\",\"label\":\"系统管理员审批\",\"config\":{\"approverType\":\"role\",\"roleSlugs\":[\"system_admin\"],\"collaborationMode\":\"any_pass\"}}," +
+                    "{\"nodeId\":\"admin_approve\",\"nodeType\":\"approve\",\"label\":\"系统管理员审批\",\"config\":{\"approverType\":\"role\",\"roleSlugs\":[\"system_admin\"],\"collaborationMode\":\"any_pass\",\"resolutionPolicy\":\"fail\"}}," +
                     "{\"nodeId\":\"end\",\"nodeType\":\"end\",\"label\":\"结束\"}" +
                     "]");
             toolPermWf.setEdges("[" +
@@ -183,6 +210,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
 
             log.info("平台工作流初始化完成");
         }
+        upgradeSeedWorkflowResolutionPolicy();
     }
 
     /**
@@ -203,8 +231,8 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
         dsPermWf.setCreatedBy(0L);
         dsPermWf.setNodes("[" +
                 "{\"nodeId\":\"start\",\"nodeType\":\"start\",\"label\":\"开始\"}," +
-                "{\"nodeId\":\"leader_approve\",\"nodeType\":\"approve\",\"label\":\"直属领导审批\",\"config\":{\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\"}}," +
-                "{\"nodeId\":\"dept_head_approve\",\"nodeType\":\"approve\",\"label\":\"部门负责人审批\",\"config\":{\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\"}}," +
+                "{\"nodeId\":\"leader_approve\",\"nodeType\":\"approve\",\"label\":\"直属领导审批\",\"config\":{\"approverType\":\"leader\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}}," +
+                "{\"nodeId\":\"dept_head_approve\",\"nodeType\":\"approve\",\"label\":\"部门负责人审批\",\"config\":{\"approverType\":\"department_head\",\"collaborationMode\":\"all_pass\",\"resolutionPolicy\":\"fail\"}}," +
                 "{\"nodeId\":\"end\",\"nodeType\":\"end\",\"label\":\"结束\"}" +
                 "]");
         dsPermWf.setEdges("[" +

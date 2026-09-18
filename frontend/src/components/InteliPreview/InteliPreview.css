@@ -301,3 +301,31 @@
   width: 14px;
   height: 14px;
 }
+/* 预览身份切换（preview-as）：设计者可切换到任意真实平台账号验证数据隔离 */
+.ip-identity-bar {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(22, 119, 255, 0.08);
+  border: 1px solid rgba(22, 119, 255, 0.25);
+  font-size: 12px;
+}
+.ip-identity-label {
+  color: #1677ff;
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* 边框/内边距/字号由 Select 自身（trigger / small 档）负责，
+   容器再包一层边框会出现双重边框；
+   min-width 保证下拉选项“姓名（账号）”在单行省略前能完整展示 */
+.ip-identity-select {
+  min-width: 170px;
+  max-width: 220px;
+  font-size: 12px;
+}

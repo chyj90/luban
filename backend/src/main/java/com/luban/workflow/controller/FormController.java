@@ -45,6 +45,11 @@ public class FormController {
         return formService.publish(id);
     }
 
+    @PostMapping("/{id}/unpublish")
+    public FormDefinition unpublish(@PathVariable Long id) {
+        return formService.unpublish(id);
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         formService.delete(id);

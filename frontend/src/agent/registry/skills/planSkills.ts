@@ -326,15 +326,26 @@ export function derivePlanFromAnalysis(analysis: AnalysisData): PlanItem[] {
     });
   }
 
-  // 流程发起链路接入放在最后：wire 是 update_code_page，必须等页面步骤执行完
-  for (const { publishStepId } of wireStepBuilders) {
+  // 流程发起链路接入放在最后：wire 是 update_code_page，必须等页面步骤执行完；
+  // 每条流程在 wire 后强制追加"链路验证（触发器预演）"收尾步骤——"完成"的定义是
+  // 预演通过而非资源创建成功，断链/审批人缺失/参数 NULL 在收尾步骤暴露（stepVerifier 拦无证据的完成）
+  for (const { publishStepId, wf } of wireStepBuilders) {
+    const wireStepId = nextId();
     items.push({
-      id: nextId(),
+      id: wireStepId,
       category: 'code_page',
-      description: `流程发起链路接入：在业务发起入口（表单提交/按钮）挂接 window.__LUBAN__.startWorkflow(流程ID, formData)。formData 必须携带业务记录标识（写查询返回的 insertId，或发起侧生成的业务主键）——审批结果触发器靠它定位业务记录，缺失即断链；字段名与流程设计的发起字段契约及触发器 paramsMapping 所需的 form.data.* 逐字一致。审批结果数据联动默认由审批节点触发器（APPROVED/REJECTED → QUERY 目标）实现，计划中未覆盖的联动缺口用 adjust_plan 补配触发器，禁止留下无人处理的断链`,
+      description: `流程发起链路接入：在业务发起入口（表单提交/按钮）挂接 window.__LUBAN__.startWorkflow(流程ID, formData)。formData 必须携带业务记录标识（写查询返回的 insertId，或发起侧生成的业务主键）——审批结果触发器靠它定位业务记录，缺失即断链；字段名与流程设计的发起字段契约及触发器 paramsMapping 所需的 form.data.* 逐字一致。⚠️ 服务端会按流程绑定表单的 schema 校验 formData（必填字段/类型，key 与表单逐字一致），缺字段发起即报错——发起 UI 不在页面重做：首选 create_page_scaffold 传 launchWorkflow={workflowId, formId, insertQueryName?, insertQueryId?}，页面生成 startWorkflowWithForm 调用代码，表单 UI 由平台按绑定表单真实渲染（支持 excel 上传解析/detail_table 等全部控件，页面零表单代码）。审批结果数据联动默认由审批节点触发器（APPROVED/REJECTED → QUERY 目标）实现，计划中未覆盖的联动缺口用 adjust_plan 补配触发器，禁止留下无人处理的断链`,
       toolName: 'update_code_page',
       toolInput: {},
       dependencies: [publishStepId],
+    });
+    items.push({
+      id: nextId(),
+      category: 'datasource',
+      description: `链路验证（触发器预演）：对流程「${wf.description}」执行 rehearse_triggers —— 用贴近真实的样例表单数据（字段与绑定表单逐字一致、含业务记录 id，主分支与驳回分支各准备一份样例）+ 审批链可解析的真实平台用户作为样例发起人（发起人须有部门归属和直属上级、或其部门配置了 manager_id，先用 search_platform_users / get_platform_departments 核对；禁止用 root 这类无组织数据的账号——解析为空是用例选错不是流程缺陷），预演路径、审批人解析、触发器 paramsMapping 解析与渲染 SQL。预演报出"审批人解析为空/断链/必填参数缺失"时必须先修复（补平台组织数据或换可解析的发起人重预演）再标完成；完成时 result 必须粘贴预演摘要（路径、触发器、errors/warnings），禁止无证据标完成`,
+      toolName: 'rehearse_triggers',
+      toolInput: {},
+      dependencies: [publishStepId, wireStepId],
     });
   }
 
@@ -368,7 +379,7 @@ function appendWorkflowDesignSteps(
   const queryCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'QUERY');
   const toolCallbacks = (wf.callbacks || []).filter((cb) => cb.targetType === 'TOOL');
   const triggerSpec = (queryCallbacks.length > 0 || toolCallbacks.length > 0)
-    ? `\n完成后在对应审批节点的 data.config.triggers 中配置以下结果触发器（契约：{ triggerId: "tg_前缀加短随机串", on, target: { type: "QUERY"|"TOOL", ref: 目标ID }, paramsMapping: [{ to, from?, value? }], retry: { maxAttempts: 3, backoffSeconds: [30, 120, 600] } }）：\n${[...queryCallbacks, ...toolCallbacks]
+    ? `\n完成后在对应审批节点的 data.config.triggers 中配置以下结果触发器（契约：{ triggerId: "tg_前缀加短随机串", on, target: { type: "QUERY"|"TOOL", ref: 目标ID }, paramsMapping: [{ to, from?, value? }], retry: { maxAttempts: 3, backoffSeconds: [30, 120, 600] }, minAffectedRows?: 仅QUERY目标且"必命中"回写时声明（如按 id 置状态声明 1），守卫型可 0 行的查询禁止声明；同组触发器按配置顺序派发，先回写状态、后扣减余额 }）：\n${[...queryCallbacks, ...toolCallbacks]
         .map((cb, i) => cb.targetType === 'TOOL'
           ? `${i + 1}. on=${cb.on} → API 工具「${cb.targetRef}」（type 填 "TOOL"，ref 为工具 ID，用 list_apis 核对；该工具未接入时在结果中明确说明缺口，禁止编造 ID）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`
           : `${i + 1}. on=${cb.on} → 查询「${cb.targetRef}」（type 填 "QUERY"，ref 为查询 ID，用 list_queries 核对）${cb.params ? `，paramsMapping：${cb.params}` : ''}${cb.purpose ? `（${cb.purpose}）` : ''}`)
@@ -462,6 +473,8 @@ const VALID_PLAN_TOOL_NAMES = new Set([
   // "计划缺少 delegate_orchestration 步骤时用 adjust_plan 补上"，校验名单必须放行，
   // 否则出现 2026-09-15 请假案例中 adjust_plan 被拒、编排只能在步骤 5 内裸执行的自相矛盾
   'delegate_orchestration',
+  // 链路验证步骤（触发器预演）：主智能体自查工具，计划强制收尾步骤用
+  'rehearse_triggers',
 ]);
 
 export function createPlanInternal(

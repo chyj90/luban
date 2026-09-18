@@ -35,6 +35,19 @@ public class DatasourceController {
         return ResponseEntity.ok(ApiResponse.ok(datasourceService.listBySlug(slug, ownerId)));
     }
 
+    /**
+     * 应用侧统一数据源视图：应用自建 + 已授权平台数据源（按所属系统权限过滤）。
+     * includePending=true 时附带申请中的平台数据源（accessStatus=PENDING，不可执行）。
+     */
+    @GetMapping("/accessible")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> accessible(
+            @RequestParam(required = false) Long applicationId,
+            @RequestParam(name = "includePending", required = false, defaultValue = "false") boolean includePending,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                datasourceService.listAccessible(applicationId, user.getId(), includePending)));
+    }
+
     @PostMapping
     public ResponseEntity<ApiResponse<Map<String, Object>>> create(
             @Valid @RequestBody CreateDatasourceRequest request,

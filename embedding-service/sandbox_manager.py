@@ -130,9 +130,13 @@ class SandboxContainer:
                 cmd, capture_output=True, text=True,
                 input=stdin_data, timeout=timeout
             )
+            # stdout 超限截断必须显式告知调用方：[-5000:] 只保留末尾后，协议里"最后一行是结果 JSON"
+            # 会被从头截掉，调用方若只看到"未返回 JSON 结果"无法区分代码错误与返回值超长（2026-09-17 Excel 全量明细案例）
+            stdout = proc.stdout or ""
             return {
                 "success": proc.returncode == 0,
-                "stdout": proc.stdout[-5000:] if proc.stdout else "",
+                "stdout": stdout[-5000:],
+                "stdout_truncated": len(stdout) > 5000,
                 "stderr": proc.stderr[-2000:] if proc.stderr else "",
                 "exit_code": proc.returncode,
             }

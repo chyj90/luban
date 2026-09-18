@@ -1,23 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Key, Plus, X, Pencil, Code, Trash2 } from 'lucide-react';
+import { Plus, X, Pencil, Code, Trash2 } from 'lucide-react';
 import { listApplicationTools, createAppTool, updateAppTool, deleteAppTool } from '@/api/tool';
+import { ApplySystemAccessModal } from '@/components/ApplySystemAccessModal';
 import { toast } from '@/stores/toastStore';
 import type { SelectedApi } from '@/components/ApiDetail';
 import './ApiPanel.css';
-
-interface KeyToolItem {
-  id: number;
-  toolId: number;
-  apiKeyId: number;
-  status: string;
-  toolName: string;
-  displayName: string;
-  description: string;
-  toolType: string;
-  inputSchema: string;
-  outputSchema: string;
-  config: string;
-}
 
 interface KeyValuePair {
   key: string;
@@ -93,10 +80,10 @@ function parseAppToolConfig(tool: AppToolItem) {
 }
 
 export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, toolsVersion, pendingApiId, onPendingApiHandled }: ApiPanelProps) {
-  const [keyTools, setKeyTools] = useState<KeyToolItem[]>([]);
   const [appTools, setAppTools] = useState<AppToolItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyApiForm);
   const [formTab, setFormTab] = useState<FormTab>('basic');
@@ -107,19 +94,10 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
     try {
       const res = await listApplicationTools(applicationId);
       const items = (res.data as Record<string, unknown>[]) || [];
-      const keys: KeyToolItem[] = [];
-      const apps: AppToolItem[] = [];
-      for (const item of items) {
-        if (item.apiKeyId != null) {
-          keys.push(item as unknown as KeyToolItem);
-        } else {
-          apps.push(item as unknown as AppToolItem);
-        }
-      }
-      setKeyTools(keys);
+      const apps: AppToolItem[] = items as unknown as AppToolItem[];
       setAppTools(apps);
     } catch {
-      setKeyTools([]);
+      setAppTools([]);
       setAppTools([]);
     } finally {
       setLoading(false);
@@ -139,11 +117,9 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
   }, [appTools, pendingApiId, loading, onSelect, onPendingApiHandled]);
 
   useEffect(() => {
-    const selfTools = appTools.map((t) => ({ id: t.id, name: t.displayName || t.toolName || '' }));
-    const keyToolItems = keyTools.map((t) => ({ id: t.id, name: t.displayName || t.toolName || '' }));
-    const merged = [...selfTools, ...keyToolItems.filter(kt => !selfTools.some(st => st.id === kt.id))];
+    const merged = appTools.map((t) => ({ id: t.id, name: t.displayName || t.toolName || '' }));
     onToolsChange?.(merged);
-  }, [appTools, keyTools, onToolsChange]);
+  }, [appTools, onToolsChange]);
 
   const handleSubmit = async () => {
     if (!form.name.trim() || !form.url.trim()) return;
@@ -253,17 +229,22 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
     <div className="api-panel">
       <div className="api-panel-header">
         <span className="api-panel-title">API</span>
-        <button
-          className="api-add-btn"
-          onClick={() => {
-            setShowForm(!showForm);
-            setEditingId(null);
-            setForm(emptyApiForm());
-            setFormTab('basic');
-          }}
-        >
-          <Plus size={14} /> 添加
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className="api-add-btn" onClick={() => setApplyModalOpen(true)} title="申请通过后，该系统下的平台 API 可在本应用中调用">
+            申请平台 API
+          </button>
+          <button
+            className="api-add-btn"
+            onClick={() => {
+              setShowForm(!showForm);
+              setEditingId(null);
+              setForm(emptyApiForm());
+              setFormTab('basic');
+            }}
+          >
+            <Plus size={14} /> 添加
+          </button>
+        </div>
       </div>
 
       {showForm && (
@@ -433,32 +414,6 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
         <div className="api-empty">加载中...</div>
       ) : (
         <div className="api-panel-list">
-          {keyTools.length > 0 && (
-            <div className="api-section">
-              <div className="api-section-title">
-                <Key size={14} />
-                KEY 授权 API
-                <span className="api-section-count">{keyTools.length}</span>
-              </div>
-              <div className="api-list">
-                {keyTools.map((tool) => (
-                  <div
-                    key={tool.id}
-                    className={`api-card ${isSelected('key', tool.id) ? 'api-card--selected' : ''}`}
-                    onClick={() => onSelect(isSelected('key', tool.id) ? null : { type: 'key', data: tool })}
-                  >
-                    <div className="api-card-header">
-                      <span className={`api-card-method method-${tool.toolType}`}>
-                        {tool.toolType}
-                      </span>
-                      <span className="api-card-name">{tool.displayName || tool.toolName}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           <div className="api-section">
             <div className="api-section-title">
               <Code size={14} />
@@ -498,6 +453,13 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
             </div>
           </div>
         </div>
+      )}
+
+      {applyModalOpen && (
+        <ApplySystemAccessModal
+          onClose={() => setApplyModalOpen(false)}
+          onApplied={() => fetchTools()}
+        />
       )}
     </div>
   );

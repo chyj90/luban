@@ -7,9 +7,33 @@ import { getOrchestration } from '@/api/orchestration';
 import { getCallerIdentity } from '../../prompts/callerContext';
 import { toolArgsKey } from '../../kernel/runtime';
 import { approvePendingApproval } from '../../core/confirmationGuard';
+import { useAgentStore } from '@/stores/agentStore';
 import type { DelegateQueryArgs, DelegateQueryFilterItem, DelegateQueryResult, Message } from '@/types/agent';
 
 const activeDelegations = new Set<string>();
+
+/**
+ * 计划漂移检测（C4）：委派产出不在当前活跃计划任何步骤声明中时提醒主智能体回写计划。
+ * 计划外资源是"计划与实际产出脱节"的信号（2026-09-17 请假案例：UpdateLeavePending 计划外
+ * 创建与挂载未回写计划，步骤清单与实际链路从此不一致）。纯提醒，不阻断。
+ */
+function detectPlanDrift(outcomes: DelegateOutcome[]): string | null {
+  try {
+    const store = useAgentStore.getState();
+    const active = store.plans.find((p) => p.status === 'confirmed' || p.status === 'executing');
+    if (!active || !outcomes.length) return null;
+    const declared = active.steps.map((s) => s.description || '').join('\n');
+    const undeclared = outcomes.filter((o) => {
+      const name = String(o.name || '').trim();
+      // binding 是流程-表单的绑定产物，没有独立名称，不参与声明比对
+      return o.type !== 'binding' && name !== '' && !declared.includes(name);
+    });
+    if (undeclared.length === 0) return null;
+    return `📋 计划漂移提醒：本次委派产出 ${undeclared.map((o) => `${o.type}「${o.name}」`).join('、')} 未出现在当前计划任何步骤的声明中。若属计划缺口，请用 adjust_plan 把这些产出回写为计划步骤，保持计划与实际链路一致（主智能体对账职责）；若是刻意替换/补充且用户知情，可忽略本提醒`;
+  } catch {
+    return null;
+  }
+}
 
 /** 流程引擎对驳回/加签的内置语义：这些能力由引擎和审批界面提供，节点 config 不支持相关配置项 */
 const WORKFLOW_ENGINE_SEMANTICS = `## 驳回与加签（引擎内置能力，禁止配置到节点）
@@ -477,6 +501,8 @@ detail_table 类型需额外提供 columns 数组，每个子字段同上格式
 - form_field: 从表单字段获取审批人，需 formFieldKey: "字段key"
 - script: 动态脚本，需 script: "代码"
 
+⚠️ **审批人解析只认平台组织数据**：leader/department_head 由流程引擎从平台组织解析（发起人主部门的 user_dept.leader_id / 部门的 departments.manager_id），**业务表里建的 leader_id/manager_id 等组织归属字段引擎不读**。需求或上下文提到用业务表的上级/经理字段支撑审批人解析时，如实指出这不影响审批人解析，并在汇报中提醒主智能体核对平台组织数据（search_members 查成员 leaderId/deptId、search_departments 查部门 managerId）
+
 ## 每个节点必须包含 nodeId、id、type、nodeType、position: { x, y }、data
 - start: nodeId: "start", id: "start", type: "startNode", nodeType: "start", position: { x: 300, y: 50 }
 - 各审批节点 y 依次递增 120（如 170, 290, 410），nodeId 和 id 设为 "approval_1"、"approval_2" 等，type: "approvalNode", nodeType: "approval"
@@ -493,12 +519,20 @@ detail_table 类型需额外提供 columns 数组，每个子字段同上格式
 每条连线格式：{ id: "边ID", source: "源节点ID", target: "目标节点ID", type: "smoothstep", markerEnd: { type: "arrowclosed" } }
 **条件分支连线必须包含 data 字段**：{ ..., data: { condition: "amount < 5000", label: "小于5000" } }
 
+## 下线与删除流程定义
+- unpublish_workflow(processId)：下线已发布流程（PUBLISHED → DRAFT），不可再发起新实例；定义保留，可重新 publish_workflow 上线（可逆）。仅用于"只下线、不删除"的场景
+- delete_workflow：删除流程定义，**不可恢复**。单个用 processId；批量（≥2 个）必须用 processIds 传完整 ID 数组——一次确认整批执行，**禁止拆成逐个调用**（确认门每次只放行一次调用，逐个删会反复打断用户）。PUBLISHED 流程会自动先下线再删除，无需预先 unpublish_workflow
+- 用户要求删除流程（含批量清理测试残留）：先 list_workflows 列全 → 一次 delete_workflow(processIds=[全部 ID]) → 删完用 list_workflows 复核归零；按工具返回的成功/跳过/失败清单如实汇报，禁止谎报
+- 删除成功后必须提醒：页面 JS 中 startWorkflow(被删流程ID) 调用点已失效，需同步清理
+
 ## 重要规则
 - ⚠️ **禁止自行推断流程结构**：必须严格按照用户需求中描述的流程节点和路由逻辑来设计，不要用"常见的请假流程"之类的模板自行替换。用户说"≤3天→直属上级审批，>3天→直属上级→部门经理"，就必须设计条件分支，而不是串行审批。用户需求中没有描述流程结构时，不要自行创建流程，如实汇报缺少的信息
 - 禁止只输出设计方案而不调用工具，必须实际创建
 - 每个流程必须包含 start 和 end 节点
 - 审批节点必须设置审批人
 - 已有可复用表单时不要重复创建，直接使用已有表单 ID
+- ⚠️ **最终汇报必须以状态行 JSON 结尾**（介入判定只认这行 JSON，不认散文）：\`{"interventionRequired": true|false, "reason": "需要用户手动做什么（无介入则留空）"}\`。需要用户手动操作（如平台面板确认组织数据、手工建表）时 required=true 并在正文说明；无介入时 required=false。正文其他位置**禁止出现 interventionRequired 字样**——散文里的否定式曾被误判为介入请求（2026-09-17 事故）
+- ⚠️ **rehearse_triggers 的样例发起人必须审批链可解析**：先用 search_members 选真实平台账号作为 sampleInitiatorId（该账号 deptId/leaderId 非空，或其部门 managerId 存在），禁止用无部门归属的账号（如 root/超级管理员）当样例发起人——那必然报"审批人解析为空"，属于用例选错而非流程缺陷。预演报出审批人解析为空时：换审批链可解析的发起人重预演，或确认平台组织数据缺失后在汇报中明确请求补组织数据；禁止把"解析为空"归因为"配置正确"后照常发布
 - ⚠️ **如实汇报**：完成后汇报实际结果（表单 ID/流程 ID/节点结构）；任何工具调用失败时，必须如实说明失败原因和已尝试的方案，禁止谎报完成`;
 }
 
@@ -596,26 +630,68 @@ export function validateDDLExecution(messages: Array<ToolMessageLike | unknown>)
 }
 
 /**
+ * 委派状态协议解析：DBA/流程助手的最终汇报必须以一行 JSON 状态收尾
+ *（见 dbaPrompt / buildWorkflowDelegateSystemPrompt 的人工介入契约）：
+ *   {"interventionRequired": true|false, "reason": "一句话"}
+ * 从汇报末尾向前找状态行（带 ```json 围栏也能解析）。找到且含布尔
+ * interventionRequired 字段即为权威结果——散文里的 interventionRequired
+ * 字样一律不算数。未找到返回 null，由调用方走散文兜底。
+ *
+ * 2026-09-17 事故：DBA 按汇报纪律在【风险与残留】写"无 interventionRequired"，
+ * 纯子串匹配把它当成介入请求误报挂起；主智能体自行判读"系统误报"后继续执行，
+ * 形成 override 安全机制的先例。根因是介入判定依赖自然语言子串，协议化后
+ * "无介入"与"请求介入"由同一个显式信号表达，不再有歧义空间。
+ */
+function parseInterventionStatus(finalReport: string): { required: boolean; reason?: string } | null {
+  if (!finalReport) return null;
+  const lines = finalReport.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines.length - i >= 15) break; // 状态行只会出现在汇报末尾附近，避免全文误扫
+    const stripped = lines[i].trim().replace(/^```(json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    if (!stripped.includes('interventionRequired')) continue;
+    try {
+      const parsed = JSON.parse(stripped) as { interventionRequired?: unknown; reason?: unknown };
+      if (typeof parsed.interventionRequired !== 'boolean') continue;
+      const reason = typeof parsed.reason === 'string' ? parsed.reason.trim() : '';
+      return { required: parsed.interventionRequired, reason: reason || undefined };
+    } catch {
+      // 非法 JSON：不是协议行，继续向前找
+    }
+  }
+  return null;
+}
+
+/**
  * 文本介入标记检测：子智能体按指示"不尝试 DDL、直接请求人工操作"时，
  * validateDDLExecution 的"尝试→被拦截→降级"链路探测不到（消息里没有 execute_sql 调用），
  * 委派会被误判为已完成：主智能体文本转达介入请求后想结束回合，被 planPolicy 的
  * 强制继续提醒顶回，形成"请继续执行 vs 等待用户操作"的死循环（2026-09-14 员工管理案例）。
- * 这里从最终汇报文本识别人工介入请求，补上结构化挂起信号。
+ * 这里从最终汇报识别人工介入请求，补上结构化挂起信号。
  *
- * 识别两类信号（满足其一即介入）：
- * 1. 显式标记 interventionRequired（dbaPrompt 契约要求人工 DDL 汇报必须携带）；
- * 2. 要求用户去数据源管理面板手动执行 SQL/DDL 的自然语言 + 存在可执行的 SQL 依据。
+ * 判定顺序：
+ * 1. 委派状态协议行（末尾 JSON）——权威信号，存在时散文标记一律忽略；
+ * 2. 散文兜底（旧输出/漏写协议行时）：显式标记词 + "去面板手动执行 SQL"的自然语言，
+ *    匹配前先剔除否定式（"无/没有/无需 interventionRequired"），避免把汇报纪律的
+ *    "没有也要写无"误判成介入请求。
  */
 export function detectManualInterventionRequest(finalReport: string): { required: boolean; reason?: string } {
   if (!finalReport) return { required: false };
-  const hasMarker = /interventionRequired/i.test(finalReport);
+
+  const status = parseInterventionStatus(finalReport);
+  if (status) return status;
+
+  const withoutNegations = finalReport.replace(
+    /(无|没有|未|不需|无需|不需要|不必)\s*(任何)?\s*interventionRequired/gi,
+    '',
+  );
+  const hasMarker = /interventionRequired/i.test(withoutNegations);
   const hasManualSqlAsk =
     /数据源管理面板/.test(finalReport) &&
     /(手动执行|请您执行|请手动|需要您执行|人工执行)/.test(finalReport) &&
     /```sql|ALTER\s+TABLE|CREATE\s+TABLE/i.test(finalReport);
   if (!hasMarker && !hasManualSqlAsk) return { required: false };
 
-  const lines = finalReport.split('\n');
+  const lines = withoutNegations.split('\n');
   const reasonLine =
     lines.find((l) => /interventionRequired/i.test(l)) ||
     lines.find((l) => /(手动执行|请您执行|需要您执行|人工执行)/.test(l)) ||
@@ -900,7 +976,7 @@ export const delegateSkills: Record<string, SkillFactory> = {
             return {
               success: false,
               _pause: true,
-              message: `需要用户手动操作后本次任务才算完成：${interventionReason || ''}。请将需要手动执行的 SQL 转达给用户，等用户在数据源管理面板执行完成并回复后，再继续后续步骤。`,
+              message: `需要用户手动操作后本次任务才算完成：${interventionReason || ''}。请把需要用户手动完成的事项转达给用户（涉及 SQL 时附完整 SQL），等用户在数据源管理面板或对应界面完成并回复后，再继续后续步骤。`,
               data: { ...result, outcomes: extractQueryOutcomes(messages) },
             };
           }
@@ -911,7 +987,13 @@ export const delegateSkills: Record<string, SkillFactory> = {
           });
 
           console.log(`[delegate_query] 完成 | 总耗时: ${Date.now() - execStart}ms`);
-          return { success: true, message: result.message, data: { ...result, outcomes: extractQueryOutcomes(messages) } };
+          const queryOutcomes = extractQueryOutcomes(messages);
+          const queryDrift = detectPlanDrift(queryOutcomes);
+          return {
+            success: true,
+            message: queryDrift ? `${result.message}\n\n${queryDrift}` : result.message,
+            data: { ...result, outcomes: queryOutcomes },
+          };
         } catch (e: unknown) {
           console.error(`[delegate_query] 失败:`, e);
           ctx.dispatch?.({
@@ -944,12 +1026,18 @@ export const delegateSkills: Record<string, SkillFactory> = {
       name: 'delegate_workflow',
       description: `向流程设计智能体委派流程设计任务。
 流程设计智能体具备独立的流程设计能力，会自行分析需求、搜索成员/角色、设计流程，并输出结果。
-task_type 用于限定子智能体只执行对应阶段的任务：design_form 仅设计表单，design_workflow 仅设计/修改流程，不传则表单+流程一起做。`,
+task_type 用于限定子智能体只执行对应阶段的任务：design_form 仅设计表单，design_workflow 仅设计/修改流程；
+query_org/approval_task/process_ops/lint/copy_preview/general 为非设计类任务（查询组织、处理审批、流程运维、校验、复制预览、通用问答），
+不传则表单+流程一起做。`,
       parameters: {
         type: 'object',
         properties: {
           requirement: { type: 'string', description: '流程设计需求描述' },
-          task_type: { type: 'string', enum: ['design_form', 'design_workflow'], description: '任务类型（可选）：design_form=仅设计表单；design_workflow=仅设计/修改流程；不传则表单+流程完整执行' },
+          task_type: {
+            type: 'string',
+            enum: ['design_form', 'design_workflow', 'query_org', 'approval_task', 'process_ops', 'lint', 'copy_preview', 'general'],
+            description: '任务类型（可选）：design_form=仅设计表单；design_workflow=仅设计/修改流程；query_org=查询成员/部门/角色；approval_task=处理审批（通过/驳回/加签/委派）；process_ops=流程运维（冻结/解冻/取消/强制终止/撤回/修改处理人/下线/删除流程）；lint=校验（表单代码/字段Schema/流程定义/条件表达式）；copy_preview=复制/预览/验证/版本；general=通用流程问题；不传则表单+流程完整执行',
+          },
           context: { type: 'string', description: '相关上下文（页面名称、已有流程、表单 ID 及字段 key 等）' },
         },
         required: ['requirement'],
@@ -961,6 +1049,9 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
         }
         const { requirement, context } = args as { requirement: string; context?: string };
         const taskType = (args as { task_type?: string }).task_type;
+        // design_form/design_workflow 走各自的精简提示词；其余非设计类任务
+        //（query_org/approval_task/process_ops/lint/copy_preview/general）走 full——
+        // 流程助手的全部技能（审批处理/运维/校验等）都在 allowedSkills 里，按需调用
         const mode: WorkflowDelegateMode
           = taskType === 'design_form' || taskType === 'design_workflow' ? taskType : 'full';
 
@@ -1138,9 +1229,10 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
           const pageSyncReminder = outcomes.some((o) => o.type === 'workflow')
             ? '\n\n⚠️ 页面挂接核对：页面 JS 里若已有对其它流程 ID 的 startWorkflow 引用（流程被删除/替换后页面不会自动更新），必须用 get_code_page + update_code_page 同步为本次流程 ID，缺这步页面发起流程会直接失败。'
             : '';
+          const driftWarning = detectPlanDrift(outcomes) ?? '';
           return {
             success: true,
-            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}${pageSyncReminder}`,
+            message: `流程设计任务完成${outcomeSummary ? `。产出资源：${outcomeSummary}` : ''}${contractWarning}${pageSyncReminder}${driftWarning}`,
             data: { response, outcomes },
           };
         } catch (e: unknown) {
@@ -1173,7 +1265,7 @@ task_type 用于限定子智能体只执行对应阶段的任务：design_form �
       id: 'delegate:orchestration',
       category: SkillCategory.DELEGATE,
       name: 'delegate_orchestration',
-      description: `委派 API 编排任务给编排设计助手：自然语言描述数据聚合/调用链需求，助手产出 DSL 并完成校验、试运行；发布为独立确认步骤。`,
+      description: `委派 API 编排任务给编排设计助手：自然语言描述数据聚合/调用链需求，助手产出 DSL 并完成校验、试运行；发布为独立确认步骤。也支持生命周期操作（如删除/清理编排，删除走用户确认门）。`,
       parameters: {
         type: 'object',
         properties: {

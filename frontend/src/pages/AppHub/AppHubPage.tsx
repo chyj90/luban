@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Key, Link, Unlink, Plus, ArrowRight, Clock, Layers, Globe } from 'lucide-react';
+import { LayoutGrid, Plus, ArrowRight, Clock, Layers, Globe } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
 import { useApplicationStore } from '@/stores/applicationStore';
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import { useLoadingStore } from '@/stores/loadingStore';
-import { listApiKeys, listKeysByApplication, bindApplicationToKey, unbindApplicationFromKey } from '@/api/tool';
 import type { Application } from '@/types/application';
 import './AppHubPage.css';
 
@@ -39,11 +38,6 @@ export function AppHubPage() {
   const setGlobalLoading = useLoadingStore((s) => s.setLoading);
   const [newAppName, setNewAppName] = useState('');
   const [showCreateApp, setShowCreateApp] = useState(false);
-  const [keyModalAppId, setKeyModalAppId] = useState<number | null>(null);
-  const [keyModalAppName, setKeyModalAppName] = useState('');
-  const [boundKeys, setBoundKeys] = useState<{ id: number; name: string }[]>([]);
-  const [allKeys, setAllKeys] = useState<{ id: number; name: string }[]>([]);
-  const [keyModalLoading, setKeyModalLoading] = useState(false);
 
   useEffect(() => {
     setGlobalLoading(loading);
@@ -75,53 +69,6 @@ export function AppHubPage() {
     if (confirmed) {
       removeApplication(appId);
       toast.success(`应用「${appName}」已删除`);
-    }
-  };
-
-  const openKeyModal = async (e: React.MouseEvent, app: Application) => {
-    e.stopPropagation();
-    setKeyModalAppId(app.id);
-    setKeyModalAppName(app.name);
-    setKeyModalLoading(true);
-    try {
-      const [keysRes, boundRes] = await Promise.all([
-        listApiKeys(),
-        listKeysByApplication(app.id),
-      ]);
-      const keys = (keysRes.data as { id: number; name: string }[]) || [];
-      setAllKeys(keys);
-      const bound = (boundRes.data as { id: number; name: string }[]) || [];
-      setBoundKeys(bound);
-    } catch {
-      toast.error('加载 KEY 失败');
-    } finally {
-      setKeyModalLoading(false);
-    }
-  };
-
-  const handleBindKey = async (keyId: number) => {
-    if (!keyModalAppId) return;
-    try {
-      await bindApplicationToKey(keyId, keyModalAppId);
-      toast.success('绑定成功');
-      const boundRes = await listKeysByApplication(keyModalAppId);
-      const bound = (boundRes.data as { id: number; name: string }[]) || [];
-      setBoundKeys(bound);
-    } catch {
-      toast.error('绑定失败');
-    }
-  };
-
-  const handleUnbindKey = async (keyId: number) => {
-    if (!keyModalAppId) return;
-    try {
-      await unbindApplicationFromKey(keyId, keyModalAppId);
-      toast.success('解绑成功');
-      const boundRes = await listKeysByApplication(keyModalAppId);
-      const bound = (boundRes.data as { id: number; name: string }[]) || [];
-      setBoundKeys(bound);
-    } catch {
-      toast.error('解绑失败');
     }
   };
 
@@ -164,13 +111,6 @@ export function AppHubPage() {
               <polyline points="3 6 5 6 21 6" />
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
             </svg>
-          </button>
-          <button
-            className="apphub-card-action apphub-card-key"
-            onClick={(e) => openKeyModal(e, app)}
-            title="管理 KEY"
-          >
-            <Key size={14} />
           </button>
         </>
       )}
@@ -227,7 +167,7 @@ export function AppHubPage() {
     <div className="apphub-page">
       <PageTopbar
         icon={<LayoutGrid size={22} />}
-        title="应用开发"
+        title="开发中心"
         subtitle="创建和管理应用，构建工作流与表单，实现业务自动化"
         actions={
           !showCreateApp && (
@@ -292,68 +232,6 @@ export function AppHubPage() {
         )}
       </div>
 
-      {keyModalAppId !== null && (
-        <div className="apphub-modal-overlay" onClick={() => setKeyModalAppId(null)}>
-          <div className="apphub-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="apphub-modal-header">
-              <h3>管理 KEY - {keyModalAppName}</h3>
-              <button className="apphub-modal-close" onClick={() => setKeyModalAppId(null)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div className="apphub-modal-body">
-              {keyModalLoading ? (
-                <p className="apphub-modal-loading">加载中...</p>
-              ) : (
-                <>
-                  <div className="apphub-modal-section">
-                    <h4>已绑定 KEY</h4>
-                    {boundKeys.length === 0 ? (
-                      <p className="apphub-modal-empty">暂无绑定 KEY</p>
-                    ) : (
-                      <ul className="apphub-key-list">
-                        {boundKeys.map((key) => (
-                          <li key={key.id} className="apphub-key-item">
-                            <span className="apphub-key-name">{key.name}</span>
-                            <button
-                              className="apphub-key-unbind"
-                              onClick={() => handleUnbindKey(key.id)}
-                            >
-                              <Unlink size={14} />
-                              解绑
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div className="apphub-modal-section">
-                    <h4>可用 KEY</h4>
-                    {allKeys.filter((k) => !boundKeys.some((b) => b.id === k.id)).length === 0 ? (
-                      <p className="apphub-modal-empty">所有 KEY 已绑定</p>
-                    ) : (
-                      <ul className="apphub-key-list">
-                        {allKeys.filter((k) => !boundKeys.some((b) => b.id === k.id)).map((key) => (
-                          <li key={key.id} className="apphub-key-item">
-                            <span className="apphub-key-name">{key.name}</span>
-                            <button
-                              className="apphub-key-bind"
-                              onClick={() => handleBindKey(key.id)}
-                            >
-                              <Link size={14} />
-                              绑定
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -2,16 +2,16 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import Select from '@/components/Select';
 import Editor from '@monaco-editor/react';
 import type { languages, IDisposable, editor } from 'monaco-editor';
-import { listDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource, syncTestSource } from '@/api/datasource';
+import { listAccessibleDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource, syncTestSource } from '@/api/datasource';
 import { encryptConfigSecrets } from '@/utils/security';
 import { splitSqlStatements, containsDdlStatement } from '@/utils/sql';
 import { listDrivers, installDriver } from '@/api/driver';
-import { listApplicationDatasources } from '@/api/tool';
 import { executeSql } from '@/api/query';
 import { getDeployMode } from '@/api/config';
 import { useToastStore } from '@/stores/toastStore';
 import { confirm } from '@/stores/confirmStore';
 import type { Datasource, DatasourceStructure, DriverInfo, InstallProgress, ExtraField } from '@/types/datasource';
+import { ApplySystemAccessModal } from '@/components/ApplySystemAccessModal';
 import type { RunQueryResponse } from '@/types/query';
 import './DatasourcePanel.css';
 
@@ -70,7 +70,6 @@ function isJdbcType(type: string) {
 
 export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const [datasources, setDatasources] = useState<Datasource[]>([]);
-  const [keyDatasources, setKeyDatasources] = useState<Array<{ id: number; name: string; type?: string; config?: Record<string, unknown> }>>([]);
   const [drivers, setDrivers] = useState<DriverInfo[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [isAllInOne, setIsAllInOne] = useState(false);
@@ -94,10 +93,11 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   const sqlStructureRef = useRef<DatasourceStructure | null>(null);
   const sqlConsoleDsIdRef = useRef<number | null>(null);
   const toast = useToastStore((s) => s.show);
+  const [applyModalOpen, setApplyModalOpen] = useState(false);
 
   useEffect(() => {
-    listDatasources('APPLICATION', applicationId).then((res) => setDatasources(res.data));
-    listApplicationDatasources(applicationId).then((res) => setKeyDatasources((res.data as Array<{ id: number; name: string; type?: string; config?: Record<string, unknown> }>) || [])).catch(() => setKeyDatasources([]));
+    // 一个平台一套：平台数据源按所属系统权限授权可见（含申请中，标记 PENDING 不可执行）
+    listAccessibleDatasources(applicationId, true).then((res) => setDatasources(res.data));
     listDrivers().then((res) => setDrivers(res.data)).catch(() => {});
     getDeployMode().then((mode) => setIsAllInOne(mode === 'allinone')).catch(() => {});
   }, [applicationId]);
@@ -182,6 +182,10 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   };
 
   const handleEdit = (ds: Datasource) => {
+    if (ds.slug === 'PLATFORM') {
+      toast('平台数据源请在「建模中心 → 系统管理」中维护', 'error');
+      return;
+    }
     const config = ds.config || {};
     const authType = (config.authType as string) || 'none';
     setForm({
@@ -260,6 +264,11 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
   };
 
   const handleDelete = async (id: number) => {
+    const target = datasources.find((d) => d.id === id);
+    if (target?.slug === 'PLATFORM') {
+      toast('平台数据源请在「建模中心 → 系统管理」中维护', 'error');
+      return;
+    }
     const ok = await confirm({ title: '确认删除', message: '确定删除此数据源？', confirmText: '删除', variant: 'danger' });
     if (!ok) return;
     await deleteDatasource(id);
@@ -572,6 +581,9 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
               {syncing ? '同步中...' : '同步测试源'}
             </button>
           )}
+          <button className="ds-add-btn ds-add-btn-secondary" onClick={() => setApplyModalOpen(true)}>
+            申请平台数据源
+          </button>
           <button className="ds-add-btn" onClick={() => { setShowForm(!showForm); setEditingId(null); setForm(EMPTY_FORM); }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -824,33 +836,7 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
       )}
 
       <div className="ds-list">
-        {keyDatasources.length > 0 && (
-          <div className="ds-section">
-            <div className="ds-section-header">
-              <span className="ds-section-title">KEY 授权数据源</span>
-              <span className="ds-section-count">{keyDatasources.length}</span>
-            </div>
-            {keyDatasources.map((kd) => {
-              const info = getDsDisplay(kd.type || '');
-              return (
-                <div key={kd.id} className="ds-card ds-card-key">
-                  <div className="ds-card-main">
-                    <div className="ds-card-icon" style={{ background: info.color + '14', color: info.color }}>
-                      {info.label.charAt(0)}
-                    </div>
-                    <div className="ds-card-info">
-                      <span className="ds-card-name">{kd.name}</span>
-                      <span className={`ds-card-type ${info.badgeClass || ''}`}>{info.label} · 来自 KEY</span>
-                    </div>
-                    <span className="ds-card-badge ds-badge-key">KEY</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {datasources.length === 0 && keyDatasources.length === 0 && !showForm && (
+        {datasources.length === 0 && !showForm && (
           <div className="ds-empty">暂无数据源，点击"新建"添加</div>
         )}
         {datasources.map((ds) => {
@@ -865,31 +851,48 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
                 <div className="ds-card-info">
                   <span className="ds-card-name">{ds.name}</span>
                   <span className={`ds-card-type ${info.badgeClass || ''}`}>{info.label}</span>
+                  {ds.slug === 'PLATFORM' ? (
+                    ds.accessStatus === 'PENDING' ? (
+                      <span className="ds-card-type" style={{ color: '#d48806', background: '#fffbe6', borderRadius: 4, padding: '0 6px' }}>申请中</span>
+                    ) : (
+                      <span className="ds-card-type" style={{ color: '#1677ff' }} title="连接的系统库：已授权，可执行 SQL 与测试，不可编辑删除">平台·已授权</span>
+                    )
+                  ) : (
+                    <span className="ds-card-type" style={{ color: '#8c8c8c' }} title="本应用自建业务库">应用</span>
+                  )}
                 </div>
                 <span className={`ds-card-status ${isConnected ? 'connected' : ''}`}>
                   {isConnected ? '●' : '○'}
                 </span>
               </div>
               <div className="ds-card-actions">
-                <button className="ds-action-btn" onClick={() => handleEdit(ds)}>编辑</button>
-                <button className="ds-action-btn" onClick={() => handleTest(ds.id)} disabled={testing === ds.id}>
-                  {testing === ds.id ? '测试中...' : '测试'}
-                </button>
-                {isJdbcType(ds.type) && (
-                  <button className="ds-action-btn" onClick={() => handleToggleSqlConsole(ds.id)}>
-                    {sqlConsoleDsId === ds.id ? '收起 SQL' : 'SQL'}
+                {ds.slug !== 'PLATFORM' && (
+                  <button className="ds-action-btn" onClick={() => handleEdit(ds)}>编辑</button>
+                )}
+                {ds.accessStatus !== 'PENDING' && (
+                  <>
+                    <button className="ds-action-btn" onClick={() => handleTest(ds.id)} disabled={testing === ds.id}>
+                      {testing === ds.id ? '测试中...' : '测试'}
+                    </button>
+                    {isJdbcType(ds.type) && (
+                      <button className="ds-action-btn" onClick={() => handleToggleSqlConsole(ds.id)}>
+                        {sqlConsoleDsId === ds.id ? '收起 SQL' : 'SQL'}
+                      </button>
+                    )}
+                  </>
+                )}
+                {ds.slug !== 'PLATFORM' && (
+                  <button className="ds-action-btn ds-action-danger" onClick={() => handleDelete(ds.id)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                    </svg>
+                    删除
                   </button>
                 )}
-                <button className="ds-action-btn ds-action-danger" onClick={() => handleDelete(ds.id)}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                    <path d="M10 11v6" />
-                    <path d="M14 11v6" />
-                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                  </svg>
-                  删除
-                </button>
               </div>
 
               {sqlConsoleDsId === ds.id && (
@@ -1071,6 +1074,12 @@ export function DatasourcePanel({ applicationId }: DatasourcePanelProps) {
           );
         })}
       </div>
+      {applyModalOpen && (
+        <ApplySystemAccessModal
+          onClose={() => setApplyModalOpen(false)}
+          onApplied={() => listAccessibleDatasources(applicationId, true).then((res) => setDatasources(res.data))}
+        />
+      )}
     </div>
   );
 }

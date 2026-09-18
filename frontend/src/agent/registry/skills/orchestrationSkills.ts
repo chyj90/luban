@@ -2,7 +2,7 @@ import { SkillCategory, type SkillFactory } from '../skillRegistry';
 import {
   createOrchestration, getOrchestration, listOrchestrations,
   lintOrchestration, testRunOrchestration, publishOrchestration,
-  saveOrchestration, listOrchestrationExecutions,
+  saveOrchestration, listOrchestrationExecutions, deleteOrchestration,
 } from '@/api/orchestration';
 
 /** 编排技能：供 orchestration-assistant 使用（调用方为已登录用户，AppAccess 天然生效） */
@@ -156,6 +156,55 @@ export const orchestrationSkills: Record<string, SkillFactory> = {
       } catch (e) {
         return { success: false, message: `发布失败: ${(e as { response?: { data?: { message?: string } } })?.response?.data?.message || (e as Error).message}` };
       }
+    },
+  }),
+
+  'orchestration:delete': (_ctx) => ({
+    id: 'orchestration:delete',
+    category: SkillCategory.ORCHESTRATION,
+    name: 'delete_orchestration',
+    description: '删除编排（后端置 ARCHIVED 关停，不可恢复）。单个用 id；批量（≥2 个）必须用 ids 传完整 ID 数组——一次确认整批执行，禁止拆成逐个调用。已发布的编排删除后其平台工具与 API Key 调用立即失效，触发器/编排/页面对它的引用会断链，汇报时必须提醒排查引用点。',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', description: '要删除的编排定义 ID（单个删除时用）' },
+        ids: { type: 'array', items: { type: 'number' }, description: '要删除的编排定义 ID 数组（批量删除时用，一次确认整批执行）' },
+      },
+    },
+    // 删除即归档关停且不可恢复：走内核确认门（挂起等用户确认），
+    // 委派场景由 delegate_orchestration 的暂停传播上浮到主智能体
+    isDangerous: true,
+    requiresConfirmation: true,
+    async execute(args) {
+      const ids = Array.isArray(args.ids) && args.ids.length > 0
+        ? Array.from(new Set((args.ids as unknown[]).map(Number).filter((n) => Number.isFinite(n))))
+        : Number.isFinite(Number(args.id)) ? [Number(args.id)] : [];
+      if (!ids.length) {
+        return { success: false, message: '请提供 id（单个）或 ids（批量 ID 数组）之一' };
+      }
+      const deleted: number[] = [];
+      const failed: string[] = [];
+      for (const id of ids) {
+        try {
+          await deleteOrchestration(id);
+          deleted.push(id);
+        } catch (e) {
+          const errMsg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || (e as Error).message || '未知错误';
+          if (/编排不存在/.test(errMsg) || /\[HTTP 404\]/.test(errMsg)) {
+            deleted.push(id); // 已是 ARCHIVED/不存在，目标状态已达成
+          } else {
+            failed.push(`${id}: ${errMsg}`);
+          }
+        }
+      }
+      const parts: string[] = [];
+      if (deleted.length) parts.push(`已删除（ARCHIVED 关停）${deleted.length} 个：${deleted.join(',')}`);
+      if (failed.length) parts.push(`失败 ${failed.length} 个：${failed.join('；')}`);
+      return {
+        success: failed.length === 0,
+        message: `批量删除完成（目标 ${ids.length} 个）。⚠️ 已发布编排的平台工具/API Key 调用已失效，引用它的触发器/编排/页面会断链，需同步排查清理\n${parts.join('\n')}`,
+        data: { deleted, failed },
+      };
     },
   }),
 

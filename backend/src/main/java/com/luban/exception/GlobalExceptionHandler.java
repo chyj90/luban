@@ -38,6 +38,15 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleNotReadable(HttpMessageNotReadableException ex) {
         String detail = ex.getMostSpecificCause().getMessage();
         log.error("请求体解析失败: {}", detail, ex);
+        // TestSpec 反序列化失败：原始 Jackson 报错对 LLM/用户不可操作（2026-09-17 请假案例自检
+        // 3 轮失败中 2 轮源于契约字段名/结构不符），归一化为"常见错误 + 期望结构"的自解释错误
+        if (detail != null && detail.contains("com.luban.selftest.dto")) {
+            return ResponseEntity.badRequest().body(ApiResponse.error(
+                    "TestSpec 结构不符合契约: " + detail
+                    + "。常见错误：① expect 必须是对象 {\"operator\":\"cell_eq|rows_count_eq|cell_contains|is_empty\",\"value\":\"期望值\"}，不是数组；"
+                    + "② query_run 步骤用数字字段 \"queryId\"、workflow_start 步骤用数字字段 \"definitionId\"，不是 queryName/processId；"
+                    + "③ actors 是平的 {\"别名\": 平台用户ID}。完整字段契约见 app_selfcheck 工具描述"));
+        }
         return ResponseEntity.badRequest().body(ApiResponse.error("请求体格式错误: " + detail));
     }
 
