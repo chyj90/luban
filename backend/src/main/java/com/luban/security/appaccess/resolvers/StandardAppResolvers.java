@@ -26,11 +26,49 @@ public final class StandardAppResolvers {
     @Component
     public static class QueryResolver implements AppResourceResolver {
         private final QueryRepository repository;
-        public QueryResolver(QueryRepository repository) { this.repository = repository; }
-        @Override public String resourceType() { return "query"; }
-        @Override public Long applicationIdOf(Long id) {
-            return repository.findById(id).map(Query::getApplicationId).orElse(null);
+        private final com.luban.security.appaccess.AppAccessService appAccessService;
+        public QueryResolver(QueryRepository repository,
+                             com.luban.security.appaccess.AppAccessService appAccessService) {
+            this.repository = repository;
+            this.appAccessService = appAccessService;
         }
+        @Override public String resourceType() { return "query"; }
+
+        /**
+         * 领域模型：applicationId 永远是源应用；publishedGroupId 非空 = 已发布为平台资产。
+         * 已发布查询按平台级资源处理（照数据源模式），未发布查询保持应用级访问控制。
+         */
+        @Override public Long applicationIdOf(Long id) {
+            return repository.findById(id)
+                    .filter(q -> q.getPublishedGroupId() == null)
+                    .map(Query::getApplicationId)
+                    .orElse(null);
+        }
+
+        @Override public String platformPermission(AppAction action) {
+            return com.luban.constant.Permissions.CONNECT_SYSTEMS;
+        }
+
+        /**
+         * 平台发布查询：源应用成员按应用访问控制放行（编辑/删除/运行权不变）；
+         * 其他用户仅 RUN 且需所属系统的 APPROVED 系统权限（canUseSystemAsset）——
+         * 订阅方因此可以运行但永远删不掉源查询。
+         */
+        @Override public boolean userGranted(Long userId, Long resourceId, AppAction action) {
+            return repository.findById(resourceId)
+                    .filter(q -> q.getPublishedGroupId() != null)
+                    .map(q -> {
+                        try {
+                            appAccessService.assertAccess(userId, q.getApplicationId(), action);
+                            return true;
+                        } catch (Exception ignored) {
+                            return action == AppAction.RUN
+                                    && appAccessService.canUseSystemAsset(userId, q.getPublishedGroupId());
+                        }
+                    })
+                    .orElse(false);
+        }
+
         @Override public boolean resourceExists(Long id) { return repository.existsById(id); }
     }
 

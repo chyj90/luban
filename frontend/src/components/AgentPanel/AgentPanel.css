@@ -460,7 +460,33 @@
 .ap-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+/* 聚焦/关闭等中性图标按钮（红色警示仅用于清空按钮） */
+.ap-header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #8c9cab;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.ap-header-btn:hover {
+  background: #eef2f7;
+  color: #1f2329;
+}
+
+/* 关闭按钮 hover 红色警示，与「清空」一致的危险操作暗示 */
+.ap-header-btn-close:hover {
+  color: #ff4d4f;
 }
 
 .ap-clear-btn {
@@ -944,6 +970,51 @@
   overflow-y: auto;
   line-height: 1.4;
   font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+}
+
+/* 工具输出：Markdown 表格段渲染为原生表格（停靠栏加宽后可读性优先，超宽横向滚动） */
+.ap-tool-call-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-tool-call-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border, #e8edf3);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.ap-tool-call-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.ap-tool-call-table th,
+.ap-tool-call-table td {
+  padding: 6px 12px;
+  text-align: left;
+  white-space: nowrap;
+  color: var(--text-1, #1f2329);
+  border-bottom: 1px solid #eef2f7;
+}
+
+.ap-tool-call-table th {
+  background: #f7f9fb;
+  font-weight: 600;
+  color: var(--text-2, #5a6a7e);
+  position: sticky;
+  top: 0;
+}
+
+.ap-tool-call-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ap-tool-call-table tbody tr:hover td {
+  background: #f9fbfd;
 }
 
 /* 思考过程 */

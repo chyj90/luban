@@ -86,3 +86,6 @@ backend/config/*.pem
 # ====== PPTX 演示文稿 ======
 *.pptx
 pptx/
+
+# ====== AI 编辑器 ======
+.zcode/

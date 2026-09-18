@@ -12,13 +12,16 @@ import { ApiDetail } from '@/components/ApiDetail';
 import type { SelectedApi } from '@/components/ApiDetail';
 import { DatasourcePanel } from '@/components/DatasourcePanel';
 import { AgentPanel } from '@/components/AgentPanel';
+import { ResizablePanel } from '@/components/ResizablePanel';
+import { CommandPalette } from '@/components/CommandPalette';
+import type { CommandItem } from '@/components/CommandPalette';
 import { SelfTestDrawer } from '@/components/SelfTestDrawer';
 import ProcessList from '@/pages/workflow/ProcessList';
 import WorkflowDesigner from '@/pages/workflow/WorkflowDesigner';
 import FormList from '@/pages/workflow/FormList';
 import FormPreview from '@/pages/workflow/FormPreview';
 import InstanceDetail from '@/pages/workflow/InstanceDetail';
-import { listPages, listQueries, listApplicationTools, createCodePage } from '@/api';
+import { listPages, listAccessibleQueries, listApplicationTools, createCodePage } from '@/api';
 import type { Page } from '@/types/page';
 import type { Query, RunQueryResponse } from '@/types/query';
 import { SHOWCASE_PAGE } from '@/luban-ui/showcase';
@@ -48,6 +51,10 @@ export function AppEditorPage() {
   const user = useAuthStore((s) => s.user);
   const [pages, setPages] = useState<Page[]>([]);
   const [agentOpen, setAgentOpen] = useState(false);
+  // Agent 聚焦态：停靠栏占主内容区大部分宽度，适合阅读长报告/自检结果
+  const [agentFocused, setAgentFocused] = useState(false);
+  // ⌘K / Ctrl+K 命令面板：应用内搜索与模块跳转
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [selfTestOpen, setSelfTestOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('pages');
   const [selectedApi, setSelectedApi] = useState<SelectedApi | null>(null);
@@ -82,7 +89,7 @@ export function AppEditorPage() {
           const livePageId = usePageStore.getState().currentPage?.id;
           const keepCurrentPage = livePageId != null && pageList.some((p) => p.id === livePageId);
           Promise.all([
-            listQueries(Number(appId)),
+            listAccessibleQueries(Number(appId)),
             listApplicationTools(Number(appId)),
           ]).then(([queriesRes, toolsRes]) => {
             const tools = ((toolsRes.data as Record<string, unknown>[]) || [])
@@ -139,7 +146,7 @@ export function AppEditorPage() {
 
   const handleQuerySelect = useCallback((query: { id: number; name: string }) => {
     setEditingFile(null);
-    listQueries(Number(appId)).then((res) => {
+    listAccessibleQueries(Number(appId)).then((res) => {
       const found = res.data.find((q) => q.id === query.id);
       if (found) {
         setSelectedQuery(found);
@@ -154,12 +161,12 @@ export function AppEditorPage() {
   }, [handleQuerySelect]);
 
   const refreshQueries = useCallback(() => {
-    listQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
+    listAccessibleQueries(Number(appId)).then((res) => setQueries(res.data)).catch(() => setQueries([]));
   }, [appId]);
 
   const handleQueriesChange = useCallback(() => {
     setSidebarTab('queries');
-    listQueries(Number(appId)).then((res) => {
+    listAccessibleQueries(Number(appId)).then((res) => {
       setQueries(res.data);
     }).catch(() => setQueries([]));
   }, [appId]);
@@ -181,7 +188,7 @@ export function AppEditorPage() {
     setSelectedQuery(null);
     setQueryRunResult(undefined);
     setSidebarTab('pages');
-    listQueries(Number(appId)).then((res) => {
+    listAccessibleQueries(Number(appId)).then((res) => {
       setQueries(res.data);
       fetchPage(pageId);
     }).catch(() => {
@@ -216,6 +223,36 @@ export function AppEditorPage() {
 
   const selectedOrchId = orchView.view === 'edit' ? orchView.orchId : null;
 
+  const commandItems: CommandItem[] = [
+    { key: 'goto-pages', label: '页面', group: '跳转模块', action: () => handleSidebarTabChange('pages') },
+    { key: 'goto-queries', label: '查询', group: '跳转模块', action: () => handleSidebarTabChange('queries') },
+    { key: 'goto-apis', label: 'API', group: '跳转模块', action: () => handleSidebarTabChange('apis') },
+    { key: 'goto-workflow', label: '流程', group: '跳转模块', action: () => handleWorkflowNavigate({ view: 'processes' }) },
+    { key: 'goto-orch', label: '编排', group: '跳转模块', action: () => handleSidebarTabChange('orchestrations') },
+    { key: 'goto-ds', label: '数据源', group: '跳转模块', action: () => handleSidebarTabChange('datasources') },
+    ...pages.map((p) => ({
+      key: `page-${p.id}`,
+      label: p.name,
+      hint: '页面',
+      group: '页面',
+      action: () => handlePageChange(p.id),
+    })),
+    ...queries.map((q) => ({
+      key: `query-${q.id}`,
+      label: q.name,
+      hint: 'Query',
+      group: '查询',
+      action: () => handleQuerySelect({ id: q.id, name: q.name }),
+    })),
+    ...appTools.map((t) => ({
+      key: `api-${t.id}`,
+      label: t.name,
+      hint: 'API',
+      group: 'API 工具',
+      action: () => handleToolsChange(t.id),
+    })),
+  ];
+
   const handleSidebarTabChange = useCallback((tab: SidebarTab) => {
     setSidebarTab(tab);
     if (tab !== 'apis') {
@@ -228,7 +265,7 @@ export function AppEditorPage() {
       setOrchView({ view: 'list' });
     }
     if (tab === 'queries') {
-      listQueries(Number(appId)).then((res) => {
+      listAccessibleQueries(Number(appId)).then((res) => {
         setQueries(res.data);
         if (res.data.length > 0 && !selectedQuery) {
           setSelectedQuery(res.data[0]);
@@ -239,13 +276,35 @@ export function AppEditorPage() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && previewFullscreen) {
-        setPreviewFullscreen(false);
+      if (e.key === 'Escape') {
+        if (previewFullscreen) {
+          setPreviewFullscreen(false);
+        } else if (agentFocused) {
+          setAgentFocused(false);
+        }
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [previewFullscreen]);
+  }, [previewFullscreen, agentFocused]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // 顶栏「搜索」按钮入口（GlobalHeader 与编辑器分层解耦，走全局事件）
+  useEffect(() => {
+    const handler = () => setPaletteOpen(true);
+    window.addEventListener('luban:open-search', handler);
+    return () => window.removeEventListener('luban:open-search', handler);
+  }, []);
 
   useEffect(() => {
     setGlobalLoading(loading);
@@ -333,7 +392,14 @@ export function AppEditorPage() {
                     </svg>
                   </div>
                   <span className="orch-list-empty-text">暂无编排</span>
-                  <span className="orch-list-empty-hint">在左侧选择已有编排，或点击 + 新建编排</span>
+                  <span className="orch-list-empty-hint">将 Query、API、流程组合为新的 API</span>
+                  <button className="orch-list-empty-cta" onClick={handleOrchestrationCreate}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    新建编排
+                  </button>
                 </div>
               </div>
             )
@@ -459,7 +525,11 @@ export function AppEditorPage() {
                 } : null}
                 allPages={pages.map((p) => ({ id: p.id, name: p.name }))}
                 onNavigate={handlePageChange}
-                onEscape={() => setPreviewFullscreen(false)}
+                onEscape={() => {
+                  // 焦点在预览 iframe 内时，父页面收不到 keydown，靠 iframe 转发的 Esc 退出全屏/聚焦
+                  if (previewFullscreen) setPreviewFullscreen(false);
+                  else setAgentFocused(false);
+                }}
                 applicationId={Number(appId)}
                 appTools={appTools}
               />
@@ -495,11 +565,43 @@ export function AppEditorPage() {
             </div>
           )}
         </div>
+
+        {/* Agent 停靠侧栏：与预览并排，可拖拽调宽；保持挂载，关闭仅隐藏以保留会话状态 */}
+        {currentPage && (
+          <div
+            className={`app-editor-agent-dock ${agentOpen ? '' : 'app-editor-hidden'} ${agentFocused ? 'app-editor-agent-dock--focused' : ''}`}
+          >
+            <ResizablePanel
+              side="right"
+              defaultWidth={520}
+              minWidth={400}
+              maxWidth={960}
+              expanded={agentFocused}
+            >
+              <AgentPanel
+                appId={appId || ''}
+                currentPageId={currentPage.id}
+                currentPageName={currentPage.name}
+                onPagesChange={() => loadPages(currentPage?.id)}
+                onPageChange={handlePageChange}
+                onQuerySelect={handleQuerySelect}
+                onQueryRun={handleQueryRun}
+                onQueriesChange={handleQueriesChange}
+                onDatasourceChange={handleDatasourceChange}
+                onToolsChange={handleToolsChange}
+                onWorkflowNavigate={(v) => handleWorkflowNavigate(v as WorkflowView)}
+                onClose={() => setAgentOpen(false)}
+                focused={agentFocused}
+                onToggleFocus={() => setAgentFocused((v) => !v)}
+              />
+            </ResizablePanel>
+          </div>
+        )}
       </div>
 
       <button
-        className={`app-editor-agent-fab ${agentOpen ? 'active' : ''}`}
-        onClick={() => setAgentOpen(!agentOpen)}
+        className={`app-editor-agent-fab ${agentOpen ? 'app-editor-hidden' : ''}`}
+        onClick={() => setAgentOpen(true)}
         title="AI 助手"
       >
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -522,26 +624,11 @@ export function AppEditorPage() {
         />
       )}
 
-      {currentPage && (
-        <>
-          <div className={`app-editor-agent-backdrop ${agentOpen ? '' : 'app-editor-hidden'}`} onClick={() => setAgentOpen(false)} />
-          <div className={`app-editor-agent-overlay ${agentOpen ? '' : 'app-editor-hidden'}`}>
-            <AgentPanel
-              appId={appId || ''}
-              currentPageId={currentPage.id}
-              currentPageName={currentPage.name}
-              onPagesChange={() => loadPages(currentPage?.id)}
-              onPageChange={handlePageChange}
-              onQuerySelect={handleQuerySelect}
-              onQueryRun={handleQueryRun}
-              onQueriesChange={handleQueriesChange}
-              onDatasourceChange={handleDatasourceChange}
-              onToolsChange={handleToolsChange}
-              onWorkflowNavigate={(v) => handleWorkflowNavigate(v as WorkflowView)}
-            />
-          </div>
-        </>
-      )}
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        items={commandItems}
+      />
 
       {/* 全屏预览：通过 CSS 放大同一个预览面板（同一 iframe 实例），
           避免重挂 InteliPreview 导致 iframe/页面脚本重跑、定时器翻倍 */}

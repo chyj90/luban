@@ -44,12 +44,14 @@ export interface LLMCallOptions {
   messages: LLMMessage[];
   tools: ToolDef[];
   temperature: number;
+  /** 空闲超时（毫秒）：流式请求连续该时长收不到任何数据才中断。不是整请求墙钟——
+   *  大参数工具调用（整页代码/超大 JSON）可持续数分钟，只要流上还有数据就继续等 */
   timeout: number;
   signal?: AbortSignal;
 }
 
 export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> {
-  const { model, tools, temperature, timeout, signal } = options;
+  const { model, tools, temperature, signal } = options;
 
   const startTime = Date.now();
   const toolNames = tools.map((t) => t.function.name).join(', ');
@@ -74,12 +76,8 @@ export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> 
     resolved = true;
   };
 
-  const timeoutId = setTimeout(() => {
-    if (!resolved) {
-      streamError = new Error(`LLM 调用超时（${timeout / 1000}秒）`);
-      resolved = true;
-    }
-  }, timeout);
+  // 不另设整请求超时：底层流已带空闲超时（见 LLMCallOptions.timeout），这里再加
+  // 绝对上限会把持续输出但耗时很长的生成误杀
 
   if (signal) {
     signal.addEventListener('abort', () => {
@@ -91,7 +89,6 @@ export async function callLLMAPI(options: LLMCallOptions): Promise<LLMResponse> 
   }
 
   await collect();
-  clearTimeout(timeoutId);
 
   if (streamError) {
     if ((streamError as Error).message.includes('Cancelled')) {
@@ -353,12 +350,32 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
     xhr.setRequestHeader('Authorization', `Bearer ${token}`);
   }
 
-  xhr.timeout = timeout;
+  // 空闲超时（非整请求墙钟）：XHR 自带的 xhr.timeout 是从 send 起算的绝对上限，
+  // onprogress 收到数据不会重置它，会误杀持续输出的大参数生成（整页代码/超大 JSON）。
+  // 改为每次收到数据就重置计时器，只有连续 timeout 时长收不到任何字节才判超时
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (finished) return;
+      streamError = new Error(`LLM 调用超时（${Math.round(timeout / 1000)}秒无响应）`);
+      finished = true;
+      try { xhr.abort(); } catch { /* already aborted */ }
+      wake();
+    }, timeout);
+  };
+  const disarmIdleTimer = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
 
   if (signal) {
     signal.addEventListener('abort', () => {
       streamError = new Error('Cancelled');
       finished = true;
+      disarmIdleTimer();
       xhr.abort();
       wake();
     });
@@ -368,6 +385,7 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
   let currentData = '';
 
   xhr.onprogress = () => {
+    armIdleTimer();
     const fullText = xhr.responseText;
     const newText = fullText.slice(lastProcessedIndex);
     lastProcessedIndex = fullText.length;
@@ -394,6 +412,7 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
   };
 
   xhr.onloadend = () => {
+    disarmIdleTimer();
     if (lineBuffer.trim()) {
       const trimmed = lineBuffer.replace(/\r$/, '');
       if (trimmed.startsWith('event: ')) {
@@ -431,16 +450,12 @@ export async function* callLLMAPIStream(options: LLMCallOptions): AsyncGenerator
   xhr.onerror = () => {
     streamError = new Error('网络请求失败');
     finished = true;
-    wake();
-  };
-
-  xhr.ontimeout = () => {
-    streamError = new Error(`LLM 调用超时（${timeout / 1000}秒）`);
-    finished = true;
+    disarmIdleTimer();
     wake();
   };
 
   xhr.send(requestBody);
+  armIdleTimer();
 
   while (true) {
     while (pending.length > 0) {

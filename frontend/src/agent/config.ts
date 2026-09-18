@@ -3,6 +3,8 @@ import type { ProviderType } from '@/types/agent';
 export const AGENT_CONFIG = {
   maxIterations: 100,
   temperature: 0.3,
+  // 空闲超时（毫秒）：LLM 流式请求连续该时长无任何数据才判超时，不是整请求上限。
+  // 大参数工具调用（整页代码/超大 JSON）可持续数分钟，持续输出不会被中断
   timeout: 300000,
 } as const;
 

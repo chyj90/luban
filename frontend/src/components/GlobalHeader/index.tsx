@@ -119,6 +119,21 @@ export function GlobalHeader() {
         )}
       </div>
       <div className="global-header-right">
+        {/* 应用内搜索入口：点击派发全局事件，由应用编辑器监听打开 ⌘K 命令面板 */}
+        {isInsideApp && (
+          <button
+            className="global-header-search"
+            onClick={() => window.dispatchEvent(new CustomEvent('luban:open-search'))}
+            title="搜索页面、查询、API (⌘K)"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span>搜索</span>
+            <kbd>⌘K</kbd>
+          </button>
+        )}
         {user && (
           <div className="global-header-user" ref={menuRef}>
             <div

@@ -2,24 +2,25 @@
   display: flex;
   height: 100%;
   background: #fff;
-  min-width: 340px;
+  min-width: 348px;
   flex-shrink: 0;
-  border-right: 1px solid #e8edf3;
+  border-right: 1px solid var(--border, #e8edf3);
   transition: min-width 0.2s ease;
 }
 
 .editor-sidebar--collapsed {
-  min-width: 48px;
+  min-width: 56px;
 }
 
+/* 深色导航 rail：与白色二级面板形成明暗层次 */
 .editor-sidebar-tabs {
   display: flex;
   flex-direction: column;
-  width: 48px;
-  border-right: 1px solid #e8edf3;
-  background: #fafafa;
-  padding: 8px 0;
-  gap: 4px;
+  width: 56px;
+  border-right: 1px solid var(--rail-border, #0f1720);
+  background: var(--rail-bg, #1c2733);
+  padding: 10px 0 8px;
+  gap: 2px;
 }
 
 .editor-sidebar-tab {
@@ -27,26 +28,29 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 8px 4px;
+  gap: 3px;
+  padding: 9px 4px;
   border: none;
   background: none;
   cursor: pointer;
-  color: #5a6a7e;
+  color: var(--rail-text, #93a3b5);
   font-size: 11px;
-  border-radius: 6px;
-  margin: 0 4px;
+  border-radius: 8px;
+  margin: 0 6px;
+  position: relative;
   transition: all 0.15s;
 }
 
 .editor-sidebar-tab:hover {
-  background: #e8edf3;
-  color: #1f1f1f;
+  background: var(--rail-hover, rgba(255, 255, 255, 0.08));
+  color: var(--rail-text-active, #fff);
 }
 
 .editor-sidebar-tab.active {
-  background: #e6f4ff;
-  color: #1677ff;
+  background: var(--brand, #1677ff);
+  color: var(--rail-text-active, #fff);
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(22, 119, 255, 0.4);
 }
 
 .editor-sidebar-tab-bottom {
@@ -201,6 +205,19 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 8px;
+}
+
+/* 列表数量徽标（页面/查询/编排/API 列表头） */
+.editor-sidebar-count {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #eef2f7;
+  color: var(--text-2, #5a6a7e);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  vertical-align: 1px;
 }
 
 .editor-sidebar-add-btn {

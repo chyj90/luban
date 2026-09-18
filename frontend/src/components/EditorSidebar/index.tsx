@@ -245,7 +245,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
         {activeTab === 'pages' && (
           <div className="editor-sidebar-section">
             <div className="editor-sidebar-section-header">
-              <span>页面列表</span>
+              <span>页面列表<span className="editor-sidebar-count">{pages.length}</span></span>
               <button
                 className="editor-sidebar-add-btn"
                 onClick={() => setShowNewPage(!showNewPage)}
@@ -401,7 +401,7 @@ export function EditorSidebar({ appId, currentPageId, pages, selectedQuery, acti
         {activeTab === 'orchestrations' && (
           <div className="editor-sidebar-section">
             <div className="editor-sidebar-section-header">
-              <span>编排</span>
+              <span>编排<span className="editor-sidebar-count">{orchItems.length}</span></span>
               <button
                 className="editor-sidebar-add-btn"
                 onClick={() => onOrchestrationCreate?.()}

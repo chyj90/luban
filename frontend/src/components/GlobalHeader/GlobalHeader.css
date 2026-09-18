@@ -93,6 +93,38 @@
   gap: 8px;
 }
 
+/* 应用内搜索入口（触发 ⌘K 命令面板） */
+.global-header-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--border, #e8edf3);
+  border-radius: var(--radius-sm, 6px);
+  background: #f7f9fb;
+  color: var(--text-3, #8c9cab);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.global-header-search:hover {
+  border-color: var(--brand, #1677ff);
+  color: var(--brand, #1677ff);
+  background: #fff;
+}
+
+.global-header-search kbd {
+  padding: 0 4px;
+  border: 1px solid var(--border, #e8edf3);
+  border-radius: 3px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 16px;
+}
+
 .global-header-user {
   position: relative;
   display: flex;

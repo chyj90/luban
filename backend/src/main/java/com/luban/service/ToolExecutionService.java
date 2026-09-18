@@ -49,7 +49,7 @@ public class ToolExecutionService {
 
     /**
      * 平台工具统一分发（Agent 调用 / 调试端点 / MCP 网关共用）。
-     * ORCHESTRATION 类型不支持，调用方须先分流到 OrchestrationToolInvoker。
+     * ORCHESTRATION / QUERY 类型不支持，调用方须先分流到编排通道 / 查询外调与漏斗通道。
      */
     public String executeToolDefinition(ToolDefinition tool, Map<String, Object> arguments, String callerInfo) {
         try {
@@ -59,6 +59,8 @@ public class ToolExecutionService {
                 case ALGORITHM -> executeAlgorithm(tool, arguments);
                 case ORCHESTRATION -> throw new IllegalArgumentException(
                         "ORCHESTRATION 类型工具请经编排通道调用");
+                case QUERY -> throw new IllegalArgumentException(
+                        "QUERY 类型工具请经查询通道调用（漏斗 QUERY 目标 / /public/queries）");
             };
         } catch (Exception e) {
             log.error("Tool execution failed: {}", tool.getName(), e);

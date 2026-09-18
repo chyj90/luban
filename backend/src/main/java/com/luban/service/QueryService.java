@@ -4,8 +4,12 @@ import com.luban.dto.CreateQueryRequest;
 import com.luban.dto.RunQueryRequest;
 import com.luban.dto.RunQueryResponse;
 import com.luban.dto.UpdateQueryRequest;
+import com.luban.constant.Permissions;
+import com.luban.constant.ToolType;
 import com.luban.entity.Datasource;
 import com.luban.entity.Query;
+import com.luban.entity.SystemPermission;
+import com.luban.entity.ToolDefinition;
 import com.luban.entity.User;
 import com.luban.entity.ApiKey;
 import com.luban.entity.ApiKeyDatasource;
@@ -15,6 +19,8 @@ import com.luban.repository.ApiKeyRepository;
 import com.luban.repository.ApplicationRepository;
 import com.luban.repository.DatasourceRepository;
 import com.luban.repository.QueryRepository;
+import com.luban.repository.SystemPermissionRepository;
+import com.luban.repository.ToolDefinitionRepository;
 import com.luban.repository.UserDeptRepository;
 import com.luban.repository.UserRepository;
 import com.luban.util.SqlUtils;
@@ -24,6 +30,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -131,6 +138,8 @@ public class QueryService {
     private final ObjectMapper objectMapper;
     private final DatasourceService datasourceService;
     private final AppAccessService appAccessService;
+    private final ToolDefinitionRepository toolDefinitionRepository;
+    private final SystemPermissionRepository systemPermissionRepository;
 
     public QueryService(QueryRepository queryRepository,
                         DatasourceRepository datasourceRepository,
@@ -141,7 +150,9 @@ public class QueryService {
                         UserRepository userRepository,
                         ObjectMapper objectMapper,
                         DatasourceService datasourceService,
-                        AppAccessService appAccessService) {
+                        AppAccessService appAccessService,
+                        ToolDefinitionRepository toolDefinitionRepository,
+                        SystemPermissionRepository systemPermissionRepository) {
         this.queryRepository = queryRepository;
         this.datasourceRepository = datasourceRepository;
         this.applicationRepository = applicationRepository;
@@ -152,6 +163,8 @@ public class QueryService {
         this.objectMapper = objectMapper;
         this.datasourceService = datasourceService;
         this.appAccessService = appAccessService;
+        this.toolDefinitionRepository = toolDefinitionRepository;
+        this.systemPermissionRepository = systemPermissionRepository;
     }
 
     public List<Map<String, Object>> listByApplication(Long applicationId) {
@@ -407,13 +420,167 @@ public class QueryService {
         }
         if (request.getParams() != null) query.setParams(toJson(request.getParams()));
         query = queryRepository.save(query);
+        // 已发布查询的名称/参数变化同步平台工具定义（body 经引用即时生效，无需重发布）
+        if (query.getPublishedGroupId() != null) {
+            syncPublishedTool(query);
+        }
         Map<String, Object> result = buildQueryMap(query);
         if (tableWarning != null) result.put("validationWarning", tableWarning);
         return result;
     }
 
     public void delete(Long id) {
+        // 已发布的查询先摘除平台身份（工具定义），避免外调目录与订阅视图悬挂
+        deletePublishedTool(id);
         queryRepository.deleteById(id);
+    }
+
+    // ==================== 平台发布（Query 作为第三类平台资产） ====================
+
+    /**
+     * 发布：挂到目标系统 + 注册 QUERY 型 ToolDefinition（照编排发布注册工具的同款模式）。
+     * 发布不复制查询行——平台身份只是 publishedGroupId 标记 + 工具定义里的 queryId 引用，
+     * 发布方修改 SQL 平台侧即时生效；取消发布/删除查询时同步清理工具定义。
+     * 应用侧使用按系统权限（SystemPermission）授权，KEY 侧订阅走 api_key_tool，与平台工具同模型。
+     */
+    @Transactional
+    public Map<String, Object> publish(Long id, Long groupId, Long userId) {
+        Query query = queryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
+        if (!appAccessService.canUseSystemAsset(userId, groupId)) {
+            throw new IllegalArgumentException("无权向该系统发布查询：请先取得所属系统的数据访问权限");
+        }
+        String toolName = publishedToolName(id);
+        ToolDefinition tool = toolDefinitionRepository.findAll().stream()
+                .filter(t -> toolName.equals(t.getName()))
+                .findFirst().orElseGet(() -> {
+                    ToolDefinition t = new ToolDefinition();
+                    t.setName(toolName);
+                    t.setScope("PLATFORM");
+                    t.setToolType(ToolType.QUERY);
+                    t.setConfig(toJson(Map.of("queryId", id)));
+                    return t;
+                });
+        tool.setGroupId(groupId);
+        tool.setDisplayName(query.getName());
+        tool.setDescription("数据查询: " + query.getName()
+                + (query.getDescription() == null || query.getDescription().isBlank()
+                        ? "" : " — " + query.getDescription()));
+        tool.setInputSchema(toJson(inputSchemaFromParams(query)));
+        toolDefinitionRepository.save(tool);
+
+        query.setPublishedGroupId(groupId);
+        query = queryRepository.save(query);
+        return buildQueryMap(query);
+    }
+
+    /** 取消发布：清发布标记 + 删除 QUERY 型工具定义 */
+    @Transactional
+    public void unpublish(Long id) {
+        Query query = queryRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("查询不存在"));
+        deletePublishedTool(id);
+        query.setPublishedGroupId(null);
+        queryRepository.save(query);
+    }
+
+    private String publishedToolName(Long queryId) {
+        return "qry_" + queryId;
+    }
+
+    private void deletePublishedTool(Long queryId) {
+        String toolName = publishedToolName(queryId);
+        toolDefinitionRepository.findAll().stream()
+                .filter(t -> toolName.equals(t.getName()))
+                .findFirst()
+                .ifPresent(toolDefinitionRepository::delete);
+    }
+
+    private void syncPublishedTool(Query query) {
+        String toolName = publishedToolName(query.getId());
+        toolDefinitionRepository.findAll().stream()
+                .filter(t -> toolName.equals(t.getName()))
+                .findFirst()
+                .ifPresent(tool -> {
+                    tool.setDisplayName(query.getName());
+                    tool.setInputSchema(toJson(inputSchemaFromParams(query)));
+                    toolDefinitionRepository.save(tool);
+                });
+    }
+
+    /** 从查询参数定义推导工具入参 schema（key=参数名，value 含 required/type 等声明） */
+    private Map<String, Object> inputSchemaFromParams(Query query) {
+        Map<String, Object> defs = fromJsonMap(query.getParams());
+        Map<String, Object> properties = new LinkedHashMap<>();
+        List<String> required = new ArrayList<>();
+        if (defs != null) {
+            for (Map.Entry<String, Object> entry : defs.entrySet()) {
+                Map<?, ?> def = entry.getValue() instanceof Map<?, ?> m ? m : Map.of();
+                Map<String, Object> prop = new LinkedHashMap<>();
+                Object type = def.get("type");
+                prop.put("type", type != null ? String.valueOf(type) : "string");
+                Object desc = def.get("description");
+                if (desc != null) prop.put("description", desc);
+                properties.put(entry.getKey(), prop);
+                Object req = def.get("required");
+                if (Boolean.TRUE.equals(req) || "true".equalsIgnoreCase(String.valueOf(req))) {
+                    required.add(entry.getKey());
+                }
+            }
+        }
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        if (!required.isEmpty()) schema.put("required", required);
+        return schema;
+    }
+
+    /**
+     * 一个平台一套 · 应用侧视图：应用自有查询 + 已授权系统的平台发布查询。
+     * 平台查询按"所属系统的系统权限（SystemPermission）"授权：APPROVED 可运行；
+     * includePending 时附带申请中的（accessStatus=PENDING，不可运行）。
+     * 平台管理员（connect:systems / 超管）可见全部。
+     */
+    public List<Map<String, Object>> listAccessible(Long applicationId, Long userId, boolean includePending) {
+        Set<Long> approvedGroups = new HashSet<>();
+        Set<Long> pendingGroups = new HashSet<>();
+        for (SystemPermission p : systemPermissionRepository.findByUserId(userId)) {
+            if ("APPROVED".equals(p.getStatus())) approvedGroups.add(p.getGroupId());
+            else if ("PENDING".equals(p.getStatus())) pendingGroups.add(p.getGroupId());
+        }
+        boolean platformAdmin = appAccessService.isSuperAdmin(userId);
+        if (!platformAdmin) {
+            try {
+                appAccessService.assertPlatformPermission(userId, Permissions.CONNECT_SYSTEMS);
+                platformAdmin = true;
+            } catch (Exception ignored) {
+            }
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Query q : queryRepository.findByPublishedGroupIdIsNotNull()) {
+            // 发布方应用自己的已发布查询在下方自有分段出现，避免重复
+            if (applicationId != null && applicationId.equals(q.getApplicationId())) continue;
+            Long groupId = q.getPublishedGroupId();
+            String accessStatus;
+            if (platformAdmin || approvedGroups.contains(groupId)) {
+                accessStatus = "APPROVED";
+            } else if (includePending && pendingGroups.contains(groupId)) {
+                accessStatus = "PENDING";
+            } else {
+                continue;
+            }
+            Map<String, Object> map = buildQueryMap(q);
+            map.put("accessStatus", accessStatus);
+            result.add(map);
+        }
+
+        if (applicationId != null) {
+            for (Query q : queryRepository.findByApplicationId(applicationId)) {
+                result.add(buildQueryMap(q));
+            }
+        }
+        return result;
     }
 
     @SuppressWarnings("unchecked")
@@ -1164,6 +1331,7 @@ public class QueryService {
         map.put("params", fromJsonMap(q.getParams()));
         map.put("description", q.getDescription());
         map.put("source", q.getSource());
+        map.put("publishedGroupId", q.getPublishedGroupId());
         map.put("createdAt", q.getCreatedAt());
         return map;
     }

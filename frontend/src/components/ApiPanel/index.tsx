@@ -228,7 +228,7 @@ export function ApiPanel({ applicationId, selectedApi, onSelect, onToolsChange, 
   return (
     <div className="api-panel">
       <div className="api-panel-header">
-        <span className="api-panel-title">API</span>
+        <span className="api-panel-title">API<span className="editor-sidebar-count">{appTools.length}</span></span>
         <div style={{ display: 'flex', gap: 6 }}>
           <button className="api-add-btn" onClick={() => setApplyModalOpen(true)} title="申请通过后，该系统下的平台 API 可在本应用中调用">
             申请平台 API

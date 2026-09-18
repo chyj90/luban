@@ -93,6 +93,85 @@ function agentColor(name: string): string {
   return `hsl(${hue}, 35%, 45%)`;
 }
 
+interface ToolResultTable {
+  type: 'table';
+  headers: string[];
+  rows: string[][];
+}
+
+interface ToolResultTextSeg {
+  type: 'text';
+  content: string;
+}
+
+type ToolResultSegment = ToolResultTable | ToolResultTextSeg;
+
+const isTableLine = (s: string) => s.startsWith('|') && s.endsWith('|');
+
+/** 解析工具输出里的 Markdown 表格段：表格渲染为原生 table（可横向滚动），其余保持文本 */
+function parseResultSegments(text: string): ToolResultSegment[] {
+  const lines = text.split('\n');
+  const segments: ToolResultSegment[] = [];
+  let textBuf: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const sep = (lines[i + 1] ?? '').trim();
+    if (isTableLine(line.trim()) && isTableLine(sep) && /^[\s|:-]+$/.test(sep)) {
+      const headers = line.trim().slice(1, -1).split('|').map((c) => c.trim());
+      const rows: string[][] = [];
+      i += 2;
+      while (i < lines.length && isTableLine(lines[i].trim())) {
+        rows.push(lines[i].trim().slice(1, -1).split('|').map((c) => c.trim()));
+        i++;
+      }
+      if (textBuf.length > 0) {
+        segments.push({ type: 'text', content: textBuf.join('\n') });
+        textBuf = [];
+      }
+      segments.push({ type: 'table', headers, rows });
+      continue;
+    }
+    textBuf.push(line);
+    i++;
+  }
+  if (textBuf.length > 0) segments.push({ type: 'text', content: textBuf.join('\n') });
+  return segments;
+}
+
+/** 工具输出块：无表格时保持 pre 文本；含 Markdown 表格时渲染原生表格 */
+function ToolResultBlock({ text }: { text: string }) {
+  const segments = useMemo(() => parseResultSegments(text), [text]);
+  if (segments.every((s) => s.type === 'text')) {
+    return <pre className="ap-tool-call-pre">{text}</pre>;
+  }
+  return (
+    <div className="ap-tool-call-result">
+      {segments.map((seg, idx) =>
+        seg.type === 'table' ? (
+          <div key={idx} className="ap-tool-call-table-wrap">
+            <table className="ap-tool-call-table">
+              <thead>
+                <tr>{seg.headers.map((h, i) => <th key={i}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {seg.rows.map((row, ri) => (
+                  <tr key={ri}>
+                    {seg.headers.map((_, ci) => <td key={ci}>{row[ci] ?? ''}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <pre key={idx} className="ap-tool-call-pre">{seg.content}</pre>
+        ),
+      )}
+    </div>
+  );
+}
+
 interface AgentPanelProps {
   appId: string;
   currentPageId: number;
@@ -105,6 +184,11 @@ interface AgentPanelProps {
   onDatasourceChange?: () => void;
   onToolsChange?: (apiId?: number) => void;
   onWorkflowNavigate?: (view: import('@/types/agent').WorkflowNavigateView) => void;
+  /** 关闭停靠栏（由宿主布局提供） */
+  onClose?: () => void;
+  /** 聚焦态：面板占主内容区大部分宽度 */
+  focused?: boolean;
+  onToggleFocus?: () => void;
 }
 
 
@@ -187,7 +271,7 @@ const MessageItem = memo(function MessageItem({ msg }: { msg: Message }) {
               {tc.result && (
                 <div className="ap-tool-call-section">
                   <div className="ap-tool-call-label">输出</div>
-                  <pre className="ap-tool-call-pre">{formatTableResult(tc.result)}</pre>
+                  <ToolResultBlock text={tc.result} />
                 </div>
               )}
             </div>
@@ -295,7 +379,7 @@ function formatExport(messages: import('@/types/agent').Message[]): string {
   return lines.join('\n');
 }
 
-export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate }: AgentPanelProps) {
+export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChange, onPageChange, onQuerySelect, onQueryRun, onQueriesChange, onDatasourceChange, onToolsChange, onWorkflowNavigate, onClose, focused, onToggleFocus }: AgentPanelProps) {
   const [input, setInput] = useState('');
   const [allPages, setAllPages] = useState<Array<{ id: number; name: string }>>([]);
   const [showMentions, setShowMentions] = useState(false);
@@ -959,6 +1043,33 @@ export function AgentPanel({ appId, currentPageId, currentPageName, onPagesChang
               </div>
             )}
           </div>
+          {onToggleFocus && (
+            <button className="ap-header-btn" onClick={onToggleFocus} title={focused ? '退出聚焦 (Esc)' : '聚焦模式：加宽面板阅读长内容'}>
+              {focused ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="9 3 3 3 3 9" />
+                  <polyline points="15 21 21 21 21 15" />
+                  <line x1="10" y1="14" x2="3" y2="21" />
+                  <line x1="21" y1="3" x2="14" y2="10" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 3 21 3 21 9" />
+                  <polyline points="9 21 3 21 3 15" />
+                  <line x1="14" y1="10" x2="21" y2="3" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              )}
+            </button>
+          )}
+          {onClose && (
+            <button className="ap-header-btn ap-header-btn-close" onClick={onClose} title="关闭">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 

@@ -7,7 +7,6 @@ import type {
   ToolTestResult,
   McpServer,
   McpToolDiscovery,
-  SystemPermission,
   SystemWithPerm,
   PendingApproval,
   AgentConfig,
@@ -107,10 +106,6 @@ export function applySystemPermission(groupId: number, reason: string) {
   return post<Record<string, unknown>>('/permissions/apply', { groupId, reason });
 }
 
-export function listMyPermissions() {
-  return get<SystemPermission[]>('/permissions/my');
-}
-
 export function listPendingApprovals() {
   return get<PendingApproval[]>('/permissions/pending');
 }
@@ -187,19 +182,6 @@ export function deletePermanentApiKey(id: number) {
 
 export function restoreApiKey(id: number) {
   return post<unknown>(`/api-keys/${id}/restore`);
-}
-
-// Datasource permissions
-export function listKeyDatasources(apiKeyId: number) {
-  return get<unknown[]>(`/api-keys/${apiKeyId}/datasources`);
-}
-
-export function listAvailableDatasources(groupId: number) {
-  return get<unknown[]>(`/api-keys/available-datasources?groupId=${groupId}`);
-}
-
-export function requestDatasourcePermission(apiKeyId: number, datasourceId: number) {
-  return post<unknown>(`/api-keys/${apiKeyId}/request-datasource`, { datasourceId });
 }
 
 /**

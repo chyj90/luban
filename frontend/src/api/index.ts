@@ -2,7 +2,7 @@ export { login, register, logout, getMe } from './auth';
 export { listApplications, createApplication, updateApplication, deleteApplication, getApplication } from './application';
 export { listPages, createCodePage, getCodePage, updateCodePage, deletePage, renamePage, getRuntimePageCode } from './page';
 export { listDatasources, listUnifiedDatasources, createDatasource, updateDatasource, testDatasource, getDatasourceStructure, deleteDatasource } from './datasource';
-export { listQueries, listInsightSavedQueries, createQuery, updateQuery, deleteQuery, runQuery, executeSql, runRuntimeQuery } from './query';
+export { listQueries, listAccessibleQueries, publishQuery, unpublishQuery, listInsightSavedQueries, createQuery, updateQuery, deleteQuery, runQuery, executeSql, runRuntimeQuery } from './query';
 export { listJsFunctions, createJsFunction } from './jsFunction';
 export { get, post, put, del, axiosInstance } from './client';
 export { listUsers, listRoles, listDepartments, updateUserRole, updateUserDepartment, updateUserLeader, createRole, updateRole, deleteRole, createDepartment, updateDepartment, deleteDepartment, downloadUserTemplate, importUsers, getMyPermissions, listPermissions, getRolePermissions, updateRolePermissions, getRoleUsers, updateRoleUsers, listSimpleUsers, listDepartmentMembers } from './user';
@@ -12,7 +12,7 @@ export {
   searchTools, getToolSchema, testTool, listSystems,
   listMcpServers, createMcpServer, updateMcpServer, deleteMcpServer,
   testMcpConnection, discoverMcpTools, syncMcpTools,
-  getSystemPermissions, applySystemPermission, listMyPermissions,
+  getSystemPermissions, applySystemPermission,
   listPendingApprovals, approvePermission, rejectPermission,
   getAgentConfig, updateAgentConfig,
   parseSwagger, batchImportSwagger,

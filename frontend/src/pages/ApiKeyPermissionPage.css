@@ -62,6 +62,12 @@
   font-weight: 500;
 }
 
+.perm-page-subtitle {
+  font-size: 12px;
+  color: #999;
+  margin-left: 4px;
+}
+
 .perm-page-submit {
   display: flex;
   align-items: center;

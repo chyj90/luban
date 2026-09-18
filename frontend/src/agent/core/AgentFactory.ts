@@ -21,7 +21,7 @@ import type { ChatRouter } from './chatRouter';
 import type { IStoreReader } from './ports';
 import { buildAttachmentInjection } from './attachmentInjection';
 import { buildAnalysisPrompt, buildExecutionPrompt, type PromptBuildContext } from './promptBuilder';
-import { createKernelRuntime } from '../kernel/runtime';
+import { createKernelRuntime, toolArgsKey } from '../kernel/runtime';
 import { createPlanPolicy } from '../kernel/planPolicy';
 import { describeInputRequest, type SessionEvent } from '../kernel/events';
 import { createSessionState, type SessionState } from '../kernel/session';
@@ -265,6 +265,29 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
     updateMessage(assistantMsgId, { toolCalls: batchToolCalls });
   };
 
+  // callId → 参数指纹：委派链路的确认重执行会新建 executor/callId，历史"待确认"标签
+  // 无法靠 callId 原地复活，只能按 name+参数指纹 关联翻转
+  const callArgsKeyById = new Map<string, string>();
+
+  /** 把同名同参的历史 blocked 标签翻转为已完成（委派链路确认后子会话用新 callId 重跑，
+   *  旧的拦截记录按参数指纹关联翻转，用户确认后同一条"待确认"显示为已执行）。
+   *  仅处理 blocked——error 是真实失败历史，不篡改 */
+  const settleStaleBlockedCalls = (toolName: string, argsKey: string, result: string) => {
+    const affected = storeReader.getMessages().filter((m) =>
+      m.agentId === agentIdFinal
+      && m.toolCalls?.some((tc) => tc.status === 'blocked' && tc.name === toolName && toolArgsKey(tc.arguments || {}) === argsKey),
+    );
+    for (const msg of affected) {
+      updateMessage(msg.id, {
+        toolCalls: msg.toolCalls!.map((tc) =>
+          tc.status === 'blocked' && tc.name === toolName && toolArgsKey(tc.arguments || {}) === argsKey
+            ? { ...tc, status: 'done' as const, result }
+            : tc,
+        ),
+      });
+    }
+  };
+
   const onEvent = (event: SessionEvent) => {
     switch (event.type) {
       case 'llm.request': {
@@ -326,6 +349,7 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
       case 'tool.call.started': {
         flushAssistantBatch();
+        callArgsKeyById.set(event.callId, toolArgsKey(event.args));
         // 确认门挂起恢复后，内核会对同一 callId 二次 started（blocked → running 精确重执行）：
         // 必须原地复活已有标签，追加会产生"失败 + 执行中"两个重复标签
         if (batchToolCalls?.some((tc) => tc.id === event.callId)) {
@@ -347,6 +371,11 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
           status: event.ok ? 'done' : 'error',
           result: event.message,
         });
+        // 同参数的历史"待确认"标签随本次成功一并翻转（委派链路确认重执行走新 callId）
+        if (event.ok) {
+          const argsKey = callArgsKeyById.get(event.callId);
+          if (argsKey) settleStaleBlockedCalls(event.name, argsKey, event.message);
+        }
         break;
       }
 
@@ -391,7 +420,10 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
             agentIcon: icon,
           });
         }
-        setStatus('completed');
+        // 委派子智能体的回合终态不代表主 run 结束：delegate_query 仍在父内核里阻塞。
+        // 子回合结束时覆盖全局 status，会让"停止"按钮闪回"发送"，直到父会话下一个
+        // delta 才恢复（子→主交接空档）；终态一律由主会话自己的事件落账
+        if (!isDelegated) setStatus('completed');
         setPendingInput?.(null);
         break;
       }
@@ -434,15 +466,20 @@ export async function createAgent(options: AgentFactoryOptions): Promise<AgentEx
 
       case 'turn.failed': {
         clearStreamingPlaceholder();
-        setError(event.error);
-        setStatus('error');
+        // 委派子智能体的失败由 delegate_query 捕获并回传主智能体处理，错误横幅与
+        // 终态由主会话事件驱动——子会话直接写全局会把主 run 的按钮状态打断
+        if (!isDelegated) {
+          setError(event.error);
+          setStatus('error');
+        }
         setPendingInput?.(null);
         break;
       }
 
       case 'turn.cancelled': {
         clearStreamingPlaceholder();
-        setStatus('cancelled');
+        // 用户停止会同时取消所有 executor（含父子），主会话事件负责落终态
+        if (!isDelegated) setStatus('cancelled');
         setPendingInput?.(null);
         break;
       }
@@ -612,9 +649,12 @@ ${pageList}`;
         runStartLog('回合被取消', '');
         return;
       }
-      setError((err as Error).message);
-      setStreaming(false);
-      setStatus('error');
+      // 委派子会话的异常由 delegate 工具捕获并回传主智能体（同 turn.failed 分支的口径）
+      if (!isDelegated) {
+        setError((err as Error).message);
+        setStreaming(false);
+        setStatus('error');
+      }
     }
   }
 

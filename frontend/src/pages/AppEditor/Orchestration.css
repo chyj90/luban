@@ -663,6 +663,26 @@
   color: #8c9cab;
 }
 
+.orch-list-empty-cta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--brand, #1677ff);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.orch-list-empty-cta:hover {
+  background: var(--brand-hover, #4096ff);
+  color: #fff;
+}
+
 /* ---- 右下角浮动提示卡片 ---- */
 .orch-toasts {
   position: fixed;

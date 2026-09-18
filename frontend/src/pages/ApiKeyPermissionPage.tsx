@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Check, Search, ChevronLeft, ChevronRight } from 'lucide-react';
-import { listToolGroups, listToolDefinitions, listKeyTools, requestToolPermissions, listKeyDatasources, listAvailableDatasources, requestDatasourcePermission, fetchToolTypes } from '@/api/tool';
+import { listToolGroups, listToolDefinitions, listKeyTools, requestToolPermissions, fetchToolTypes } from '@/api/tool';
 import { listApiKeys, listAllApplicationTools } from '@/api/tool';
 import { useToastStore } from '@/stores/toastStore';
 import { useConfirmStore } from '@/stores/confirmStore';
@@ -14,18 +14,6 @@ interface ApiKeyItem {
 }
 
 interface ToolWithStatus extends ToolDefinition {
-  permissionStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
-}
-
-interface DatasourceItem {
-  id: number;
-  name: string;
-  type: string;
-  status: string;
-  description?: string;
-}
-
-interface DatasourceWithStatus extends DatasourceItem {
   permissionStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
 }
 
@@ -69,14 +57,7 @@ export default function ApiKeyPermissionPage() {
   const [keyToolStatuses, setKeyToolStatuses] = useState<Map<number, string>>(new Map());
   const PAGE_SIZE = 20;
 
-  const [activeTab, setActiveTab] = useState<'tools' | 'datasources' | 'apptools'>('tools');
-  const [datasources, setDatasources] = useState<DatasourceWithStatus[]>([]);
-  const [selectedDsIds, setSelectedDsIds] = useState<Set<number>>(new Set());
-  const [dsSearch, setDsSearch] = useState('');
-  const [dsPage, setDsPage] = useState(1);
-  const [dsLoading, setDsLoading] = useState(false);
-  const [keyDsStatuses, setKeyDsStatuses] = useState<Map<number, string>>(new Map());
-  const [activeDsGroupId, setActiveDsGroupId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<'tools' | 'apptools'>('tools');
 
   // 应用工具（编排、HTTP等）按应用折叠，服务端分页
   const [appGroups, setAppGroups] = useState<AppGroup[]>([]);
@@ -152,33 +133,6 @@ export default function ApiKeyPermissionPage() {
   useEffect(() => {
     setPage(1);
   }, [activeGroupId, search]);
-
-  const fetchDatasources = useCallback(async (groupId: number, statuses?: Map<number, string>) => {
-    const sm = statuses || keyDsStatuses;
-    setDsLoading(true);
-    try {
-      const [allRes, keyRes] = await Promise.all([
-        listAvailableDatasources(groupId),
-        listKeyDatasources(Number(keyId)),
-      ]);
-      const all = (allRes.data as DatasourceItem[]) || [];
-      const keyList = (keyRes.data as { datasourceId: number; status: string }[]) || [];
-      const ksm = new Map<number, string>();
-      keyList.forEach((item) => ksm.set(item.datasourceId, item.status));
-      setKeyDsStatuses(ksm);
-
-      const withStatus: DatasourceWithStatus[] = all.map((ds) => ({
-        ...ds,
-        permissionStatus: ((sm.get(ds.id) || ksm.get(ds.id) || 'NONE') as DatasourceWithStatus['permissionStatus']),
-      }));
-      setDatasources(withStatus);
-    } catch {
-      toast('加载数据源失败', 'error');
-    } finally {
-      setDsLoading(false);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyId, toast]);
 
   const fetchAppTools = useCallback(async (pg: number, statuses?: Map<number, string>) => {
     const sm = statuses || keyToolStatuses;
@@ -258,20 +212,6 @@ export default function ApiKeyPermissionPage() {
     setAppPage(1);
   };
 
-  useEffect(() => {
-    if (activeTab === 'datasources' && activeDsGroupId !== null) fetchDatasources(activeDsGroupId);
-  }, [activeTab, activeDsGroupId, fetchDatasources]);
-
-  useEffect(() => {
-    if (activeTab === 'datasources' && activeDsGroupId === null && groups.length > 0) {
-      setActiveDsGroupId(groups[0].id);
-    }
-  }, [activeTab, activeDsGroupId, groups]);
-
-  useEffect(() => {
-    setDsPage(1);
-  }, [activeDsGroupId, dsSearch]);
-
   const filteredTools = useMemo(() => {
     let list = tools;
     if (search.trim()) {
@@ -301,30 +241,6 @@ export default function ApiKeyPermissionPage() {
   const selectableTools = useMemo(() =>
     filteredTools.filter((t) => t.permissionStatus === 'NONE' || t.permissionStatus === 'REJECTED'),
     [filteredTools]);
-
-  const filteredDatasources = useMemo(() => {
-    let list = datasources;
-    if (dsSearch.trim()) {
-      const q = dsSearch.trim().toLowerCase();
-      list = list.filter((ds) =>
-        (ds.name || '').toLowerCase().includes(q) ||
-        (ds.description || '').toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [datasources, dsSearch]);
-
-  const dsTotalPages = Math.max(1, Math.ceil(filteredDatasources.length / PAGE_SIZE));
-  const pagedDatasources = useMemo(() => {
-    const start = (dsPage - 1) * PAGE_SIZE;
-    return filteredDatasources.slice(start, start + PAGE_SIZE);
-  }, [filteredDatasources, dsPage]);
-
-  const selectableDatasources = useMemo(() =>
-    filteredDatasources.filter((ds) => ds.permissionStatus === 'NONE' || ds.permissionStatus === 'REJECTED'),
-    [filteredDatasources]);
-
-  const allDsSelectedInView = selectableDatasources.length > 0 && selectableDatasources.every((ds) => selectedDsIds.has(ds.id));
 
   const allSelectedInView = selectableTools.length > 0 && selectableTools.every((t) => selectedIds.has(t.id));
 
@@ -379,50 +295,6 @@ export default function ApiKeyPermissionPage() {
     }
   };
 
-  const toggleDsSelect = (dsId: number) => {
-    setSelectedDsIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(dsId)) next.delete(dsId);
-      else next.add(dsId);
-      return next;
-    });
-  };
-
-  const toggleSelectAllDs = () => {
-    if (allDsSelectedInView) {
-      setSelectedDsIds((prev) => {
-        const next = new Set(prev);
-        selectableDatasources.forEach((ds) => next.delete(ds.id));
-        return next;
-      });
-    } else {
-      setSelectedDsIds((prev) => {
-        const next = new Set(prev);
-        selectableDatasources.forEach((ds) => next.add(ds.id));
-        return next;
-      });
-    }
-  };
-
-  const handleDsBatchRequest = async () => {
-    if (selectedDsIds.size === 0) return;
-    const result = await confirm({
-      title: '确认申请',
-      message: `确定要为 ${selectedDsIds.size} 个数据源申请权限吗？`,
-    });
-    if (!result) return;
-    try {
-      for (const dsId of selectedDsIds) {
-        await requestDatasourcePermission(Number(keyId), dsId);
-      }
-      toast('数据源权限申请已提交', 'success');
-      setSelectedDsIds(new Set());
-      fetchDatasources(activeDsGroupId!);
-    } catch {
-      toast('申请失败', 'error');
-    }
-  };
-
   if (loading) {
     return <div className="perm-page-loading">加载中...</div>;
   }
@@ -437,6 +309,7 @@ export default function ApiKeyPermissionPage() {
           </button>
           <h2>权限申请</h2>
           {keyInfo && <span className="perm-page-key-name">{keyInfo.name}</span>}
+          <span className="perm-page-subtitle">KEY 权限控制外部系统使用此 KEY 可调用的编排与工具</span>
         </div>
         <div className="perm-page-tabs">
           <button
@@ -444,12 +317,6 @@ export default function ApiKeyPermissionPage() {
             onClick={() => setActiveTab('tools')}
           >
             工具
-          </button>
-          <button
-            className={`perm-page-tab ${activeTab === 'datasources' ? 'active' : ''}`}
-            onClick={() => setActiveTab('datasources')}
-          >
-            数据源
           </button>
           <button
             className={`perm-page-tab ${activeTab === 'apptools' ? 'active' : ''}`}
@@ -464,13 +331,7 @@ export default function ApiKeyPermissionPage() {
             申请选中 ({selectedIds.size})
           </button>
         )}
-        {activeTab === 'datasources' && selectedDsIds.size > 0 && (
-          <button className="perm-page-submit" onClick={handleDsBatchRequest}>
-            <Check size={16} />
-            申请选中 ({selectedDsIds.size})
-          </button>
-        )}
-      {activeTab === 'apptools' && selectedIds.size > 0 && (
+        {activeTab === 'apptools' && selectedIds.size > 0 && (
           <button className="perm-page-submit" onClick={handleBatchRequest}>
             <Check size={16} />
             申请选中 ({selectedIds.size})
@@ -595,137 +456,6 @@ export default function ApiKeyPermissionPage() {
                     className="perm-pagination-btn"
                     disabled={page >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'datasources' && (
-        <div className="perm-layout">
-          <div className="perm-sidebar">
-            <div className="perm-sidebar-search">
-              <Search size={14} />
-              <input
-                type="text"
-                placeholder="搜索系统..."
-                value={systemSearch}
-                onChange={(e) => setSystemSearch(e.target.value)}
-              />
-            </div>
-            <div className="perm-sidebar-label">
-              <span>全部系统</span>
-              <span className="perm-sidebar-label-count">{groups.length}</span>
-            </div>
-            {filteredGroups.map((group) => (
-              <div
-                key={group.id}
-                className={`perm-sidebar-item ${activeDsGroupId === group.id ? 'active' : ''}`}
-                onClick={() => setActiveDsGroupId(group.id)}
-              >
-                <span className="perm-sidebar-name">{group.name}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="perm-content">
-            <div className="perm-toolbar">
-              <div className="perm-toolbar-left">
-                <div className="perm-search">
-                  <Search size={16} />
-                  <input
-                    type="text"
-                    placeholder="搜索数据源名称或描述..."
-                    value={dsSearch}
-                    onChange={(e) => setDsSearch(e.target.value)}
-                  />
-                </div>
-                <span className="perm-tool-count">
-                  {activeDsGroupId !== null
-                    ? `${groups.find((g) => g.id === activeDsGroupId)?.name} · ${datasources.length} 个数据源`
-                    : `数据源 · ${datasources.length} 个`}
-                </span>
-              </div>
-              {selectableDatasources.length > 0 && (
-                <label className="perm-select-all">
-                  <input
-                    type="checkbox"
-                    checked={allDsSelectedInView}
-                    onChange={toggleSelectAllDs}
-                  />
-                  全选 ({selectableDatasources.length})
-                </label>
-              )}
-            </div>
-
-            {dsLoading ? (
-              <div className="perm-tool-empty">加载中...</div>
-            ) : (
-              <div className="perm-tool-list">
-                {pagedDatasources.length === 0 ? (
-                  <div className="perm-tool-empty">暂无数据源</div>
-                ) : (
-                  pagedDatasources.map((ds) => {
-                    const isSelected = selectedDsIds.has(ds.id);
-                    const canRequest = ds.permissionStatus === 'NONE' || ds.permissionStatus === 'REJECTED';
-
-                    return (
-                      <div
-                        key={ds.id}
-                        className={`perm-tool-item ${isSelected ? 'selected' : ''}`}
-                        onClick={() => { if (canRequest) toggleDsSelect(ds.id); }}
-                      >
-                        {canRequest && (
-                          <input
-                            type="checkbox"
-                            className="perm-tool-checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleDsSelect(ds.id)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        )}
-                        <div className="perm-tool-info">
-                          <div className="perm-tool-name-row">
-                            <span className="perm-tool-name">{ds.name}</span>
-                            <span className="perm-tool-type type-HTTP">
-                              {ds.type || 'DB'}
-                            </span>
-                            <span className={`perm-tool-status status-${ds.permissionStatus.toLowerCase()}`}>
-                              {STATUS_LABEL[ds.permissionStatus]}
-                            </span>
-                          </div>
-                          {ds.description && (
-                            <span className="perm-tool-desc">{ds.description}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-
-            {dsTotalPages > 1 && (
-              <div className="perm-pagination">
-                <span className="perm-pagination-info">
-                  共 {filteredDatasources.length} 个数据源，第 {dsPage}/{dsTotalPages} 页
-                </span>
-                <div className="perm-pagination-btns">
-                  <button
-                    className="perm-pagination-btn"
-                    disabled={dsPage <= 1}
-                    onClick={() => setDsPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <button
-                    className="perm-pagination-btn"
-                    disabled={dsPage >= dsTotalPages}
-                    onClick={() => setDsPage((p) => Math.min(dsTotalPages, p + 1))}
                   >
                     <ChevronRight size={16} />
                   </button>

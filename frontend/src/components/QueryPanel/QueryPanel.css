@@ -602,3 +602,175 @@
   font-size: 13px;
   color: #8c9cab;
 }
+/* 平台订阅标记 */
+.qp-platform-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 16px;
+  vertical-align: middle;
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.qp-platform-badge.pending {
+  background: #fffbe6;
+  color: #d48806;
+}
+
+/* 列表项操作按钮（发布/取消发布） */
+.qp-item-action {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #8c9cab;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.editor-sidebar-item:hover .qp-item-action {
+  display: flex;
+}
+
+.qp-item-action:hover {
+  background: #e6f4ff;
+  color: #1677ff;
+}
+
+.qp-item-action.published {
+  color: #1677ff;
+}
+
+/* 头部操作区 */
+.qp-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.qp-apply-btn {
+  padding: 2px 8px;
+  border: 1px solid #e8edf3;
+  border-radius: 4px;
+  background: #fff;
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.qp-apply-btn:hover {
+  border-color: #1677ff;
+}
+
+/* 发布到系统弹窗 */
+.qp-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.qp-modal {
+  width: 380px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.qp-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f1f1f;
+}
+
+.qp-modal-hint {
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: #8c9cab;
+  line-height: 1.5;
+}
+
+.qp-modal-systems {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+}
+
+.qp-system-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #1f1f1f;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.qp-system-item:last-child {
+  border-bottom: none;
+}
+
+.qp-system-item:hover {
+  background: #f6f9fc;
+}
+
+.qp-system-item.active {
+  background: #e6f4ff;
+}
+
+.qp-system-name {
+  flex: 1;
+}
+
+.qp-system-perm {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: #f6ffed;
+  color: #389e0d;
+}
+
+.qp-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.qp-modal-actions button {
+  padding: 6px 16px;
+  border: 1px solid #e8edf3;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: #1f1f1f;
+  cursor: pointer;
+}
+
+.qp-modal-actions button.primary {
+  border-color: #1677ff;
+  background: #1677ff;
+  color: #fff;
+}
+
+.qp-modal-actions button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

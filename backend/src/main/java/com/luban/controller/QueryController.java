@@ -31,6 +31,43 @@ public class QueryController {
         return ResponseEntity.ok(ApiResponse.ok(queryService.listByApplication(applicationId)));
     }
 
+    /**
+     * 一个平台一套 · 应用侧统一视图：应用自有查询 + 已授权系统的平台发布查询
+     * （照 /datasources/accessible 同模型，平台项带 accessStatus=APPROVED/PENDING）。
+     */
+    @GetMapping("/accessible")
+    @AppAccess(action = AppAction.VIEW, from = AppAccess.Source.PARAM, key = "applicationId")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> accessible(
+            @RequestParam Long applicationId,
+            @RequestParam(name = "includePending", required = false, defaultValue = "false") boolean includePending,
+            @AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                queryService.listAccessible(applicationId, user.getId(), includePending)));
+    }
+
+    /** 发布为平台查询：挂到目标系统。KEY 可订阅调用，其他应用按系统权限使用 */
+    @PostMapping("/{id}/publish")
+    @AppAccess(action = AppAction.DEVELOP, resource = "query", key = "id")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> publish(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body,
+            @AuthenticationPrincipal User user) {
+        Object groupId = body == null ? null : body.get("groupId");
+        if (!(groupId instanceof Number number)) {
+            return ResponseEntity.badRequest().body(ApiResponse.error("缺少发布目标系统 groupId"));
+        }
+        return ResponseEntity.ok(ApiResponse.ok(
+                queryService.publish(id, number.longValue(), user.getId())));
+    }
+
+    /** 取消发布：摘除平台身份（清理 QUERY 型工具定义），查询回到应用私有 */
+    @DeleteMapping("/{id}/publish")
+    @AppAccess(action = AppAction.DEVELOP, resource = "query", key = "id")
+    public ResponseEntity<ApiResponse<Void>> unpublish(@PathVariable Long id) {
+        queryService.unpublish(id);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
     @PostMapping
     @AppAccess(action = AppAction.DEVELOP, from = AppAccess.Source.BODY, key = "applicationId")
     public ResponseEntity<ApiResponse<Map<String, Object>>> create(

@@ -9,6 +9,10 @@ export interface Query {
   description?: string;
   /** INSIGHT=智能洞察沉淀，空=应用开发创建 */
   source?: string;
+  /** 非空=已发布为平台资产（值为所属系统 id），源应用保留编辑/删除权 */
+  publishedGroupId?: number | null;
+  /** 平台发布查询在 accessible 视图中的授权状态：APPROVED 可运行，PENDING 申请中 */
+  accessStatus?: 'APPROVED' | 'PENDING';
   createdAt: string;
 }
 

@@ -55,8 +55,11 @@ public class AgentController {
             .connectTimeout(Duration.ofSeconds(30))
             .build();
     private static final ScheduledExecutorService idleExecutor = Executors.newScheduledThreadPool(4);
+    /** 空闲超时：上游连续该时长无新行才中断（每收到一行即重置），是流式请求的主要保护 */
     private static final Duration LLM_IDLE_TIMEOUT = Duration.ofSeconds(120);
-    private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(300);
+    /** 兜底硬上限：大参数生成（整页代码/超大 JSON）可持续数分钟，空闲看门狗在重置就不该
+     *  误杀；此值仅在空闲保护失效时兜底，须远大于典型生成时长（此前 300s 会掐断长生成） */
+    private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(1800);
 
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
@@ -310,7 +313,9 @@ public class AgentController {
         }
 
         AsyncContext asyncContext = request.startAsync();
-        asyncContext.setTimeout(300000);
+        // Servlet async 兜底上限（startAsync 起算的绝对时长）：主要保护是空闲看门狗
+        // （LLM_IDLE_TIMEOUT），这里只防异常悬挂；此前 300s 会把持续输出的长生成掐断
+        asyncContext.setTimeout(1800000);
 
         CompletableFuture.runAsync(() -> {
             try {

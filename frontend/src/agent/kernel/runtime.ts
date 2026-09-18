@@ -202,6 +202,19 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
     if (msg) msg.content = resultJson;
   };
 
+  /** 工具结果 → UI 事件。危险确认挂起是"等待"而非"失败"：发 blocked（UI 渲染"待确认"
+   *  标签），不发 ok:false 的 finished（会被渲染成红色失败标签，确认卡片还没弹就先报错） */
+  const emitToolResult = (turnId: string, callId: string, name: string, result: ToolExecuteResult): void => {
+    const pauseRequest = result._pause
+      ? (result.data as { suspendRequest?: import('./events').InputRequest } | undefined)?.suspendRequest
+      : undefined;
+    if (pauseRequest?.kind === 'danger-confirm') {
+      emit({ type: 'tool.call.blocked', turnId, callId, name, reason: pauseRequest.message.split('\n')[0], waitConfirmation: true });
+    } else {
+      emit({ type: 'tool.call.finished', turnId, callId, name, ok: result.success, message: result.message, data: result.data });
+    }
+  };
+
   /** 策略可要求切换 system prompt（如确认计划后从分析阶段切到执行阶段提示词） */
   const applySystemPromptReplace = (effect: { replaceSystemPrompt?: string } | null | undefined): void => {
     if (effect?.replaceSystemPrompt) {
@@ -357,7 +370,7 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
         // 注入当轮正文：submit_analysis 等工具可取正文作为分析报告，模型无需在
         // 工具参数里把报告全文再转义复述一遍（数千 token 的重复生成是挂起前等待的大头）
         const result = await executeTool(tool, args, tc.id, undefined, visibleContent);
-        emit({ type: 'tool.call.finished', turnId, callId: tc.id, name: tc.name, ok: result.success, message: result.message, data: result.data });
+        emitToolResult(turnId, tc.id, tc.name, result);
         conversation.push({ id: `t-${++turnSeq}`, role: 'tool', toolCallId: tc.id, content: JSON.stringify(result), timestamp: Date.now() });
 
         // 成功的资源类产出记入关键事实账本（账本在压缩中幸存，替代被裁剪的结果原文）
@@ -483,7 +496,7 @@ export function createKernelRuntime(options: KernelRuntimeOptions): KernelRuntim
             const result = tool
               ? await executeTool(tool, pending.args, pending.callId, true)
               : { success: false, message: `工具 "${pending.toolName}" 不存在` };
-            emit({ type: 'tool.call.finished', turnId, callId: pending.callId, name: pending.toolName, ok: result.success, message: result.message, data: result.data });
+            emitToolResult(turnId, pending.callId, pending.toolName, result);
             rewriteToolResult(pending.callId, JSON.stringify(result));
             // 重执行仍带 _pause（委派类工具的子会话在下一个危险操作上再次挂起）：
             // 必须重新挂起，禁止把 _pause 当普通工具结果交给模型续跑——否则模型只会

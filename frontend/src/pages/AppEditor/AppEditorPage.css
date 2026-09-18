@@ -2,7 +2,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #f4f6f9;
+  background: var(--canvas, #f5f7fa);
 }
 
 .app-editor-header {
@@ -104,6 +104,7 @@
   flex: 1;
   display: flex;
   overflow: hidden;
+  position: relative;
 }
 
 .app-editor-main {
@@ -126,7 +127,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #f4f6f9;
+  background: var(--canvas, #f5f7fa);
 }
 
 /* Agent FAB */
@@ -138,10 +139,10 @@
   height: 48px;
   border-radius: 50%;
   border: none;
-  background: #1677ff;
+  background: var(--brand, #1677ff);
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 4px 12px rgba(22, 119, 255, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -150,51 +151,32 @@
 }
 
 .app-editor-agent-fab:hover {
-  background: #4096ff;
+  background: var(--brand-hover, #4096ff);
   transform: scale(1.05);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 6px 16px rgba(22, 119, 255, 0.4);
 }
 
-.app-editor-agent-fab.active {
-  background: #1f1f1f;
+/* Agent 抽屉：覆盖在主内容之上，不参与 flex 布局——
+   主内容宽度完全不变，避免 Query/流程/编排等页面被挤变形；
+   宽度由 ResizablePanel 拖左缘调整（400–960px） */
+.app-editor-agent-dock {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  background: #fff;
+  border-left: 1px solid var(--border, #e8edf3);
+  box-shadow: -12px 0 36px rgba(15, 23, 42, 0.14);
 }
 
-/* Agent overlay */
-.app-editor-agent-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 98;
+/* 聚焦态：覆盖更大宽度（不挤压下方内容），适合阅读长报告/自检结果；Esc 退出 */
+.app-editor-agent-dock--focused {
+  width: min(1080px, 85vw);
 }
 
 .app-editor-hidden {
   display: none !important;
-}
-
-.app-editor-agent-overlay {
-  position: fixed;
-  bottom: 84px;
-  right: 24px;
-  width: 400px;
-  height: 560px;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  z-index: 99;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: agent-slide-up 0.2s ease-out;
-}
-
-@keyframes agent-slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 /* 预览工具条（预览标签/文件入口/视口切换/全屏）在左侧栏「页面」面板底部，

@@ -6,9 +6,11 @@ interface ResizablePanelProps {
   minWidth: number;
   maxWidth: number;
   side: 'left' | 'right';
+  /** 展开模式：占满容器宽度，隐藏拖拽手柄（如 Agent 聚焦态） */
+  expanded?: boolean;
 }
 
-export function ResizablePanel({ children, defaultWidth, minWidth, maxWidth, side }: ResizablePanelProps) {
+export function ResizablePanel({ children, defaultWidth, minWidth, maxWidth, side, expanded }: ResizablePanelProps) {
   const [width, setWidth] = useState(defaultWidth);
   const isDragging = useRef(false);
 
@@ -34,6 +36,16 @@ export function ResizablePanel({ children, defaultWidth, minWidth, maxWidth, sid
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
   }, [side, minWidth, maxWidth]);
+
+  if (expanded) {
+    return (
+      <div style={{ display: 'flex', height: '100%', flexDirection: 'row' }}>
+        <div style={{ width: '100%', overflow: 'hidden' }}>
+          {children}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', height: '100%', flexDirection: side === 'right' ? 'row' : 'row' }}>

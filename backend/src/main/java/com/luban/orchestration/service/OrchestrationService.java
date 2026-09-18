@@ -53,6 +53,7 @@ public class OrchestrationService {
     private final OrchestrationEngine engine;
     private final OrchestrationExecutionRecorder executionRecorder;
     private final AppAccessService appAccessService;
+    private final com.luban.service.ApiKeyRateLimiter apiKeyRateLimiter;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public OrchestrationDefinition getById(Long id) {
@@ -367,40 +368,9 @@ public class OrchestrationService {
         return executionRepository.findTop50ByDefinitionIdOrderByCreatedAtDesc(definitionId);
     }
 
-    // 频控（M6）：每 Key 滑动窗口（默认 10s 内 10 次）+ 日配额（默认 1000 次）
-    private static final int RATE_LIMIT_WINDOW_MS = 10_000;
-    private static final int RATE_LIMIT_MAX = 10;
-    private static final int DAILY_QUOTA = 1000;
-    private final java.util.concurrent.ConcurrentHashMap<Long, java.util.ArrayDeque<Long>> invokeTimestamps =
-            new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.concurrent.ConcurrentHashMap<String, Integer> dailyInvokeCount =
-            new java.util.concurrent.ConcurrentHashMap<>();
-    private volatile java.time.LocalDate dailyCountDate = java.time.LocalDate.now();
-
-    /** 频控检查：超限抛 SecurityException（由 controller 转 429） */
+    /** 频控检查：超限抛 SecurityException（由 controller 转 429）。实现抽取为 ApiKeyRateLimiter，与查询外调入口共享每 KEY 配额 */
     private void checkRateLimit(Long apiKeyId) {
-        java.time.LocalDate today = java.time.LocalDate.now();
-        if (!today.equals(dailyCountDate)) {
-            dailyInvokeCount.clear();
-            dailyCountDate = today;
-        }
-        String quotaKey = "k:" + apiKeyId;
-        int used = dailyInvokeCount.merge(quotaKey, 1, Integer::sum);
-        if (used > DAILY_QUOTA) {
-            throw new SecurityException("API KEY 日配额已用尽（" + DAILY_QUOTA + " 次/天）");
-        }
-        long now = System.currentTimeMillis();
-        java.util.ArrayDeque<Long> window = invokeTimestamps.computeIfAbsent(apiKeyId,
-                k -> new java.util.ArrayDeque<>());
-        synchronized (window) {
-            while (!window.isEmpty() && now - window.peekFirst() > RATE_LIMIT_WINDOW_MS) {
-                window.pollFirst();
-            }
-            if (window.size() >= RATE_LIMIT_MAX) {
-                throw new SecurityException("调用过于频繁（" + RATE_LIMIT_MAX + " 次/" + (RATE_LIMIT_WINDOW_MS / 1000) + "s），请稍后重试");
-            }
-            window.addLast(now);
-        }
+        apiKeyRateLimiter.check(apiKeyId);
     }
 
     /**

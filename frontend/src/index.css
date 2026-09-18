@@ -1,3 +1,39 @@
+/* ===== Design tokens：平台统一视觉变量（新样式优先引用，存量逐步迁移） ===== */
+:root {
+  /* 品牌 */
+  --brand: #1677ff;
+  --brand-hover: #4096ff;
+  --brand-active: #0958d9;
+  --brand-bg: #e6f4ff;
+
+  /* 画布与卡片 */
+  --canvas: #f5f7fa;
+  --card: #ffffff;
+  --border: #e8edf3;
+  --border-strong: #d9e1ea;
+
+  /* 文字 */
+  --text-1: #1f2329;
+  --text-2: #5a6a7e;
+  --text-3: #8c9cab;
+
+  /* 深色导航 rail */
+  --rail-bg: #1c2733;
+  --rail-border: #0f1720;
+  --rail-text: #93a3b5;
+  --rail-text-active: #ffffff;
+  --rail-hover: rgba(255, 255, 255, 0.08);
+
+  /* 层级 */
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-pop: 0 8px 32px rgba(15, 23, 42, 0.12);
+
+  /* 圆角 */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+}
+
 * {
   margin: 0;
   padding: 0;

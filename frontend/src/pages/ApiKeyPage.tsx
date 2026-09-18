@@ -246,7 +246,7 @@ export default function ApiKeyPage() {
                     <div className="api-key-row-actions">
                       {key.status === 'ACTIVE' ? (
                         <>
-                          <button className="api-key-row-btn" onClick={() => navigate(`/connect/keys/${key.id}/permissions`)} data-tip="申请权限">
+                          <button className="api-key-row-btn" onClick={() => navigate(`/modeling/keys/${key.id}/permissions`)} data-tip="申请权限">
                             <Shield size={16} />
                           </button>
                           <button className="api-key-row-btn danger" onClick={() => handleDelete(key)} data-tip="吊销">

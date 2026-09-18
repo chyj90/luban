@@ -227,13 +227,9 @@ public class ApiKeyService {
                 .filter(k -> k.getExpiresAt() == null || k.getExpiresAt().isAfter(LocalDateTime.now()));
     }
 
-    public boolean hasToolPermission(Long apiKeyId, Long toolId) {
-        return apiKeyToolRepository.findByApiKeyIdAndToolId(apiKeyId, toolId)
-                .map(kt -> "APPROVED".equals(kt.getStatus()))
-                .orElse(false);
-    }
-
     // ==================== Datasource Permission ====================
+    // KEY 数据源授权（ApiKeyDatasource）当前无外部执行链路消费：
+    // 外部调用仅校验 api_key_tool；数据源授权为 Query 外调（Phase 4）预留。
 
     public List<Datasource> listAvailableDatasources(Long groupId) {
         return datasourceRepository.findByScopeAndOwnerId("PLATFORM", groupId);
@@ -298,12 +294,6 @@ public class ApiKeyService {
                 .orElseThrow(() -> new RuntimeException("权限申请不存在"));
         keyDs.setStatus("REJECTED");
         return apiKeyDatasourceRepository.save(keyDs);
-    }
-
-    public boolean hasDatasourcePermission(Long apiKeyId, Long datasourceId) {
-        return apiKeyDatasourceRepository.findByApiKeyIdAndDatasourceId(apiKeyId, datasourceId)
-                .map(kd -> "APPROVED".equals(kd.getStatus()))
-                .orElse(false);
     }
 
     public void recordUsage(Long apiKeyId) {

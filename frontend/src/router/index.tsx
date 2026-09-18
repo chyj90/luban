@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 import { ProtectedRoute, GuestRoute, PermissionGate, AnyPermissionGate, AppAccessGate, ModelingIndex } from './guards';
 import { ReactFlowProvider } from '@xyflow/react';
 import { AppLayout } from '@/pages/AppLayout';
@@ -31,6 +31,12 @@ import OrgPage from '@/pages/OrgPage';
 import WorkApprovalPage from '@/pages/WorkApprovalPage';
 import WorkbenchDataPage from '@/pages/workbench/WorkbenchDataPage';
 import { WorkAppPageViewer } from '@/pages/WorkAppPageViewer';
+
+// 建模中心合并前的旧路径：带上 keyId 重定向到权限申请页，避免旧链接退回列表页
+function KeyPermissionsRedirect() {
+  const { keyId } = useParams();
+  return <Navigate to={`/modeling/keys/${keyId}/permissions`} replace />;
+}
 
 export const router = createBrowserRouter([
   {
@@ -136,7 +142,7 @@ export const router = createBrowserRouter([
       { path: '/connect/tools', element: <Navigate to="/modeling/tools" replace /> },
       { path: '/connect/gateway', element: <Navigate to="/modeling/gateway" replace /> },
       { path: '/connect/keys', element: <Navigate to="/modeling/keys" replace /> },
-      { path: '/connect/keys/:keyId/permissions', element: <Navigate to="/modeling/keys" replace /> },
+      { path: '/connect/keys/:keyId/permissions', element: <KeyPermissionsRedirect /> },
       { path: '/connect/agent', element: <Navigate to="/modeling/agent" replace /> },
       { path: '/connect/mcp', element: <Navigate to="/modeling/gateway" replace /> },
       { path: '/connect/concepts', element: <Navigate to="/modeling/concepts" replace /> },

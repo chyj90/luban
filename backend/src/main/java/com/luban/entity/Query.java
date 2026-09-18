@@ -38,6 +38,14 @@ public class Query {
     @Column(length = 20)
     private String source;
 
+    /**
+     * 平台发布标记：非空 = 已发布为平台资产，值为所属系统（ToolGroup）id。
+     * 发布不复制行——源应用保留编辑/删除权，订阅方按系统权限运行；
+     * 工具定义（qry_{id}）里的 queryId 引用本行，修改 SQL 平台侧即时生效。
+     */
+    @Column(name = "published_group_id")
+    private Long publishedGroupId;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
