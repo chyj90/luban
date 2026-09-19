@@ -2,7 +2,8 @@ interface ModelingMenuItem {
   key: string;
   label: string;
   path: string;
-  permission: string;
+  /** 菜单显隐所需的平台权限；缺省表示登录即可见（如个人凭据类入口） */
+  permission?: string;
 }
 
 export interface ModelingMenuGroup {
@@ -23,12 +24,14 @@ export const MODELING_MENU_GROUPS: ModelingMenuGroup[] = [
     items: [
       // 工具管理不单独挂侧边栏：依赖系统页选中的系统上下文（groupId），从系统管理进入
       { key: '/modeling/systems', label: '系统管理', path: '/modeling/systems', permission: 'connect:systems' },
-      { key: '/modeling/gateway', label: '运行监控', path: '/modeling/gateway', permission: 'connect:gateway' },
+      // 运行监控观测的是概念链路（指标/健康度接口均在 concepts 权限下）
+      { key: '/modeling/gateway', label: '运行监控', path: '/modeling/gateway', permission: 'connect:concepts' },
     ],
   },
   {
     title: '语义运营',
     items: [
+      // 勾选概念编辑器同时放开绑定管理与语义包回归（后端同权）
       { key: '/modeling/concepts', label: '概念编辑器', path: '/modeling/concepts', permission: 'connect:concepts' },
       { key: '/modeling/binding-profiles', label: '绑定管理', path: '/modeling/binding-profiles', permission: 'connect:concepts' },
       { key: '/modeling/concept-feedback', label: '问题洞察', path: '/modeling/concept-feedback', permission: 'connect:concept-feedback' },
@@ -38,7 +41,8 @@ export const MODELING_MENU_GROUPS: ModelingMenuGroup[] = [
   {
     title: '凭据与模型',
     items: [
-      { key: '/modeling/keys', label: '我的 KEY', path: '/modeling/keys', permission: 'connect:keys' },
+      // 我的 KEY 是个人凭据，登录即可用，不设权限位
+      { key: '/modeling/keys', label: '我的 KEY', path: '/modeling/keys' },
       { key: '/modeling/agent', label: '大模型配置', path: '/modeling/agent', permission: 'connect:agent' },
     ],
   },
@@ -48,7 +52,7 @@ export const MODELING_MENU_GROUPS: ModelingMenuGroup[] = [
 export function modelingHomePath(hasPermission: (p: string) => boolean): string {
   for (const group of MODELING_MENU_GROUPS) {
     for (const item of group.items) {
-      if (hasPermission(item.permission)) return item.path;
+      if (!item.permission || hasPermission(item.permission)) return item.path;
     }
   }
   return '/modeling/systems';

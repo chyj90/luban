@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Network, RefreshCw, GitBranch, ShieldCheck } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
+import { RegressionCaseModal } from '@/components/RegressionCaseModal';
 import {
   ReactFlow,
   useNodesState,
@@ -35,15 +36,11 @@ import {
   unbindToolConcept,
   getConcept,
   listConceptMappings,
-  createConceptMapping,
-  updateConceptMapping,
-  deleteConceptMapping,
   autoMatchConceptMappings,
   autoMatchConceptMappingsV2,
+  applyAutoMatchMappings,
+  getAsyncTask,
   listConceptJoinMappings,
-  createConceptJoinMapping,
-  updateConceptJoinMapping,
-  deleteConceptJoinMapping,
   rebuildConceptIndex,
   listOntologyGroups,
   createOntologyGroup,
@@ -334,9 +331,32 @@ function layoutNodes(
 }
 
 export default function ConceptEditorPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const urlDomainId = Number(searchParams.get('domainId')) || null;
   const urlDomainIdRef = useRef<number | null>(urlDomainId);
+  // 问题洞察「去建概念」深链：/modeling/concepts?create=<高频词>&samples=<a\nb\nc>
+  // 建完概念不直接结束，接着弹补全引导（自动映射绑定 → 样例问题入回归），把修复闭环走完
+  const pendingGuideRef = useRef<{ term: string; samples: string[] } | null>(
+    searchParams.get('create')
+      ? {
+          term: searchParams.get('create') || '',
+          samples: (searchParams.get('samples') || '').split('\n').map((s) => s.trim()).filter(Boolean),
+        }
+      : null,
+  );
+  // AI 修复落地深链：?guide=<conceptId>&name=<名>&samples=<...>&auto=1
+  // 直接打开补全引导；auto=1 时自动跑一键绑定（AI 修复已建好概念）
+  const pendingOpenGuideRef = useRef<{ conceptId: number; name: string; samples: string[]; auto: boolean } | null>(
+    searchParams.get('guide')
+      ? {
+          conceptId: Number(searchParams.get('guide')) || 0,
+          name: searchParams.get('name') || '',
+          samples: (searchParams.get('samples') || '').split('\n').map((s) => s.trim()).filter(Boolean),
+          auto: searchParams.get('auto') === '1',
+        }
+      : null,
+  );
 
   const { labels, colors, sourceToTarget, sourceRoles, targetRoles, isSymmetric } = useRelationTypes();
 
@@ -375,12 +395,6 @@ export default function ConceptEditorPage() {
 
   const [conceptMappings, setConceptMappings] = useState<ConceptMapping[]>([]);
   const [joinMappings, setJoinMappings] = useState<ConceptJoinMapping[]>([]);
-  const [showMappingForm, setShowMappingForm] = useState(false);
-  const [mappingForm, setMappingForm] = useState<Partial<ConceptMapping>>({});
-  const [editingMappingId, setEditingMappingId] = useState<number | null>(null);
-  const [showJoinForm, setShowJoinForm] = useState(false);
-  const [joinForm, setJoinForm] = useState<Partial<ConceptJoinMapping>>({});
-  const [editingJoinId, setEditingJoinId] = useState<number | null>(null);
 
   const [domainGroups, setDomainGroups] = useState<OntologyGroup[]>([]);
   const [selectedDomainId, setSelectedDomainId] = useState<number | null | undefined>(undefined);
@@ -456,6 +470,8 @@ export default function ConceptEditorPage() {
     });
     return { groups, noOwner };
   }, [datasources]);
+
+  const datasourceNameMap = useMemo(() => new Map(datasources.map((d) => [d.id, d.name])), [datasources]);
 
   const [showSearchRelation, setShowSearchRelation] = useState(false);
   const [searchRelSourceId, setSearchRelSourceId] = useState<number | null>(null);
@@ -855,6 +871,111 @@ export default function ConceptEditorPage() {
     });
   }, [openCreateDialog, createOntologyGroup, domainGroups.length, toast, fetchData]);
 
+  // ===== 建概念后的补全引导：绑定数据（自动映射）→ 样例问题入回归 =====
+
+  const [guide, setGuide] = useState<{ conceptId: number; name: string; samples: string[] } | null>(null);
+  const [guideBind, setGuideBind] = useState<{ state: 'idle' | 'running' | 'done' | 'empty' | 'error'; msg: string }>({ state: 'idle', msg: '' });
+  const [guideRegDone, setGuideRegDone] = useState(false);
+  const [showGuideRegModal, setShowGuideRegModal] = useState(false);
+
+  // 问题洞察「去建概念」跳转落地：域列表加载完成后弹出预填了高频词的新建概念对话框，并清掉 URL 参数避免刷新重弹
+  useEffect(() => {
+    if (loading) return;
+    const pending = pendingGuideRef.current;
+    if (!pending) return;
+    pendingGuideRef.current = null;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('create');
+      next.delete('samples');
+      return next;
+    }, { replace: true });
+    if (domainGroups.length > 0) {
+      openCreateDialog(pending.term, (name) => {
+        createConcept({ name, groupId: selectedDomainId ?? undefined }).then((res) => {
+          toast('概念创建成功', 'success');
+          fetchData();
+          setGuide({ conceptId: res.data.id, name, samples: pending.samples });
+        }).catch(() => toast('概念创建失败', 'error'));
+      });
+    } else {
+      toast('暂无概念域，请先新建概念域', 'warning');
+    }
+  }, [loading, domainGroups.length, selectedDomainId, openCreateDialog, fetchData, toast, setSearchParams]);
+
+  /** 轮询异步任务直到终态；超时抛错让用户去异步任务列表看 */
+  const pollTaskUntilDone = useCallback(async (taskId: number, timeoutMs = 120000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await getAsyncTask(taskId);
+      if (res.data.status === 'COMPLETED' || res.data.status === 'FAILED') return res.data;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    throw new Error('timeout');
+  }, []);
+
+  const runGuideAutoBind = useCallback(async (conceptIdOverride?: number) => {
+    const conceptId = conceptIdOverride ?? guide?.conceptId;
+    if (!conceptId) return;
+    const dsIds = datasources.map((d) => d.id);
+    if (dsIds.length === 0) {
+      setGuideBind({ state: 'error', msg: '暂无可用数据源，请先在系统管理接入数据源' });
+      return;
+    }
+    setGuideBind({ state: 'running', msg: '已提交映射任务，规则匹配中…' });
+    try {
+      const res = await autoMatchConceptMappingsV2([conceptId], dsIds);
+      setGuideBind({ state: 'running', msg: '规则没命中的字段会走大模型兜底，请稍候…' });
+      const task = await pollTaskUntilDone(res.data.taskId);
+      if (task.status === 'FAILED') {
+        setGuideBind({ state: 'error', msg: task.errorMsg || '自动映射失败，请到绑定管理手动配置' });
+        return;
+      }
+      setGuideBind({ state: 'running', msg: '匹配完成，正在应用映射…' });
+      const applyRes = await applyAutoMatchMappings(task.id);
+      const created = Number((applyRes.data as { created?: number })?.created ?? 0);
+      if (created > 0) {
+        setGuideBind({ state: 'done', msg: `已绑定 ${created} 条表/字段映射，这个概念现在能被查到了` });
+      } else {
+        setGuideBind({ state: 'empty', msg: '没匹配到合适的字段，需要手动指定表/字段' });
+      }
+      fetchData();
+    } catch (e) {
+      const msg = e instanceof Error && e.message === 'timeout'
+        ? '映射任务仍在后台执行，可在异步任务列表查看结果'
+        : '自动映射提交失败，请到绑定管理手动配置';
+      setGuideBind({ state: 'error', msg });
+    }
+  }, [guide, datasources, pollTaskUntilDone, fetchData]);
+
+  // AI 修复深链落地：页面就绪后直接打开补全引导；auto=1 表示概念刚由 AI 修复创建，自动跑一键绑定
+  useEffect(() => {
+    if (loading) return;
+    const pending = pendingOpenGuideRef.current;
+    if (!pending || !pending.conceptId) return;
+    pendingOpenGuideRef.current = null;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('guide');
+      next.delete('name');
+      next.delete('samples');
+      next.delete('auto');
+      return next;
+    }, { replace: true });
+    setGuide({ conceptId: pending.conceptId, name: pending.name || `概念 ${pending.conceptId}`, samples: pending.samples });
+    if (pending.auto) {
+      runGuideAutoBind(pending.conceptId);
+    }
+  }, [loading, runGuideAutoBind, setSearchParams]);
+
+  const closeGuide = useCallback(() => {
+    setGuide(null);
+    setGuideBind({ state: 'idle', msg: '' });
+    setGuideRegDone(false);
+    setShowGuideRegModal(false);
+    fetchData();
+  }, [fetchData]);
+
   const handleRebuildIndex = async () => {
     try {
       await rebuildConceptIndex();
@@ -1158,17 +1279,6 @@ export default function ConceptEditorPage() {
     }
   };
 
-  const handleOpenMappingForm = (mapping?: ConceptMapping) => {
-    if (mapping) {
-      setEditingMappingId(mapping.id);
-      setMappingForm(mapping);
-    } else {
-      setEditingMappingId(null);
-      setMappingForm({ datasourceId: undefined, tableName: '', columnName: '', attributeName: '', mappingType: 'direct' });
-    }
-    setShowMappingForm(true);
-  };
-
   const handleAutoMatch = async () => {
     if (domainGroups.length === 0) {
       toast('请先创建概念域', 'warning');
@@ -1213,75 +1323,6 @@ export default function ConceptEditorPage() {
       setSelectedConceptIds([]);
     } catch {
       toast('提交自动映射任务失败', 'error');
-    }
-  };
-
-  const handleSaveMapping = async () => {
-    if (!selectedConcept || !mappingForm.tableName || !mappingForm.columnName) return;
-    try {
-      if (editingMappingId) {
-        await updateConceptMapping(selectedConcept.id, editingMappingId, mappingForm);
-        toast('映射已更新', 'success');
-      } else {
-        await createConceptMapping(selectedConcept.id, mappingForm);
-        toast('映射已创建', 'success');
-      }
-      setShowMappingForm(false);
-      const res = await listConceptMappings(selectedConcept.id);
-      setConceptMappings(res.data);
-    } catch {
-      toast('保存映射失败', 'error');
-    }
-  };
-
-  const handleDeleteMapping = async (mappingId: number) => {
-    if (!selectedConcept) return;
-    try {
-      await deleteConceptMapping(selectedConcept.id, mappingId);
-      toast('映射已删除', 'success');
-      setConceptMappings((prev) => prev.filter((m) => m.id !== mappingId));
-    } catch {
-      toast('删除失败', 'error');
-    }
-  };
-
-  const handleOpenJoinForm = (join?: ConceptJoinMapping) => {
-    if (join) {
-      setEditingJoinId(join.id);
-      setJoinForm(join);
-    } else {
-      setEditingJoinId(null);
-      setJoinForm({ datasourceId: undefined, targetConcept: '', relationType: 'LEFT', joinTable: '', joinCondition: '' });
-    }
-    setShowJoinForm(true);
-  };
-
-  const handleSaveJoin = async () => {
-    if (!selectedConcept || !joinForm.targetConcept || !joinForm.joinTable || !joinForm.joinCondition) return;
-    try {
-      if (editingJoinId) {
-        await updateConceptJoinMapping(selectedConcept.id, editingJoinId, joinForm);
-        toast('JOIN 映射已更新', 'success');
-      } else {
-        await createConceptJoinMapping(selectedConcept.id, joinForm);
-        toast('JOIN 映射已创建', 'success');
-      }
-      setShowJoinForm(false);
-      const res = await listConceptJoinMappings(selectedConcept.id);
-      setJoinMappings(res.data);
-    } catch {
-      toast('保存 JOIN 映射失败', 'error');
-    }
-  };
-
-  const handleDeleteJoin = async (joinId: number) => {
-    if (!selectedConcept) return;
-    try {
-      await deleteConceptJoinMapping(selectedConcept.id, joinId);
-      toast('JOIN 映射已删除', 'success');
-      setJoinMappings((prev) => prev.filter((j) => j.id !== joinId));
-    } catch {
-      toast('删除失败', 'error');
     }
   };
 
@@ -1703,25 +1744,25 @@ export default function ConceptEditorPage() {
                 {conceptMappings.length > 0 && <span className="sidebarCardBadge">{conceptMappings.length}</span>}
               </div>
               {conceptMappings.length === 0 ? (
-                <div className="emptyHint">暂无字段映射</div>
+                <div className="emptyHint">暂无字段映射 · 通过「自动匹配」生成</div>
               ) : (
-                conceptMappings.map((m) => (
-                  <div key={m.id} className="sidebarItem">
-                    <div className="sidebarItemMain">
-                      <span className="sidebarItemTag" style={{ background: '#722ed1' }}>{m.mappingType}</span>
-                      <span className="sidebarItemText">
-                        {m.tableName}.{m.columnName}
-                        {m.attributeName && ` → ${m.attributeName}`}
-                      </span>
+                [...conceptMappings]
+                  .sort((a, b) => (a.datasourceId ?? 0) - (b.datasourceId ?? 0) || a.tableName.localeCompare(b.tableName))
+                  .map((m) => (
+                    <div key={m.id} className="sidebarItem">
+                      <div className="sidebarItemMain">
+                        <span className="sidebarItemTag" style={{ background: '#5b6b8c' }}>
+                          {datasourceNameMap.get(m.datasourceId) || `数据源#${m.datasourceId}`}
+                        </span>
+                        <span className="sidebarItemTag" style={{ background: '#722ed1' }}>{m.mappingType}</span>
+                        <span className="sidebarItemText">
+                          {m.tableName}.{m.columnName}
+                          {m.attributeName && ` → ${m.attributeName}`}
+                        </span>
+                      </div>
                     </div>
-                    <div className="sidebarItemActions">
-                      <button className="sidebarItemEdit" onClick={() => handleOpenMappingForm(m)}>✎</button>
-                      <button className="sidebarItemRemove" onClick={() => handleDeleteMapping(m.id)}>×</button>
-                    </div>
-                  </div>
-                ))
+                  ))
               )}
-              <button className="sidebarAddBtn" onClick={() => handleOpenMappingForm()}>+ 添加映射</button>
             </div>
 
             <div className="sidebarCard">
@@ -1730,25 +1771,36 @@ export default function ConceptEditorPage() {
                 {joinMappings.length > 0 && <span className="sidebarCardBadge">{joinMappings.length}</span>}
               </div>
               {joinMappings.length === 0 ? (
-                <div className="emptyHint">暂无 JOIN 映射</div>
+                <div className="emptyHint">暂无 JOIN 映射 · 通过「自动匹配」生成</div>
               ) : (
-                joinMappings.map((j) => (
-                  <div key={j.id} className="sidebarItem">
-                    <div className="sidebarItemMain">
-                      <span className="sidebarItemTag" style={{ background: '#13c2c2' }}>{j.relationType} JOIN</span>
-                      <span className="sidebarItemText">
-                        {j.targetConcept} ← {j.joinTable}
-                      </span>
+                [...joinMappings]
+                  .sort((a, b) => (a.datasourceId ?? 0) - (b.datasourceId ?? 0) || a.joinTable.localeCompare(b.joinTable))
+                  .map((j) => (
+                    <div key={j.id} className="sidebarItem">
+                      <div className="sidebarItemMain">
+                        <span className="sidebarItemTag" style={{ background: '#5b6b8c' }}>
+                          {datasourceNameMap.get(j.datasourceId) || `数据源#${j.datasourceId}`}
+                        </span>
+                        <span className="sidebarItemTag" style={{ background: '#13c2c2' }}>{j.relationType} JOIN</span>
+                        <span className="sidebarItemText">
+                          {j.targetConcept} ← {j.joinTable}
+                        </span>
+                      </div>
+                      <div className="sidebarItemExtra">{j.joinCondition}</div>
                     </div>
-                    <div className="sidebarItemActions">
-                      <button className="sidebarItemEdit" onClick={() => handleOpenJoinForm(j)}>✎</button>
-                      <button className="sidebarItemRemove" onClick={() => handleDeleteJoin(j.id)}>×</button>
-                    </div>
-                    <div className="sidebarItemExtra">{j.joinCondition}</div>
-                  </div>
-                ))
+                  ))
               )}
-              <button className="sidebarAddBtn" onClick={() => handleOpenJoinForm()}>+ 添加 JOIN</button>
+            </div>
+
+            <div className="sidebarCard">
+              <div className="sidebarCardTitle">映射维护</div>
+              <div className="emptyHint">
+                映射与 JOIN 由自动匹配（自学习）按数据源维护，概念编辑器只读。
+                人工引导请调整绑定管理的术语词典后重新自动匹配。
+              </div>
+              <button className="sidebarAddBtn" onClick={() => navigate('/modeling/binding-profiles')}>
+                前往绑定管理
+              </button>
             </div>
           </div>
         )}
@@ -1949,6 +2001,100 @@ export default function ConceptEditorPage() {
         </div>
       )}
 
+      {guide && (
+        <div className="overlay" onClick={closeGuide}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ padding: 20, width: 480, maxWidth: '92vw' }}>
+            <div className="dialogTitle">「{guide.name}」已创建，还差两步就能被问到</div>
+            <div className="dialogSubtitle">只有概念本身还查不了数，按下面顺序补全即可</div>
+
+            <div className="guide-step">
+              <div className="guide-step-head">
+                <span className="guide-step-no">1</span>
+                绑定数据表<span className="guide-step-tag">必需</span>
+              </div>
+              <div className="guide-step-desc">告诉系统这个概念从哪张表、哪个字段取数。自动映射按名称相似度匹配，结果可随时在绑定管理调整。</div>
+              {guideBind.state === 'idle' && (
+                <div className="guide-step-actions">
+                  <button className="btnPrimary" onClick={() => runGuideAutoBind()}>一键自动映射数据表</button>
+                  <button className="btn" onClick={() => navigate('/modeling/binding-profiles')}>手动绑定</button>
+                </div>
+              )}
+              {guideBind.state === 'running' && (
+                <div className="guide-step-status guide-step-status--running">
+                  <span className="guide-step-spinner" />{guideBind.msg}
+                </div>
+              )}
+              {guideBind.state === 'done' && (
+                <div className="guide-step-status guide-step-status--ok">✓ {guideBind.msg}</div>
+              )}
+              {guideBind.state === 'empty' && (
+                <div className="guide-step-status guide-step-status--warn">{guideBind.msg}</div>
+              )}
+              {(guideBind.state === 'empty' || guideBind.state === 'error') && (
+                <div className="guide-step-actions">
+                  <button className="btn" onClick={() => navigate('/modeling/binding-profiles')}>去绑定管理手动配置</button>
+                </div>
+              )}
+              {guideBind.state === 'error' && (
+                <div className="guide-step-status guide-step-status--warn">{guideBind.msg}</div>
+              )}
+            </div>
+
+            <div className="guide-step">
+              <div className="guide-step-head">
+                <span className="guide-step-no">2</span>
+                加回归验证<span className="guide-step-tag guide-step-tag--soft">建议</span>
+              </div>
+              <div className="guide-step-desc">
+                把问数流量里真实撞上「{guide.name}」的问题补进语义包回归，修完跑一次回归就知道有没有修好。
+              </div>
+              {guide.samples.length > 0 ? (
+                <>
+                  <div className="guide-samples">
+                    {guide.samples.map((s, i) => <div key={i} className="guide-sample">· {s}</div>)}
+                  </div>
+                  {guideRegDone ? (
+                    <div className="guide-step-status guide-step-status--ok">✓ 样例问题已加入回归问题集</div>
+                  ) : (
+                    <div className="guide-step-actions">
+                      <button className="btnPrimary" onClick={() => setShowGuideRegModal(true)}>把 {guide.samples.length} 条样例问题加入回归</button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="guide-step-actions">
+                  <button className="btn" onClick={() => navigate('/modeling/concept-feedback')}>去问题洞察补回归问题</button>
+                </div>
+              )}
+            </div>
+
+            <div className="guide-step">
+              <div className="guide-step-head">
+                <span className="guide-step-no">3</span>
+                概念间关系<span className="guide-step-tag guide-step-tag--soft">可选</span>
+              </div>
+              <div className="guide-step-desc">单一指标类问题不用配关系；需要跨概念关联查询时，再在画布上拖线连接即可。</div>
+            </div>
+
+            <div className="formActions" style={{ marginTop: 16 }}>
+              <button className="btnPrimary" onClick={closeGuide}>完成</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuideRegModal && guide && (
+        <RegressionCaseModal
+          questions={guide.samples}
+          mustHitConcepts={[guide.name]}
+          onClose={() => setShowGuideRegModal(false)}
+          onAdded={() => {
+            setGuideRegDone(true);
+            setShowGuideRegModal(false);
+          }}
+        />
+      )}
+
       {contextMenu && (
         <div className="contextMenu" style={{ left: contextMenu.x, top: contextMenu.y }}>
           {contextMenu.nodeId ? (
@@ -2106,154 +2252,7 @@ export default function ConceptEditorPage() {
         </div>
       )}
 
-      {showMappingForm && (
-        <div className="overlay" onClick={() => setShowMappingForm(false)}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="dialogTitle">{editingMappingId ? '编辑字段映射' : '添加字段映射'}</div>
-            <div className="dialogSubtitle">概念「{selectedConcept?.name}」的数据库字段映射</div>
-            <div className="formGroup">
-              <label className="formLabel">数据源 ID</label>
-              <input
-                className="formInput"
-                type="number"
-                placeholder="数据源 ID"
-                value={mappingForm.datasourceId || ''}
-                onChange={(e) => setMappingForm((f) => ({ ...f, datasourceId: Number(e.target.value) }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">表名</label>
-              <input
-                className="formInput"
-                placeholder="如: hr_employee"
-                value={mappingForm.tableName || ''}
-                onChange={(e) => setMappingForm((f) => ({ ...f, tableName: e.target.value }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">字段名</label>
-              <input
-                className="formInput"
-                placeholder="如: employee_name"
-                value={mappingForm.columnName || ''}
-                onChange={(e) => setMappingForm((f) => ({ ...f, columnName: e.target.value }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">属性名</label>
-              <input
-                className="formInput"
-                placeholder="如: 姓名、编号、创建时间"
-                value={mappingForm.attributeName || ''}
-                onChange={(e) => setMappingForm((f) => ({ ...f, attributeName: e.target.value }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">映射类型</label>
-              <Select
-                value={mappingForm.mappingType || 'direct'}
-                options={[
-                  { value: 'direct', label: '直接映射' },
-                  { value: 'computed', label: '计算字段' },
-                ]}
-                onChange={(v) => setMappingForm((f) => ({ ...f, mappingType: v as ConceptMapping['mappingType'] }))}
-              />
-            </div>
-            {mappingForm.mappingType === 'computed' && (
-              <div className="formGroup">
-                <label className="formLabel">计算表达式</label>
-                <input
-                  className="formInput"
-                  placeholder="如: salary * 12"
-                  value={mappingForm.computedExpr || ''}
-                  onChange={(e) => setMappingForm((f) => ({ ...f, computedExpr: e.target.value }))}
-                />
-              </div>
-            )}
-            <div className="formGroup">
-              <label className="formLabel">置信度 (0-1)</label>
-              <input
-                className="formInput"
-                type="number"
-                min="0"
-                max="1"
-                step="0.1"
-                value={mappingForm.confidence ?? 0.8}
-                onChange={(e) => setMappingForm((f) => ({ ...f, confidence: Number(e.target.value) }))}
-              />
-            </div>
-            <div className="formActions">
-              <button className="btnPrimary" onClick={handleSaveMapping}>保存</button>
-              <button className="btn" onClick={() => setShowMappingForm(false)}>取消</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showJoinForm && (
-        <div className="overlay" onClick={() => setShowJoinForm(false)}>
-          <div className="dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="dialogTitle">{editingJoinId ? '编辑 JOIN 映射' : '添加 JOIN 映射'}</div>
-            <div className="dialogSubtitle">概念「{selectedConcept?.name}」的关联表映射</div>
-            <div className="formGroup">
-              <label className="formLabel">数据源 ID</label>
-              <input
-                className="formInput"
-                type="number"
-                placeholder="数据源 ID"
-                value={joinForm.datasourceId || ''}
-                onChange={(e) => setJoinForm((f) => ({ ...f, datasourceId: Number(e.target.value) }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">关联概念</label>
-              <input
-                className="formInput"
-                placeholder="如: department"
-                value={joinForm.targetConcept || ''}
-                onChange={(e) => setJoinForm((f) => ({ ...f, targetConcept: e.target.value }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">JOIN 类型</label>
-              <Select
-                value={joinForm.relationType || 'LEFT'}
-                options={[
-                  { value: 'LEFT', label: 'LEFT JOIN' },
-                  { value: 'RIGHT', label: 'RIGHT JOIN' },
-                  { value: 'INNER', label: 'INNER JOIN' },
-                  { value: 'FULL', label: 'FULL JOIN' },
-                ]}
-                onChange={(v) => setJoinForm((f) => ({ ...f, relationType: v }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">JOIN 表名</label>
-              <input
-                className="formInput"
-                placeholder="如: hr_department"
-                value={joinForm.joinTable || ''}
-                onChange={(e) => setJoinForm((f) => ({ ...f, joinTable: e.target.value }))}
-              />
-            </div>
-            <div className="formGroup">
-              <label className="formLabel">JOIN 条件</label>
-              <input
-                className="formInput"
-                placeholder="如: t1.dept_id = t2.id"
-                value={joinForm.joinCondition || ''}
-                onChange={(e) => setJoinForm((f) => ({ ...f, joinCondition: e.target.value }))}
-              />
-            </div>
-            <div className="formActions">
-              <button className="btnPrimary" onClick={handleSaveJoin}>保存</button>
-              <button className="btn" onClick={() => setShowJoinForm(false)}>取消</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showSearchRelation && (
+{showSearchRelation && (
         <div className="overlay" onClick={() => setShowSearchRelation(false)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()} style={{ width: 480 }}>
             <div className="dialogTitle">添加关系</div>

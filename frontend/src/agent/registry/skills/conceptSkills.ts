@@ -87,12 +87,13 @@ export const conceptSkills: Record<string, SkillFactory> = {
     id: 'concept:nl2sql',
     category: SkillCategory.CONCEPT,
     name: 'nl2sql_generate',
-    description: `按概念映射直拼基准 SQL：传入概念 ID 列表，平台把概念→表/列映射与概念间 JOIN 拼成 SELECT（与智能问数共用同一套概念映射）。**注意：模板只覆盖简单场景**（单表/预定义 JOIN/等值过滤），复杂聚合与计算口径请改用 get_concept_detail 拿映射后自写 SQL；最终统计口径以智能问数为准。生成后可把 SQL 作为查询 body，再按需补充 {{ this.params.xxx }} 参数绑定与动态标签。仅适用于 SELECT，写查询仍按表结构手写。`,
+    description: `按概念映射直拼基准 SQL：传入概念 ID 列表，平台把概念→表/列映射与概念间 JOIN 拼成 SELECT（与智能问数共用同一套概念映射）。概念映射按数据源归属：所选概念在多个数据源上均有映射时必须传 datasourceId（报错会列出候选数据源）。**注意：模板只覆盖简单场景**（单表/预定义 JOIN/等值过滤），复杂聚合与计算口径请改用 get_concept_detail 拿映射后自写 SQL；最终统计口径以智能问数为准。生成后可把 SQL 作为查询 body，再按需补充 {{ this.params.xxx }} 参数绑定与动态标签。仅适用于 SELECT，写查询仍按表结构手写。`,
     parameters: {
       type: 'object',
       properties: {
         conceptIds: { type: 'array', items: { type: 'number' }, description: '概念 ID 列表（1 个即含该概念全部映射字段；多个概念时平台自动补概念间 JOIN）' },
         filters: { type: 'object', description: '可选过滤条件 { "属性名": "值" }' },
+        datasourceId: { type: 'number', description: '可选数据源 ID；概念映射跨多个数据源时必填，单数据源可省略' },
       },
       required: ['conceptIds'],
     },
@@ -100,6 +101,7 @@ export const conceptSkills: Record<string, SkillFactory> = {
       const res = await generateNl2Sql({
         conceptIds: args.conceptIds as number[],
         filters: args.filters as Record<string, unknown> | undefined,
+        datasourceId: args.datasourceId as number | undefined,
       });
       const d = res.data;
       const status = d.valid

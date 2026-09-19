@@ -446,10 +446,20 @@ export interface RegressionPackageInfo {
   displayName: string;
   description: string;
   caseCount: number;
+  /** 运行时追加的问题数（问数流量挖出的缺口问题） */
+  customCount?: number;
 }
 
 export function listRegressionPackages() {
   return get<RegressionPackageInfo[]>('/ontology/regression/packages');
+}
+
+export function addRegressionCases(packageName: string, questions: string[], mustHitConcepts?: string[]) {
+  return post<{ added: number; duplicated: number }>('/ontology/regression/packages/cases', {
+    packageName,
+    questions,
+    ...(mustHitConcepts && mustHitConcepts.length > 0 ? { mustHitConcepts } : {}),
+  });
 }
 
 export function runRegression(packageName: string) {
@@ -463,7 +473,7 @@ export interface GapCluster {
   action: string;
   term: string;
   count: number;
-  samples: Array<{ question: string; at: string }>;
+  samples: Array<{ question: string; at: string; sql?: string; error?: string }>;
 }
 
 export interface QuestionGapReport {
@@ -475,6 +485,38 @@ export interface QuestionGapReport {
 
 export function getQuestionGaps(days = 14) {
   return get<QuestionGapReport>(`/ontology/gaps?days=${days}`);
+}
+
+export interface GapFixProposal {
+  mode: 'create-concept' | 'remap';
+  bucket: string;
+  term: string;
+  feasible: boolean;
+  /** 建概念原因 / 诊断结论 */
+  rationale?: string;
+  diagnosis?: string;
+  /** create-concept：建议的概念定义 */
+  conceptName?: string;
+  description?: string;
+  synonyms?: string[];
+  /** remap：需要重新自动映射的概念名 */
+  fixHint?: string;
+  involvedConcepts?: string[];
+  /** remap：概念名 → id，用于把 LLM 选中的名字解析回可执行的概念 id */
+  conceptIdByName?: Record<string, number>;
+}
+
+/** AI 修复建议：LLM 分析缺口聚簇，只出建议不落库 */
+export function postFixProposal(bucket: string, term: string, samples: GapCluster['samples']) {
+  return post<GapFixProposal>('/ontology/gaps/fix-proposal', {
+    bucket,
+    term,
+    samples: samples.map((s) => ({
+      question: s.question,
+      ...(s.sql ? { sql: s.sql } : {}),
+      ...(s.error ? { error: s.error } : {}),
+    })),
+  });
 }
 
 // ===== 跨源桥接（Federation Bridge） =====
@@ -540,8 +582,8 @@ export interface Nl2SqlGenerateResult {
   joins: Nl2SqlJoin[];
 }
 
-/** 按概念口径生成基准 SQL（表/列/JOIN 全部来自概念映射，与智能问数同源） */
-export function generateNl2Sql(data: { conceptIds: number[]; filters?: Record<string, unknown> }) {
+/** 按概念口径生成基准 SQL（表/列/JOIN 全部来自概念映射，与智能问数同源）；概念映射跨多个数据源时必须指定 datasourceId */
+export function generateNl2Sql(data: { conceptIds: number[]; filters?: Record<string, unknown>; datasourceId?: number }) {
   return post<Nl2SqlGenerateResult>('/nl2sql/generate', data);
 }
 

@@ -11,7 +11,7 @@ const NAV_ITEMS: { path: string; label: string; permission?: string; anyOf?: str
   { path: '/agent-chat', label: '智能问数', permission: 'ask:read' },
   { path: '/apps', label: '开发中心', permission: 'apps:read' },
   { path: '/modeling', label: '建模中心', anyOf: ['connect:systems', 'connect:concepts'] },
-  { path: '/people', label: '平台管理', permission: 'people:users' },
+  { path: '/people', label: '平台管理', anyOf: ['people:users', 'people:org', 'people:roles'] },
 ];
 
 export function GlobalHeader() {

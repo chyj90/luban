@@ -30,6 +30,23 @@ public class OntologyRegressionController {
         return ResponseEntity.ok(ApiResponse.ok(regressionService.listPackages()));
     }
 
+    /**
+     * 运行时追加回归问题（问数流量挖出的缺口问题随包一起回归验证）。
+     * body: { packageName, questions: [...], mustHitConcepts?: [...] }
+     */
+    @PostMapping("/packages/cases")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> addCases(
+            @RequestBody Map<String, Object> body,
+            @AuthenticationPrincipal User user) {
+        String packageName = body.get("packageName") instanceof String s ? s : null;
+        @SuppressWarnings("unchecked")
+        List<String> questions = (List<String>) body.get("questions");
+        @SuppressWarnings("unchecked")
+        List<String> mustHitConcepts = (List<String>) body.get("mustHitConcepts");
+        return ResponseEntity.ok(ApiResponse.ok(
+                regressionService.addCases(packageName, questions, mustHitConcepts, "gap-insight", user.getName())));
+    }
+
     @PostMapping("/run")
     public ResponseEntity<ApiResponse<Map<String, Object>>> run(
             @RequestBody Map<String, String> body,

@@ -1,0 +1,214 @@
+.gapfix-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+
+.gapfix-modal {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  max-height: 85vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.gapfix-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.gapfix-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #531dab;
+}
+
+.gapfix-close {
+  border: none;
+  background: none;
+  color: #999;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+}
+
+.gapfix-close:hover:not(:disabled) {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.gapfix-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.gapfix-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #531dab;
+  font-size: 13px;
+  padding: 24px 0;
+  justify-content: center;
+}
+
+.gapfix-error {
+  font-size: 13px;
+  color: #ff4d4f;
+  background: #fff2f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.gapfix-block {
+  border: 1px solid #eef1f5;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gapfix-block-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.gapfix-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.gapfix-label {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+.gapfix-input {
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #1f1f1f;
+}
+
+.gapfix-input:focus {
+  outline: none;
+  border-color: #531dab;
+}
+
+.gapfix-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #404040;
+  white-space: pre-wrap;
+}
+
+.gapfix-rationale {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #531dab;
+  background: #f9f0ff;
+  border: 1px solid #efdbff;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.gapfix-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gapfix-chip {
+  font-size: 12px;
+  color: #531dab;
+  background: #f9f0ff;
+  border: 1px solid #efdbff;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+
+.gapfix-note {
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8c8c8c;
+}
+
+.gapfix-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 20px 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.gapfix-btn {
+  padding: 7px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+
+.gapfix-btn:hover:not(:disabled) {
+  border-color: #531dab;
+  color: #531dab;
+}
+
+.gapfix-btn--primary {
+  background: #531dab;
+  border-color: #531dab;
+  color: #fff;
+}
+
+.gapfix-btn--primary:hover:not(:disabled) {
+  background: #722ed1;
+  border-color: #722ed1;
+  color: #fff;
+}
+
+.gapfix-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.gapfix-applying {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px 14px;
+  font-size: 12px;
+  color: #531dab;
+}
+
+.gapfix-spin {
+  animation: gapfix-rotate 0.9s linear infinite;
+}
+
+@keyframes gapfix-rotate {
+  to { transform: rotate(360deg); }
+}

@@ -44,7 +44,12 @@ public class Nl2SqlController {
         @SuppressWarnings("unchecked")
         Map<String, Object> filters = (Map<String, Object>) body.getOrDefault("filters", Map.of());
 
-        SqlGeneratorService.GeneratedSql generated = sqlGeneratorService.generateSql(conceptIds, filters);
+        // 多数据源下概念映射按数据源归属，可选 datasourceId 用于消除跨库歧义
+        Long requestDatasourceId = body.get("datasourceId") != null
+                ? Long.valueOf(body.get("datasourceId").toString())
+                : null;
+
+        SqlGeneratorService.GeneratedSql generated = sqlGeneratorService.generateSql(conceptIds, filters, requestDatasourceId);
 
         Long datasourceId = generated.getMappings().stream()
                 .findFirst()

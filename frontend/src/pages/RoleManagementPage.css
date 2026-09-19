@@ -8,7 +8,7 @@
 .role-page__content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 24px 20px;
 }
 
 .role-page__loading {
@@ -80,11 +80,23 @@
 .role-page__grid {
   flex: 1;
   overflow-y: auto;
-  padding: 0 24px 24px;
+  padding: 0 12px 24px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
   align-content: start;
+}
+
+@media (max-width: 720px) {
+  .role-page__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .role-page__grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .role-page__card {
@@ -100,36 +112,31 @@
 }
 
 .role-page__card-body {
-  display: flex;
-  gap: 14px;
-  padding: 20px;
+  padding: 14px 16px;
 }
 
-.role-page__card-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: #e6f4ff;
-  color: #1677ff;
+.role-page__card-title-row {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.role-page__card-info {
-  flex: 1;
-  min-width: 0;
+.role-page__card-title-row .role-page__scope-badge {
+  flex-shrink: 0;
 }
 
 .role-page__card-name {
   font-size: 15px;
   font-weight: 600;
   color: #1a1a2e;
-  margin: 0 0 4px;
+  margin: 0;
+  min-width: 0;
 }
 
 .role-page__card-slug {
+  display: inline-block;
+  margin-top: 4px;
   font-size: 11px;
   color: #999;
   background: #f5f5f5;
@@ -152,8 +159,9 @@
 .role-page__card-footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
   border-top: 1px solid #f0f0f0;
   background: #fafafa;
 }
@@ -171,12 +179,13 @@
 
 .role-page__card-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  margin-left: auto;
 }
 
 .role-page__action-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid #d9d9d9;
   border-radius: 6px;

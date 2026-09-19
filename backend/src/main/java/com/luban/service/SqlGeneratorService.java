@@ -20,21 +20,37 @@ public class SqlGeneratorService {
     private final ConceptJoinMappingRepository joinMappingRepository;
 
     /**
-     * 根据概念 ID 列表，从概念映射自动生成 SQL 查询
+     * 根据概念 ID 列表，从概念映射自动生成 SQL 查询。
+     * 映射按数据源归属（一个数据源一套绑定集），生成的 SQL 必须限定单一数据源：
+     * 概念映射跨多个数据源时调用方必须指定 datasourceId，否则拒绝生成——
+     * 否则不同库的同名/异名表会被混编进同一条 SQL。
      */
-    public GeneratedSql generateSql(List<Long> conceptIds, Map<String, Object> filters) {
+    public GeneratedSql generateSql(List<Long> conceptIds, Map<String, Object> filters, Long datasourceId) {
         if (conceptIds == null || conceptIds.isEmpty()) {
             throw new IllegalArgumentException("概念 ID 列表不能为空");
         }
 
-        List<ConceptMapping> allMappings = new ArrayList<>();
-        for (Long conceptId : conceptIds) {
-            allMappings.addAll(mappingRepository.findByConceptId(conceptId));
-        }
+        List<ConceptMapping> allMappings = datasourceId != null
+                ? mappingRepository.findByConceptIdInAndDatasourceIdIn(conceptIds, List.of(datasourceId))
+                : mappingRepository.findByConceptIdIn(conceptIds);
 
         if (allMappings.isEmpty()) {
-            throw new IllegalStateException("没有找到概念映射，请先在概念管理中配置字段映射");
+            throw new IllegalStateException(datasourceId != null
+                    ? "在数据源 " + datasourceId + " 上没有找到概念映射，请先执行自动匹配"
+                    : "没有找到概念映射，请先在概念管理中配置字段映射");
         }
+
+        List<Long> scopedDatasourceIds = allMappings.stream()
+                .map(ConceptMapping::getDatasourceId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        if (scopedDatasourceIds.size() > 1) {
+            throw new IllegalStateException("所选概念在多个数据源上均有映射 " + scopedDatasourceIds
+                    + "，请在请求中指定 datasourceId 后重试，或向用户确认应使用哪个数据源。");
+        }
+        Long scopeDatasourceId = scopedDatasourceIds.isEmpty() ? datasourceId : scopedDatasourceIds.get(0);
 
         Map<String, List<ConceptMapping>> tableGroups = allMappings.stream()
                 .collect(Collectors.groupingBy(ConceptMapping::getTableName));
@@ -68,13 +84,16 @@ public class SqlGeneratorService {
 
         List<JoinInfo> joinInfos = new ArrayList<>();
         if (tableGroups.size() > 1) {
+            List<ConceptJoinMapping> scopedJoins = scopeDatasourceId != null
+                    ? joinMappingRepository.findByConceptIdInAndDatasourceIdIn(conceptIds, List.of(scopeDatasourceId))
+                    : joinMappingRepository.findByConceptIdIn(conceptIds);
             for (String table : tableGroups.keySet()) {
                 if (table.equals(mainTable)) continue;
-                List<ConceptJoinMapping> joins = joinMappingRepository.findByConceptIdInAndJoinTable(
-                        conceptIds, table);
-                for (ConceptJoinMapping join : joins) {
-                    joinInfos.add(new JoinInfo(join.getRelationType(), join.getJoinTable(),
-                            join.getJoinCondition()));
+                for (ConceptJoinMapping join : scopedJoins) {
+                    if (table.equals(join.getJoinTable())) {
+                        joinInfos.add(new JoinInfo(join.getRelationType(), join.getJoinTable(),
+                                join.getJoinCondition()));
+                    }
                 }
             }
         }

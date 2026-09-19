@@ -348,7 +348,7 @@ export function QueryEditor({ query, applicationId, onQueryUpdate, externalResul
     }
     setConceptGenerating(true);
     try {
-      const res = await generateNl2Sql({ conceptIds: selectedConcepts.map((c) => c.id) });
+      const res = await generateNl2Sql({ conceptIds: selectedConcepts.map((c) => c.id), datasourceId: query.datasourceId });
       const d = res.data;
       if (!d.valid) {
         toast.error(`校验未通过：${(d.errors || []).join('；')}`);

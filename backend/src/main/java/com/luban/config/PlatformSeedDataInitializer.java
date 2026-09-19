@@ -20,6 +20,8 @@ import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -40,6 +42,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
     public void run(String... args) {
         initPlatformRoles();
         initSuperAdminPermissions();
+        cleanupOrphanPermissions();
         initRootUser();
         initPlatformWorkflows();
         initDatasourceApprovalWorkflow();
@@ -109,6 +112,24 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
             rolePermissionRepository.save(rp);
         }
         log.info("super_admin 权限授予完成（{} 项）", Permissions.ALL.size());
+    }
+
+    /**
+     * 权限清单收敛后的自愈：历史种子授予或管理员勾选过的权限 key，若已从
+     * Permissions.ALL 下线（无任何鉴权/菜单引用），其勾选记录直接清掉，
+     * 避免角色授权界面与实际能力长期不一致。
+     */
+    private void cleanupOrphanPermissions() {
+        Set<String> validKeys = Permissions.ALL.stream()
+                .map(Permissions.Def::getKey)
+                .collect(Collectors.toSet());
+        List<RolePermission> orphans = rolePermissionRepository.findAll().stream()
+                .filter(rp -> !validKeys.contains(rp.getPermission()))
+                .toList();
+        if (orphans.isEmpty()) return;
+        rolePermissionRepository.deleteAll(orphans);
+        log.info("清理 {} 条已下线权限的勾选记录: {}", orphans.size(),
+                orphans.stream().map(RolePermission::getPermission).distinct().toList());
     }
 
     private void initRootUser() {

@@ -198,11 +198,11 @@ class AppAccessServiceTest {
         // 持 connect:systems → 放行
         assertThatCode(() -> service.assertPlatformPermission(DEVELOPER_ID, "connect:systems")).doesNotThrowAnyException();
         // 未持该权限 → 拒绝
-        assertThatThrownBy(() -> service.assertPlatformPermission(DEVELOPER_ID, "connect:tools"))
+        assertThatThrownBy(() -> service.assertPlatformPermission(DEVELOPER_ID, "connect:agent"))
                 .isInstanceOf(AppAccessService.AppAccessDeniedException.class);
         // super_admin → 放行
         stubSuperAdmin();
-        assertThatCode(() -> service.assertPlatformPermission(SUPER_ADMIN_ID, "connect:tools")).doesNotThrowAnyException();
+        assertThatCode(() -> service.assertPlatformPermission(SUPER_ADMIN_ID, "connect:agent")).doesNotThrowAnyException();
     }
 
     @Test

@@ -92,6 +92,9 @@ public class QuestionGapMiningService {
         return result;
     }
 
+    /** 样例 SQL/报错截断长度：足够 LLM 诊断，又不撑大报告载荷 */
+    private static final int SAMPLE_SQL_MAX_LEN = 600;
+
     /** 对一个桶内的问题做关键词聚簇；相同问题文本去重，聚簇度量"多少种问题"而非"问了多少次" */
     private List<Map<String, Object>> mineCluster(String bucket, String action, List<AgentQueryLog> logs) {
         if (logs.isEmpty()) return List.of();
@@ -134,8 +137,22 @@ public class QuestionGapMiningService {
                     List<Map<String, Object>> samples = e.getValue().stream()
                             .sorted((a, b) -> Long.compare(uniqueQuestions.get(b).getId(), uniqueQuestions.get(a).getId()))
                             .limit(MAX_SAMPLES_PER_TERM)
-                            .map(q -> Map.<String, Object>of("question", q,
-                                    "at", String.valueOf(uniqueQuestions.get(q).getCreatedAt())))
+                            .map(q -> {
+                                AgentQueryLog logEntry = uniqueQuestions.get(q);
+                                Map<String, Object> sample = new LinkedHashMap<>();
+                                sample.put("question", q);
+                                sample.put("at", String.valueOf(logEntry.getCreatedAt()));
+                                // SQL 失败桶带原始 SQL 与报错，供 AI 修复做诊断
+                                if (logEntry.getSqlGenerated() != null && !logEntry.getSqlGenerated().isBlank()) {
+                                    String sql = logEntry.getSqlGenerated().trim();
+                                    sample.put("sql", sql.length() > SAMPLE_SQL_MAX_LEN ? sql.substring(0, SAMPLE_SQL_MAX_LEN) + "…" : sql);
+                                }
+                                if (logEntry.getSqlError() != null && !logEntry.getSqlError().isBlank()) {
+                                    String err = logEntry.getSqlError().trim();
+                                    sample.put("error", err.length() > SAMPLE_SQL_MAX_LEN ? err.substring(0, SAMPLE_SQL_MAX_LEN) + "…" : err);
+                                }
+                                return sample;
+                            })
                             .collect(Collectors.toList());
                     cluster.put("samples", samples);
                     clusters.add(cluster);

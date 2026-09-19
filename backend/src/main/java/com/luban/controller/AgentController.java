@@ -1,5 +1,7 @@
 package com.luban.controller;
 
+import com.luban.annotation.RequirePermission;
+import com.luban.constant.Permissions;
 import com.luban.service.AgentService;
 import com.luban.service.AgentConfigService;
 import com.luban.entity.AgentConfig;
@@ -71,6 +73,7 @@ public class AgentController {
     }
 
     @PostMapping("/chat")
+    @RequirePermission(Permissions.ASK_READ)
     public ResponseEntity<Map<String, Object>> chat(@RequestBody Map<String, Object> params) {
         String sessionId = (String) params.getOrDefault("sessionId", UUID.randomUUID().toString());
         String message = (String) params.get("message");
@@ -91,6 +94,7 @@ public class AgentController {
     }
 
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RequirePermission(Permissions.ASK_READ)
     public void chatStream(@RequestBody Map<String, Object> params, HttpServletRequest request,
                            HttpServletResponse response) {
         final String sessionId = (String) params.getOrDefault("sessionId", UUID.randomUUID().toString());
@@ -264,6 +268,7 @@ public class AgentController {
     
 
     @PostMapping("/chat/clear")
+    @RequirePermission(Permissions.ASK_READ)
     public ResponseEntity<Map<String, Object>> clearSession(@RequestBody Map<String, Object> params) {
         String sessionId = (String) params.get("sessionId");
         if (sessionId != null) {
@@ -516,12 +521,14 @@ public class AgentController {
      * 当前用户的历史会话列表（按 updatedAt 倒序）。
      */
     @GetMapping("/sessions")
+    @RequirePermission(Permissions.ASK_READ)
     public ResponseEntity<Map<String, Object>> listSessions() {
         Long userId = requireCurrentUser();
         return ResponseEntity.ok(Map.of("sessions", agentService.listUserSessions(userId)));
     }
 
     @GetMapping("/sessions/{sessionId}/messages")
+    @RequirePermission(Permissions.ASK_READ)
     public ResponseEntity<?> getSessionMessages(@PathVariable String sessionId) {
         Long userId = requireCurrentUser();
         if (!agentService.hasSessionAccess(sessionId, userId)) {

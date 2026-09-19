@@ -44,7 +44,7 @@ public class ToolController {
     }
 
     @PostMapping
-    @RequirePermission(Permissions.CONNECT_TOOLS)
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ToolDefinition>> create(@RequestBody CreateToolRequest request,
                                   @AuthenticationPrincipal User user) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -52,13 +52,13 @@ public class ToolController {
     }
 
     @PutMapping("/{id}")
-    @RequirePermission(Permissions.CONNECT_TOOLS)
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ToolDefinition>> update(@PathVariable Long id, @RequestBody CreateToolRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(toolService.update(id, request)));
     }
 
     @DeleteMapping("/{id}")
-    @RequirePermission(Permissions.CONNECT_TOOLS)
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         toolService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok(null));
@@ -70,7 +70,7 @@ public class ToolController {
     }
 
     @PostMapping("/{toolId}/concepts")
-    @RequirePermission(Permissions.CONNECT_TOOLS)
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<ConceptToolBinding>> bindConcept(@PathVariable Long toolId,
                                     @RequestBody CreateToolConceptBindingRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -78,7 +78,7 @@ public class ToolController {
     }
 
     @DeleteMapping("/{toolId}/concepts/{bindId}")
-    @RequirePermission(Permissions.CONNECT_TOOLS)
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     public ResponseEntity<ApiResponse<Void>> unbindConcept(@PathVariable Long toolId, @PathVariable Long bindId) {
         conceptService.unbindToolConcept(bindId);
         return ResponseEntity.ok(ApiResponse.ok(null));

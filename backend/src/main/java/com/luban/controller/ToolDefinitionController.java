@@ -130,7 +130,7 @@ public class ToolDefinitionController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @RequirePermission("connect:tools")
+    @RequirePermission(Permissions.CONNECT_SYSTEMS)
     @PostMapping("/{id}/test")
     public ResponseEntity<ApiResponse<Map<String, Object>>> testTool(
             @PathVariable Long id,

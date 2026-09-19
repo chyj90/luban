@@ -1956,3 +1956,112 @@
   background: #ff4d4f;
   color: #fff;
 }
+/* ===== 建概念后的补全引导（问题洞察深链创建流程） ===== */
+.guide-step {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #eef1f5;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.guide-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.guide-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #1677ff;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.guide-step-tag {
+  font-size: 11px;
+  font-weight: 500;
+  color: #ff4d4f;
+  background: #fff2f0;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.guide-step-tag--soft {
+  color: #8c8c8c;
+  background: #f0f0f0;
+}
+
+.guide-step-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #8c8c8c;
+}
+
+.guide-step-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.guide-step-status {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.guide-step-status--running {
+  color: #1677ff;
+}
+
+.guide-step-status--ok {
+  color: #52c41a;
+}
+
+.guide-step-status--warn {
+  color: #fa8c16;
+}
+
+.guide-step-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #d6e4ff;
+  border-top-color: #1677ff;
+  border-radius: 50%;
+  animation: guide-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes guide-spin {
+  to { transform: rotate(360deg); }
+}
+
+.guide-samples {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #eef1f5;
+  border-radius: 6px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.guide-sample {
+  font-size: 12px;
+  color: #595959;
+  line-height: 1.8;
+}

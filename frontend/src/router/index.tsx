@@ -97,7 +97,8 @@ export const router = createBrowserRouter([
             ],
           },
           {
-            element: <PermissionGate permission="people:users" />,
+            // 三个子页各自校验 people:users / people:org / people:roles，入口任一即可
+            element: <AnyPermissionGate permissions={['people:users', 'people:org', 'people:roles']} />,
             children: [
               {
                 path: '/people',
@@ -133,7 +134,12 @@ export const router = createBrowserRouter([
               },
             ],
           },
-          { path: '/agent-chat', element: <AgentChatPage /> },
+          {
+            element: <PermissionGate permission="ask:read" />,
+            children: [
+              { path: '/agent-chat', element: <AgentChatPage /> },
+            ],
+          },
         ],
       },
       { path: '/workspace', element: <Navigate to="/work" replace /> },

@@ -38,3 +38,45 @@
 .gap-bucket--err b {
   color: #ff4d4f;
 }
+
+/* 时间范围下拉（平台公共 Select 组件，small 尺寸） */
+.gap-range-select {
+  width: 104px;
+  flex-shrink: 0;
+}
+
+/* 修复建议步骤 */
+.gap-fix-steps {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: #595959;
+}
+
+/* 「看反馈明细」锚点滚动时给顶栏留出空间 */
+#gap-feedback-section {
+  scroll-margin-top: 16px;
+}
+
+/* 「加入回归」主操作按钮（蓝调区分普通操作） */
+.bp-btn--reg {
+  color: #1677ff;
+  border-color: #91caff;
+}
+
+.bp-btn--reg:hover:not(:disabled) {
+  background: #f0f7ff;
+}
+
+/* 「AI 修复」主操作按钮（紫调标识大模型能力） */
+.bp-btn--ai {
+  color: #531dab;
+  border-color: #d3adf7;
+}
+
+.bp-btn--ai:hover:not(:disabled) {
+  background: #f9f0ff;
+}

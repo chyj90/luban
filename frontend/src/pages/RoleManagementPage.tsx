@@ -417,20 +417,17 @@ export default function RoleManagementPage() {
   const renderRoleCard = (role: Role) => (
     <div key={role.id} className="role-page__card">
       <div className="role-page__card-body">
-        <div className="role-page__card-icon">
-          <Shield size={20} />
-        </div>
-        <div className="role-page__card-info">
+        <div className="role-page__card-title-row">
           <h4 className="role-page__card-name">{role.name}</h4>
-          <span className="role-page__card-slug">{role.slug}</span>
-          <p className="role-page__card-desc">{role.description}</p>
+          <span className="role-page__scope-badge">
+            <Globe size={12} />
+            {SCOPE_LABELS[role.scope] || role.scope}
+          </span>
         </div>
+        <span className="role-page__card-slug">{role.slug}</span>
+        <p className="role-page__card-desc">{role.description}</p>
       </div>
       <div className="role-page__card-footer">
-        <span className="role-page__scope-badge">
-          <Globe size={12} />
-          {SCOPE_LABELS[role.scope] || role.scope}
-        </span>
         <div className="role-page__card-actions">
           <button className="role-page__action-btn" onClick={() => openUsers(role)}>
             <Users size={14} />

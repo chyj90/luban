@@ -2,7 +2,9 @@ package com.luban.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.luban.entity.OntologyQuestionsetCase;
 import com.luban.repository.ChatMessageRepository;
+import com.luban.repository.OntologyQuestionsetCaseRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -18,6 +20,9 @@ import java.util.stream.Collectors;
  * 每个语义包带一份典型问题集（自然语言问题 + 结构化期望：概念命中 / SQL 落表 / 回答可用性），
  * 回归跑真实问数链路并逐用例评估。内置本体好不好不再靠感觉，跑一遍报告说话。
  * 期望只做结构断言，不断言具体数值（随环境数据变化）。
+ *
+ * 问题集 = classpath 内置 JSON + 运行时追加（ontology_questionset_case，问数流量挖出的
+ * 缺口问题经问题洞察/建概念引导写入），追加按 packageName 合并，随下一次回归一起跑。
  */
 @Slf4j
 @Service
@@ -26,25 +31,90 @@ public class OntologyRegressionService {
 
     private static final String QUESTIONSET_DIR = "classpath*:ontology-questionsets/*.json";
     private static final int ANSWER_EXCERPT_LEN = 200;
+    private static final int QUESTION_MAX_LEN = 500;
     private static final List<String> DEFAULT_FORBIDDEN = List.of("无法查询", "无法确定", "分析未能");
 
     private final AgentService agentService;
     private final AsyncTaskService asyncTaskService;
     private final ChatMessageRepository chatMessageRepository;
+    private final OntologyQuestionsetCaseRepository questionsetCaseRepository;
     private final ObjectMapper objectMapper;
 
-    /** 列出全部可用问题集（resources/ontology-questionsets/*.json） */
+    /** 列出全部可用问题集（内置 + 运行时追加合并），customCount 为运行时追加的条数 */
     public List<Map<String, Object>> listPackages() {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> pkg : loadPackages().values()) {
+            String name = String.valueOf(pkg.get("name"));
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("name", pkg.get("name"));
+            item.put("name", name);
             item.put("displayName", pkg.get("displayName"));
             item.put("description", pkg.get("description"));
             item.put("caseCount", ((List<?>) pkg.getOrDefault("cases", List.of())).size());
+            item.put("customCount", questionsetCaseRepository.countByPackageName(name));
             result.add(item);
         }
         return result;
+    }
+
+    /**
+     * 运行时追加回归问题：按包去重后入库，期望断言只带概念命中（可选），
+     * SQL/回答断言留空即只检查执行成功与回答不含失败表述。
+     */
+    public Map<String, Object> addCases(String packageName, List<String> questions,
+                                        List<String> mustHitConcepts, String source, String userName) {
+        if (packageName == null || packageName.isBlank()) {
+            throw new IllegalArgumentException("缺少 packageName");
+        }
+        if (questions == null || questions.isEmpty()) {
+            throw new IllegalArgumentException("缺少 questions");
+        }
+        if (!loadPackages().containsKey(packageName)) {
+            throw new IllegalArgumentException("问题集不存在: " + packageName);
+        }
+        List<String> cleaned = questions.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(q -> !q.isEmpty())
+                .map(q -> q.length() > QUESTION_MAX_LEN ? q.substring(0, QUESTION_MAX_LEN) : q)
+                .distinct()
+                .toList();
+        if (cleaned.isEmpty()) {
+            throw new IllegalArgumentException("questions 全为空");
+        }
+
+        Set<String> existing = questionsetCaseRepository
+                .findByPackageNameAndQuestionIn(packageName, cleaned)
+                .stream().map(OntologyQuestionsetCase::getQuestion).collect(Collectors.toSet());
+        List<OntologyQuestionsetCase> toSave = new ArrayList<>();
+        for (String q : cleaned) {
+            if (existing.contains(q)) continue;
+            OntologyQuestionsetCase row = new OntologyQuestionsetCase();
+            row.setPackageName(packageName);
+            row.setQuestion(q);
+            row.setExpect(toExpectJson(mustHitConcepts));
+            row.setSource(source == null || source.isBlank() ? "manual" : source);
+            row.setCreatedBy(userName);
+            toSave.add(row);
+        }
+        if (!toSave.isEmpty()) {
+            questionsetCaseRepository.saveAll(toSave);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("added", toSave.size());
+        result.put("duplicated", cleaned.size() - toSave.size());
+        return result;
+    }
+
+    private String toExpectJson(List<String> mustHitConcepts) {
+        try {
+            Map<String, Object> expect = new LinkedHashMap<>();
+            if (mustHitConcepts != null && !mustHitConcepts.isEmpty()) {
+                expect.put("mustHitConcepts", mustHitConcepts);
+            }
+            return objectMapper.writeValueAsString(expect);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     /** 异步执行一个语义包的回归，返回 taskId；报告写入异步任务结果 */
@@ -204,7 +274,34 @@ public class OntologyRegressionService {
         } catch (Exception e) {
             log.warn("[regression] 无可用问题集: {}", e.getMessage());
         }
+        mergeRuntimeCases(packages);
         return packages;
+    }
+
+    /** 追加 DB 里的运行时问题到对应问题集（只进有内置包的域，孤儿行忽略） */
+    private void mergeRuntimeCases(Map<String, Map<String, Object>> packages) {
+        try {
+            for (String packageName : packages.keySet()) {
+                List<OntologyQuestionsetCase> rows =
+                        questionsetCaseRepository.findByPackageNameOrderByCreatedAtAsc(packageName);
+                if (rows.isEmpty()) continue;
+                List<Map<String, Object>> cases = new ArrayList<>(
+                        castList(packages.get(packageName).getOrDefault("cases", List.of())));
+                for (OntologyQuestionsetCase row : rows) {
+                    Map<String, Object> c = new LinkedHashMap<>();
+                    c.put("id", "db-" + row.getId());
+                    c.put("question", row.getQuestion());
+                    if (row.getExpect() != null && !row.getExpect().isBlank()) {
+                        c.put("expect", objectMapper.readValue(row.getExpect(),
+                                new TypeReference<Map<String, Object>>() {}));
+                    }
+                    cases.add(c);
+                }
+                packages.get(packageName).put("cases", cases);
+            }
+        } catch (Exception e) {
+            log.warn("[regression] 合并运行时问题失败（仅内置问题集生效）: {}", e.getMessage());
+        }
     }
 
     private AsyncTaskHolder createTask(int caseCount, Long userId) {

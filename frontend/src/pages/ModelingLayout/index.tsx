@@ -17,7 +17,7 @@ export function ModelingLayout() {
   const visibleGroups = loaded
     ? MODELING_MENU_GROUPS.map((group) => ({
         ...group,
-        items: group.items.filter((item) => hasPermission(item.permission)),
+        items: group.items.filter((item) => !item.permission || hasPermission(item.permission)),
       })).filter((group) => group.items.length > 0)
     : MODELING_MENU_GROUPS;
 
