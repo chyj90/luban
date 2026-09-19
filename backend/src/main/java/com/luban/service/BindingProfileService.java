@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luban.entity.BindingProfile;
 import com.luban.entity.Concept;
+import com.luban.entity.Datasource;
 import com.luban.repository.BindingProfileRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRepository;
@@ -64,6 +65,12 @@ public class BindingProfileService {
         // 有映射但尚未显式建档的数据源也纳入视图（合成条目，不落库），避免绑定管理页漏源
         Set<Long> dsIds = new LinkedHashSet<>(profileByDs.keySet());
         dsIds.addAll(coverageByDs.keySet());
+        // 批量取名字而不是循环调 getById：getById 走事务代理，源已删除时抛的异常会把
+        // 本只读事务标记 rollback-only，被 catch 吞掉后提交时抛 UnexpectedRollbackException
+        Map<Long, String> dsNames = new HashMap<>();
+        for (Datasource ds : datasourceRepository.findAllById(dsIds)) {
+            dsNames.put(ds.getId(), ds.getName());
+        }
         for (Long dsId : dsIds) {
             BindingProfile p = profileByDs.get(dsId);
             Map<String, Object> item = new LinkedHashMap<>();
@@ -84,13 +91,7 @@ public class BindingProfileService {
                 item.put("enumColumnCount", 0);
                 item.put("updatedAt", null);
             }
-            String dsName;
-            try {
-                dsName = datasourceService.getById(dsId).getName();
-            } catch (Exception e) {
-                dsName = "数据源#" + dsId;
-            }
-            item.put("datasourceName", dsName);
+            item.put("datasourceName", dsNames.getOrDefault(dsId, "数据源#" + dsId));
             item.put("status", mapped > 0 ? "ACTIVE" : "EMPTY");
             item.put("mappedConcepts", mapped);
             item.put("totalConcepts", totalConcepts);

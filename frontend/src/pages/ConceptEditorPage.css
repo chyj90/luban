@@ -7,8 +7,11 @@
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
+  row-gap: 8px;
 }
 
 .toolbarTitle {

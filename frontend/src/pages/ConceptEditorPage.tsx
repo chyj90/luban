@@ -1403,8 +1403,8 @@ export default function ConceptEditorPage() {
       <PageTopbar
         icon={<Network size={22} />}
         title={
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <h2 className="page-topbar__title" style={{ margin: 0 }}>概念编辑器</h2>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            概念编辑器
             <button className="titleIconBtn" onClick={() => fetchData()} title="刷新">
               <RefreshCw size={15} />
             </button>

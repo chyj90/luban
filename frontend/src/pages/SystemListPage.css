@@ -60,12 +60,12 @@
 
 .system-list-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 16px;
-  align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+  align-content: start;
   flex: 1;
   overflow-y: auto;
-  padding: 24px 32px;
+  padding: 20px 24px;
 }
 
 .system-card {
@@ -73,7 +73,7 @@
   background: #fff;
   border: 1px solid #e8e8e8;
   border-radius: 8px;
-  padding: 20px;
+  padding: 14px 16px;
   transition: box-shadow 0.2s;
 }
 
@@ -81,28 +81,42 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
+.system-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .system-card-name {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: #1a1a2e;
-  margin: 0 0 4px;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .system-card-code {
-  display: inline-block;
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: #1677ff;
   background: #e6f4ff;
   padding: 2px 8px;
   border-radius: 4px;
-  margin-bottom: 8px;
   font-family: monospace;
 }
 
 .system-card-desc {
   font-size: 13px;
   color: #666;
-  margin: 0 0 12px;
+  margin: 0;
   line-height: 1.5;
   min-height: 20px;
   display: -webkit-box;
@@ -111,40 +125,12 @@
   overflow: hidden;
 }
 
-.system-card-meta {
+.system-card-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.system-card-status {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.system-card-status.enabled {
-  color: #52c41a;
-  background: #f6ffed;
-}
-
-.system-card-status.disabled {
-  color: #999;
-  background: #f5f5f5;
-}
-
-.system-card-actions {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.system-card:hover .system-card-actions {
-  opacity: 1;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .system-card-btn {

@@ -119,12 +119,10 @@ export default function SystemListPage() {
       <div className="system-list-grid">
         {groups.map((group) => (
           <div key={group.id} className="system-card">
-            <div className="system-card-body">
+            <div className="system-card-title">
               <h3 className="system-card-name">{group.name}</h3>
               <span className="system-card-code">{group.code}</span>
-              <p className="system-card-desc">{group.description || '暂无描述'}</p>
-            </div>
-            <div className="system-card-actions">
+              <div className="system-card-actions">
               <button
                 className="system-card-btn"
                 title="查看工具"
@@ -156,7 +154,9 @@ export default function SystemListPage() {
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
               </button>
+              </div>
             </div>
+            <p className="system-card-desc">{group.description || '暂无描述'}</p>
             {showKey === group.id && group.publicKey && (
               <div className="system-card-key">
                 <div className="system-card-key-header">

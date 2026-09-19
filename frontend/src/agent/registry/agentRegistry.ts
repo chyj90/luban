@@ -104,6 +104,8 @@ export const AGENTS: AgentDefinition[] = [
       'query:lint',
       // 概念语义层：一个平台一套，SELECT 优先按概念口径生成（与智能问数同源），概念未覆盖才裸建模
       'concept:search', 'concept:detail', 'concept:tree', 'concept:nl2sql',
+      // 建表后发现业务对象缺概念/映射时提交本体变更草稿（dbaPrompt 概念语义优先第 4 条引用的工具）
+      'concept:propose_change',
       'api:list', 'api:connect', 'api:test', 'api:delete',
       // 平台资产：测试数据绑定 user_id 必须用真实平台用户，部门取真实组织树
       'platform:users', 'platform:departments',

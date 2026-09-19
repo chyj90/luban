@@ -39,6 +39,8 @@ public class DatasourceService {
     private final com.luban.repository.SystemPermissionRepository systemPermissionRepository;
     private final com.luban.security.appaccess.AppAccessService appAccessService;
     private final com.luban.repository.DatasourceSchemaRepository datasourceSchemaRepository;
+    private final com.luban.repository.ConceptMappingRepository conceptMappingRepository;
+    private final com.luban.repository.BindingProfileRepository bindingProfileRepository;
     private final ObjectMapper objectMapper;
     private final JdbcDriverService jdbcDriverService;
     private final CryptoUtil cryptoUtil;
@@ -65,6 +67,8 @@ public class DatasourceService {
                              com.luban.repository.SystemPermissionRepository systemPermissionRepository,
                              com.luban.security.appaccess.AppAccessService appAccessService,
                              com.luban.repository.DatasourceSchemaRepository datasourceSchemaRepository,
+                             com.luban.repository.ConceptMappingRepository conceptMappingRepository,
+                             com.luban.repository.BindingProfileRepository bindingProfileRepository,
                              ObjectMapper objectMapper,
                              JdbcDriverService jdbcDriverService,
                              CryptoUtil cryptoUtil,
@@ -74,6 +78,8 @@ public class DatasourceService {
         this.systemPermissionRepository = systemPermissionRepository;
         this.appAccessService = appAccessService;
         this.datasourceSchemaRepository = datasourceSchemaRepository;
+        this.conceptMappingRepository = conceptMappingRepository;
+        this.bindingProfileRepository = bindingProfileRepository;
         this.objectMapper = objectMapper;
         this.jdbcDriverService = jdbcDriverService;
         this.cryptoUtil = cryptoUtil;
@@ -477,6 +483,9 @@ public class DatasourceService {
     public void delete(Long id) {
         datasourceRepository.deleteById(id);
         datasourceSchemaRepository.deleteByDatasourceId(id);
+        // 级联清掉绑定集与概念映射，否则残留行让绑定管理页/覆盖率把已删源当孤儿处理
+        conceptMappingRepository.deleteAll(conceptMappingRepository.findByDatasourceId(id));
+        bindingProfileRepository.findByDatasourceId(id).ifPresent(bindingProfileRepository::delete);
     }
 
     public Map<String, Object> update(Long id, CreateDatasourceRequest request) {
