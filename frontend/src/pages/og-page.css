@@ -1,0 +1,33 @@
+/* 建模中心页面通用外壳（og-page + PageTopbar 配套）：问题洞察、语义包回归共用 */
+.og-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.og-page__content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 20px 0 28px;
+}
+
+.og-page__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+  color: #1677ff;
+}
+
+.og-page__spin {
+  animation: og-rotate 0.9s linear infinite;
+}
+
+@keyframes og-rotate {
+  to { transform: rotate(360deg); }
+}

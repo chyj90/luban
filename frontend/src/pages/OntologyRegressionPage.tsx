@@ -8,6 +8,7 @@ import {
   getAsyncTask,
   type RegressionPackageInfo,
 } from '@/api/concept';
+import './og-page.css';
 import './OntologyRegressionPage.css';
 
 interface CaseCheck {

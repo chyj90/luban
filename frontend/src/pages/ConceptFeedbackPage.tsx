@@ -11,6 +11,7 @@ import {
   type GapCluster,
 } from '@/api/concept';
 import type { ConceptFeedback } from '@/types/concept';
+import './og-page.css';
 import './ConceptFeedbackPage.css';
 
 const BUCKET_LABELS: Record<string, string> = {
@@ -146,7 +147,7 @@ export default function ConceptFeedbackPage() {
           )}
         </div>
 
-        <div className="bp-section" style={{ padding: '24px 24px 0' }}>
+        <div className="bp-section" style={{ padding: '0 24px' }}>
           <div className="bp-section-title">
             用户反馈
             <span className="bp-section-hint">问数页用户标记的坏答案（已快照原问题/回答/SQL），处理完可忽略或删除</span>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
-import { Link2, Plus, Trash2, RefreshCw, Loader2, Save, X, Zap } from 'lucide-react';
+import { Link2, Plus, Trash2, RefreshCw, Loader2, Save, X, Zap, ArrowLeftRight } from 'lucide-react';
 import PageTopbar from '@/components/PageTopbar';
+import Select from '@/components/Select';
 import { useToastStore } from '@/stores/toastStore';
 import {
   listBindingProfiles,
@@ -30,6 +31,17 @@ interface AutoBindState {
   error?: string;
 }
 
+const BRIDGE_FORM_INIT = {
+  name: '',
+  leftDatasourceId: '',
+  leftTable: '',
+  leftColumn: '',
+  rightDatasourceId: '',
+  rightTable: '',
+  rightColumn: '',
+  joinType: 'INNER',
+};
+
 export default function BindingProfilePage() {
   const [profiles, setProfiles] = useState<BindingProfileInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +56,7 @@ export default function BindingProfilePage() {
   const [applying, setApplying] = useState(false);
   const [bridges, setBridges] = useState<FederationBridgeInfo[]>([]);
   const [showBridgeForm, setShowBridgeForm] = useState(false);
-  const [bridgeForm, setBridgeForm] = useState({ name: '', leftDatasourceId: '', leftTable: '', leftColumn: '', rightDatasourceId: '', rightTable: '', rightColumn: '', joinType: 'INNER' });
+  const [bridgeForm, setBridgeForm] = useState(BRIDGE_FORM_INIT);
   const [bridgeSaving, setBridgeSaving] = useState(false);
   const toast = useToastStore((s) => s.show);
   const autoBindRef = useRef(autoBind);
@@ -149,14 +161,18 @@ export default function BindingProfilePage() {
         joinType: bridgeForm.joinType,
       });
       toast('桥接已创建', 'success');
-      setShowBridgeForm(false);
-      setBridgeForm({ name: '', leftDatasourceId: '', leftTable: '', leftColumn: '', rightDatasourceId: '', rightTable: '', rightColumn: '', joinType: 'INNER' });
+      closeBridgeForm();
       fetchBridges();
     } catch (e) {
       toast(e instanceof Error ? e.message : '创建失败', 'error');
     } finally {
       setBridgeSaving(false);
     }
+  };
+
+  const closeBridgeForm = () => {
+    setShowBridgeForm(false);
+    setBridgeForm(BRIDGE_FORM_INIT);
   };
 
   const handleBridgeDelete = async (id: number) => {
@@ -276,41 +292,98 @@ export default function BindingProfilePage() {
 
       <div className="bp-content">
         {/* 跨源桥接（全局） */}
-        <div className="bp-section" style={{ marginBottom: 20 }}>
-          <div className="bp-section-title">
+        <div className="bp-card" style={{ marginBottom: 20 }}>
+          <div className="bp-card-title">
             跨源桥接
             <span className="bp-section-hint">声明两个数据源之间的等值联接键；问数遇到跨源问题时按 nl2sql_federated 生成两条分源 SQL，平台内存合并</span>
-            <button className="bp-btn" style={{ marginLeft: 10 }} onClick={() => setShowBridgeForm(!showBridgeForm)}>
+            <button className="bp-btn" onClick={() => (showBridgeForm ? closeBridgeForm() : setShowBridgeForm(true))}>
+              {showBridgeForm ? <X size={13} /> : <Plus size={13} />}
               {showBridgeForm ? '收起' : '新建桥接'}
             </button>
           </div>
           {showBridgeForm && (
-            <div className="bp-enum-refresh" style={{ flexWrap: 'wrap', marginBottom: 10, gap: 6 }}>
-              <input placeholder="名称(可选)" value={bridgeForm.name} onChange={(e) => setBridgeForm({ ...bridgeForm, name: e.target.value })} style={{ width: 110 }} />
-              <select value={bridgeForm.leftDatasourceId} onChange={(e) => setBridgeForm({ ...bridgeForm, leftDatasourceId: e.target.value })} style={{ padding: '5px 8px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 12 }}>
-                <option value="">左侧数据源</option>
-                {profiles.map((p) => <option key={p.datasourceId} value={p.datasourceId}>{p.datasourceName} #{p.datasourceId}</option>)}
-              </select>
-              <input placeholder="左表" value={bridgeForm.leftTable} onChange={(e) => setBridgeForm({ ...bridgeForm, leftTable: e.target.value })} style={{ width: 120 }} />
-              <input placeholder="左列" value={bridgeForm.leftColumn} onChange={(e) => setBridgeForm({ ...bridgeForm, leftColumn: e.target.value })} style={{ width: 100 }} />
-              <span>↔</span>
-              <select value={bridgeForm.rightDatasourceId} onChange={(e) => setBridgeForm({ ...bridgeForm, rightDatasourceId: e.target.value })} style={{ padding: '5px 8px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 12 }}>
-                <option value="">右侧数据源</option>
-                {profiles.map((p) => <option key={p.datasourceId} value={p.datasourceId}>{p.datasourceName} #{p.datasourceId}</option>)}
-              </select>
-              <input placeholder="右表" value={bridgeForm.rightTable} onChange={(e) => setBridgeForm({ ...bridgeForm, rightTable: e.target.value })} style={{ width: 120 }} />
-              <input placeholder="右列" value={bridgeForm.rightColumn} onChange={(e) => setBridgeForm({ ...bridgeForm, rightColumn: e.target.value })} style={{ width: 100 }} />
-              <select value={bridgeForm.joinType} onChange={(e) => setBridgeForm({ ...bridgeForm, joinType: e.target.value })} style={{ padding: '5px 8px', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 12 }}>
-                <option value="INNER">INNER</option>
-                <option value="LEFT">LEFT</option>
-              </select>
-              <button className="bp-btn bp-btn--primary" onClick={handleBridgeCreate} disabled={bridgeSaving}>
-                {bridgeSaving ? <Loader2 size={13} className="bp-spin" /> : null} 保存
-              </button>
+            <div className="bp-bridge-form">
+              <div className="bp-bridge-sides">
+                <div className="bp-bridge-side">
+                  <div className="bp-bridge-side-name">左侧</div>
+                  <div className="bp-bridge-fields">
+                    <div className="bp-bridge-field">
+                      <label>数据源</label>
+                      <Select
+                        className="bp-select-ds"
+                        small
+                        searchable
+                        value={bridgeForm.leftDatasourceId}
+                        placeholder="选择数据源"
+                        options={profiles.map((p) => ({ value: String(p.datasourceId), label: `${p.datasourceName} #${p.datasourceId}` }))}
+                        onChange={(v) => setBridgeForm({ ...bridgeForm, leftDatasourceId: v })}
+                      />
+                    </div>
+                    <div className="bp-bridge-field">
+                      <label>表名</label>
+                      <input placeholder="如 t_order" value={bridgeForm.leftTable} onChange={(e) => setBridgeForm({ ...bridgeForm, leftTable: e.target.value })} />
+                    </div>
+                    <div className="bp-bridge-field">
+                      <label>联接列</label>
+                      <input placeholder="如 user_id" value={bridgeForm.leftColumn} onChange={(e) => setBridgeForm({ ...bridgeForm, leftColumn: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+                <div className="bp-bridge-mid">
+                  <span className="bp-bridge-mid-icon"><ArrowLeftRight size={13} /></span>
+                  <Select
+                    className="bp-select-join"
+                    small
+                    value={bridgeForm.joinType}
+                    options={[{ value: 'INNER', label: 'INNER' }, { value: 'LEFT', label: 'LEFT' }]}
+                    onChange={(v) => setBridgeForm({ ...bridgeForm, joinType: v })}
+                  />
+                </div>
+                <div className="bp-bridge-side">
+                  <div className="bp-bridge-side-name bp-bridge-side-name--right">右侧</div>
+                  <div className="bp-bridge-fields">
+                    <div className="bp-bridge-field">
+                      <label>数据源</label>
+                      <Select
+                        className="bp-select-ds"
+                        small
+                        searchable
+                        value={bridgeForm.rightDatasourceId}
+                        placeholder="选择数据源"
+                        options={profiles.map((p) => ({ value: String(p.datasourceId), label: `${p.datasourceName} #${p.datasourceId}` }))}
+                        onChange={(v) => setBridgeForm({ ...bridgeForm, rightDatasourceId: v })}
+                      />
+                    </div>
+                    <div className="bp-bridge-field">
+                      <label>表名</label>
+                      <input placeholder="如 t_user" value={bridgeForm.rightTable} onChange={(e) => setBridgeForm({ ...bridgeForm, rightTable: e.target.value })} />
+                    </div>
+                    <div className="bp-bridge-field">
+                      <label>联接列</label>
+                      <input placeholder="如 id" value={bridgeForm.rightColumn} onChange={(e) => setBridgeForm({ ...bridgeForm, rightColumn: e.target.value })} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bp-bridge-footer">
+                <div className="bp-bridge-field bp-bridge-field--name">
+                  <label>桥接名称（可选）</label>
+                  <input placeholder="便于识别，如：计费库 ↔ 用户库" value={bridgeForm.name} onChange={(e) => setBridgeForm({ ...bridgeForm, name: e.target.value })} />
+                </div>
+                <div className="bp-bridge-footer-actions">
+                  <button className="bp-btn" onClick={closeBridgeForm}>取消</button>
+                  <button className="bp-btn bp-btn--primary" onClick={handleBridgeCreate} disabled={bridgeSaving}>
+                    {bridgeSaving ? <Loader2 size={13} className="bp-spin" /> : <Save size={13} />} 保存桥接
+                  </button>
+                </div>
+              </div>
             </div>
           )}
+          {!showBridgeForm && bridges.length === 0 && (
+            <div className="bp-bridge-empty">暂无桥接。跨源问数前，先为两侧数据源声明等值联接键。</div>
+          )}
           {bridges.length > 0 && (
-            <table className="bp-table">
+            <table className="bp-table bp-table--flat">
               <thead>
                 <tr>
                   <th>名称</th>
@@ -400,13 +473,13 @@ export default function BindingProfilePage() {
                                   <span>{autoBind[expandedDs].currentStep || '正在匹配...'}</span>
                                 </div>
                               )}
-                              {autoBind[expandedDs].status === 'FAILED' && (
+                              {autoBind[expandedDs]?.status === 'FAILED' && (
                                 <div className="bp-autobind-result bp-autobind-result--error">
                                   自动匹配失败：{autoBind[expandedDs].error}
                                   <button className="bp-btn" onClick={() => startAutoBind(expandedDs)} style={{ marginLeft: 10 }}>重试</button>
                                 </div>
                               )}
-                              {autoBind[expandedDs].status === 'COMPLETED' && !autoBind[expandedDs].applied && (() => {
+                              {autoBind[expandedDs]?.status === 'COMPLETED' && !autoBind[expandedDs]?.applied && (() => {
                                 const s = autoBind[expandedDs].summary;
                                 return (
                                   <div className="bp-autobind-result">
@@ -420,7 +493,7 @@ export default function BindingProfilePage() {
                                   </div>
                                 );
                               })()}
-                              {autoBind[expandedDs].applied && (
+                              {autoBind[expandedDs]?.applied && (
                                 <div className="bp-autobind-result bp-autobind-result--done">
                                   已生效：新建 {autoBind[expandedDs].applied!.created} 条映射、{autoBind[expandedDs].applied!.createdJoins} 条 JOIN，
                                   跳过 {autoBind[expandedDs].applied!.skipped} 条
@@ -496,9 +569,11 @@ export default function BindingProfilePage() {
                               </div>
                             </div>
 
-                            <button className="bp-btn bp-btn--primary" onClick={saveProfile} disabled={saving}>
-                              {saving ? <Loader2 size={13} className="bp-spin" /> : <Save size={13} />} 保存绑定集
-                            </button>
+                            <div className="bp-detail-footer">
+                              <button className="bp-btn bp-btn--primary" onClick={saveProfile} disabled={saving}>
+                                {saving ? <Loader2 size={13} className="bp-spin" /> : <Save size={13} />} 保存绑定集
+                              </button>
+                            </div>
                           </div>
                         )}
                       </td>
