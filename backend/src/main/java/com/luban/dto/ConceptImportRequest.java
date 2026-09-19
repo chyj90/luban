@@ -9,7 +9,6 @@ public class ConceptImportRequest {
     private String sourceType;
     private String content;
     private String url;
-    private Long industryId;
     private Long groupId;
     private List<Map<String, Object>> selectedItems;
 }

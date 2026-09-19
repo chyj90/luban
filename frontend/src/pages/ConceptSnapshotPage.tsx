@@ -5,9 +5,9 @@ import Select from '@/components/Select';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { listSnapshots, createSnapshot, diffSnapshots, getSnapshot, rollbackSnapshot } from '@/api/snapshot';
-import { listOntologyGroups, listIndustries } from '@/api/concept';
+import { listOntologyGroups } from '@/api/concept';
 import type { ConceptSnapshot, DiffResult } from '@/api/snapshot';
-import type { OntologyGroup, Industry } from '@/types/concept';
+import type { OntologyGroup } from '@/types/concept';
 import './ConceptSnapshotPage.css';
 
 type ViewMode = 'list' | 'diff' | 'detail';
@@ -15,11 +15,9 @@ type ViewMode = 'list' | 'diff' | 'detail';
 export default function ConceptSnapshotPage() {
   const [snapshots, setSnapshots] = useState<ConceptSnapshot[]>([]);
   const [groups, setGroups] = useState<OntologyGroup[]>([]);
-  const [industries, setIndustries] = useState<Industry[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedIndustryId, setSelectedIndustryId] = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [comment, setComment] = useState('');
   const [createError, setCreateError] = useState('');
@@ -52,29 +50,14 @@ export default function ConceptSnapshotPage() {
     listOntologyGroups()
       .then((d) => setGroups(d.data || []))
       .catch(() => {});
-    listIndustries()
-      .then((d) => {
-        setIndustries(d.data || []);
-        if (d.data && d.data.length > 0) setSelectedIndustryId(d.data[0].id);
-      })
-      .catch(() => {});
   }, [fetchSnapshots]);
-
-  const filteredGroups = useMemo(() => {
-    if (!selectedIndustryId) return [];
-    return groups.filter((g) => g.industryId === selectedIndustryId);
-  }, [groups, selectedIndustryId]);
 
   const selectedGroup = useMemo(() => {
     return groups.find((g) => g.id === selectedGroupId) || null;
   }, [groups, selectedGroupId]);
 
-  const selectedIndustry = useMemo(() => {
-    return industries.find((i) => i.id === selectedIndustryId) || null;
-  }, [industries, selectedIndustryId]);
-
   const autoVersion = useMemo(() => {
-    if (!selectedIndustry || !selectedGroup) return '';
+    if (!selectedGroup) return '';
     const now = new Date();
     const ts = now.getFullYear().toString() +
       String(now.getMonth() + 1).padStart(2, '0') +
@@ -83,15 +66,11 @@ export default function ConceptSnapshotPage() {
       String(now.getMinutes()).padStart(2, '0') +
       String(now.getSeconds()).padStart(2, '0');
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    return `v${selectedIndustry.id}-${selectedGroup.id}-${ts}-${random}`;
-  }, [selectedIndustry, selectedGroup]);
+    return `v${selectedGroup.id}-${ts}-${random}`;
+  }, [selectedGroup]);
 
   const handleCreate = async () => {
     setCreateError('');
-    if (!selectedIndustryId) {
-      setCreateError('请选择行业');
-      return;
-    }
     if (!selectedGroupId) {
       setCreateError('请选择概念域');
       return;
@@ -211,26 +190,10 @@ export default function ConceptSnapshotPage() {
           <div className="snapshot-modal-dialog">
             <div className="snapshot-modal-title">创建版本快照</div>
             <div className="snapshot-form-group">
-              <label>行业 <span className="snapshot-required">*</span></label>
-              <Select
-                value={selectedIndustryId != null ? String(selectedIndustryId) : ''}
-                options={industries.map((ind) => ({
-                  value: String(ind.id),
-                  label: ind.displayName,
-                }))}
-                onChange={(v) => {
-                  setSelectedIndustryId(v ? Number(v) : null);
-                  setSelectedGroupId(null);
-                  setCreateError('');
-                }}
-                placeholder="选择行业"
-              />
-            </div>
-            <div className="snapshot-form-group">
               <label>概念域 <span className="snapshot-required">*</span></label>
               <Select
                 value={selectedGroupId != null ? String(selectedGroupId) : ''}
-                options={filteredGroups.map((g) => ({
+                options={groups.map((g) => ({
                   value: String(g.id),
                   label: g.displayName || g.name,
                 }))}
@@ -238,19 +201,15 @@ export default function ConceptSnapshotPage() {
                   setSelectedGroupId(v ? Number(v) : null);
                   setCreateError('');
                 }}
-                placeholder={selectedIndustryId ? '选择概念域' : '请先选择行业'}
-                disabled={!selectedIndustryId}
+                placeholder="选择概念域"
               />
-              {selectedIndustryId && filteredGroups.length === 0 && (
-                <span className="snapshot-form-hint">该行业下暂无概念域</span>
-              )}
             </div>
             <div className="snapshot-form-group">
               <label>版本号</label>
               <div className="snapshot-version-display">
                 {autoVersion || (
                   <span className="snapshot-version-placeholder">
-                    {selectedIndustryId && selectedGroupId ? '生成中...' : '选择行业和概念域后自动生成'}
+                    {selectedGroupId ? '生成中...' : '选择概念域后自动生成'}
                   </span>
                 )}
               </div>
@@ -267,7 +226,7 @@ export default function ConceptSnapshotPage() {
             )}
             <div className="snapshot-modal-actions">
               <button className="snapshot-btn-cancel" onClick={() => { setShowCreate(false); setCreateError(''); }}>取消</button>
-              <button className="snapshot-btn-primary" onClick={handleCreate} disabled={!selectedIndustryId || !selectedGroupId}>创建</button>
+              <button className="snapshot-btn-primary" onClick={handleCreate} disabled={!selectedGroupId}>创建</button>
             </div>
           </div>
         </div>

@@ -84,7 +84,8 @@ public class AgentController {
         if (!agentService.hasSessionAccess(sessionId, userId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "无权访问该会话"));
         }
-        Map<String, Object> result = agentService.chat(sessionId, message, userId, userName);
+        Long datasourceScope = params.get("datasourceId") instanceof Number n ? n.longValue() : null;
+        Map<String, Object> result = agentService.chat(sessionId, message, userId, userName, datasourceScope);
         result.put("sessionId", sessionId);
         return ResponseEntity.ok(result);
     }
@@ -94,6 +95,7 @@ public class AgentController {
                            HttpServletResponse response) {
         final String sessionId = (String) params.getOrDefault("sessionId", UUID.randomUUID().toString());
         final String message = (String) params.get("message");
+        final Long datasourceScope = params.get("datasourceId") instanceof Number n ? n.longValue() : null;
         final Long userId = requireCurrentUser();
         final String userName = getCurrentUserName();
 
@@ -148,7 +150,7 @@ public class AgentController {
                     } catch (IOException e) {
                         log.warn("Failed to send reasoning event", e);
                     }
-                });
+                }, datasourceScope);
                 result.put("sessionId", sessionId);
 
                 Object conceptTrace = result.get("conceptTrace");

@@ -17,9 +17,6 @@ public class ConceptImportLog {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, length = 32)
-    private String industry;
-
     @Column(nullable = false, length = 128)
     private String source;
 

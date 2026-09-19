@@ -50,10 +50,10 @@ public class RoleConceptPermissionService {
     public boolean checkQueryPermission(Long userId, Long conceptId) {
         Concept concept = conceptRepository.findById(conceptId)
                 .orElseThrow(() -> new IllegalArgumentException("概念不存在: " + conceptId));
-        Long groupId = concept.getGroupId();
-        if (groupId == null) {
+        if (concept.getGroupId() == null || isSuperAdmin(userId)) {
             return true;
         }
+        Long groupId = concept.getGroupId();
         List<Long> roleIds = roleUserRepository.findByUserId(userId)
                 .stream().map(ru -> ru.getRoleId()).toList();
         if (roleIds.isEmpty()) {
@@ -72,6 +72,7 @@ public class RoleConceptPermissionService {
         List<Concept> concepts = conceptRepository.findAllById(conceptIds);
         List<Long> roleIds = roleUserRepository.findByUserId(userId)
                 .stream().map(ru -> ru.getRoleId()).toList();
+        boolean superAdmin = isSuperAdmin(userId);
 
         log.info("batchCheckQueryPermission: userId={}, roleIds={}, conceptCount={}",
                 userId, roleIds, concepts.size());
@@ -85,7 +86,8 @@ public class RoleConceptPermissionService {
         Map<Long, Boolean> result = new HashMap<>();
         for (Concept concept : concepts) {
             Long groupId = concept.getGroupId();
-            if (groupId == null) {
+            if (groupId == null || superAdmin) {
+                // 未分组概念放行；超管拥有全部概念域的查询权限
                 result.put(concept.getId(), true);
             } else if (roleIds.isEmpty()) {
                 log.info("batchCheckQueryPermission: concept={}(id={}) groupId={} DENIED (no roles)",

@@ -46,6 +46,8 @@ export interface AgentChatParams {
   systemId?: number;
   availableSystems?: { id: number; name: string; description: string }[];
   history?: { role: string; content: string }[];
+  /** 绑定集 scope：锁定本次问数的数据源（分公司），ContextBuilder 只装配该源的绑定 */
+  datasourceId?: number;
 }
 
 export function getAgentMetricsOverview() {

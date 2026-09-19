@@ -76,6 +76,12 @@ public class DatasourceController {
         return ResponseEntity.ok(ApiResponse.ok(datasourceService.getStructure(id)));
     }
 
+    @PostMapping("/{id}/structure/refresh")
+    @AppAccess(action = AppAction.VIEW, resource = "datasource", key = "id")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> refreshStructure(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.ok(datasourceService.refreshStructure(id)));
+    }
+
     @DeleteMapping("/{id}")
     @AppAccess(action = AppAction.DEVELOP, resource = "datasource", key = "id")
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {

@@ -11,7 +11,7 @@ import com.luban.repository.ConceptRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptEmbeddingTaskRepository;
-import com.luban.repository.IndustryRelationRepository;
+import com.luban.repository.RelationTypeRepository;
 import com.luban.repository.OntologyGroupRepository;
 import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.ToolDefinitionRepository;
@@ -33,7 +33,7 @@ public class ConceptService {
     private final ConceptMappingRepository conceptMappingRepository;
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
-    private final IndustryRelationRepository industryRelationRepository;
+    private final RelationTypeRepository relationTypeRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
@@ -72,6 +72,11 @@ public class ConceptService {
             c.setMapped(mappedConceptIds.contains(c.getId()));
         }
         return concepts;
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<Concept> findById(Long id) {
+        return conceptRepository.findById(id);
     }
 
     @Transactional(readOnly = true)
@@ -265,12 +270,12 @@ public class ConceptService {
     private Map<String, Boolean> loadSourceToTargetMap() {
         Map<String, Boolean> map = new HashMap<>();
         try {
-            List<com.luban.entity.IndustryRelation> industryRelations = industryRelationRepository.findAll();
-            for (com.luban.entity.IndustryRelation ir : industryRelations) {
-                map.putIfAbsent(ir.getRelationType(), ir.getSourceToTarget());
+            List<com.luban.entity.RelationType> relationTypes = relationTypeRepository.findAll();
+            for (com.luban.entity.RelationType rt : relationTypes) {
+                map.putIfAbsent(rt.getRelationType(), rt.getSourceToTarget());
             }
         } catch (Exception e) {
-            log.warn("Failed to load IndustryRelation for parentId computation, using defaults", e);
+            log.warn("Failed to load RelationType for parentId computation, using defaults", e);
         }
         return map;
     }
@@ -366,22 +371,12 @@ public class ConceptService {
     }
 
     private void validateRelationType(Long conceptId, String relationType) {
-        Concept concept = conceptRepository.findById(conceptId)
+        conceptRepository.findById(conceptId)
                 .orElseThrow(() -> new NoSuchElementException("Concept not found: " + conceptId));
-        Long industryId = null;
-        if (concept.getGroupId() != null) {
-            OntologyGroup group = ontologyGroupRepository.findById(concept.getGroupId()).orElse(null);
-            if (group != null) {
-                industryId = group.getIndustryId();
-            }
-        }
-        if (industryId != null) {
-            boolean registered = industryRelationRepository
-                    .findByIndustryIdAndRelationType(industryId, relationType).isPresent();
-            if (!registered) {
-                throw new IllegalArgumentException(
-                        "关系类型 '" + relationType + "' 未在行业 " + industryId + " 中注册，请先在行业关系管理中注册");
-            }
+        boolean registered = relationTypeRepository.findByRelationType(relationType).isPresent();
+        if (!registered) {
+            throw new IllegalArgumentException(
+                    "关系类型 '" + relationType + "' 未注册，请先在关系类型管理中注册");
         }
     }
 

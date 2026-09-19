@@ -9,8 +9,9 @@ import com.luban.repository.AgentConfigRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.repository.OntologyGroupRepository;
+import com.luban.repository.RelationTypeRepository;
 import com.luban.entity.OntologyGroup;
-import com.luban.entity.IndustryRelation;
+import com.luban.entity.RelationType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,7 +42,7 @@ public class ConceptImportService {
     private final OntologyService ontologyService;
     private final ConceptEmbeddingService conceptEmbeddingService;
     private final LlmChatClient llmChatClient;
-    private final IndustryService industryService;
+    private final RelationTypeRepository relationTypeRepository;
     private final AsyncTaskService asyncTaskService;
 
     private final ObjectMapper jsonMapper = new ObjectMapper();
@@ -53,10 +54,10 @@ public class ConceptImportService {
             "luban.embedding.base-url", "http://127.0.0.1:8765");
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> preview(String sourceType, String content, String url, Long industryId, Long groupId) {
+    public Map<String, Object> preview(String sourceType, String content, String url, Long groupId) {
         log.info("══════════════════════════════════════════════════");
-        log.info("[import] 开始导入预览, sourceType={}, industryId={}, groupId={}, mode={}",
-                sourceType, industryId, groupId, url != null ? "URL" : "paste");
+        log.info("[import] 开始导入预览, sourceType={}, groupId={}, mode={}",
+                sourceType, groupId, url != null ? "URL" : "paste");
         Map<String, Object> result = new LinkedHashMap<>();
         File tempFile = null;
         try {
@@ -72,7 +73,7 @@ public class ConceptImportService {
             tempFile = saveToTempFile(rawContent, sourceType);
             log.info("[import] 临时文件: {} ({} bytes)", tempFile.getAbsolutePath(), tempFile.length());
 
-            Map<String, Object> parseResult = parseWithPythonService(sourceType, tempFile.toPath(), industryId);
+            Map<String, Object> parseResult = parseWithPythonService(sourceType, tempFile.toPath());
 
             if (parseResult.containsKey("error")) {
                 result.put("error", parseResult.get("error"));
@@ -87,7 +88,7 @@ public class ConceptImportService {
             }
             log.info("[import] Python解析得到 {} 个概念", rawConcepts.size());
 
-            result = buildPreviewResult(rawConcepts, industryId, groupId, sourceType);
+            result = buildPreviewResult(rawConcepts, groupId, sourceType);
             log.info("[import] 预览构建完成, totalConcepts={}", result.get("total"));
 
         } catch (Exception e) {
@@ -104,7 +105,7 @@ public class ConceptImportService {
     }
 
     public long previewAsync(String sourceType, byte[] fileBytes, String content, String url,
-                              Long industryId, Long groupId, Long userId) {
+                              Long groupId, Long userId) {
         AsyncTask task = asyncTaskService.createTask("IMPORT_CONCEPTS", 3, userId);
         asyncTaskService.startTask(task.getId());
         Thread.startVirtualThread(() -> {
@@ -123,14 +124,13 @@ public class ConceptImportService {
                 }
 
                 asyncTaskService.updateProgress(task.getId(), 1, "正在调用 AI 解析...");
-                Map<String, Object> result = preview(sourceType, rawContent, null, industryId, groupId);
+                Map<String, Object> result = preview(sourceType, rawContent, null, groupId);
                 if (result.containsKey("error")) {
                     asyncTaskService.failTask(task.getId(), (String) result.get("error"));
                     return;
                 }
 
                 asyncTaskService.updateProgress(task.getId(), 2, "解析完成");
-                result.put("_industryId", industryId);
                 result.put("_groupId", groupId);
                 asyncTaskService.completeTask(task.getId(), jsonMapper.writeValueAsString(result));
             } catch (Exception e) {
@@ -153,9 +153,8 @@ public class ConceptImportService {
         try {
             Map<String, Object> preview = jsonMapper.readValue(task.getResult(), Map.class);
             String sourceType = (String) preview.get("sourceType");
-            Long industryId = preview.get("_industryId") instanceof Number n ? n.longValue() : null;
             Long groupId = preview.get("_groupId") instanceof Number n ? n.longValue() : null;
-            return execute(sourceType, null, null, industryId, groupId, selectedItems);
+            return execute(sourceType, null, null, groupId, selectedItems);
         } catch (Exception e) {
             log.error("[import-async] 从任务执行导入失败: {}", e.getMessage(), e);
             return Map.of("error", "导入失败: " + e.getMessage());
@@ -417,7 +416,7 @@ public class ConceptImportService {
         return null;
     }
 
-    private Map<String, Object> parseWithPythonService(String sourceType, Path filePath, Long industryId) {
+    private Map<String, Object> parseWithPythonService(String sourceType, Path filePath) {
         log.info("[import] ┌─ 阶段1: 生成文件摘要");
         String summary = buildFileSummary(sourceType, filePath);
         if (summary == null) {
@@ -427,7 +426,7 @@ public class ConceptImportService {
         log.info("[import] ├─ 摘要长度: {} chars", summary.length());
 
         log.info("[import] ┌─ 阶段2: LLM生成解析代码");
-        ImportSession session = new ImportSession(sourceType, filePath, summary, null, industryId);
+        ImportSession session = new ImportSession(sourceType, filePath, summary, null);
         LLMResult llmResult = callLLMWithHistory(sourceType, session);
         if (llmResult.code == null) {
             if (llmResult.clarification != null) {
@@ -446,9 +445,9 @@ public class ConceptImportService {
         return Map.of("concepts", (Object) concepts);
     }
 
-    private Map<String, Object> buildPreviewResult(List<Map<String, Object>> rawConcepts, Long industryId, Long groupId, String sourceType) {
+    private Map<String, Object> buildPreviewResult(List<Map<String, Object>> rawConcepts, Long groupId, String sourceType) {
         log.info("[import] → 开始LLM规范化, conceptCount={}, autoDomain={}", rawConcepts.size(), groupId == null);
-        List<Map<String, Object>> normalized = normalizeWithLLM(rawConcepts, industryId, groupId);
+        List<Map<String, Object>> normalized = normalizeWithLLM(rawConcepts, groupId);
         log.info("[import] → LLM规范化完成, 返回 {} 个概念", normalized.size());
 
         List<Map<String, Object>> withConflicts = detectConflicts(normalized, groupId);
@@ -564,10 +563,10 @@ public class ConceptImportService {
 
     @SuppressWarnings("unchecked")
     @Transactional
-    public Map<String, Object> execute(String sourceType, String content, String url, Long industryId, Long groupId,
+    public Map<String, Object> execute(String sourceType, String content, String url, Long groupId,
                                         List<Map<String, Object>> selectedItems) {
-        log.info("[import] ===== 开始执行导入, sourceType={}, industryId={}, itemCount={}, autoDomain={} =====",
-                sourceType, industryId, selectedItems.size(), groupId == null);
+        log.info("[import] ===== 开始执行导入, sourceType={}, itemCount={}, autoDomain={} =====",
+                sourceType, selectedItems.size(), groupId == null);
         Map<String, Object> result = new LinkedHashMap<>();
         int created = 0;
         int skipped = 0;
@@ -595,7 +594,6 @@ public class ConceptImportService {
                         newGroup.setName(domainName);
                         newGroup.setDisplayName(domainName);
                         newGroup.setDescription("自动创建: " + domainName);
-                        newGroup.setIndustryId(industryId);
                         newGroup = groupRepository.save(newGroup);
                         domainCache.put(domainName, newGroup.getId());
                         log.info("[import] 创建新域 '{}', id={}", domainName, newGroup.getId());
@@ -687,9 +685,9 @@ public class ConceptImportService {
             }
             log.info("[import] 关系创建完成: {} 条", relCount);
 
-            if (industryId != null && !usedRelationTypes.isEmpty()) {
-                Set<String> existingTypes = industryService.getRelations(industryId).stream()
-                        .map(IndustryRelation::getRelationType)
+            if (!usedRelationTypes.isEmpty()) {
+                Set<String> existingTypes = relationTypeRepository.findAll().stream()
+                        .map(RelationType::getRelationType)
                         .collect(Collectors.toSet());
                 usedRelationTypes.removeAll(existingTypes);
                 if (!usedRelationTypes.isEmpty()) {
@@ -737,7 +735,7 @@ public class ConceptImportService {
         return content != null && !content.isEmpty() ? content : null;
     }
 
-    private List<Map<String, Object>> normalizeWithLLM(List<Map<String, Object>> rawConcepts, Long industryId, Long groupId) {
+    private List<Map<String, Object>> normalizeWithLLM(List<Map<String, Object>> rawConcepts, Long groupId) {
         try {
             AgentConfig config = agentConfigRepository.findByIsDefaultTrue().orElse(null);
             if (config == null) {
@@ -771,7 +769,7 @@ public class ConceptImportService {
 
             prompt += "- relations: 关系列表，每项 { type: 关系类型英文, target: 目标概念名, expression: 计算公式(可选), description: 关系描述(可选) }\n\n"
                     + "可用关系类型：\n"
-                    + getRelationPromptString(industryId) + "\n"
+                    + getRelationPromptString() + "\n"
                     + "优先从上表选择，如果原始数据中的关系类型不在上表，可保留原样\n\n"
                     + "只返回JSON数组，不要其他内容。";
 
@@ -899,16 +897,14 @@ public class ConceptImportService {
         Path filePath;
         String summary;
         List<Map<String, Object>> llmMessages;
-        Long industryId;
         Long groupId;
         long createdAt;
 
-        ImportSession(String sourceType, Path filePath, String summary, Long groupId, Long industryId) {
+        ImportSession(String sourceType, Path filePath, String summary, Long groupId) {
             this.sourceType = sourceType;
             this.filePath = filePath;
             this.summary = summary;
             this.groupId = groupId;
-            this.industryId = industryId;
             this.llmMessages = new ArrayList<>();
             this.createdAt = System.currentTimeMillis();
         }
@@ -958,7 +954,7 @@ public class ConceptImportService {
                         + "4. 使用 print(json.dumps(concepts)) 输出 JSON 数组\n\n"
                         + "每个概念格式：{ \"name\": \"CamelCase\", \"description\": \"...\", \"parentName\": \"...\", \"domain\": \"...\", \"relations\": [{\"type\": \"关系类型\", \"target\": \"OtherConcept\", \"expression\": \"计算公式(可选)\", \"description\": \"关系描述(可选)\"}] }\n\n"
                         + "可用关系类型：\n"
-                        + getRelationPromptString(session.industryId) + "\n"
+                        + getRelationPromptString() + "\n"
                         + "以上为已有关系类型供参考。如果文件中出现的新关系类型不在上表中，也请原样提取，不要强行映射到已有类型\n\n"
                         + "重要规则：\n"
                         + "- 不要定义 _IMPORT_FILE_PATH，它已经存在，直接使用即可\n"
@@ -1071,10 +1067,17 @@ public class ConceptImportService {
                 + "注意 Python 语法：dict 和函数参数必须有逗号分隔。";
     }
 
-    private String getRelationPromptString(Long industryId) {
-        if (industryId != null) {
-            return industryService.toPromptString(industryId);
+    private String getRelationPromptString() {
+        List<RelationType> types = relationTypeRepository.findAll();
+        if (types.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (RelationType r : types) {
+            sb.append("- ").append(r.getRelationType());
+            if (r.getDescription() != null && !r.getDescription().isEmpty()) {
+                sb.append(": ").append(r.getDescription());
+            }
+            sb.append("\n");
         }
-        return "";
+        return sb.toString();
     }
 }

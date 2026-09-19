@@ -20,6 +20,7 @@ import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
+import com.luban.repository.UserRepository;
 import com.luban.constant.OntologyOperationType;
 import com.luban.constant.ToolType;
 import com.luban.entity.OntologyChangeLog;
@@ -67,6 +68,7 @@ public class AgentService {
     private final DatasourceService datasourceService;
     private final AgentMetricsService agentMetricsService;
     private final ChatMessageRepository chatMessageRepository;
+    private final UserRepository userRepository;
     private final ChatRootCauseRepository chatRootCauseRepository;
     private final CodeExecutorService codeExecutorService;
     private final OntologyChangeService ontologyChangeService;
@@ -74,7 +76,6 @@ public class AgentService {
     private final com.luban.service.algorithm.JsonSchemaValidator jsonSchemaValidator;
     private final ContextBuilder contextBuilder;
     private final SqlExecutionService sqlExecutionService;
-    private final IndustryService industryService;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final org.slf4j.Logger agentDebug = LoggerFactory.getLogger("agent-debug");
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -135,14 +136,14 @@ public class AgentService {
                         DatasourceService datasourceService,
                         AgentMetricsService agentMetricsService,
                         ChatMessageRepository chatMessageRepository,
+                        UserRepository userRepository,
                         ChatRootCauseRepository chatRootCauseRepository,
                         CodeExecutorService codeExecutorService,
                         OntologyChangeService ontologyChangeService,
                         AlgorithmExecutionLogRepository algorithmExecutionLogRepository,
                         com.luban.service.algorithm.JsonSchemaValidator jsonSchemaValidator,
                         ContextBuilder contextBuilder,
-                        SqlExecutionService sqlExecutionService,
-                        IndustryService industryService) {
+                        SqlExecutionService sqlExecutionService) {
         this.agentConfigRepository = agentConfigRepository;
         this.agentConfigService = agentConfigService;
         this.toolDefinitionRepository = toolDefinitionRepository;
@@ -156,6 +157,7 @@ public class AgentService {
         this.datasourceService = datasourceService;
         this.agentMetricsService = agentMetricsService;
         this.chatMessageRepository = chatMessageRepository;
+        this.userRepository = userRepository;
         this.chatRootCauseRepository = chatRootCauseRepository;
         this.codeExecutorService = codeExecutorService;
         this.ontologyChangeService = ontologyChangeService;
@@ -163,22 +165,34 @@ public class AgentService {
         this.jsonSchemaValidator = jsonSchemaValidator;
         this.contextBuilder = contextBuilder;
         this.sqlExecutionService = sqlExecutionService;
-        this.industryService = industryService;
     }
 
     public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName) {
-        return chat(sessionId, userMessage, userId, userName, null, null, null);
+        return chat(sessionId, userMessage, userId, userName, null, null, null, null);
+    }
+
+    public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
+                                    Long datasourceScope) {
+        return chat(sessionId, userMessage, userId, userName, null, null, null, datasourceScope);
     }
 
     public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
                                     java.util.function.Consumer<String> onProgress) {
-        return chat(sessionId, userMessage, userId, userName, onProgress, null, null);
+        return chat(sessionId, userMessage, userId, userName, onProgress, null, null, null);
     }
 
     public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
                                     java.util.function.Consumer<String> onProgress,
                                     java.util.function.Consumer<String> onChunk,
                                     java.util.function.Consumer<String> onReasoning) {
+        return chat(sessionId, userMessage, userId, userName, onProgress, onChunk, onReasoning, null);
+    }
+
+    public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName,
+                                    java.util.function.Consumer<String> onProgress,
+                                    java.util.function.Consumer<String> onChunk,
+                                    java.util.function.Consumer<String> onReasoning,
+                                    Long datasourceScope) {
         if (!hasSessionAccess(sessionId, userId)) {
             Map<String, Object> denied = new LinkedHashMap<>();
             denied.put("answer", "无权访问该会话");
@@ -238,6 +252,9 @@ public class AgentService {
             initialState.put("tool_call_count", 0);
             initialState.put("user_id", userId);
             initialState.put("user_name", userName != null ? userName : "unknown");
+            if (datasourceScope != null) {
+                initialState.put("datasource_scope", datasourceScope);
+            }
 
             Optional<AgentState> result;
             try {
@@ -659,6 +676,7 @@ public class AgentService {
         graph.addNode("agent", buildAgentNode(config));
         graph.addNode("tool_executor", buildToolExecutorNode());
         graph.addNode("nl2sql_executor", buildNl2sqlExecutorNode());
+        graph.addNode("federated_executor", buildFederatedExecutorNode());
         graph.addNode("code_executor", buildCodeExecutorNode());
         graph.addNode("algorithm_executor", buildAlgorithmExecutorNode());
         graph.addNode("ontology_advisor", buildOntologyAdvisorNode());
@@ -673,6 +691,7 @@ public class AgentService {
         graph.addConditionalEdges("agent", buildRouterEdge(), Map.of(
                 "tool_call", "tool_executor",
                 "nl2sql", "nl2sql_executor",
+                "nl2sql_federated", "federated_executor",
                 "code_mode", "code_executor",
                 "algorithm", "algorithm_executor",
                 "ontology_action", "ontology_advisor",
@@ -682,6 +701,7 @@ public class AgentService {
 
         graph.addEdge("tool_executor", "agent");
         graph.addEdge("nl2sql_executor", "agent");
+        graph.addEdge("federated_executor", "agent");
         graph.addEdge("code_executor", "agent");
         graph.addEdge("algorithm_executor", "agent");
         graph.addEdge("ontology_advisor", "agent");
@@ -715,10 +735,26 @@ public class AgentService {
             String intent = "query";
             String generalAnswer = null;
 
+            // 当前用户身份：第一人称身份类问题（我的账号/我叫什么）由 general 路径直接作答；
+            // 第一人称数据问题（我的工单）仍走 query，由 ContextBuilder 注入的身份上下文支撑
+            String identityHint = "";
+            if (userId != null) {
+                var user = userRepository.findById(userId).orElse(null);
+                if (user != null) {
+                    identityHint = "\n当前登录用户：ID=" + userId
+                            + (user.getName() != null ? "，姓名=" + user.getName() : "")
+                            + (user.getAccount() != null ? "，账号=" + user.getAccount() : "")
+                            + (user.getEmail() != null ? "，邮箱=" + user.getEmail() : "")
+                            + "。仅当用户以第一人称（\"我\"）询问自己的身份信息（如\"我的账号\"）时，才输出 general 并在 answer 中直接告知；"
+                            + "凡涉及其他人名（如\"张三的领导\"）或任何数据统计、查询，一律输出 query。";
+                }
+            }
+
             String intentPrompt = "判断以下用户消息的意图，仅输出一个 JSON 对象，不要输出其他内容：\n"
                     + "- 如果用户想查询企业数据、分析指标、下钻根因，输出 {\"intent\": \"query\"}\n"
                     + "- 如果用户想配置本体（创建概念、添加映射、表连接、配置关系等），输出 {\"intent\": \"ontology\"}\n"
-                    + "- 如果是寒暄、闲聊、常识问答等与企业数据无关的内容，输出 {\"intent\": \"general\", \"answer\": \"<你的回答>\"}\n\n"
+                    + "- 如果是寒暄、闲聊、常识问答、个人身份信息等与企业数据分析无关的内容，输出 {\"intent\": \"general\", \"answer\": \"<你的回答>\"}\n\n"
+                    + identityHint
                     + "用户消息：" + userQuery;
             List<Map<String, Object>> intentMessages = new ArrayList<>();
             intentMessages.add(Map.of("role", "system", "content", "你是一个意图分类器。只输出 JSON，不要输出任何其他内容。"));
@@ -999,7 +1035,9 @@ public class AgentService {
         if (cached != null) {
             return cached;
         }
-        Map<String, Object> context = contextBuilder.build(sessionId, userQuery, messages, userId, intent);
+        Map<String, Object> context = contextBuilder.build(sessionId, userQuery, messages, userId, intent,
+                data.get("datasource_scope") instanceof Number n ? n.longValue() : null,
+                (String) data.get("user_name"));
         Map<String, Object> cacheEntry = new LinkedHashMap<>();
         cacheEntry.put("prompt", context.get("prompt"));
         cacheEntry.put("conceptTrace", context.get("conceptTrace"));
@@ -1125,7 +1163,9 @@ public class AgentService {
             loopCtx.append("4. 如果数据不足，说明具体缺什么数据（缺哪个表、缺哪个字段），不是笼统的\"表不可用\"\n");
             loopCtx.append("【禁止】在未执行单表验证的情况下断言\"表不存在\"或\"映射缺失\"。");
             messages.add(Map.of("role", "system", "content", loopCtx.toString()));
-            Map<String, Object> summaryContext = contextBuilder.build(sessionId, userQuery, messages, userId, intent);
+            Map<String, Object> summaryContext = contextBuilder.build(sessionId, userQuery, messages, userId, intent,
+                    data.get("datasource_scope") instanceof Number n ? n.longValue() : null,
+                    (String) data.get("user_name"));
             boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
             String summaryResponse = callLlm(config, messages, (String) summaryContext.get("prompt"), isAdmin);
             recordLlmResponse(data, summaryResponse);
@@ -1288,6 +1328,8 @@ public class AgentService {
             routeToolCall(data, messages, parsed);
         } else if ("nl2sql".equals(type)) {
             routeNl2sql(data, messages, parsed);
+        } else if ("nl2sql_federated".equals(type)) {
+            routeNl2sqlFederated(data, messages, parsed);
         } else if ("code_mode".equals(type)) {
             routeCodeMode(data, messages, parsed);
         } else if ("algorithm".equals(type)) {
@@ -1709,6 +1751,96 @@ public class AgentService {
     private boolean hasDateFilter(String sql) {
         SqlStructureAnalyzer.Analysis a = SqlStructureAnalyzer.analyze(sql);
         return a != null && a.dateLiteralFilter();
+    }
+
+    /**
+     * 跨源联邦查询：按本体声明的桥接键，生成两条分源 SQL，平台内存哈希联接。
+     * 结构校验从简（桥接列真实性与安全校验由执行器/桥接管理保证），联接失败反馈给 LLM 重试。
+     */
+    private void routeNl2sqlFederated(Map<String, Object> data, List<Map<String, Object>> messages,
+            Map<String, Object> parsed) {
+        @SuppressWarnings("unchecked")
+        List<?> rawSteps = (List<?>) parsed.getOrDefault("steps", List.of());
+        int validSteps = 0;
+        if (rawSteps != null) {
+            for (Object o : rawSteps) {
+                if (o instanceof Map<?, ?> s
+                        && s.get("datasourceId") instanceof Number
+                        && s.get("sql") != null && !String.valueOf(s.get("sql")).isBlank()
+                        && s.get("key") != null) {
+                    validSteps++;
+                }
+            }
+        }
+        if (validSteps != 2) {
+            messages.add(Map.of("role", "system", "content",
+                    "nl2sql_federated 需要恰好 2 个完整 steps（每步含 datasourceId、sql、key），请修正后重新输出。"));
+            data.put("next_action", "continue");
+            return;
+        }
+
+        String toolCallId = "call_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        Map<String, Object> pendingFederated = new LinkedHashMap<>(parsed);
+        pendingFederated.put("tool_call_id", toolCallId);
+        appendReasoning(data, (String) parsed.getOrDefault("reasoning", ""));
+        data.put("next_action", "nl2sql_federated");
+        data.put("pending_nl2sql_federated", pendingFederated);
+        addAssistantToolCallMsg(messages, toolCallId, "federated_executor",
+                Map.of("steps", validSteps, "joinType", String.valueOf(parsed.getOrDefault("joinType", "INNER"))));
+    }
+
+    private AsyncNodeAction<AgentState> buildFederatedExecutorNode() {
+        return (state) -> {
+            Map<String, Object> data = new LinkedHashMap<>(state.data());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> pending = (Map<String, Object>) data.get("pending_nl2sql_federated");
+            String toolCallId = (String) pending.get("tool_call_id");
+            @SuppressWarnings("unchecked")
+            List<?> rawSteps = (List<?>) pending.getOrDefault("steps", List.of());
+            List<Map<String, Object>> steps = new ArrayList<>();
+            for (Object o : rawSteps) {
+                if (o instanceof Map<?, ?> m) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> step = new LinkedHashMap<>((Map<String, Object>) m);
+                    steps.add(step);
+                }
+            }
+            List<Long> conceptIds = new ArrayList<>();
+            if (pending.get("concept_ids") instanceof List<?> rawIds) {
+                rawIds.stream().filter(v -> v instanceof Number)
+                        .forEach(v -> conceptIds.add(((Number) v).longValue()));
+            }
+            if (conceptIds.isEmpty()) {
+                conceptIds.addAll(toLongList((List<?>) data.getOrDefault("concept_ids", List.of())));
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> messages = (List<Map<String, Object>>) data.get("messages");
+            Long userId = data.get("user_id") instanceof Number
+                    ? ((Number) data.get("user_id")).longValue() : null;
+            String joinType = String.valueOf(pending.getOrDefault("joinType", "INNER"));
+
+            sendProgress("正在执行跨源联接查询...");
+            Map<String, Object> queryResult = sqlExecutionService.executeFederated(
+                    steps, joinType, conceptIds, userId);
+            data.put("query_result", queryResult);
+
+            String error = (String) queryResult.get("error");
+            if (error != null) {
+                messages.add(Map.of("role", "tool", "tool_call_id",
+                        toolCallId != null ? toolCallId : "", "content",
+                        "跨源联接执行失败: " + error + "。请修正两条分源 SQL 或联接键后重试；"
+                                + "若两侧数据无法等值联接，请改用 final_answer 说明。"));
+            } else {
+                int rowCount = queryResult.get("rowCount") instanceof Number n ? n.intValue() : 0;
+                messages.add(Map.of("role", "tool", "tool_call_id",
+                        toolCallId != null ? toolCallId : "", "content",
+                        "跨源联接成功，返回 " + rowCount + " 行合并结果（见查询结果）。"));
+                data.put("sql_exec_count", (int) data.getOrDefault("sql_exec_count", 0) + 1);
+            }
+            data.remove("pending_nl2sql_federated");
+            data.put("next_action", "continue");
+            return CompletableFuture.completedFuture(data);
+        };
     }
 
     private boolean isDateRangeQuery(String sql) {
@@ -2405,8 +2537,10 @@ public class AgentService {
 
             @SuppressWarnings("unchecked")
             Map<String, Map<String, Object>> valueOrigins = (Map<String, Map<String, Object>>) nl2sqlCall.get("value_origins");
+            // LLM 可在 nl2sql 动作中声明 datasourceId，对映射横跨多个数据源的概念做执行目标消歧
+            Long preferredDatasourceId = nl2sqlCall.get("datasourceId") instanceof Number n ? n.longValue() : null;
             AgentStateData stateData = AgentStateData.fromMap(data);
-            Map<String, Object> queryResult = sqlExecutionService.execute(sql, conceptIds, userId, valueOrigins, stateData);
+            Map<String, Object> queryResult = sqlExecutionService.execute(sql, conceptIds, userId, valueOrigins, stateData, preferredDatasourceId);
             data.put("query_result", queryResult);
 
             String error = (String) queryResult.get("error");
@@ -2816,16 +2950,11 @@ public class AgentService {
                     errors.add(String.format("- ADD_CONCEPT：概念「%s」已存在，请使用 UPDATE_CONCEPT 修改或改用其他名称", conceptName));
                     return false;
                 }
-                Long industryId = concept != null && concept.get("industryId") instanceof Number
-                        ? ((Number) concept.get("industryId")).longValue() : null;
-                if (industryId == null) {
-                    errors.add("- ADD_CONCEPT：缺少必填字段 industryId");
-                    return false;
-                }
-                boolean valid = industryService.list().stream()
-                        .anyMatch(i -> i.getId().equals(industryId));
-                if (!valid) {
-                    errors.add(String.format("- ADD_CONCEPT：行业ID %d 不存在，请从上方「可用行业与域」表格中选择有效行业", industryId));
+                String groupName = concept != null ? (String) concept.get("groupName") : null;
+                Long groupId = concept != null && concept.get("groupId") instanceof Number
+                        ? ((Number) concept.get("groupId")).longValue() : null;
+                if (groupId == null && (groupName == null || groupName.isEmpty())) {
+                    errors.add("- ADD_CONCEPT：缺少必填字段 groupName（或 groupId），请从「可用概念域」表格中选择");
                     return false;
                 }
                 Long dataSourceId = change.get("dataSourceId") instanceof Number

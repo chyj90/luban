@@ -29,8 +29,11 @@ public class SqlExecutionService {
     private final DatasourceService datasourceService;
     private final DatasourceRepository datasourceRepository;
     private final RoleConceptPermissionService roleConceptPermissionService;
+    private final BindingProfileService bindingProfileService;
 
     private static final int MAX_RESULT_ROWS = 200;
+    /** 跨源联接的桥接步骤行数上限（联接前每侧最多拉取行数，合并后仍受 MAX_RESULT_ROWS 限制） */
+    private static final int FEDERATED_BRIDGE_MAX_ROWS = 5000;
     private static final Logger sqlDebug = LoggerFactory.getLogger("sql-debug");
     private static final int MAX_STRING_LENGTH = 500;
 
@@ -39,13 +42,48 @@ public class SqlExecutionService {
 
     public Map<String, Object> execute(String sql, List<Long> conceptIds, Long userId,
             Map<String, Map<String, Object>> valueOrigins, AgentStateData state) {
+        return execute(sql, conceptIds, userId, valueOrigins, state, null);
+    }
+
+    public Map<String, Object> execute(String sql, List<Long> conceptIds, Long userId,
+            Map<String, Map<String, Object>> valueOrigins, AgentStateData state, Long preferredDatasourceId) {
         long t0 = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
 
         // 先解析数据源，安全校验需要按数据源类型与状态判定
         List<ConceptMapping> mappings = conceptMappingRepository.findByConceptIdIn(conceptIds);
         List<ConceptJoinMapping> joins = conceptJoinMappingRepository.findByConceptIdIn(conceptIds);
-        Long datasourceId = resolveDatasourceId(mappings, joins, conceptIds);
+        // 绑定集 scope：会话锁定数据源时，scope 外的映射一律不参与解析，跨源歧义自然消失
+        Long scopeDatasourceId = state != null ? state.getDatasourceScope() : null;
+        if (scopeDatasourceId != null) {
+            mappings.removeIf(m -> !scopeDatasourceId.equals(m.getDatasourceId()));
+            joins.removeIf(j -> !scopeDatasourceId.equals(j.getDatasourceId()));
+        }
+        Long datasourceId = resolveDatasourceId(mappings, joins, conceptIds, preferredDatasourceId);
+        if (datasourceId == null) {
+            Set<Long> candidateIds = new LinkedHashSet<>();
+            for (ConceptMapping m : mappings) {
+                if (m.getDatasourceId() != null) candidateIds.add(m.getDatasourceId());
+            }
+            for (ConceptJoinMapping j : joins) {
+                if (j.getDatasourceId() != null) candidateIds.add(j.getDatasourceId());
+            }
+            if (candidateIds.size() > 1) {
+                String candidates = candidateIds.stream()
+                        .map(id -> id + "(" + datasourceRepository.findById(id).map(Datasource::getName).orElse("?") + ")")
+                        .collect(Collectors.joining("、"));
+                result.put("error", "所查概念在多个数据源都有表映射（" + candidates + "），无法确定执行目标。"
+                        + "请在 nl2sql 动作中声明 datasourceId 指定本次查询的数据源后重试，或向用户确认应使用哪个数据源。");
+                result.put("rows", 0);
+                return result;
+            }
+            if (scopeDatasourceId != null && candidateIds.isEmpty()) {
+                result.put("error", "所查概念在当前数据源（#" + scopeDatasourceId + "）范围内没有任何表映射绑定，"
+                        + "请用 final_answer 告知用户该数据源缺少相关概念的绑定，不要跨源查询。");
+                result.put("rows", 0);
+                return result;
+            }
+        }
 
         String permError = checkConceptPermission(userId, conceptIds);
         if (permError != null) {
@@ -208,12 +246,21 @@ public class SqlExecutionService {
             log.warn("Right-value verification rejected unsafe identifier: table={}, column={}", table, column);
             return false;
         }
+        // 枚举字典优先：绑定集已缓存该列的枚举值时直接判定，免实连
+        if (datasourceId != null) {
+            Boolean dictHit = bindingProfileService.lookupEnumValue(datasourceId, table, column, value);
+            if (dictHit != null) return dictHit;
+        }
         try (Connection conn = getConnection(datasourceId);
              Statement stmt = conn.createStatement()) {
             stmt.setQueryTimeout(10);
             String verifySql = "SELECT 1 FROM " + table + " WHERE " + column + " = '" + value.replace("'", "''") + "' LIMIT 1";
             try (ResultSet rs = stmt.executeQuery(verifySql)) {
-                return rs.next();
+                boolean exists = rs.next();
+                if (exists && datasourceId != null) {
+                    bindingProfileService.recordEnumValue(datasourceId, table, column, value);
+                }
+                return exists;
             }
         } catch (SQLException e) {
             // 校验失败按"值不存在"处理（fail-closed），原实现放行会导致溯源校验形同虚设
@@ -235,7 +282,8 @@ public class SqlExecutionService {
         return name != null && SAFE_IDENTIFIER.matcher(name).matches();
     }
 
-    private Long resolveDatasourceId(List<ConceptMapping> mappings, List<ConceptJoinMapping> joins, List<Long> conceptIds) {
+    private Long resolveDatasourceId(List<ConceptMapping> mappings, List<ConceptJoinMapping> joins,
+            List<Long> conceptIds, Long preferredDatasourceId) {
         Set<Long> ids = new LinkedHashSet<>();
         boolean hasComputed = false;
         for (ConceptMapping m : mappings) {
@@ -244,6 +292,10 @@ public class SqlExecutionService {
         }
         for (ConceptJoinMapping j : joins) {
             if (j.getDatasourceId() != null) ids.add(j.getDatasourceId());
+        }
+        if (preferredDatasourceId != null && ids.contains(preferredDatasourceId)) {
+            log.info("resolveDatasourceId: using preferred datasourceId={} among candidates {}", preferredDatasourceId, ids);
+            return preferredDatasourceId;
         }
         if (ids.size() == 1) {
             return ids.iterator().next();
@@ -309,6 +361,194 @@ public class SqlExecutionService {
             if (t != null) tables.add(t);
         }
         return tables;
+    }
+
+    /**
+     * 跨源联邦执行（v1：单跳等值桥接）。按本体声明的桥接键，agent 生成两条分源 SQL，
+     * 平台各执行一次（桥接行数上限 FEDERATED_BRIDGE_MAX_ROWS），内存哈希联接后返回。
+     * steps: [{datasourceId, sql, key}, {datasourceId, sql, key}]，key 为各自结果集中的联接列名。
+     */
+    public Map<String, Object> executeFederated(List<Map<String, Object>> steps, String joinType,
+            List<Long> conceptIds, Long userId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        if (steps == null || steps.size() != 2) {
+            result.put("error", "nl2sql_federated 需要恰好 2 个 steps（每个数据源一条 SQL）");
+            result.put("rows", 0);
+            return result;
+        }
+
+        List<Long> stepDsIds = new ArrayList<>();
+        List<String> stepSqls = new ArrayList<>();
+        List<String> stepKeys = new ArrayList<>();
+        for (Map<String, Object> s : steps) {
+            Long dsId = s.get("datasourceId") instanceof Number n ? n.longValue() : null;
+            String sql = (String) s.get("sql");
+            String key = (String) s.get("key");
+            if (dsId == null || sql == null || sql.isBlank() || key == null || !isSafeIdentifier(key)) {
+                result.put("error", "steps 中缺少 datasourceId/sql，或 key 不是合法列名");
+                result.put("rows", 0);
+                return result;
+            }
+            stepDsIds.add(dsId);
+            stepSqls.add(sql);
+            stepKeys.add(key);
+        }
+        if (stepDsIds.get(0).equals(stepDsIds.get(1))) {
+            result.put("error", "两个步骤属于同一数据源，同源查询请使用普通 nl2sql 动作");
+            result.put("rows", 0);
+            return result;
+        }
+
+        String permError = checkConceptPermission(userId, conceptIds);
+        if (permError != null) {
+            result.put("error", permError);
+            result.put("rows", 0);
+            return result;
+        }
+
+        // 每步独立安全校验（按各自数据源类型与状态判定）
+        for (int i = 0; i < 2; i++) {
+            try {
+                var validation = sqlSecurityValidator.validate(stepSqls.get(i), stepDsIds.get(i));
+                if (!validation.isValid()) {
+                    result.put("error", "步骤 " + (i + 1) + " SQL 安全校验失败: " + String.join("; ", validation.getErrors()));
+                    result.put("rows", 0);
+                    return result;
+                }
+            } catch (Exception e) {
+                result.put("error", "步骤 " + (i + 1) + " SQL 安全校验失败: " + e.getMessage());
+                result.put("rows", 0);
+                return result;
+            }
+        }
+
+        Map<String, Object> left = runBridgeQuery(stepDsIds.get(0), stepSqls.get(0));
+        if (left.containsKey("error")) {
+            result.put("error", "步骤 1 执行失败: " + left.get("error"));
+            result.put("rows", 0);
+            return result;
+        }
+        Map<String, Object> right = runBridgeQuery(stepDsIds.get(1), stepSqls.get(1));
+        if (right.containsKey("error")) {
+            result.put("error", "步骤 2 执行失败: " + right.get("error"));
+            result.put("rows", 0);
+            return result;
+        }
+
+        try {
+            result = hashJoin(left, right, stepKeys.get(0), stepKeys.get(1), stepDsIds, joinType);
+        } catch (IllegalStateException e) {
+            result.put("error", e.getMessage());
+            result.put("rows", 0);
+            return result;
+        }
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> runBridgeQuery(Long datasourceId, String sql) {
+        try (Connection conn = getConnection(datasourceId);
+             Statement stmt = conn.createStatement()) {
+            stmt.setQueryTimeout(30);
+            try (ResultSet rs = stmt.executeQuery(sql)) {
+                ResultSetMetaData meta = rs.getMetaData();
+                int columnCount = meta.getColumnCount();
+                List<String> columns = new ArrayList<>();
+                for (int i = 1; i <= columnCount; i++) columns.add(meta.getColumnLabel(i));
+                List<Map<String, Object>> rows = new ArrayList<>();
+                while (rs.next() && rows.size() < FEDERATED_BRIDGE_MAX_ROWS) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (String col : columns) {
+                        Object val = rs.getObject(col);
+                        row.put(col, val);
+                    }
+                    rows.add(row);
+                }
+                sqlDebug.info("FEDERATED STEP: datasourceId={}, rows={}, sql={}", datasourceId, rows.size(),
+                        sql.length() > 200 ? sql.substring(0, 200) : sql);
+                return Map.of("columns", columns, "rows", rows);
+            }
+        } catch (SQLException e) {
+            return Map.of("error", e.getMessage() == null ? "unknown" : e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> hashJoin(Map<String, Object> left, Map<String, Object> right,
+            String leftKey, String rightKey, List<Long> dsIds, String joinType) {
+        List<String> leftColumns = (List<String>) left.get("columns");
+        List<Map<String, Object>> leftRows = (List<Map<String, Object>>) left.get("rows");
+        List<String> rightColumns = (List<String>) right.get("columns");
+        List<Map<String, Object>> rightRows = (List<Map<String, Object>>) right.get("rows");
+
+        if (!leftColumns.contains(leftKey)) {
+            throw new IllegalStateException("步骤 1 结果不含联接键 " + leftKey);
+        }
+        if (!rightColumns.contains(rightKey)) {
+            throw new IllegalStateException("步骤 2 结果不含联接键 " + rightKey);
+        }
+
+        // 合并列：左列全保留，右列去掉联接键，重名加后缀
+        boolean keepRight = "LEFT".equalsIgnoreCase(joinType) || "INNER".equalsIgnoreCase(joinType);
+        List<String> rightTake = rightColumns.stream()
+                .filter(c -> !c.equals(rightKey))
+                .collect(Collectors.toList());
+        List<String> mergedColumns = new ArrayList<>(leftColumns);
+        Map<String, String> rightColMapping = new LinkedHashMap<>();
+        for (String rc : rightTake) {
+            String target = mergedColumns.contains(rc) ? rc + "_r2" : rc;
+            rightColMapping.put(rc, target);
+            mergedColumns.add(target);
+        }
+
+        // 右侧哈希表（键值统一 trim + 字符串化）
+        Map<String, List<Map<String, Object>>> rightIndex = new HashMap<>();
+        for (Map<String, Object> rr : rightRows) {
+            Object kv = rr.get(rightKey);
+            if (kv == null) continue;
+            rightIndex.computeIfAbsent(String.valueOf(kv).trim(), k -> new ArrayList<>()).add(rr);
+        }
+
+        boolean leftOuter = "LEFT".equalsIgnoreCase(joinType);
+        List<Map<String, Object>> mergedRows = new ArrayList<>();
+        boolean truncated = false;
+        for (Map<String, Object> lr : leftRows) {
+            Object kv = lr.get(leftKey);
+            List<Map<String, Object>> matches = kv == null ? List.of()
+                    : rightIndex.getOrDefault(String.valueOf(kv).trim(), List.of());
+            if (matches.isEmpty()) {
+                if (!leftOuter) continue;
+                if (mergedRows.size() >= MAX_RESULT_ROWS) { truncated = true; break; }
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (String c : leftColumns) row.put(c, lr.get(c));
+                for (String target : rightColMapping.values()) row.put(target, null);
+                mergedRows.add(row);
+                continue;
+            }
+            for (Map<String, Object> rr : matches) {
+                if (mergedRows.size() >= MAX_RESULT_ROWS) { truncated = true; break; }
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (String c : leftColumns) row.put(c, lr.get(c));
+                for (Map.Entry<String, String> e2 : rightColMapping.entrySet()) {
+                    row.put(e2.getValue(), rr.get(e2.getKey()));
+                }
+                mergedRows.add(row);
+            }
+            if (truncated) break;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("columns", mergedColumns);
+        result.put("rows", mergedRows);
+        result.put("rowCount", mergedRows.size());
+        result.put("truncated", truncated || leftRows.size() >= FEDERATED_BRIDGE_MAX_ROWS
+                || rightRows.size() >= FEDERATED_BRIDGE_MAX_ROWS);
+        result.put("_federated", true);
+        result.put("_datasourceIds", dsIds);
+        log.info("Federated join: type={}, leftRows={}, rightRows={}, merged={}",
+                joinType, leftRows.size(), rightRows.size(), mergedRows.size());
+        return result;
     }
 
     public String formatResult(Map<String, Object> result) {

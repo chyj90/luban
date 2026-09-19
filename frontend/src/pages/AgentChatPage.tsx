@@ -5,6 +5,8 @@ import remarkGfm from 'remark-gfm';
 import { Database, Search, Sparkles } from 'lucide-react';
 import { fetchAgentChatStream, getSessionMessages, clearChatSession, listAgentSessions, type AgentSessionSummary } from '@/api/agent';
 import { listConceptFeedback, createProblemFeedback } from '@/api/concept';
+import { listUnifiedDatasources } from '@/api/datasource';
+import type { Datasource } from '@/types/datasource';
 import { useToastStore } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { fixMarkdownTable } from '@/lib/markdown';
@@ -199,6 +201,9 @@ export default function AgentChatPage() {
   const [selectedDatasources, setSelectedDatasources] = useState<Record<number, Set<string>>>({});
   const [expandedDatasources, setExpandedDatasources] = useState<Set<number>>(new Set());
   const [confirmedDatasources, setConfirmedDatasources] = useState<Set<string>>(new Set());
+  // 绑定集 scope：锁定本次问数的数据源（分公司），空 = 全部
+  const [chatScope, setChatScope] = useState<number | null>(null);
+  const [scopeOptions, setScopeOptions] = useState<Datasource[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const skipFetchRef = useRef(false);
   const toast = useToastStore((s) => s.show);
@@ -207,6 +212,7 @@ export default function AgentChatPage() {
 
   // 历史会话列表以后端为准（按登录用户分权分域），不再写 localStorage
   useEffect(() => {
+    listUnifiedDatasources().then((ds) => setScopeOptions(ds)).catch(() => {});
     localStorage.removeItem(LEGACY_HISTORY_KEY);
     let cancelled = false;
     listAgentSessions().then((res) => {
@@ -552,6 +558,7 @@ export default function AgentChatPage() {
       {
         sessionId,
         message: userMsg.content,
+        datasourceId: chatScope ?? undefined,
         history: newMessages.slice(-10).map((m) => ({
           role: m.role,
           content: m.content,
@@ -687,7 +694,7 @@ export default function AgentChatPage() {
         setSending(false);
       },
     );
-  }, [input, sending, activeSessionId, messages, syncSessions]);
+   }, [input, sending, activeSessionId, messages, syncSessions, chatScope]);
 
   const handleProblemFeedback = useCallback(async (msg: ChatMessage) => {
     const msgId = msg.messageId || msg.id;
@@ -765,7 +772,20 @@ export default function AgentChatPage() {
 
       <div className="agent-chat-main">
         <div className="agent-chat-header">
-          <h2 className="agent-chat-title">问数</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <h2 className="agent-chat-title">问数</h2>
+            <div style={{ width: 220 }}>
+              <Select
+                value={chatScope ? String(chatScope) : ''}
+                options={[
+                  { value: '', label: '全部数据源' },
+                  ...scopeOptions.map((ds) => ({ value: String(ds.id), label: ds.name })),
+                ]}
+                onChange={(v) => setChatScope(v ? Number(v) : null)}
+                placeholder="选择数据源范围"
+              />
+            </div>
+          </div>
           <div className="agent-chat-header-actions">
             <button
               className="agent-chat-copy-btn"
@@ -790,30 +810,28 @@ export default function AgentChatPage() {
                 <h1 className="agent-chat-welcome-title">AI 数据洞察助手</h1>
                 <p className="agent-chat-welcome-subtitle">自动分析数据，定位指标异常根因</p>
                 <div className="agent-chat-templates">
-                  {user?.superAdmin && (
-                    <div
-                      className="agent-chat-template-card"
-                      onClick={() => setInput('帮我配置库存积压分析本体，数据源"零售电商库"。根概念"库存周转天数"，异常阈值 > 60 天，下钻维度：物料 → 供应商 → 采购订单，关联维度：生产计划。需要用到 materials、inventory、suppliers、purchase_orders、production_plans 表')}
-                    >
-                      <div className="agent-chat-template-card-icon" style={{ background: 'linear-gradient(135deg, #eef2ff, #dbe4ff)' }}>
-                      <Database size={20} color="#4f6ef6" />
-                    </div>
-                      <div className="agent-chat-template-card-text">
-                        <span className="agent-chat-template-label">建本体</span>
-                        <span className="agent-chat-template-desc">配置库存积压分析本体</span>
-                      </div>
-                    </div>
-                  )}
                   <div
                     className="agent-chat-template-card"
-                    onClick={() => setInput('最近客诉率为什么超 3%？')}
+                    onClick={() => setInput('上月出账收入是多少？宽带和移动各占多少？')}
+                  >
+                    <div className="agent-chat-template-card-icon" style={{ background: 'linear-gradient(135deg, #eef2ff, #dbe4ff)' }}>
+                      <Database size={20} color="#4f6ef6" />
+                    </div>
+                    <div className="agent-chat-template-card-text">
+                      <span className="agent-chat-template-label">问指标</span>
+                      <span className="agent-chat-template-desc">上月出账收入与套餐结构</span>
+                    </div>
+                  </div>
+                  <div
+                    className="agent-chat-template-card"
+                    onClick={() => setInput('上月投诉量是多少？按投诉类型和地市看看集中在哪里')}
                   >
                     <div className="agent-chat-template-card-icon" style={{ background: 'linear-gradient(135deg, #eef2ff, #dbe4ff)' }}>
                       <Search size={20} color="#4f6ef6" />
                     </div>
                     <div className="agent-chat-template-card-text">
-                      <span className="agent-chat-template-label">问数据</span>
-                      <span className="agent-chat-template-desc">客诉率异常根因分析</span>
+                      <span className="agent-chat-template-label">问异常</span>
+                      <span className="agent-chat-template-desc">投诉量按类型与地市定位</span>
                     </div>
                   </div>
                 </div>

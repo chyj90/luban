@@ -29,7 +29,6 @@ public class ConceptImportController {
                 request.getSourceType(),
                 request.getContent(),
                 request.getUrl(),
-                request.getIndustryId(),
                 request.getGroupId()
         );
         return ResponseEntity.ok(ApiResponse.ok(result));
@@ -41,7 +40,6 @@ public class ConceptImportController {
                 request.getSourceType(),
                 request.getContent(),
                 request.getUrl(),
-                request.getIndustryId(),
                 request.getGroupId(),
                 request.getSelectedItems()
         );
@@ -59,9 +57,7 @@ public class ConceptImportController {
             @RequestParam("sourceType") String sourceType,
             @RequestParam(value = "content", required = false) String content,
             @RequestParam(value = "url", required = false) String url,
-            @RequestParam(value = "industryId", defaultValue = "auto") String industryIdStr,
             @RequestParam(value = "groupId", defaultValue = "auto") String groupIdStr) {
-        Long industryId = "auto".equals(industryIdStr) ? null : Long.valueOf(industryIdStr);
         Long groupId = "auto".equals(groupIdStr) ? null : Long.valueOf(groupIdStr);
         Long userId = getCurrentUserId();
         try {
@@ -70,7 +66,6 @@ public class ConceptImportController {
                     file != null ? file.getBytes() : null,
                     content,
                     url,
-                    industryId,
                     groupId,
                     userId
             );

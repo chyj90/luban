@@ -457,9 +457,20 @@ public class ConceptMappingService {
                 List<Map<String, Object>> allMappings = (List<Map<String, Object>>) parsed.getOrDefault("mappings", new ArrayList<>());
                 List<Map<String, Object>> allJoins = (List<Map<String, Object>>) parsed.getOrDefault("joinMappings", new ArrayList<>());
                 List<String> errors = new ArrayList<>();
+                Set<Long> allowedDsIds = datasources.stream().map(Datasource::getId).collect(Collectors.toSet());
                 for (Map<String, Object> m : allMappings) {
                     String mappingType = (String) m.getOrDefault("mappingType", "direct");
                     String tbl = (String) m.get("tableName"); String col = (String) m.get("columnName"); String expr = (String) m.get("computedExpr");
+                    // datasourceId 忠实性校验：LLM 抄示例/编造的数据源 id 一律拦截；单数据源场景自动纠正
+                    long dsIdVal = m.get("datasourceId") instanceof Number n ? n.longValue() : -1;
+                    if (!allowedDsIds.contains(dsIdVal)) {
+                        if (allowedDsIds.size() == 1) {
+                            m.put("datasourceId", allowedDsIds.iterator().next());
+                        } else {
+                            errors.add("mapping(tableName=" + tbl + "): datasourceId " + dsIdVal + " 不在可用数据源 " + allowedDsIds + " 中");
+                            continue;
+                        }
+                    }
                     if ("computed".equals(mappingType)) {
                         if (expr == null || expr.isBlank()) { errors.add("mapping(tableName=" + tbl + "): computed 缺少 computedExpr"); continue; }
                         if (tbl == null || tbl.isBlank()) { errors.add("mapping(columnName=" + col + "): computed 缺少 tableName"); continue; }
@@ -473,6 +484,15 @@ public class ConceptMappingService {
                 }
                 for (Map<String, Object> jc : allJoins) {
                     String joinTbl = (String) jc.get("joinTable");
+                    long joinDsIdVal = jc.get("datasourceId") instanceof Number n2 ? n2.longValue() : -1;
+                    if (!allowedDsIds.contains(joinDsIdVal)) {
+                        if (allowedDsIds.size() == 1) {
+                            jc.put("datasourceId", allowedDsIds.iterator().next());
+                        } else {
+                            errors.add("joinMapping(joinTable=" + joinTbl + "): datasourceId " + joinDsIdVal + " 不在可用数据源 " + allowedDsIds + " 中");
+                            continue;
+                        }
+                    }
                     if (joinTbl != null && !tableColumnIndex.containsKey(joinTbl)) { errors.add("joinMapping(joinTable=" + joinTbl + "): 表不存在"); continue; }
                     String joinCond = (String) jc.get("joinCondition");
                     if (joinCond != null) errors.addAll(validateJoinCondition(joinCond, tableColumnIndex));
@@ -530,6 +550,19 @@ public class ConceptMappingService {
                     for (Map<String, Object> j : ej) prompt.append("  - JOIN: ").append(j.get("joinTable")).append(" ON ").append(j.get("joinCondition")).append("\n");
                 }
             }
+            prompt.append("\n## 可用数据源（mapping/joinMapping 的 datasourceId 必须使用下列 id，禁止编造）\n");
+            Map<Long, String> dsIdNames = new LinkedHashMap<>();
+            for (List<Map<String, Object>> pruned : conceptPrunedDs.values()) {
+                for (Map<String, Object> ds : pruned) {
+                    if (ds.get("id") instanceof Number n) {
+                        dsIdNames.putIfAbsent(n.longValue(), String.valueOf(ds.getOrDefault("name", "")));
+                    }
+                }
+            }
+            for (Map.Entry<Long, String> e : dsIdNames.entrySet()) {
+                prompt.append("- id=").append(e.getKey()).append("，名称=").append(e.getValue()).append("\n");
+            }
+
             prompt.append("\n## 可用表结构\n");
             Set<String> seenTables = new HashSet<>();
             for (Concept c : concepts) {
@@ -564,7 +597,10 @@ public class ConceptMappingService {
                 if (rel.getExpression() != null) prompt.append("  expression: ").append(rel.getExpression());
                 prompt.append("\n");
             }
-            prompt.append("\n## 输出格式\n返回 JSON，每个 mapping 和 joinMapping 都要包含 conceptName 字段：\n{\"mappings\":[{\"conceptName\":\"...\",\"datasourceId\":1,\"tableName\":\"...\",\"columnName\":\"...\",\"attributeName\":\"...\",\"mappingType\":\"direct\",\"computedExpr\":null,\"confidence\":0.8}],\"joinMappings\":[{\"conceptName\":\"...\",\"datasourceId\":1,\"joinTable\":\"...\",\"joinCondition\":\"...\",\"joinType\":\"LEFT\"}]}\n\n规则：\n1. 只映射规则未覆盖的概念和属性\n2. 只使用数据源中实际存在的表和列，禁止捏造\n3. confidence >= 0.6\n4. computed 类型映射：mappingType=\"computed\"，必须同时填写 tableName（结果所在表）、columnName（结果列名）和 computedExpr（计算公式，引用其他表的列用 表名.列名 格式）\n5. 只输出 JSON\n");
+            String exampleDsId = dsIdNames.size() == 1 ? String.valueOf(dsIdNames.keySet().iterator().next()) : "<可用数据源id>";
+            prompt.append("\n## 输出格式\n返回 JSON，每个 mapping 和 joinMapping 都要包含 conceptName 字段：\n{\"mappings\":[{\"conceptName\":\"...\",\"datasourceId\":"
+                    + exampleDsId + ",\"tableName\":\"...\",\"columnName\":\"...\",\"attributeName\":\"...\",\"mappingType\":\"direct\",\"computedExpr\":null,\"confidence\":0.8}],\"joinMappings\":[{\"conceptName\":\"...\",\"datasourceId\":"
+                    + exampleDsId + ",\"joinTable\":\"...\",\"joinCondition\":\"...\",\"joinType\":\"LEFT\"}]}\n\n规则：\n1. 只映射规则未覆盖的概念和属性\n2. 只使用数据源中实际存在的表和列，禁止捏造\n3. datasourceId 必须从上方可用数据源列表中选取\n4. confidence >= 0.6\n5. computed 类型映射：mappingType=\"computed\"，必须同时填写 tableName（结果所在表）、columnName（结果列名）和 computedExpr（计算公式，引用其他表的列用 表名.列名 格式）\n6. 只输出 JSON\n");
             if (errorHint != null) prompt.append("\n").append(errorHint);
             List<Map<String, Object>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", "你是数据库映射专家。只输出 JSON，禁止捏造不存在的表或列。"));
@@ -616,8 +652,14 @@ public class ConceptMappingService {
                     .map(cr -> cr.get("conceptId") instanceof Number n ? n.longValue() : null)
                     .filter(Objects::nonNull).distinct().toList();
 
+            // 数据源忠实性防御：候选只允许落在任务声明的数据源范围内，
+            // 防止 LLM 抄示例/编造的 datasourceId 混进 concept_mapping（会破坏问数的数据源解析）
+            List<Long> taskDsIds = ((List<?>) taskResult.getOrDefault("datasourceIds", List.of())).stream()
+                    .filter(x -> x instanceof Number).map(x -> ((Number) x).longValue()).toList();
+
             if (!allConceptIds.isEmpty()) {
-                return transactionTemplate.execute(status -> applyInTransaction(allConceptIds, allRawMappings, allRawJoinMappings));
+                return transactionTemplate.execute(status ->
+                        applyInTransaction(allConceptIds, allRawMappings, allRawJoinMappings, taskDsIds));
             }
             return Map.of("error", "没有可应用的映射");
         } catch (Exception e) {
@@ -635,7 +677,8 @@ public class ConceptMappingService {
      *    避免抹掉通过本体变更人工添加的 JOIN。
      */
     private Map<String, Object> applyInTransaction(List<Long> allConceptIds,
-            List<Map<String, Object>> allRawMappings, List<Map<String, Object>> allRawJoinMappings) {
+            List<Map<String, Object>> allRawMappings, List<Map<String, Object>> allRawJoinMappings,
+            List<Long> taskDsIds) {
         // 应用前自动打快照：本操作会覆盖这些概念的全部旧自动映射，快照是唯一的回滚保障。
         // 必须在删除动作之前读取（同一事务内），失败不阻断应用
         try {
@@ -669,11 +712,20 @@ public class ConceptMappingService {
         List<ConceptMapping> allMappings = new ArrayList<>();
         Set<String> mappingKeys = new HashSet<>();
         int lowConfidenceSkipped = 0;
+        int outOfScopeSkipped = 0;
         for (Map<String, Object> item : allRawMappings) {
             String mappingType = (String) item.getOrDefault("mappingType", "direct");
             String tbl = (String) item.get("tableName");
             String col = (String) item.get("columnName");
             String expr = (String) item.get("computedExpr");
+
+            Long itemDsId = item.get("datasourceId") instanceof Number n ? n.longValue() : null;
+            if (!taskDsIds.isEmpty() && (itemDsId == null || !taskDsIds.contains(itemDsId))) {
+                outOfScopeSkipped++;
+                log.warn("[apply-auto-match] 跳过数据源越界的候选: conceptId={}, datasourceId={}, 允许={}",
+                        item.get("conceptId"), itemDsId, taskDsIds);
+                continue;
+            }
 
             if ("computed".equals(mappingType)) {
                 if (expr == null || expr.isBlank()) {
@@ -755,6 +807,13 @@ public class ConceptMappingService {
             String relationType = (String) item.getOrDefault("relationType", "JOIN");
             String joinTable = (String) item.get("joinTable");
             String joinCondition = (String) item.get("joinCondition");
+            if (!taskDsIds.isEmpty() && (dsid == null || !taskDsIds.contains(dsid))) {
+                skippedJoins++;
+                outOfScopeSkipped++;
+                log.warn("[apply-auto-match] 跳过数据源越界的 JOIN 候选: conceptId={}, datasourceId={}, 允许={}",
+                        cid, dsid, taskDsIds);
+                continue;
+            }
             if (cid == null || joinTable == null || joinCondition == null) {
                 skippedJoins++;
                 skippedDetails.add(Map.of(
@@ -797,12 +856,14 @@ public class ConceptMappingService {
         return Map.of(
                 "created", createdMappings,
                 "skipped", lowConfidenceSkipped,
+                "outOfScopeSkipped", outOfScopeSkipped,
                 "createdJoins", createdJoins,
                 "skippedJoins", skippedJoins,
                 "savedDetails", savedDetails,
                 "skippedDetails", skippedDetails,
                 "message", "已应用 " + createdMappings + " 条映射、" + createdJoins + " 条 JOIN"
                         + (lowConfidenceSkipped > 0 ? "，跳过低置信度 " + lowConfidenceSkipped + " 条映射" : "")
+                        + (outOfScopeSkipped > 0 ? "，拦截数据源越界 " + outOfScopeSkipped + " 条候选" : "")
                         + (skippedJoins > 0 ? "，跳过 " + skippedJoins + " 条 JOIN" : "")
         );
     }

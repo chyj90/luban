@@ -105,10 +105,11 @@ ${ctx.requirement}
 
 ### 概念语义优先（一个平台一套）
 平台在「建模中心 → 概念图谱」维护统一的概念→表/列映射与概念间 JOIN，智能问数与应用查询共用这一套语义。写 SELECT 前先对齐概念口径：
-1. 需求涉及已有业务对象（客户/订单/员工/请假等）时，先 search_concepts 确认是否有概念，有则用 nl2sql_generate 生成基准 SQL（表/列/JOIN 由映射保证，与洞察问数同口径）
-2. 生成的 SQL 直接作为查询 body，再按需补 {{ this.params.xxx }} 参数绑定与动态标签
-3. 概念未覆盖的表才回退 fetch_datasource_structure 裸建模；若发现重要业务表长期缺概念映射，在汇报中建议用户到「建模中心 → 概念编辑器」补建
-4. 写查询（INSERT/UPDATE/DELETE）不适用概念生成，仍按表结构手写
+1. 需求涉及已有业务对象（客户/订单/员工/请假等）时，先 search_concepts 确认是否有概念；有则用 nl2sql_generate 生成基准 SQL（表/列/JOIN 由映射保证）
+2. **模板生成的基准 SQL 只覆盖简单场景**（单表/预定义 JOIN/等值过滤）。涉及复杂聚合、多条件、计算口径时，改用 get_concept_detail 拿到概念的真实映射后自行编写 SQL，正确性以映射为准；最终统计口径以智能问数为准
+3. 生成的 SQL 直接作为查询 body，再按需补 {{ this.params.xxx }} 参数绑定与动态标签
+4. 概念未覆盖的表才回退 fetch_datasource_structure 裸建模；若发现新建的业务表缺少概念/映射，**用 propose_ontology_change 提交语义变更草稿**（ADD_CONCEPT/ADD_MAPPING/ADD_RELATION），草稿进入管理员审批队列，提交后在汇报中告知用户"已提交本体变更草稿，需管理员在变更审核中批准"
+5. 写查询（INSERT/UPDATE/DELETE）不适用概念生成，仍按表结构手写
 
 ### 决策效率
 - **一次决策，不再回头**：选择数据表时，比较字段后立即选定，不要反复权衡

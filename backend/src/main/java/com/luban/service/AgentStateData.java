@@ -216,6 +216,18 @@ public class AgentStateData {
         data.put("availableDatasources", v);
     }
 
+    /**
+     * 问数绑定集 scope：用户所选数据源（分公司）。非空时 ContextBuilder 只装配该源
+     * 的映射/JOIN/表结构，SQL 执行也锁定在该源；空 = 全部数据源（旧行为）。
+     */
+    public Long getDatasourceScope() {
+        return data.get("datasource_scope") instanceof Number n ? n.longValue() : null;
+    }
+
+    public void setDatasourceScope(Long v) {
+        data.put("datasource_scope", v);
+    }
+
     // ────────── NL2SQL ──────────
     @SuppressWarnings("unchecked")
     public Map<String, Object> getPendingNl2sql() {

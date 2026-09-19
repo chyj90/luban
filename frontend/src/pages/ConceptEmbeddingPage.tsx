@@ -9,7 +9,7 @@ import {
   getProcessedAsyncTasks,
   executeImportFromTask,
   applyAutoMatchMappings,
-  addIndustryRelationsBatch,
+  createRelationType,
   autoMatchConceptMappings,
   markTaskProcessed,
 } from '@/api/concept';
@@ -105,7 +105,6 @@ export default function ConceptEmbeddingPage() {
         concepts: Array<Record<string, unknown>>;
         total: number;
         sourceType: string;
-        _industryId?: number;
         autoDomain?: boolean;
         suggestedDomains?: Array<{ name: string; conceptCount: number; isNew: boolean }>;
       };
@@ -308,18 +307,17 @@ export default function ConceptEmbeddingPage() {
       fetchPendingTasks();
 
       const newTypes = res.data.newRelationTypes;
-      const industryId = previewData._industryId;
-      if (newTypes && newTypes.length > 0 && industryId) {
+      if (newTypes && newTypes.length > 0) {
         const typesStr = newTypes.join('、');
         const ok = await confirm({
           title: '发现新关系类型',
-          message: `导入的概念中使用了以下新的关系类型：${typesStr}。是否将其添加到当前行业的关系类型中？`,
+          message: `导入的概念中使用了以下新的关系类型：${typesStr}。是否将其注册到全局关系类型中？`,
           confirmText: '添加',
           variant: 'default',
         });
         if (ok) {
           try {
-            await addIndustryRelationsBatch(industryId, newTypes);
+            await Promise.all(newTypes.map((t) => createRelationType({ relationType: t })));
             toast(`已添加 ${newTypes.length} 个关系类型`, 'success');
           } catch {
             toast('添加关系类型失败', 'error');

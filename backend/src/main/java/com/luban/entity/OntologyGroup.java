@@ -23,9 +23,6 @@ public class OntologyGroup {
     @Column(name = "display_name", nullable = false, length = 128)
     private String displayName;
 
-    @Column(name = "industry_id")
-    private Long industryId;
-
     @Column(length = 256)
     private String description;
 

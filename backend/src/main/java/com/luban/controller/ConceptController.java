@@ -2,6 +2,7 @@ package com.luban.controller;
 
 import com.luban.dto.*;
 import com.luban.entity.Concept;
+import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.ConceptToolBinding;
 import com.luban.service.ConceptMappingService;
@@ -36,6 +37,39 @@ public class ConceptController {
     @PostMapping("/batch")
     public ResponseEntity<ApiResponse<List<Concept>>> batch(@RequestBody List<Long> ids) {
         return ResponseEntity.ok(ApiResponse.ok(conceptService.findByIds(ids)));
+    }
+
+    /**
+     * 按数据源视图：列出在某数据源上有绑定映射的概念及其映射明细。
+     * 供概念编辑器的数据源视图与绑定覆盖率展示。
+     */
+    @GetMapping("/by-datasource/{datasourceId}")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> byDatasource(@PathVariable Long datasourceId) {
+        List<Map<String, Object>> result = conceptMappingService.listByDatasource(datasourceId).stream()
+                .collect(Collectors.groupingBy(ConceptMapping::getConceptId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .map(e -> {
+                    Optional<Concept> cOpt = conceptService.findById(e.getKey());
+                    if (cOpt.isEmpty()) return null;
+                    Concept c = cOpt.get();
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("conceptId", c.getId());
+                    item.put("name", c.getName());
+                    item.put("groupId", c.getGroupId());
+                    item.put("description", c.getDescription());
+                    item.put("mappings", e.getValue().stream().map(m -> {
+                        Map<String, Object> mm = new LinkedHashMap<>();
+                        mm.put("tableName", m.getTableName());
+                        mm.put("columnName", m.getColumnName());
+                        mm.put("attributeName", m.getAttributeName());
+                        mm.put("mappingType", m.getMappingType());
+                        return mm;
+                    }).collect(Collectors.toList()));
+                    return item;
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ApiResponse.ok(result));
     }
 
     @GetMapping("/tree")

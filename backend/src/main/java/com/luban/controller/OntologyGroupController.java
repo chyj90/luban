@@ -23,10 +23,7 @@ public class OntologyGroupController {
     private final OntologyGroupService groupService;
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<OntologyGroup>>> list(@RequestParam(required = false) Long industryId) {
-        if (industryId != null) {
-            return ResponseEntity.ok(ApiResponse.ok(groupService.listByIndustry(industryId)));
-        }
+    public ResponseEntity<ApiResponse<List<OntologyGroup>>> list() {
         return ResponseEntity.ok(ApiResponse.ok(groupService.list()));
     }
 

@@ -32,8 +32,7 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
     private final RolePermissionRepository rolePermissionRepository;
     private final WorkflowDefinitionRepository workflowDefinitionRepository;
     private final AgentConfigRepository agentConfigRepository;
-    private final IndustryRepository industryRepository;
-    private final IndustryRelationRepository industryRelationRepository;
+    private final RelationTypeRepository relationTypeRepository;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -290,39 +289,29 @@ public class PlatformSeedDataInitializer implements CommandLineRunner {
     }
 
     private void initBuiltinRelations() {
-        List<Industry> industries = industryRepository.findAll();
-        if (industries.isEmpty()) {
-            return;
-        }
-
         int totalInserted = 0;
-        for (Industry industry : industries) {
-            for (BuiltinRelation def : BuiltinRelation.values()) {
-                String relationType = def.name();
-                if (industryRelationRepository.findByIndustryIdAndRelationTypeAndIsBuiltin(
-                        industry.getId(), relationType, true).isEmpty()) {
-                    IndustryRelation relation = new IndustryRelation();
-                    relation.setIndustryId(industry.getId());
-                    relation.setRelationType(relationType);
-                    relation.setDescription(def.description());
-                    relation.setLabel(def.label());
-                    relation.setColor(def.color());
-                    relation.setSourceRole(def.sourceRole());
-                    relation.setTargetRole(def.targetRole());
-                    relation.setSourceToTarget(def.sourceToTarget());
-                    relation.setIsTransitive(def.isTransitive());
-                    relation.setIsSymmetric(def.isSymmetric());
-                    relation.setSortOrder(def.sortOrder());
-                    relation.setIsBuiltin(true);
-                    industryRelationRepository.save(relation);
-                    totalInserted++;
-                }
+        for (BuiltinRelation def : BuiltinRelation.values()) {
+            String relationType = def.name();
+            if (!relationTypeRepository.existsByRelationType(relationType)) {
+                RelationType relation = new RelationType();
+                relation.setRelationType(relationType);
+                relation.setDescription(def.description());
+                relation.setLabel(def.label());
+                relation.setColor(def.color());
+                relation.setSourceRole(def.sourceRole());
+                relation.setTargetRole(def.targetRole());
+                relation.setSourceToTarget(def.sourceToTarget());
+                relation.setIsTransitive(def.isTransitive());
+                relation.setIsSymmetric(def.isSymmetric());
+                relation.setSortOrder(def.sortOrder());
+                relation.setIsBuiltin(true);
+                relationTypeRepository.save(relation);
+                totalInserted++;
             }
         }
 
         if (totalInserted > 0) {
-            log.info("平台关系类型初始化完成：{} 个行业 × {} 种关系类型 = {} 条",
-                    industries.size(), BuiltinRelation.values().length, totalInserted);
+            log.info("平台关系类型初始化完成：{} 种内置关系类型", totalInserted);
         }
     }
 }

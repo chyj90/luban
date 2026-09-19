@@ -10,7 +10,13 @@ export interface ModelingMenuGroup {
   items: ModelingMenuItem[];
 }
 
-/** 建模中心菜单定义（与 ModelingLayout 共用） */
+/**
+ * 建模中心菜单定义（与 ModelingLayout 共用）。
+ *
+ * 面向"语义运营"收敛：概念域管理、版本快照、异步任务不再挂侧边栏——
+ * 概念域的创建内联在概念编辑器；快照/回滚与异步任务由变更审核流程自动驱动，
+ * 页面路由保留（无菜单入口），供排查问题深链访问。
+ */
 export const MODELING_MENU_GROUPS: ModelingMenuGroup[] = [
   {
     title: '数据接入',
@@ -21,13 +27,12 @@ export const MODELING_MENU_GROUPS: ModelingMenuGroup[] = [
     ],
   },
   {
-    title: '概念图谱',
+    title: '语义运营',
     items: [
-      { key: '/modeling/ontology-groups', label: '概念域管理', path: '/modeling/ontology-groups', permission: 'connect:ontology-groups' },
       { key: '/modeling/concepts', label: '概念编辑器', path: '/modeling/concepts', permission: 'connect:concepts' },
-      { key: '/modeling/concept-feedback', label: '概念反馈', path: '/modeling/concept-feedback', permission: 'connect:concept-feedback' },
-      { key: '/modeling/concept-snapshots', label: '版本快照', path: '/modeling/concept-snapshots', permission: 'connect:concept-snapshots' },
-      { key: '/modeling/concept-embeddings', label: '异步任务', path: '/modeling/concept-embeddings', permission: 'connect:concept-embeddings' },
+      { key: '/modeling/binding-profiles', label: '绑定管理', path: '/modeling/binding-profiles', permission: 'connect:concepts' },
+      { key: '/modeling/concept-feedback', label: '问题洞察', path: '/modeling/concept-feedback', permission: 'connect:concept-feedback' },
+      { key: '/modeling/ontology-regression', label: '语义包回归', path: '/modeling/ontology-regression', permission: 'connect:concepts' },
     ],
   },
   {

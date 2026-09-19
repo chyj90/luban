@@ -1,6 +1,6 @@
 import { get, post, put, del } from './client';
 import { useAuthStore } from '@/stores/authStore';
-import type { Concept, ConceptDetailResponse, ConceptRelation, ConceptTreeResponse, ToolConcept, CreateConceptRequest, CreateRelationRequest, CreateToolConceptRequest, OntologyGroup, Industry, IndustryRelation, ConceptMapping, ConceptJoinMapping, ConceptToolBinding, ConceptFeedback, RelationTypeMeta } from '@/types/concept';
+import type { Concept, ConceptDetailResponse, ConceptRelation, ConceptTreeResponse, ToolConcept, CreateConceptRequest, CreateRelationRequest, CreateToolConceptRequest, OntologyGroup, RelationType, ConceptMapping, ConceptJoinMapping, ConceptToolBinding, ConceptFeedback, RelationTypeMeta } from '@/types/concept';
 
 export function listConcepts(groupId?: number, keyword?: string) {
   const params = new URLSearchParams();
@@ -71,9 +71,8 @@ export function unbindToolConcept(toolId: number, bindId: number) {
   return del<void>(`/tools/${toolId}/concepts/${bindId}`);
 }
 
-export function listOntologyGroups(industryId?: number) {
-  const params = industryId ? `?industryId=${industryId}` : '';
-  return get<OntologyGroup[]>(`/ontology-groups${params}`);
+export function listOntologyGroups() {
+  return get<OntologyGroup[]>('/ontology-groups');
 }
 
 export function getOntologyGroup(id: number) {
@@ -92,44 +91,20 @@ export function deleteOntologyGroup(id: number) {
   return del<void>(`/ontology-groups/${id}`);
 }
 
-export function listIndustries() {
-  return get<Industry[]>('/industries');
+export function listRelationTypes() {
+  return get<RelationType[]>('/relation-types');
 }
 
-export function getIndustry(id: number) {
-  return get<Industry>(`/industries/${id}`);
+export function createRelationType(data: Partial<RelationType>) {
+  return post<RelationType>('/relation-types', data);
 }
 
-export function createIndustry(data: Partial<Industry>) {
-  return post<Industry>('/industries', data);
+export function updateRelationType(id: number, data: Partial<RelationType>) {
+  return put<RelationType>(`/relation-types/${id}`, data);
 }
 
-export function updateIndustry(id: number, data: Partial<Industry>) {
-  return put<Industry>(`/industries/${id}`, data);
-}
-
-export function deleteIndustry(id: number) {
-  return del<void>(`/industries/${id}`);
-}
-
-export function getIndustryRelations(industryId: number) {
-  return get<IndustryRelation[]>(`/industries/${industryId}/relations`);
-}
-
-export function saveIndustryRelations(industryId: number, relations: Partial<IndustryRelation>[]) {
-  return put<IndustryRelation[]>(`/industries/${industryId}/relations`, relations);
-}
-
-export function addIndustryRelation(industryId: number, data: Partial<IndustryRelation>) {
-  return post<IndustryRelation>(`/industries/${industryId}/relations`, data);
-}
-
-export function addIndustryRelationsBatch(industryId: number, types: string[]) {
-  return post<IndustryRelation[]>(`/industries/${industryId}/relations/batch`, types);
-}
-
-export function deleteIndustryRelation(industryId: number, relationId: number) {
-  return del<void>(`/industries/${industryId}/relations/${relationId}`);
+export function deleteRelationType(id: number) {
+  return del<void>(`/relation-types/${id}`);
 }
 
 export function listConceptMappings(conceptId: number, datasourceId?: number) {
@@ -229,51 +204,6 @@ export function createProblemFeedback(data: {
   return post<ConceptFeedback>('/concept-feedback', data);
 }
 
-export function locateConceptFeedback(id: number) {
-  return post<Record<string, unknown>>(`/concept-feedback/${id}/locate`);
-}
-
-export function batchAnalyzeFeedback(feedbackIds: number[]) {
-  return post<Record<string, unknown>>('/concept-feedback/batch-analyze', { feedbackIds });
-}
-
-export function getFeedbackStats(conceptId?: number, industryId?: number) {
-  const params = new URLSearchParams();
-  if (conceptId) params.set('conceptId', String(conceptId));
-  if (industryId) params.set('industryId', String(industryId));
-  return get<Record<string, unknown>>(`/concept-feedback/stats?${params.toString()}`);
-}
-
-export function getFeedbackDashboard(industryId?: number) {
-  const params = new URLSearchParams();
-  if (industryId) params.set('industryId', String(industryId));
-  return get<Record<string, unknown>>(`/concept-feedback/dashboard?${params.toString()}`);
-}
-
-export function reviewConceptFeedback(id: number, data: { reviewedBy: string; reviewComment: string }) {
-  return put<ConceptFeedback>(`/concept-feedback/${id}/review`, data);
-}
-
-export function resolveConceptFeedback(id: number, data: { reviewedBy: string }) {
-  return put<ConceptFeedback>(`/concept-feedback/${id}/resolve`, data);
-}
-
-export function analyzeConceptFeedback(id: number) {
-  return post<Array<Record<string, unknown>>>(`/concept-feedback/${id}/analyze`);
-}
-
-export function previewConceptFeedbackSuggestion(id: number, suggestionIndex: number) {
-  return post<Record<string, unknown>>(`/concept-feedback/${id}/preview-suggestion`, { suggestionIndex });
-}
-
-export function applyConceptFeedbackSuggestion(id: number, suggestionIndex: number, reviewedBy: string) {
-  return post<Record<string, unknown>>(`/concept-feedback/${id}/apply-suggestion`, { suggestionIndex, reviewedBy });
-}
-
-export function applyAllConceptFeedbackSuggestions(id: number, reviewedBy: string) {
-  return post<Record<string, unknown>[]>(`/concept-feedback/${id}/apply-all-suggestions`, { reviewedBy });
-}
-
 export function ignoreConceptFeedback(id: number, data: { reviewedBy: string; reviewComment: string }) {
   return put<ConceptFeedback>(`/concept-feedback/${id}/ignore`, data);
 }
@@ -352,7 +282,6 @@ export function executeImportFromTask(taskId: number, selectedItems: Array<Recor
 export function uploadConceptImportAsync(
   file: File | null,
   sourceType: string,
-  industryId: number | null,
   groupId: number | null,
   extra?: { content?: string; url?: string },
 ): Promise<{ taskId: number }> {
@@ -367,7 +296,6 @@ export function uploadConceptImportAsync(
     formData.append('url', extra.url);
   }
   formData.append('sourceType', sourceType);
-  formData.append('industryId', industryId != null ? String(industryId) : 'auto');
   formData.append('groupId', groupId != null ? String(groupId) : 'auto');
 
   const token = useAuthStore.getState().token;
@@ -382,11 +310,11 @@ export function regenerateAllEmbeddings() {
   return post<{ status: string; message: string }>('/concept-embeddings/regenerate-all');
 }
 
-export function previewConceptImport(data: { sourceType: string; content?: string; url?: string; industryId?: number; groupId?: number }) {
+export function previewConceptImport(data: { sourceType: string; content?: string; url?: string; groupId?: number }) {
   return post<{ concepts: Array<Record<string, unknown>>; total: number; sourceType: string }>('/concepts/import/preview', data, { timeout: 120000 });
 }
 
-export function executeConceptImport(data: { sourceType: string; content?: string; url?: string; industryId?: number; groupId?: number; selectedItems: Array<Record<string, unknown>> }) {
+export function executeConceptImport(data: { sourceType: string; content?: string; url?: string; groupId?: number; selectedItems: Array<Record<string, unknown>> }) {
   return post<{ created: number; skipped: number; imported: Array<Record<string, unknown>>; newRelationTypes?: string[] }>('/concepts/import/execute', data);
 }
 
@@ -430,6 +358,159 @@ export function batchApproveOntologyChanges(changeIds: number[]) {
 
 export function batchRejectOntologyChanges(changeIds: number[]) {
   return post<{ success: boolean; rejected: number }>('/ontology/changes/batch/reject', { changeIds });
+}
+
+/** 建模 agent 语义缺口回流：提交本体变更草稿进审批队列 */
+export function proposeOntologyChanges(data: { sessionId?: string; reasoning: string; changes: Array<Record<string, unknown>> }) {
+  return post<{ success: boolean; recorded: Array<{ changeId: string; operation: string; status: string }> }>(
+    '/ontology/changes/propose',
+    data,
+  );
+}
+
+// ===== 绑定集（Binding Profile） =====
+
+export interface BindingProfileInfo {
+  id: number;
+  datasourceId: number;
+  datasourceName: string;
+  name: string;
+  description: string;
+  status: string;
+  mappedConcepts: number;
+  totalConcepts: number;
+  synonymCount: number;
+  enumColumnCount: number;
+  updatedAt: string;
+}
+
+export interface SynonymDictEntry {
+  term: string;
+  conceptName?: string;
+  synonyms?: string[];
+  note?: string;
+}
+
+export interface EnumDictEntry {
+  table: string;
+  column: string;
+  values?: string[];
+  syncedAt?: string;
+}
+
+export function listBindingProfiles() {
+  return get<BindingProfileInfo[]>('/binding-profiles');
+}
+
+export function getBindingProfile(datasourceId: number) {
+  return get<BindingProfileInfo & { synonymDict: string | null; enumDict: string | null }>(`/binding-profiles/datasource/${datasourceId}`);
+}
+
+/** 一键接入：对该数据源启动全量概念自动映射（规则优先 + LLM 兜底），返回异步 taskId */
+export function autoBindProfile(datasourceId: number, conceptIds?: number[]) {
+  return post<{ profileId: number; taskId: number; conceptCount: number }>(
+    `/binding-profiles/datasource/${datasourceId}/auto-bind`,
+    conceptIds?.length ? { conceptIds } : {},
+  );
+}
+
+export function getAsyncTask(id: number) {
+  return get<AsyncTaskInfo>(`/async-tasks/${id}`);
+}
+
+export interface AutoMatchApplyResult {
+  created: number;
+  skipped: number;
+  createdJoins: number;
+  skippedJoins: number;
+  message: string;
+  savedDetails?: Array<{ conceptId: number; tableName?: string; columnName?: string }>;
+  skippedDetails?: Array<{ conceptId: number; tableName?: string; reason?: string }>;
+}
+
+export function updateBindingProfile(id: number, data: { name?: string; description?: string; synonymDict?: SynonymDictEntry[] }) {
+  return put<BindingProfileInfo>(`/binding-profiles/${id}`, {
+    ...data,
+    synonymDict: data.synonymDict ? JSON.stringify(data.synonymDict) : undefined,
+  });
+}
+
+export function refreshEnumColumn(datasourceId: number, table: string, column: string) {
+  return post<{ table: string; column: string; values: string[] }>(`/binding-profiles/datasource/${datasourceId}/enum-refresh`, { table, column });
+}
+
+// ===== 语义包典型问题回归 =====
+
+export interface RegressionPackageInfo {
+  name: string;
+  displayName: string;
+  description: string;
+  caseCount: number;
+}
+
+export function listRegressionPackages() {
+  return get<RegressionPackageInfo[]>('/ontology/regression/packages');
+}
+
+export function runRegression(packageName: string) {
+  return post<{ taskId: number }>('/ontology/regression/run', { packageName });
+}
+
+// ===== 问题洞察（问数流量缺口挖掘 + 用户反馈） =====
+
+export interface GapCluster {
+  bucket: string;
+  action: string;
+  term: string;
+  count: number;
+  samples: Array<{ question: string; at: string }>;
+}
+
+export interface QuestionGapReport {
+  windowDays: number;
+  totalQuestions: number;
+  buckets: { noConcept: number; sqlFail: number; permissionDenied: number; userFlagged: number };
+  clusters: GapCluster[];
+}
+
+export function getQuestionGaps(days = 14) {
+  return get<QuestionGapReport>(`/ontology/gaps?days=${days}`);
+}
+
+// ===== 跨源桥接（Federation Bridge） =====
+
+export interface FederationBridgeInfo {
+  id: number;
+  name: string;
+  leftDatasourceId: number;
+  leftDatasourceName: string;
+  leftTable: string;
+  leftColumn: string;
+  rightDatasourceId: number;
+  rightDatasourceName: string;
+  rightTable: string;
+  rightColumn: string;
+  joinType: string;
+  description: string;
+}
+
+export function listFederationBridges() {
+  return get<FederationBridgeInfo[]>('/federation-bridges');
+}
+
+export function createFederationBridge(data: Partial<FederationBridgeInfo>) {
+  return post<FederationBridgeInfo>('/federation-bridges', data);
+}
+
+export function deleteFederationBridge(id: number) {
+  return del<void>(`/federation-bridges/${id}`);
+}
+
+/** 按数据源视图：列出在某数据源上有绑定映射的概念及其映射明细 */
+export function listConceptsByDatasource(datasourceId: number) {
+  return get<Array<{ conceptId: number; name: string; groupId: number; description: string; mappings: Array<{ tableName: string; columnName: string; attributeName: string; mappingType: string }> }>>(
+    `/concepts/by-datasource/${datasourceId}`,
+  );
 }
 
 export function fetchBuiltinRelationTypes() {

@@ -8,13 +8,15 @@ import com.luban.service.ConceptFeedbackService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 回答反馈（轻量采集）：问数页 👎 反馈的采集与人工处理。
+ * LLM 分析/变更建议/应用链路已废弃——本体变更统一走 /ontology/changes/propose → 变更审核。
+ */
 @RestController
 @RequestMapping("/api/v1/concept-feedback")
 @RequiredArgsConstructor
@@ -26,12 +28,11 @@ public class ConceptFeedbackController {
     @RequirePermission(Permissions.CONNECT_CONCEPTS)
     public ResponseEntity<ApiResponse<List<ConceptFeedback>>> list(
             @RequestParam(required = false) String sessionId,
-            @RequestParam(required = false) String status,
-            @RequestParam(required = false) String feedbackType) {
+            @RequestParam(required = false) String status) {
         if (sessionId != null) {
             return ResponseEntity.ok(ApiResponse.ok(feedbackService.listBySession(sessionId)));
         }
-        if (status != null || feedbackType != null) {
+        if (status != null) {
             return ResponseEntity.ok(ApiResponse.ok(feedbackService.listByStatus(status)));
         }
         return ResponseEntity.ok(ApiResponse.ok(feedbackService.listAll()));
@@ -55,12 +56,6 @@ public class ConceptFeedbackController {
                         sessionId, messageId, userDescription, userQuestion)));
     }
 
-    @PostMapping("/{id}/locate")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> locate(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.locate(id)));
-    }
-
     @PutMapping("/{id}/ignore")
     @RequirePermission(Permissions.CONNECT_CONCEPTS)
     public ResponseEntity<ApiResponse<ConceptFeedback>> ignore(
@@ -74,71 +69,5 @@ public class ConceptFeedbackController {
     public ResponseEntity<ApiResponse<Void>> delete(@PathVariable Long id) {
         feedbackService.delete(id);
         return ResponseEntity.ok(ApiResponse.ok(null));
-    }
-
-    @PostMapping("/{id}/analyze")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> analyze(@PathVariable Long id) {
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.analyzeByLlm(id)));
-    }
-
-    @PostMapping("/{id}/preview-suggestion")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> previewSuggestion(
-            @PathVariable Long id, @RequestBody Map<String, Integer> body) {
-        int index = body.getOrDefault("suggestionIndex", 0);
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.previewSuggestion(id, index)));
-    }
-
-    @PostMapping("/{id}/apply-suggestion")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> applySuggestion(
-            @PathVariable Long id, @RequestBody Map<String, Object> body) {
-        int index = ((Number) body.getOrDefault("suggestionIndex", 0)).intValue();
-        String reviewedBy = (String) body.get("reviewedBy");
-        Long operatorId = getCurrentUserId();
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestion(id, index, reviewedBy, operatorId)));
-    }
-
-    @PostMapping("/{id}/apply-all-suggestions")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> applyAllSuggestions(
-            @PathVariable Long id, @RequestBody Map<String, String> body) {
-        String reviewedBy = body.getOrDefault("reviewedBy", "system");
-        Long operatorId = getCurrentUserId();
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.applySuggestionChain(id, reviewedBy, operatorId)));
-    }
-
-    @PostMapping("/batch-analyze")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> batchAnalyze(
-            @RequestBody Map<String, Object> body) {
-        @SuppressWarnings("unchecked")
-        List<Number> ids = (List<Number>) body.get("feedbackIds");
-        List<Long> feedbackIds = ids.stream().map(Number::longValue).toList();
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.batchAnalyze(feedbackIds)));
-    }
-
-    @GetMapping("/stats")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> stats(
-            @RequestParam(required = false) Long conceptId,
-            @RequestParam(required = false) Long industryId) {
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.stats(conceptId, industryId)));
-    }
-
-    @GetMapping("/dashboard")
-    @RequirePermission(Permissions.CONNECT_CONCEPTS)
-    public ResponseEntity<ApiResponse<Map<String, Object>>> dashboard(
-            @RequestParam(required = false) Long industryId) {
-        return ResponseEntity.ok(ApiResponse.ok(feedbackService.dashboard(industryId)));
-    }
-
-    private Long getCurrentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.getPrincipal() instanceof com.luban.entity.User user) {
-            return user.getId();
-        }
-        return null;
     }
 }

@@ -43,6 +43,7 @@ class AppAccessServiceTest {
     @Mock private RolePermissionRepository rolePermissionRepository;
     @Mock private com.luban.repository.RoleConceptPermissionRepository roleConceptPermissionRepository;
     @Mock private com.luban.repository.ConceptRepository conceptRepository;
+    @Mock private com.luban.repository.SystemPermissionRepository systemPermissionRepository;
 
     private AppAccessService service;
 
@@ -57,7 +58,7 @@ class AppAccessServiceTest {
         com.luban.service.RoleConceptPermissionService roleConceptPermissionService =
                 new com.luban.service.RoleConceptPermissionService(
                         roleConceptPermissionRepository, conceptRepository, roleUserRepository, roleRepository);
-        service = new AppAccessService(applicationRepository, roleRepository, roleUserRepository, rolePermissionRepository, roleConceptPermissionService);
+        service = new AppAccessService(applicationRepository, roleRepository, roleUserRepository, rolePermissionRepository, roleConceptPermissionService, systemPermissionRepository);
 
         Application app = new Application();
         app.setCreatedBy(OWNER_ID);

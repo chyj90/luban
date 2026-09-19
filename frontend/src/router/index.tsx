@@ -21,10 +21,11 @@ import ApiKeyPage from '@/pages/ApiKeyPage';
 import ApiKeyPermissionPage from '@/pages/ApiKeyPermissionPage';
 import AgentChatPage from '@/pages/AgentChatPage';
 import ConceptEditorPage from '@/pages/ConceptEditorPage';
-import OntologyGroupPage from '@/pages/OntologyGroupPage';
 import ConceptFeedbackPage from '@/pages/ConceptFeedbackPage';
 import ConceptSnapshotPage from '@/pages/ConceptSnapshotPage';
 import ConceptEmbeddingPage from '@/pages/ConceptEmbeddingPage';
+import BindingProfilePage from '@/pages/BindingProfilePage';
+import OntologyRegressionPage from '@/pages/OntologyRegressionPage';
 import UserListPage from '@/pages/UserListPage';
 import RoleManagementPage from '@/pages/RoleManagementPage';
 import OrgPage from '@/pages/OrgPage';
@@ -83,9 +84,12 @@ export const router = createBrowserRouter([
                   { path: 'keys', element: <ApiKeyPage /> },
                   { path: 'keys/:keyId/permissions', element: <ApiKeyPermissionPage /> },
                   { path: 'agent', element: <AgentConfigPage /> },
-                  { path: 'ontology-groups', element: <OntologyGroupPage /> },
+                  { path: 'ontology-groups', element: <Navigate to="/modeling/concepts" replace /> },
                   { path: 'concepts', element: <ReactFlowProvider><ConceptEditorPage /></ReactFlowProvider> },
+                  { path: 'binding-profiles', element: <BindingProfilePage /> },
+                  { path: 'ontology-regression', element: <OntologyRegressionPage /> },
                   { path: 'concept-feedback', element: <ConceptFeedbackPage /> },
+                  // 快照/异步任务已收进语义运营流程，不再挂菜单；路由保留供排查深链访问
                   { path: 'concept-snapshots', element: <ConceptSnapshotPage /> },
                   { path: 'concept-embeddings', element: <ConceptEmbeddingPage /> },
                 ],
@@ -146,12 +150,12 @@ export const router = createBrowserRouter([
       { path: '/connect/agent', element: <Navigate to="/modeling/agent" replace /> },
       { path: '/connect/mcp', element: <Navigate to="/modeling/gateway" replace /> },
       { path: '/connect/concepts', element: <Navigate to="/modeling/concepts" replace /> },
-      { path: '/connect/ontology-groups', element: <Navigate to="/modeling/ontology-groups" replace /> },
+      { path: '/connect/ontology-groups', element: <Navigate to="/modeling/concepts" replace /> },
       { path: '/connect/concept-feedback', element: <Navigate to="/modeling/concept-feedback" replace /> },
       { path: '/connect/concept-snapshots', element: <Navigate to="/modeling/concept-snapshots" replace /> },
       { path: '/connect/concept-embeddings', element: <Navigate to="/modeling/concept-embeddings" replace /> },
       { path: '/concept', element: <Navigate to="/modeling" replace /> },
-      { path: '/concept/ontology-groups', element: <Navigate to="/modeling/ontology-groups" replace /> },
+      { path: '/concept/ontology-groups', element: <Navigate to="/modeling/concepts" replace /> },
       { path: '/concept/concepts', element: <Navigate to="/modeling/concepts" replace /> },
       { path: '/concept/concept-feedback', element: <Navigate to="/modeling/concept-feedback" replace /> },
       { path: '/concept/concept-snapshots', element: <Navigate to="/modeling/concept-snapshots" replace /> },

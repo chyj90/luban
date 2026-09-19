@@ -1,0 +1,78 @@
+{
+  "name": "operator-semantics",
+  "displayName": "运营商语义包",
+  "description": "运营商行业语义（用户/套餐/月账单/投诉 + 出账收入/投诉量/新增用户数/宽带用户数）的典型问题回归。表名断言基于运营商标准演示 schema（独立演示库 luban_demo_operator）；接入真实省份库后，映射经自动绑定指向本地表列，需将 sqlContains 断言按本地 schema 调整或仅保留概念命中断言。数据内容不做强断言（随环境数据变化）。",
+  "cases": [
+    {
+      "id": "revenue-total",
+      "question": "上月出账收入是多少？",
+      "expect": {
+        "mustHitConcepts": ["出账收入"],
+        "sqlContainsAny": ["op_bill"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表", "缺少表映射"]
+      }
+    },
+    {
+      "id": "revenue-by-package-type",
+      "question": "上月出账收入按套餐类型怎么拆分？",
+      "expect": {
+        "mustHitConcepts": ["出账收入"],
+        "sqlContainsAll": ["op_bill", "op_package"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "complaint-by-type",
+      "question": "上月投诉量按投诉类型的分布是怎样的？",
+      "expect": {
+        "mustHitConcepts": ["投诉量"],
+        "sqlContainsAll": ["op_complaint"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "broadband-users",
+      "question": "当前宽带用户数是多少？",
+      "expect": {
+        "mustHitConcepts": ["宽带用户数"],
+        "sqlContainsAny": ["op_user"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "new-users",
+      "question": "上月新增用户数有多少？",
+      "expect": {
+        "mustHitConcepts": ["新增用户数"],
+        "sqlContainsAny": ["op_user"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "users-by-city",
+      "question": "石家庄市在网用户有多少？",
+      "expect": {
+        "mustHitConcepts": ["OpUser"],
+        "sqlContainsAll": ["op_user"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "top-complaint-city",
+      "question": "投诉量最高的地市是哪个？",
+      "expect": {
+        "mustHitConcepts": ["投诉量"],
+        "sqlContainsAny": ["op_complaint"]
+      }
+    },
+    {
+      "id": "complaint-drill-county",
+      "question": "唐山市路南区上月有多少投诉？",
+      "expect": {
+        "mustHitConcepts": ["投诉量"],
+        "sqlContainsAny": ["op_complaint"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    }
+  ]
+}

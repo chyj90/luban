@@ -7,9 +7,9 @@ import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
-import com.luban.entity.IndustryRelation;
 import com.luban.entity.OntologyChangeLog;
 import com.luban.entity.OntologyGroup;
+import com.luban.entity.RelationType;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
@@ -17,9 +17,9 @@ import com.luban.repository.ConceptRepository;
 import com.luban.repository.ConceptEmbeddingTaskRepository;
 import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.DatasourceRepository;
-import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyChangeLogRepository;
 import com.luban.repository.OntologyGroupRepository;
+import com.luban.repository.RelationTypeRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -42,7 +42,7 @@ public class OntologyChangeService {
     private final ConceptRelationRepository conceptRelationRepository;
     private final ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository;
     private final ConceptToolBindingRepository conceptToolBindingRepository;
-    private final IndustryRelationRepository industryRelationRepository;
+    private final RelationTypeRepository relationTypeRepository;
     private final OntologyGroupRepository ontologyGroupRepository;
     private final OntologyService ontologyService;
     private final ConceptEmbeddingService conceptEmbeddingService;
@@ -57,7 +57,7 @@ public class OntologyChangeService {
                                   ConceptRelationRepository conceptRelationRepository,
                                   ConceptEmbeddingTaskRepository conceptEmbeddingTaskRepository,
                                   ConceptToolBindingRepository conceptToolBindingRepository,
-                                  IndustryRelationRepository industryRelationRepository,
+                                  RelationTypeRepository relationTypeRepository,
                                   OntologyGroupRepository ontologyGroupRepository,
                                   OntologyService ontologyService,
                                   ConceptEmbeddingService conceptEmbeddingService,
@@ -71,7 +71,7 @@ public class OntologyChangeService {
         this.conceptRelationRepository = conceptRelationRepository;
         this.conceptEmbeddingTaskRepository = conceptEmbeddingTaskRepository;
         this.conceptToolBindingRepository = conceptToolBindingRepository;
-        this.industryRelationRepository = industryRelationRepository;
+        this.relationTypeRepository = relationTypeRepository;
         this.ontologyGroupRepository = ontologyGroupRepository;
         this.ontologyService = ontologyService;
         this.conceptEmbeddingService = conceptEmbeddingService;
@@ -462,7 +462,6 @@ public class OntologyChangeService {
         }
         String name = (String) conceptData.get("name");
         String description = (String) conceptData.get("description");
-        Object industryIdObj = conceptData.get("industryId");
 
         if (name == null || name.isEmpty()) {
             throw new RuntimeException("概念名称为空");
@@ -480,25 +479,15 @@ public class OntologyChangeService {
             concept.setAnomalyThresholdDesc((String) conceptData.get("anomalyThresholdDesc"));
         }
 
-        if (industryIdObj instanceof Number) {
-            Long industryId = ((Number) industryIdObj).longValue();
-            List<OntologyGroup> groups = ontologyGroupRepository.findByIndustryId(industryId);
-            if (!groups.isEmpty()) {
-                concept.setGroupId(groups.get(0).getId());
-            }
-        }
-
         // 优先使用 groupId（指定已有领域）
         Object groupIdObj = conceptData.get("groupId");
         if (groupIdObj instanceof Number) {
             concept.setGroupId(((Number) groupIdObj).longValue());
         } else if (conceptData.containsKey("groupName")) {
-            // 新建领域：groupName 指定领域显示名，需配合 industryId
+            // groupName 指定领域显示名，域不存在时自动创建
             String groupName = (String) conceptData.get("groupName");
-            if (groupName != null && !groupName.isEmpty() && industryIdObj instanceof Number) {
-                Long industryId = ((Number) industryIdObj).longValue();
-                // 检查是否已存在同名领域
-                List<OntologyGroup> existing = ontologyGroupRepository.findByIndustryId(industryId);
+            if (groupName != null && !groupName.isEmpty()) {
+                List<OntologyGroup> existing = ontologyGroupRepository.findAll();
                 Optional<OntologyGroup> matched = existing.stream()
                         .filter(g -> g.getDisplayName().equals(groupName))
                         .findFirst();
@@ -508,7 +497,7 @@ public class OntologyChangeService {
                     OntologyGroup newGroup = new OntologyGroup();
                     String baseName = groupName.toLowerCase().replaceAll("[^a-z0-9_]", "_");
                     if (baseName.isEmpty() || baseName.matches("^_+$")) {
-                        baseName = "group_" + industryId + "_" + (existing.size() + 1);
+                        baseName = "group_" + (existing.size() + 1);
                     }
                     // 确保 name 唯一
                     String uniqueName = baseName;
@@ -519,11 +508,10 @@ public class OntologyChangeService {
                     }
                     newGroup.setName(uniqueName);
                     newGroup.setDisplayName(groupName);
-                    newGroup.setIndustryId(industryId);
                     newGroup.setSortOrder(existing.size());
                     newGroup = ontologyGroupRepository.save(newGroup);
                     concept.setGroupId(newGroup.getId());
-                    log.info("Auto-created OntologyGroup: id={}, name={}, industryId={}", newGroup.getId(), newGroup.getDisplayName(), industryId);
+                    log.info("Auto-created OntologyGroup: id={}, name={}", newGroup.getId(), newGroup.getDisplayName());
                 }
             }
         }
@@ -659,7 +647,7 @@ public class OntologyChangeService {
         Long sourceId = sources.get(0).getId();
         Long targetId = targets.get(0).getId();
 
-        // 确保关系类型在行业中注册，不存在则自动创建
+        // 确保关系类型在全局注册表中存在，不存在则自动创建
         ensureRelationTypeRegistered(sourceId, relationType, description);
 
         List<ConceptRelation> existingRelations = conceptRelationRepository
@@ -736,36 +724,26 @@ public class OntologyChangeService {
     }
 
     private void ensureRelationTypeRegistered(Long conceptId, String relationType, String description) {
-        Concept concept = conceptRepository.findById(conceptId)
+        conceptRepository.findById(conceptId)
                 .orElseThrow(() -> new RuntimeException("概念不存在: " + conceptId));
-        Long industryId = null;
-        if (concept.getGroupId() != null) {
-            OntologyGroup group = ontologyGroupRepository.findById(concept.getGroupId()).orElse(null);
-            if (group != null) {
-                industryId = group.getIndustryId();
-            }
-        }
-        if (industryId == null) return;
 
-        boolean exists = industryRelationRepository
-                .findByIndustryIdAndRelationType(industryId, relationType).isPresent();
+        boolean exists = relationTypeRepository.findByRelationType(relationType).isPresent();
         if (!exists) {
-            IndustryRelation ir = new IndustryRelation();
-            ir.setIndustryId(industryId);
-            ir.setRelationType(relationType);
-            ir.setDescription(description != null ? description : "LLM自动生成的关系类型");
-            ir.setLabel(relationType);
-            ir.setColor("#999999");
-            ir.setSourceRole("源概念");
-            ir.setTargetRole("目标概念");
-            ir.setSourceToTarget(false);
-            ir.setIsBuiltin(false);
-            ir.setIsTransitive(false);
-            ir.setIsSymmetric(false);
-            List<IndustryRelation> existing = industryRelationRepository.findByIndustryIdOrderBySortOrder(industryId);
-            ir.setSortOrder(existing.size());
-            industryRelationRepository.save(ir);
-            log.info("Auto-registered relation type '{}' for industry {}", relationType, industryId);
+            RelationType rt = new RelationType();
+            rt.setRelationType(relationType);
+            rt.setDescription(description != null ? description : "LLM自动生成的关系类型");
+            rt.setLabel(relationType);
+            rt.setColor("#999999");
+            rt.setSourceRole("源概念");
+            rt.setTargetRole("目标概念");
+            rt.setSourceToTarget(false);
+            rt.setIsBuiltin(false);
+            rt.setIsTransitive(false);
+            rt.setIsSymmetric(false);
+            List<RelationType> existing = relationTypeRepository.findAll();
+            rt.setSortOrder(existing.size());
+            relationTypeRepository.save(rt);
+            log.info("Auto-registered relation type '{}'", relationType);
         }
     }
 

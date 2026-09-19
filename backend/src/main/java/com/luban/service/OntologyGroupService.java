@@ -30,18 +30,6 @@ public class OntologyGroupService {
     }
 
     @Transactional(readOnly = true)
-    public List<OntologyGroup> listByIndustry(Long industryId) {
-        List<OntologyGroup> groups;
-        if (industryId == null) {
-            groups = groupRepository.findAll();
-        } else {
-            groups = groupRepository.findByIndustryId(industryId);
-        }
-        groups.forEach(g -> g.setConceptCount(conceptRepository.countByGroupId(g.getId())));
-        return groups;
-    }
-
-    @Transactional(readOnly = true)
     public OntologyGroup getById(Long id) {
         return groupRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("概念域不存在: " + id));
@@ -67,7 +55,6 @@ public class OntologyGroupService {
         if (updated.getDescription() != null) existing.setDescription(updated.getDescription());
         if (updated.getIconUrl() != null) existing.setIconUrl(updated.getIconUrl());
         if (updated.getSortOrder() != null) existing.setSortOrder(updated.getSortOrder());
-        if (updated.getIndustryId() != null) existing.setIndustryId(updated.getIndustryId());
         return groupRepository.save(existing);
     }
 

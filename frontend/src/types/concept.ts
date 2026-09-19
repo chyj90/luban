@@ -104,7 +104,6 @@ export interface OntologyGroup {
   id: number;
   name: string;
   displayName: string;
-  industryId: number | null;
   description: string;
   iconUrl: string;
   sortOrder: number;
@@ -115,18 +114,8 @@ export interface OntologyGroup {
   conceptCount: number;
 }
 
-export interface Industry {
+export interface RelationType {
   id: number;
-  name: string;
-  displayName: string;
-  description: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface IndustryRelation {
-  id: number;
-  industryId: number;
   relationType: string;
   description: string;
   label: string;

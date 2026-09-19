@@ -75,6 +75,48 @@ def health():
     return jsonify({"status": "ok", "model": MODEL_NAME, "loaded": model is not None})
 
 
+# ---------- 中文分词（问题洞察缺口挖掘） ----------
+
+def _get_jieba_analyse():
+    global _jieba_analyse
+    if _jieba_analyse is None:
+        import jieba.analyse as analyse
+        _jieba_analyse = analyse
+    return _jieba_analyse
+
+
+_jieba_analyse = None
+
+
+@app.route("/v1/segment", methods=["POST"])
+def segment():
+    """批量中文关键词提取：{"texts": ["..."], "topK": 10}
+    → {"results": [{"terms": ["工单", ...]}]}，供后端问题洞察聚簇使用。"""
+    global _jieba_analyse
+    try:
+        analyse = _get_jieba_analyse()
+    except Exception as e:
+        return jsonify({"error": f"jieba unavailable: {e}"}), 503
+
+    data = request.get_json(silent=True) or {}
+    texts = data.get("texts") or []
+    if not isinstance(texts, list):
+        return jsonify({"error": "'texts' must be a list"}), 400
+    try:
+        top_k = max(1, min(int(data.get("topK", 10)), 30))
+    except (TypeError, ValueError):
+        top_k = 10
+
+    results = []
+    for text in texts[:500]:
+        try:
+            terms = analyse.extract_tags(str(text or ""), topK=top_k)
+        except Exception:
+            terms = []
+        results.append({"terms": terms})
+    return jsonify({"results": results})
+
+
 @app.route("/v1/embeddings", methods=["POST"])
 def embeddings():
     if model is None:

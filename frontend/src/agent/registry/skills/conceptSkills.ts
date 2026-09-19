@@ -6,7 +6,7 @@
  */
 
 import { SkillCategory, type SkillFactory } from '../skillRegistry';
-import { listConcepts, getConcept, getConceptTree, listConceptMappings, listConceptJoinMappings, generateNl2Sql } from '@/api/concept';
+import { listConcepts, getConcept, getConceptTree, listConceptMappings, listConceptJoinMappings, generateNl2Sql, proposeOntologyChanges } from '@/api/concept';
 
 export const conceptSkills: Record<string, SkillFactory> = {
   'concept:search': () => ({
@@ -87,7 +87,7 @@ export const conceptSkills: Record<string, SkillFactory> = {
     id: 'concept:nl2sql',
     category: SkillCategory.CONCEPT,
     name: 'nl2sql_generate',
-    description: `按概念口径生成基准 SQL：传入概念 ID 列表，平台根据概念→表/列映射与概念间 JOIN 关系产出 SELECT 语句（与智能问数同源同口径）。返回 sql + 字段映射 + JOIN 明细 + 安全校验结果。生成后可把 SQL 作为查询 body，再按需补充 {{ this.params.xxx }} 参数绑定与动态标签。仅适用于 SELECT，写查询仍按表结构手写。`,
+    description: `按概念映射直拼基准 SQL：传入概念 ID 列表，平台把概念→表/列映射与概念间 JOIN 拼成 SELECT（与智能问数共用同一套概念映射）。**注意：模板只覆盖简单场景**（单表/预定义 JOIN/等值过滤），复杂聚合与计算口径请改用 get_concept_detail 拿映射后自写 SQL；最终统计口径以智能问数为准。生成后可把 SQL 作为查询 body，再按需补充 {{ this.params.xxx }} 参数绑定与动态标签。仅适用于 SELECT，写查询仍按表结构手写。`,
     parameters: {
       type: 'object',
       properties: {
@@ -109,6 +109,37 @@ export const conceptSkills: Record<string, SkillFactory> = {
         success: d.valid,
         message: `${status}\nSQL：\n${d.sql}\n字段映射：${d.mappings.map((m) => `${m.attributeName}→${m.tableName}.${m.columnName}`).join('、')}`,
         data: d,
+      };
+    },
+  }),
+
+  'concept:propose_change': () => ({
+    id: 'concept:propose_change',
+    category: SkillCategory.CONCEPT,
+    name: 'propose_ontology_change',
+    description: `把建模过程中发现的语义缺口（新建业务表缺概念/缺映射/缺关系）作为本体变更草稿提交到平台审批队列，与智能问数的本体变更走同一链路。草稿不会立即生效，需管理员在「建模中心 → 变更审核」中批准后由平台执行（执行时平台会校验表/列/概念是否真实存在，失败会标记 FAILED）。建完表/写入数据后，若该表对应的业务对象还没有概念或映射，用它提交草稿，并在汇报中告知用户需要管理员批准。`,
+    parameters: {
+      type: 'object',
+      properties: {
+        reasoning: { type: 'string', description: '为什么需要这批变更（如：新 建 t_after_service 表承接售后工单，缺概念与映射）' },
+        changes: {
+          type: 'array',
+          description: '变更草稿数组。ADD_CONCEPT: { "operation": "ADD_CONCEPT", "concept": { "name": "AfterServiceOrder", "description": "售后工单", "groupName": "服务域", "conceptType": "ENTITY" } }；ADD_MAPPING: { "operation": "ADD_MAPPING", "mapping": { "conceptName": "AfterServiceOrder", "tableName": "t_after_service", "columnName": "order_no", "mappingType": "direct", "dataSourceId": 12 } }；ADD_RELATION: { "operation": "ADD_RELATION", "relation": { "sourceConceptName": "AfterServiceOrder", "targetConceptName": "Customer", "relationType": "CORRELATED", "description": "售后工单关联客户" } }',
+          items: { type: 'object' },
+        },
+      },
+      required: ['reasoning', 'changes'],
+    },
+    async execute(args) {
+      const res = await proposeOntologyChanges({
+        reasoning: args.reasoning as string,
+        changes: args.changes as Array<Record<string, unknown>>,
+      });
+      const recorded = res.data.recorded as Array<{ changeId: string; operation: string; status: string }>;
+      return {
+        success: true,
+        message: `已提交 ${recorded.length} 条本体变更草稿（${recorded.map((r) => r.operation).join('、')}），等待管理员在「变更审核」中批准后生效`,
+        data: res.data,
       };
     },
   }),

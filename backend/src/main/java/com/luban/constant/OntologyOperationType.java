@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 public enum OntologyOperationType {
 
     ADD_CONCEPT(1, true, "CONCEPT", "concept",
-            "{\"name\":\"概念名\",\"description\":\"描述\",\"industryId\":1,\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\">0触发CRITICAL告警\",\"groupName\":\"所属领域\",\"parentConceptName\":\"父概念名\",\"conceptType\":\"DIMENSION|METRIC|ENTITY\",\"defaultAggregation\":\"SUM|COUNT|AVG|MAX|MIN|NONE(仅METRIC需要)\",\"unit\":\"单位如元/%(仅METRIC需要)\",\"timestampColumn\":\"时间列如stat_date(仅METRIC需要)\"}",
+            "{\"name\":\"概念名\",\"description\":\"描述\",\"groupName\":\"所属领域\",\"anomalyThresholdExpr\":\"CRITICAL\",\"anomalyThresholdDesc\":\">0触发CRITICAL告警\",\"parentConceptName\":\"父概念名\",\"conceptType\":\"DIMENSION|METRIC|ENTITY\",\"defaultAggregation\":\"SUM|COUNT|AVG|MAX|MIN|NONE(仅METRIC需要)\",\"unit\":\"单位如元/%(仅METRIC需要)\",\"timestampColumn\":\"时间列如stat_date(仅METRIC需要)\"}",
             "新增概念"),
     ADD_MAPPING(2, true, "MAPPING", "mapping",
             "{\"conceptName\":\"概念名\",\"tableName\":\"表名\",\"columnName\":\"列名\",\"mappingType\":\"direct|computed\",\"computedExpr\":\"计算表达式(仅computed需要)\",\"dataSourceId\":1}",
@@ -140,32 +140,7 @@ public enum OntologyOperationType {
     }
 
     /**
-     * 生成反馈分析用的建议类型及参数说明（小写蛇形命名 + 扁平 params）。
-     * 用于 ConceptFeedbackService.buildAnalysisPrompt，避免维护两套格式。
-     */
-    public static String toFeedbackPromptFormat() {
-        StringBuilder sb = new StringBuilder();
-        int idx = 1;
-        for (OntologyOperationType t : values()) {
-            String lowerName = t.name().toLowerCase();
-            sb.append(idx).append(". **").append(lowerName).append("** — ").append(t.description).append("\n");
-
-            if (t.nested && t.dataKey != null) {
-                sb.append("   params: { \"").append(t.dataKey).append("\": ").append(t.jsonSchema).append(" }\n\n");
-            } else {
-                String inner = t.jsonSchema.trim();
-                if (inner.startsWith("{") && inner.endsWith("}")) {
-                    inner = inner.substring(1, inner.length() - 1);
-                }
-                sb.append("   params: { ").append(inner).append(" }\n\n");
-            }
-            idx++;
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 内置关系类型（行业创建时自动注册）。
+     * 内置关系类型（启动时自动注册到全局关系类型注册表）。
      */
     public enum BuiltinRelation {
         DRILLS_INTO("可下钻到子维度，纯分析导航", "可下钻", "#1677ff", "子维度", "父维度", false, true, false, 0),

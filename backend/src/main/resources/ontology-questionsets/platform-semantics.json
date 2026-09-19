@@ -1,0 +1,58 @@
+{
+  "name": "platform-semantics",
+  "displayName": "平台语义包",
+  "description": "组织 / 人员 / 部门语义的典型问题回归。检查概念命中、SQL 落表与回答可用性，数据内容不做强断言（随环境数据变化）。",
+  "cases": [
+    {
+      "id": "identity-account",
+      "question": "我的账号是什么？",
+      "expect": {
+        "answerContainsAny": ["账号"],
+        "answerForbiddenAny": ["无法访问", "无法查询", "无法确定"]
+      }
+    },
+    {
+      "id": "dept-count",
+      "question": "平台一共有多少个部门？",
+      "expect": {
+        "mustHitConcepts": ["PlatformDepartment", "UserDeptRelation"],
+        "sqlContainsAny": ["departments"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表", "缺少表映射"]
+      }
+    },
+    {
+      "id": "user-count",
+      "question": "平台有多少个用户账号？",
+      "expect": {
+        "mustHitConcepts": ["PlatformUser"],
+        "sqlContainsAny": ["users"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表", "缺少表映射"]
+      }
+    },
+    {
+      "id": "user-dept-join",
+      "question": "列出前5个用户的账号、姓名和所在部门名称",
+      "expect": {
+        "mustHitConcepts": ["PlatformUser"],
+        "sqlContainsAll": ["users", "departments"],
+        "answerForbiddenAny": ["无法查询", "未配置到任何数据表"]
+      }
+    },
+    {
+      "id": "dept-member-count",
+      "question": "技术部有多少人？",
+      "expect": {
+        "mustHitConcepts": ["PlatformDepartment", "UserDeptRelation"],
+        "sqlContainsAny": ["departments", "user_dept"]
+      }
+    },
+    {
+      "id": "direct-leader",
+      "question": "张三的直属领导是谁？",
+      "expect": {
+        "mustHitConcepts": ["UserDeptRelation", "PlatformUser"],
+        "sqlContainsAny": ["user_dept", "leader_id", "departments"]
+      }
+    }
+  ]
+}

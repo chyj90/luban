@@ -34,7 +34,90 @@ public class ContextBuilder {
     private final RoleConceptPermissionService roleConceptPermissionService;
     private final ToolEmbeddingService toolEmbeddingService;
     private final OntologyGroupRepository ontologyGroupRepository;
-    private final IndustryService industryService;
+    private final com.luban.repository.RelationTypeRepository relationTypeRepository;
+    private final BindingProfileService bindingProfileService;
+    private final com.luban.repository.UserRepository userRepository;
+    private final FederationBridgeService federationBridgeService;
+
+    /**
+     * 绑定集 scope 上下文：声明本次问数锁定哪个数据源，注入该源术语词典，
+     * 并给出该源缺绑定时的行为规则。
+     */
+    private String buildScopeContext(Long datasourceScope) {
+        if (datasourceScope == null) return "";
+        String dsName;
+        try {
+            dsName = datasourceService.getById(datasourceScope).getName();
+        } catch (Exception e) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 本次问数范围（绑定集 scope）\n");
+        sb.append("用户已将本次会话锁定到数据源 #").append(datasourceScope).append("「").append(dsName).append("」。\n");
+        sb.append("- 表结构、映射、JOIN 白名单均已限定为该数据源，禁止引用其他数据源的表。\n");
+        sb.append("- 若所查概念在该数据源没有表映射，用 final_answer 告知用户\"概念 X 在当前数据源缺少绑定\"，不要跨源查询。\n\n");
+        String dict = bindingProfileService.toPromptString(datasourceScope);
+        if (!dict.isEmpty()) sb.append(dict).append("\n");
+        return sb.toString();
+    }
+
+    /**
+     * 当前用户身份上下文（this.auth 的语义侧）：平台语义包约定业务表只存 user_id，
+     * "我的/我提交的/我审批的"类问题直接以注入的 userId 过滤，无需反查用户表。
+     */
+    private String buildIdentityContext(Long userId, String userName) {
+        if (userId == null) return "";
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 当前用户身份（运行时注入）\n");
+        sb.append("- 当前登录用户：ID=").append(userId);
+        if (userName != null && !userName.isBlank() && !"unknown".equals(userName)) {
+            sb.append("，姓名=").append(userName);
+        }
+        com.luban.entity.User user = userRepository.findById(userId).orElse(null);
+        if (user != null && user.getAccount() != null) {
+            sb.append("，账号=").append(user.getAccount());
+        }
+        if (user != null && user.getEmail() != null) {
+            sb.append("，邮箱=").append(user.getEmail());
+        }
+        sb.append("\n");
+        sb.append("- 用户问\"我的/我提交的/我审批的/我负责的\"等第一人称范围时，业务表直接以 user_id = ").append(userId).append(" 过滤")
+                .append("（业务表只存 user_id，禁止冗余姓名列）。\n");
+        sb.append("- 需要展示/匹配姓名、部门时，JOIN 平台语义的概念映射表（平台系统库）：users/user_dept/departments。\n\n");
+        return sb.toString();
+    }
+
+    /**
+     * 跨源桥接上下文：本体声明的桥接键 + nl2sql_federated 动作格式。
+     * 绑定集 scope 锁定单源时不注入（scope 内禁止跨源）。
+     */
+    private String buildFederationBridgesContext(Long datasourceScope) {
+        if (datasourceScope != null) return "";
+        List<Map<String, Object>> bridges = federationBridgeService.list();
+        if (bridges.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("## 跨源桥接（Federation）\n");
+        sb.append("以下桥接由本体声明，可用于跨数据源联接：\n");
+        for (Map<String, Object> b : bridges) {
+            sb.append("- 数据源#").append(b.get("leftDatasourceId")).append("「").append(b.get("leftDatasourceName"))
+              .append("」").append(b.get("leftTable")).append(".").append(b.get("leftColumn"))
+              .append(" ↔ 数据源#").append(b.get("rightDatasourceId")).append("「").append(b.get("rightDatasourceName"))
+              .append("」").append(b.get("rightTable")).append(".").append(b.get("rightColumn"))
+              .append(" (").append(b.get("joinType")).append(")\n");
+        }
+        sb.append("""
+                  当且仅当问题需要联接上述两个不同数据源的数据时，使用 nl2sql_federated 动作：
+                  ```json
+                  {"type": "nl2sql_federated", "reasoning": "...", "concept_ids": [...],
+                   "steps": [{"datasourceId": 数据源A, "sql": "SELECT 键列与所需列 FROM 表A", "key": "键列名"},
+                             {"datasourceId": 数据源B, "sql": "SELECT 键列与所需列 FROM 表B", "key": "键列名"}],
+                   "joinType": "INNER|LEFT"}
+                  ```
+                  规则：每个步骤只能查自己数据源的表；key 必须是对应 SQL 结果中的列名；两侧键等值联接，平台在内存中合并结果（每侧最多取 5000 行）。
+                  不需要跨源时一律使用普通 nl2sql。
+
+        """);
+        return sb.toString();
+    }
 
     private static final int MAX_CONCEPT_EXPAND = 20;
     private static final int MAX_CONCEPT_IDS = 10;
@@ -44,6 +127,16 @@ public class ContextBuilder {
 
     public Map<String, Object> build(String sessionId, String userQuery,
             List<Map<String, Object>> messages, Long userId, String intent) {
+        return build(sessionId, userQuery, messages, userId, intent, null);
+    }
+
+    public Map<String, Object> build(String sessionId, String userQuery,
+            List<Map<String, Object>> messages, Long userId, String intent, Long datasourceScope) {
+        return build(sessionId, userQuery, messages, userId, intent, datasourceScope, null);
+    }
+
+    public Map<String, Object> build(String sessionId, String userQuery,
+            List<Map<String, Object>> messages, Long userId, String intent, Long datasourceScope, String userName) {
         long t0 = System.currentTimeMillis();
         Map<String, Object> result = new LinkedHashMap<>();
         List<Map<String, Object>> conceptTrace = new ArrayList<>();
@@ -52,7 +145,9 @@ public class ContextBuilder {
         List<ConceptMapping> tableMappings = new ArrayList<>();
         List<ConceptJoinMapping> joinMappings = new ArrayList<>();
 
-        List<Map<String, Object>> faissResults = searchConcepts(userQuery);
+        ConceptSearchResult search = searchConceptsDetailed(userQuery);
+        List<Map<String, Object>> faissResults = search.results();
+        boolean faissDegraded = search.degraded();
         // 按相对分数阈值过滤低相关度概念，减少 prompt 体积
         double maxScore = faissResults.stream()
                 .mapToDouble(r -> ((Number) r.getOrDefault("confidence", 0)).doubleValue())
@@ -206,6 +301,12 @@ public class ContextBuilder {
 
         if (matchedConceptIds.isEmpty()) {
             List<Concept> accessibleConcepts = getAccessibleConcepts(userId);
+            if (faissDegraded && !accessibleConcepts.isEmpty()) {
+                int before = accessibleConcepts.size();
+                accessibleConcepts = degradeConceptsByKeyword(accessibleConcepts, userQuery);
+                conceptTrace.add(Map.of("type", "degraded", "message",
+                        "语义检索服务不可用，已降级为关键词匹配（候选从 " + before + " 缩减至 " + accessibleConcepts.size() + " 个概念）"));
+            }
             if (!accessibleConcepts.isEmpty()) {
                 for (Concept c : accessibleConcepts) {
                     conceptIds.add(c.getId());
@@ -261,6 +362,24 @@ public class ContextBuilder {
         // 防止 🔒 展示 + 执行期校验缺失导致的旁路。authorizedConceptIds 为空集表示全部命中被拒。
         boolean permissionApplied = userId != null && !matchedConceptIds.isEmpty();
         if (permissionApplied) {
+            // 本体图扩展出的邻居概念此前被整段过滤（未做鉴权直接丢弃），跨概念查询因此缺表。
+            // 对映射/JOIN 涉及但尚未鉴权的概念补一次批量鉴权：有权限则放行，无权限才过滤。
+            Set<Long> toCheck = new LinkedHashSet<>();
+            tableMappings.stream().map(ConceptMapping::getConceptId).filter(Objects::nonNull)
+                    .filter(id -> !authorizedConceptIds.contains(id)).forEach(toCheck::add);
+            joinMappings.stream().map(ConceptJoinMapping::getConceptId).filter(Objects::nonNull)
+                    .filter(id -> !authorizedConceptIds.contains(id)).forEach(toCheck::add);
+            if (!toCheck.isEmpty()) {
+                try {
+                    Map<Long, Boolean> extraPerms = roleConceptPermissionService
+                            .batchCheckQueryPermission(userId, new ArrayList<>(toCheck));
+                    extraPerms.forEach((id, ok) -> {
+                        if (Boolean.TRUE.equals(ok)) authorizedConceptIds.add(id);
+                    });
+                } catch (Exception e) {
+                    log.warn("ContextBuilder: expanded-concept permission check failed: {}", e.getMessage());
+                }
+            }
             tableMappings.removeIf(m -> !authorizedConceptIds.contains(m.getConceptId()));
             joinMappings.removeIf(j -> !authorizedConceptIds.contains(j.getConceptId()));
             drillDimensions.values().forEach(list ->
@@ -271,14 +390,31 @@ public class ContextBuilder {
                     list.removeIf(r -> !authorizedConceptIds.contains(r.get("conceptId"))));
         }
 
+        // 绑定集 scope 路由：指定数据源时只装配该 profile 的映射/JOIN，
+        // 概念在 scope 外的映射一律不进 prompt，也不进 SQL 校验白名单
+        if (datasourceScope != null) {
+            tableMappings.removeIf(m -> !datasourceScope.equals(m.getDatasourceId()));
+            joinMappings.removeIf(j -> !datasourceScope.equals(j.getDatasourceId()));
+            drillDimensions.values().forEach(list -> list.removeIf(d -> !authorizedConceptIds.contains(d.get("conceptId"))));
+        }
+
         List<Map<String, Object>> availableDatasources = datasourceService.getAvailableDatasources();
+        if (datasourceScope != null) {
+            availableDatasources = availableDatasources.stream()
+                    .filter(ds -> datasourceScope.equals(ds.get("id")))
+                    .collect(Collectors.toList());
+        }
+        String scopeContext = buildScopeContext(datasourceScope);
+        String identityContext = buildIdentityContext(userId, userName);
+        String bridgeContext = buildFederationBridgesContext(datasourceScope);
         String availableRelations = buildAvailableRelationsPrompt(conceptTrace);
         boolean isAdmin = userId != null && roleConceptPermissionService.isSuperAdmin(userId);
         String prompt = buildUnifiedContextPrompt(userQuery, conceptTrace, apiTools,
                 tableMappings, joinMappings, authorizedConceptIds, groupNameMap,
                 drillDimensions, correlatedDimensions, ontologyRelations,
                 messages, availableDatasources,
-                availableRelations, isAdmin, intent, permissionApplied);
+                availableRelations, isAdmin, intent, permissionApplied,
+                scopeContext + identityContext + bridgeContext);
 
         // ===== 构建概念追踪管道 =====
         Map<String, Object> pipeline = new LinkedHashMap<>();
@@ -450,6 +586,35 @@ public class ContextBuilder {
         return false;
     }
 
+    /** FAISS 不可用或无结果时，按用户问题关键词对候选概念粗筛 + 封顶，避免全量概念灌入 prompt */
+    private List<Concept> degradeConceptsByKeyword(List<Concept> candidates, String userQuery) {
+        Set<String> tokens = new LinkedHashSet<>();
+        for (String t : userQuery.split("[\\s，。？！、：;,.?!\\-_/\\\\]+")) {
+            if (t.length() >= 2) tokens.add(t.toLowerCase());
+        }
+        List<Concept> ranked = candidates.stream()
+                .sorted((a, b) -> keywordScore(b, tokens) - keywordScore(a, tokens))
+                .toList();
+        int topN = Math.min(ranked.size(), MAX_CONCEPT_IDS);
+        List<Concept> result = new ArrayList<>(ranked.subList(0, topN));
+        // 关键词全都没命中时仍返回前 N 个授权概念（有界兜底，而非无界全量）
+        if (result.stream().allMatch(c -> keywordScore(c, tokens) == 0)) {
+            result.sort(Comparator.comparing(Concept::getName));
+        }
+        return result;
+    }
+
+    private int keywordScore(Concept c, Set<String> tokens) {
+        String name = c.getName() != null ? c.getName().toLowerCase() : "";
+        String desc = c.getDescription() != null ? c.getDescription().toLowerCase() : "";
+        int score = 0;
+        for (String t : tokens) {
+            if (name.contains(t)) score += 2;
+            else if (desc.contains(t)) score += 1;
+        }
+        return score;
+    }
+
     private List<Concept> getAccessibleConcepts(Long userId) {
         List<Concept> allIndexed = conceptRepository.findAll().stream()
                 .filter(c -> c.getEmbedding() != null && c.getEmbedding().length > 0)
@@ -465,13 +630,16 @@ public class ContextBuilder {
         }
     }
 
-    private List<Map<String, Object>> searchConcepts(String userQuery) {
-        if (!faissService.isHealthy()) return List.of();
+    /** 概念召回结果：degraded=true 表示语义检索不可用（服务挂/无向量），调用方需走关键词降级 */
+    private record ConceptSearchResult(List<Map<String, Object>> results, boolean degraded) {}
+
+    private ConceptSearchResult searchConceptsDetailed(String userQuery) {
+        if (!faissService.isHealthy()) return new ConceptSearchResult(List.of(), true);
         try {
             List<Float> embedding = faissService.getEmbedding(userQuery);
-            if (embedding == null || embedding.isEmpty()) return List.of();
+            if (embedding == null || embedding.isEmpty()) return new ConceptSearchResult(List.of(), true);
             List<Map<String, Object>> results = faissService.search(embedding, 10);
-            if (results == null || results.isEmpty()) return List.of();
+            if (results == null || results.isEmpty()) return new ConceptSearchResult(List.of(), false);
             List<Map<String, Object>> enriched = new ArrayList<>();
             for (Map<String, Object> r : results) {
                 Object id = r.get("id");
@@ -491,10 +659,10 @@ public class ContextBuilder {
                 if (score instanceof Number) item.put("confidence", ((Number) score).doubleValue());
                 enriched.add(item);
             }
-            return enriched;
+            return new ConceptSearchResult(enriched, false);
         } catch (Exception e) {
             log.warn("FAISS concept search failed: {}", e.getMessage());
-            return List.of();
+            return new ConceptSearchResult(List.of(), true);
         }
     }
 
@@ -563,31 +731,17 @@ public class ContextBuilder {
 
     private String buildAvailableRelationsPrompt(List<Map<String, Object>> conceptTrace) {
         if (conceptTrace == null || conceptTrace.isEmpty()) return "";
-        Set<Long> groupIds = conceptTrace.stream()
-                .filter(c -> c.get("groupId") instanceof Number)
-                .map(c -> ((Number) c.get("groupId")).longValue())
-                .collect(Collectors.toSet());
-        if (groupIds.isEmpty()) return "";
-        Set<Long> industryIds = new LinkedHashSet<>();
-        for (Long gid : groupIds) {
-            ontologyGroupRepository.findById(gid).ifPresent(g -> {
-                if (g.getIndustryId() != null) industryIds.add(g.getIndustryId());
-            });
-        }
-        if (industryIds.isEmpty()) return "";
+        List<com.luban.entity.RelationType> relationTypes = relationTypeRepository.findAll();
+        if (relationTypes.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
-        for (Long industryId : industryIds) {
-            List<IndustryRelation> relations = industryService.getRelations(industryId);
-            if (relations.isEmpty()) continue;
-            for (IndustryRelation r : relations) {
-                sb.append("     - ").append(r.getRelationType());
-                if (r.getDescription() != null && !r.getDescription().isEmpty())
-                    sb.append(": ").append(r.getDescription());
-                if (r.getSourceRole() != null && r.getTargetRole() != null)
-                    sb.append("。source=").append(r.getSourceRole())
-                            .append(", target=").append(r.getTargetRole());
-                sb.append("\n");
-            }
+        for (com.luban.entity.RelationType r : relationTypes) {
+            sb.append("     - ").append(r.getRelationType());
+            if (r.getDescription() != null && !r.getDescription().isEmpty())
+                sb.append(": ").append(r.getDescription());
+            if (r.getSourceRole() != null && r.getTargetRole() != null)
+                sb.append("。source=").append(r.getSourceRole())
+                        .append(", target=").append(r.getTargetRole());
+            sb.append("\n");
         }
         return sb.toString();
     }
@@ -600,10 +754,13 @@ public class ContextBuilder {
             Map<Long, List<Map<String, Object>>> ontologyRelations,
             List<Map<String, Object>> messages,
             List<Map<String, Object>> availableDatasources, String availableRelations,
-            boolean isAdmin, String intent, boolean permissionApplied) {
+            boolean isAdmin, String intent, boolean permissionApplied, String scopeContext) {
 
         StringBuilder sb = new StringBuilder();
         sb.append("## 用户问题\n").append(userQuery).append("\n\n");
+        if (scopeContext != null && !scopeContext.isEmpty()) {
+            sb.append(scopeContext).append("\n");
+        }
 
         boolean isOntologyFlow = "ontology".equals(intent);
         if (isAdmin && isOntologyFlow) {
@@ -1005,11 +1162,12 @@ public class ContextBuilder {
         sb.append("1. **调用 API 工具**：\n   ```json\n   {\"type\": \"tool_call\", \"reasoning\": \"...\", \"tool_call\": {\"name\": \"工具名\", \"arguments\": {...}}}\n   ```\n\n");
         sb.append("2. **生成 SQL 查询**：只能对标记为 ✅ 的表生成 SQL。\n");
         sb.append("   ```json\n");
-        sb.append("   {\"type\": \"nl2sql\", \"reasoning\": \"...\", \"sql\": \"SELECT ...\", \"concept_ids\": [1, 2, 3],\n");
+        sb.append("   {\"type\": \"nl2sql\", \"reasoning\": \"...\", \"sql\": \"SELECT ...\", \"concept_ids\": [1, 2, 3], \"datasourceId\": 数据源ID,\n");
         sb.append("    \"value_origins\": {\"OTN\": {\"origin\": \"table_column\", \"table\": \"dedicated_lines\", \"column\": \"type\"},\n");
         sb.append("                     \"1\": {\"origin\": \"previous_sql\", \"sql\": \"SELECT line_id FROM ...\"}}}\n");
         sb.append("   ```\n");
         sb.append("   - SQL 只能是 SELECT 查询\n");
+        sb.append("   - **【强制】所查概念在多个数据源都有映射时，必须声明 datasourceId（从上方「可用数据源」表格中选取）指定本次查询的数据源；只涉及一个数据源时可省略。未声明且存在歧义时查询将被拒绝**\n");
         sb.append("   - **【强制】多表关联只能使用上方「表 JOIN 条件」中预定义的 JOIN，禁止自行构造任何 JOIN 路径或 ON 条件。如果预定义 JOIN 中没有直达目标表的路径，必须通过预定义 JOIN 链间接到达。**\n");
         sb.append("   - **【强制】value_origins 必须声明 SQL 中所有字符串等值条件的右值来源，缺失或声明不完整的 SQL 将被拒绝执行**\n");
         sb.append("     - origin=table_column：值来自某个表的实际枚举值，必须给出 table 和 column\n");
@@ -1144,20 +1302,14 @@ public class ContextBuilder {
     private String buildFullOntologyContext() {
         StringBuilder sb = new StringBuilder();
 
-        List<Industry> industries = industryService.list();
-        if (!industries.isEmpty()) {
-            sb.append("## 可用行业与域\n");
-            sb.append("ADD_CONCEPT 的 industryId 和 groupName 必须从下表中选取，禁止凭空编造。\n\n");
-            sb.append("| 行业ID | 行业名 | 域（groupName） |\n");
-            sb.append("|--------|--------|-----------------|\n");
-            for (Industry ind : industries) {
-                List<OntologyGroup> groups = ontologyGroupRepository.findByIndustryId(ind.getId());
-                List<String> groupNames = groups.stream()
-                        .map(g -> g.getDisplayName() != null ? g.getDisplayName() : g.getName())
-                        .collect(Collectors.toList());
-                sb.append("| ").append(ind.getId()).append(" | ").append(ind.getDisplayName())
-                        .append(" | ").append(groupNames.isEmpty() ? "-" : String.join("、", groupNames))
-                        .append(" |\n");
+        List<OntologyGroup> groups = ontologyGroupRepository.findAll();
+        if (!groups.isEmpty()) {
+            sb.append("## 可用概念域\n");
+            sb.append("ADD_CONCEPT 的 groupName 必须从下表中选取，禁止凭空编造。\n\n");
+            sb.append("| 域（groupName） |\n");
+            sb.append("|-----------------|\n");
+            for (OntologyGroup g : groups) {
+                sb.append("| ").append(g.getDisplayName() != null ? g.getDisplayName() : g.getName()).append(" |\n");
             }
             sb.append("\n");
         }
@@ -1211,10 +1363,10 @@ public class ContextBuilder {
         return "本体创建思维链：\n"
                 + "1. 分析用户需求，确定需要创建的概念\n"
                 + "2. 检查现有概念是否已覆盖需求\n"
-                + "3. 如需要新概念，从上方「可用行业与域」表格中选择 industryId 和 groupName\n"
+                + "3. 如需要新概念，从上方「可用概念域」表格中选择 groupName\n"
                 + "4. 确定概念间的下钻和关联关系\n"
                 + "5. 确定概念对应的数据表映射，dataSourceId 必须从上方「可用数据源」表格中选择\n"
-                + "6. 使用 ontology_action 输出完整变更，industryId 和 dataSourceId 禁止编造\n";
+                + "6. 使用 ontology_action 输出完整变更，groupName 和 dataSourceId 禁止编造\n";
     }
 
     private void injectPreCheckTableSchemas(StringBuilder sb, List<String> preChecks,

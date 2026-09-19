@@ -24,4 +24,7 @@ public interface ConceptMappingRepository extends JpaRepository<ConceptMapping, 
     void deleteByConceptIdIn(List<Long> conceptIds);
 
     List<ConceptMapping> findByTableNameIn(List<String> tableNames);
+
+    @Query("SELECT m.datasourceId, COUNT(DISTINCT m.conceptId) FROM ConceptMapping m WHERE m.datasourceId IS NOT NULL GROUP BY m.datasourceId")
+    List<Object[]> countDistinctConceptsByDatasource();
 }

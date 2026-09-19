@@ -46,16 +46,16 @@ import {
   deleteConceptJoinMapping,
   rebuildConceptIndex,
   listOntologyGroups,
-  getOntologyGroup,
-  listIndustries,
+  createOntologyGroup,
   getConceptTree,
+  listRelationTypes,
   listPendingOntologyChanges,
   approveOntologyChange,
   rejectOntologyChange,
   batchApproveOntologyChanges,
   batchRejectOntologyChanges,
+  listConceptsByDatasource,
   type OntologyChangeLog,
-  getIndustryRelations,
 } from '@/api/concept';
 import { listToolDefinitions, listToolGroups, fetchBindingTypes } from '@/api/tool';
 import { listDatasources } from '@/api/datasource';
@@ -68,8 +68,7 @@ import type {
   ConceptMapping,
   ConceptJoinMapping,
   OntologyGroup,
-  Industry,
-  IndustryRelation,
+  RelationType,
 } from '@/types/concept';
 import {
   CONCEPT_NODE_ICONS,
@@ -112,7 +111,7 @@ function formatSnapshot(obj: Record<string, unknown> | null, entityType: string)
   }).filter(Boolean);
 
   if (entityType === 'CONCEPT') {
-    const fields = extract(['name', 'description', 'calculationFormula', 'threshold', 'industryId', 'industryName']);
+    const fields = extract(['name', 'description', 'calculationFormula', 'threshold']);
     return fields.length > 0 ? fields.join(' | ') : JSON.stringify(data);
   }
   if (entityType === 'RELATION') {
@@ -383,27 +382,26 @@ export default function ConceptEditorPage() {
   const [joinForm, setJoinForm] = useState<Partial<ConceptJoinMapping>>({});
   const [editingJoinId, setEditingJoinId] = useState<number | null>(null);
 
-  const [industries, setIndustries] = useState<Industry[]>([]);
-  const [selectedIndustryId, setSelectedIndustryId] = useState<number | null>(null);
   const [domainGroups, setDomainGroups] = useState<OntologyGroup[]>([]);
   const [selectedDomainId, setSelectedDomainId] = useState<number | null | undefined>(undefined);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [selectedDatasourceIds, setSelectedDatasourceIds] = useState<number[]>([]);
+  const [viewDatasourceId, setViewDatasourceId] = useState<number | null>(null);
   const [showDatasourceModal, setShowDatasourceModal] = useState(false);
   const [autoMatchStrategy, setAutoMatchStrategy] = useState<'llm' | 'rule'>('rule');
   const [showConceptSelectModal, setShowConceptSelectModal] = useState(false);
   const [selectedConceptIds, setSelectedConceptIds] = useState<number[]>([]);
-  const [allIndustryConcepts, setAllIndustryConcepts] = useState<Map<number, Concept[]>>(new Map());
+  const [allDomainConcepts, setAllDomainConcepts] = useState<Map<number, Concept[]>>(new Map());
   const [ownerNameMap, setOwnerNameMap] = useState<Map<number, string>>(new Map());
   const [domainLegendCollapsed, setDomainLegendCollapsed] = useState(false);
   const domainColorMap = useRef<Record<number, string>>({});
   const domainGroupsFetchedRef = useRef<number | null>(null);
-  const [industryConceptGroupMap, setIndustryConceptGroupMap] = useState<Map<number, number>>(new Map());
-  const [industryAllRelations, setIndustryAllRelations] = useState<ConceptRelation[]>([]);
-  const [industryRelationTypes, setIndustryRelationTypes] = useState<IndustryRelation[]>([]);
+  const [conceptGroupMap, setConceptGroupMap] = useState<Map<number, number>>(new Map());
+  const [allConceptRelations, setAllConceptRelations] = useState<ConceptRelation[]>([]);
+  const [relationTypeList, setRelationTypeList] = useState<RelationType[]>([]);
 
   const relationOptions = useMemo(() => {
-    return industryRelationTypes.map((ir) => ({
+    return relationTypeList.map((ir) => ({
       type: ir.relationType,
       title: ir.label || labels[ir.relationType] || ir.relationType,
       desc: ir.description || '',
@@ -412,7 +410,7 @@ export default function ConceptEditorPage() {
       sourceRole: ir.sourceRole || sourceRoles[ir.relationType] || '',
       targetRole: ir.targetRole || targetRoles[ir.relationType] || '',
     }));
-  }, [industryRelationTypes, labels, colors, sourceRoles, targetRoles]);
+  }, [relationTypeList, labels, colors, sourceRoles, targetRoles]);
 
   const [showChangeReview, setShowChangeReview] = useState(false);
   const [pendingChanges, setPendingChanges] = useState<OntologyChangeLog[]>([]);
@@ -422,9 +420,9 @@ export default function ConceptEditorPage() {
   const crossDomainStats = useMemo(() => {
     const domainIdToName = new Map<number, string>();
     domainGroups.forEach((d) => domainIdToName.set(d.id, d.displayName));
-    const conceptToDomain = industryConceptGroupMap;
+    const conceptToDomain = conceptGroupMap;
     const crossByDomain = new Map<number, { count: number; peers: Map<number, number> }>();
-    industryAllRelations.forEach((r) => {
+    allConceptRelations.forEach((r) => {
       const srcDomain = conceptToDomain.get(r.sourceConceptId);
       const tgtDomain = conceptToDomain.get(r.targetConceptId);
       if (srcDomain != null && tgtDomain != null && srcDomain !== tgtDomain) {
@@ -442,7 +440,7 @@ export default function ConceptEditorPage() {
       }
     });
     return { crossByDomain, domainIdToName };
-  }, [industryAllRelations, industryConceptGroupMap, domainGroups]);
+  }, [allConceptRelations, conceptGroupMap, domainGroups]);
 
   const groupedDatasources = useMemo(() => {
     const groups = new Map<number, Datasource[]>();
@@ -473,7 +471,6 @@ export default function ConceptEditorPage() {
   const user = useAuthStore((s) => s.user);
   const isSuperAdmin = user?.superAdmin === true;
   const confirm = useConfirmStore((s) => s.confirm);
-  const selectedIndustryIdRef = useRef<number | null>(null);
   const undoStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
   const redoStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([]);
 
@@ -498,37 +495,11 @@ export default function ConceptEditorPage() {
     return domainColorMap.current[groupId];
   }, [domainGroups]);
 
-  const fetchIndustries = useCallback(async () => {
+  const fetchDomainGroups = useCallback(async () => {
+    if (domainGroupsFetchedRef.current) return;
+    domainGroupsFetchedRef.current = 1;
     try {
-      const res = await listIndustries();
-      setIndustries(res.data);
-
-      if (urlDomainIdRef.current) {
-        try {
-          const domainRes = await getOntologyGroup(urlDomainIdRef.current);
-          const domainIndustryId = domainRes.data.industryId;
-          if (domainIndustryId && res.data.some((ind) => ind.id === domainIndustryId)) {
-            setSelectedIndustryId(domainIndustryId);
-            return;
-          }
-        } catch {
-          // fall through to default selection
-        }
-      }
-
-      if (res.data.length > 0 && selectedIndustryIdRef.current === null) {
-        setSelectedIndustryId(res.data[0].id);
-      }
-    } catch {
-      // industries are optional
-    }
-  }, []);
-
-  const fetchDomainGroups = useCallback(async (industryId?: number | null) => {
-    if (!industryId || domainGroupsFetchedRef.current === industryId) return;
-    domainGroupsFetchedRef.current = industryId;
-    try {
-      const res = await listOntologyGroups(industryId);
+      const res = await listOntologyGroups();
       const groups = res.data;
       setDomainGroups(groups);
       if (urlDomainIdRef.current && groups.some((g) => g.id === urlDomainIdRef.current)) {
@@ -551,10 +522,10 @@ export default function ConceptEditorPage() {
         groupConcepts.set(gid, r.data);
         r.data.forEach((c) => map.set(c.id, c.groupId!));
       });
-      setAllIndustryConcepts(groupConcepts);
-      setIndustryConceptGroupMap(map);
+      setAllDomainConcepts(groupConcepts);
+      setConceptGroupMap(map);
       const conceptIds = new Set(map.keys());
-      setIndustryAllRelations(allRelationsRes.data.filter(
+      setAllConceptRelations(allRelationsRes.data.filter(
         (r) => conceptIds.has(r.sourceConceptId) || conceptIds.has(r.targetConceptId)
       ));
     } catch {
@@ -565,8 +536,6 @@ export default function ConceptEditorPage() {
   const fetchData = useCallback(async (forceDomainId?: number | null) => {
     const targetDomainId = forceDomainId !== undefined ? forceDomainId : selectedDomainId;
     if (targetDomainId === undefined) return;
-    const industryId = selectedIndustryIdRef.current;
-    if (industryId === null) return;
     try {
       setLoading(true);
 
@@ -612,6 +581,15 @@ export default function ConceptEditorPage() {
         }
       }
 
+      // 数据源视图：仅显示在该数据源上有绑定映射的概念
+      if (viewDatasourceId != null) {
+        try {
+          const boundRes = await listConceptsByDatasource(viewDatasourceId);
+          const bound = new Set(boundRes.data.map((c) => c.conceptId));
+          visibleConcepts = visibleConcepts.filter((c) => bound.has(c.id));
+        } catch { /* 过滤失败按全部概念展示 */ }
+      }
+
       const visibleConceptIds = new Set(visibleConcepts.map((c) => c.id));
       allRelations = allRelations.filter(
         (r) => visibleConceptIds.has(r.sourceConceptId) && visibleConceptIds.has(r.targetConceptId)
@@ -631,11 +609,9 @@ export default function ConceptEditorPage() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDomainId, domainGroups, setNodes, setEdges, toast, getDomainName, getDomainColor]);
+  }, [selectedDomainId, domainGroups, viewDatasourceId, setNodes, setEdges, toast, getDomainName, getDomainColor]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  useEffect(() => { fetchIndustries(); }, [fetchIndustries]);
 
   useEffect(() => {
     // 建模中心视角：概念映射面向全量平台数据源（应用侧可见性由系统权限另行控制）
@@ -656,18 +632,12 @@ export default function ConceptEditorPage() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { selectedIndustryIdRef.current = selectedIndustryId; }, [selectedIndustryId]);
-
   useEffect(() => {
-    if (selectedIndustryId !== null) {
-      fetchDomainGroups(selectedIndustryId);
-      getIndustryRelations(selectedIndustryId).then((res) => {
-        setIndustryRelationTypes(res.data);
-      }).catch(() => {});
-    } else {
-      setIndustryRelationTypes([]);
-    }
-  }, [fetchDomainGroups, selectedIndustryId]);
+    fetchDomainGroups();
+    listRelationTypes().then((res) => {
+      setRelationTypeList(res.data);
+    }).catch(() => {});
+  }, [fetchDomainGroups]);
 
   const selectConcept = useCallback(async (conceptId: string) => {
     const concept = concepts.find((c) => String(c.id) === conceptId);
@@ -874,6 +844,16 @@ export default function ConceptEditorPage() {
       }).catch(() => toast('概念创建失败', 'error'));
     });
   }, [pushUndo, fetchData, toast, openCreateDialog, selectedDomainId]);
+
+  // 概念域管理已收进编辑器：新建域内联完成，不再依赖独立的概念域管理页
+  const handleCreateDomain = useCallback(() => {
+    openCreateDialog('', (name) => {
+      createOntologyGroup({ name, displayName: name, sortOrder: domainGroups.length }).then(() => {
+        toast('概念域创建成功', 'success');
+        fetchData();
+      }).catch(() => toast('概念域创建失败', 'error'));
+    });
+  }, [openCreateDialog, createOntologyGroup, domainGroups.length, toast, fetchData]);
 
   const handleRebuildIndex = async () => {
     try {
@@ -1190,14 +1170,14 @@ export default function ConceptEditorPage() {
   };
 
   const handleAutoMatch = async () => {
-    if (!selectedIndustryId) {
-      toast('请先选择一个行业', 'warning');
+    if (domainGroups.length === 0) {
+      toast('请先创建概念域', 'warning');
       return;
     }
     setSelectedDatasourceIds([]);
     setShowConceptSelectModal(true);
     const unmapped: number[] = [];
-    for (const concepts of allIndustryConcepts.values()) {
+    for (const concepts of allDomainConcepts.values()) {
       for (const c of concepts) {
         if (!c.mapped) unmapped.push(c.id);
       }
@@ -1442,13 +1422,16 @@ export default function ConceptEditorPage() {
           <div className="toolbar">
             <div className="toolbarDomainSelect">
               <Select
-                value={selectedIndustryId ? String(selectedIndustryId) : ''}
-                options={industries.map((ind) => ({
-                  value: String(ind.id),
-                  label: ind.displayName,
-                }))}
-                onChange={(v) => setSelectedIndustryId(v ? Number(v) : null)}
-                placeholder="选择行业"
+                value={viewDatasourceId ? String(viewDatasourceId) : ''}
+                options={[
+                  { value: '', label: '全部数据源' },
+                  ...datasources.map((ds) => ({
+                    value: String(ds.id),
+                    label: ds.name,
+                  })),
+                ]}
+                onChange={(v) => setViewDatasourceId(v ? Number(v) : null)}
+                placeholder="数据源视图"
               />
             </div>
             <div className="toolbarDomainSelect">
@@ -1465,6 +1448,7 @@ export default function ConceptEditorPage() {
                 placeholder="全部概念域"
               />
             </div>
+            <button className="toolbarBtn" onClick={handleCreateDomain}>+ 新建概念域</button>
             <button className="toolbarBtnPrimary" onClick={handleCreateConcept}>+ 新建概念</button>
             <div className="toolbarActions">
               <button className="toolbarBtn" onClick={handleAutoMatch}>⚡ 自动映射</button>
@@ -1495,8 +1479,8 @@ export default function ConceptEditorPage() {
             </svg>
             <span className="canvasLoadingText">加载中</span>
           </div>
-        ) : selectedIndustryId === null ? (
-          <div className="emptyState">请先选择一个行业</div>
+        ) : domainGroups.length === 0 ? (
+          <div className="emptyState">暂无概念域，点击上方「+ 新建概念域」创建</div>
         ) : treeMode ? (
           <div className="treeView">
             <div className="treeViewHeader">概念树形结构</div>
@@ -2368,7 +2352,7 @@ export default function ConceptEditorPage() {
                 const mappedIds = new Set<number>();
                 const allIds: number[] = [];
                 const domainList: { gid: number; name: string; concepts: Concept[] }[] = [];
-                for (const [gid, concepts] of allIndustryConcepts.entries()) {
+                for (const [gid, concepts] of allDomainConcepts.entries()) {
                   const domain = domainGroups.find(d => d.id === gid);
                   domainList.push({ gid, name: domain?.displayName || `域 ${gid}`, concepts });
                   for (const c of concepts) {

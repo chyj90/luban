@@ -6,16 +6,12 @@ import com.luban.entity.Concept;
 import com.luban.entity.ConceptJoinMapping;
 import com.luban.entity.ConceptMapping;
 import com.luban.entity.ConceptRelation;
-import com.luban.entity.IndustryRelation;
-import com.luban.entity.OntologyGroup;
 import com.luban.entity.ConceptToolBinding;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
-import com.luban.repository.IndustryRelationRepository;
-import com.luban.repository.OntologyGroupRepository;
 import com.luban.repository.ConceptToolBindingRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import jakarta.annotation.PostConstruct;
@@ -34,8 +30,8 @@ import java.util.stream.Collectors;
  * 历史上这里用 Apache Jena OWL 推理机承载同一套语义，但实际用到的能力只有
  * 三项——父子层级遍历、transitive 传递闭包、symmetric 双向展开——用邻接表
  * BFS 即可实现，还顺带修掉了 Jena 方案的固有缺陷：
- * - 跨行业/跨域的关系此前被按 source 行业分模型而静默丢弃，图中按 conceptId 建边天然支持；
- * - 同名关系类型在不同行业的 transitive/symmetric 元数据按 source 概念所属行业解析，不再全局串味。
+ * - 跨域的关系此前被按 source 行业分模型而静默丢弃，图中按 conceptId 建边天然支持；
+ * - 关系类型的 transitive/symmetric 元数据取自全局关系类型注册表（relation_type）。
  */
 @Slf4j
 @Service
@@ -49,8 +45,7 @@ public class OntologyService {
     private final ConceptJoinMappingRepository conceptJoinMappingRepository;
     private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
-    private final OntologyGroupRepository groupRepository;
-    private final IndustryRelationRepository industryRelationRepository;
+    private final com.luban.repository.RelationTypeRepository relationTypeRepository;
 
     private static final int MAX_CONCEPT_EXPAND = 20;
     private static final int MAX_API_TOOLS = 15;
@@ -70,8 +65,7 @@ public class OntologyService {
             Map<Long, List<RelationEdge>> incoming,
             Map<Long, Set<Long>> parentsByChild,
             Map<Long, Set<Long>> childrenByParent,
-            Map<Long, Map<String, RelationMeta>> metaByIndustry,
-            Map<Long, Long> industryByConcept,
+            Map<String, RelationMeta> metaByType,
             Map<Long, String> nameByConcept,
             Map<String, String> expressions) {
 
@@ -79,14 +73,12 @@ public class OntologyService {
             return nameByConcept.isEmpty();
         }
 
-        RelationMeta meta(Long conceptId, String relationType) {
-            Long industryId = industryByConcept.get(conceptId);
-            if (industryId == null) return null;
-            return metaByIndustry.getOrDefault(industryId, Map.of()).get(relationType);
+        RelationMeta meta(String relationType) {
+            return metaByType.get(relationType);
         }
 
         /**
-         * 关系的直接邻居：出边 + 对称关系的入边（对称由 source 概念所属行业的元数据决定）。
+         * 关系的直接邻居：出边 + 对称关系的入边（对称性由关系类型元数据决定）。
          * 返回的边统一以 targetId 为"邻居"，入边在此翻转方向。
          */
         List<RelationEdge> neighbors(Long conceptId, String relationType) {
@@ -96,7 +88,7 @@ public class OntologyService {
             }
             for (RelationEdge e : incoming.getOrDefault(conceptId, List.of())) {
                 if (!e.relationType().equals(relationType)) continue;
-                RelationMeta meta = meta(e.sourceId(), relationType);
+                RelationMeta meta = meta(relationType);
                 if (meta != null && meta.symmetric()) {
                     result.add(new RelationEdge(e.targetId(), e.sourceId(), relationType));
                 }
@@ -110,7 +102,7 @@ public class OntologyService {
             for (RelationEdge e : neighbors(conceptId, relationType)) {
                 if (result.add(e.targetId())) queue.add(e.targetId());
             }
-            if (!isTransitive(conceptId, relationType)) return result;
+            if (!isTransitive(relationType)) return result;
             while (!queue.isEmpty()) {
                 Long cur = queue.poll();
                 for (RelationEdge e : neighbors(cur, relationType)) {
@@ -120,8 +112,8 @@ public class OntologyService {
             return result;
         }
 
-        private boolean isTransitive(Long conceptId, String relationType) {
-            RelationMeta meta = meta(conceptId, relationType);
+        private boolean isTransitive(String relationType) {
+            RelationMeta meta = meta(relationType);
             return meta != null && meta.transitive();
         }
 
@@ -154,7 +146,7 @@ public class OntologyService {
     private volatile OntologyGraph graph = emptyGraph();
 
     private static OntologyGraph emptyGraph() {
-        return new OntologyGraph(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
+        return new OntologyGraph(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
     }
 
     public OntologyService(ConceptRepository conceptRepository,
@@ -163,16 +155,14 @@ public class OntologyService {
                            ConceptJoinMappingRepository conceptJoinMappingRepository,
                            ConceptToolBindingRepository conceptToolBindingRepository,
                            ToolDefinitionRepository toolDefinitionRepository,
-                           OntologyGroupRepository groupRepository,
-                           IndustryRelationRepository industryRelationRepository) {
+                           com.luban.repository.RelationTypeRepository relationTypeRepository) {
         this.conceptRepository = conceptRepository;
         this.conceptRelationRepository = conceptRelationRepository;
         this.conceptMappingRepository = conceptMappingRepository;
         this.conceptJoinMappingRepository = conceptJoinMappingRepository;
         this.conceptToolBindingRepository = conceptToolBindingRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
-        this.groupRepository = groupRepository;
-        this.industryRelationRepository = industryRelationRepository;
+        this.relationTypeRepository = relationTypeRepository;
     }
 
     @PostConstruct
@@ -234,41 +224,27 @@ public class OntologyService {
     private void buildGraph() {
         List<Concept> concepts = conceptRepository.findAll();
         List<ConceptRelation> relations = conceptRelationRepository.findAll();
-        List<IndustryRelation> industryRelations = industryRelationRepository.findAll();
-        List<OntologyGroup> groups = groupRepository.findAll();
+        List<com.luban.entity.RelationType> relationTypes = relationTypeRepository.findAll();
 
-        Map<Long, Long> groupIdToIndustry = new HashMap<>();
-        for (OntologyGroup g : groups) {
-            if (g.getIndustryId() != null) {
-                groupIdToIndustry.put(g.getId(), g.getIndustryId());
-            }
-        }
-
-        Map<Long, Long> industryByConcept = new HashMap<>();
         Map<Long, String> nameByConcept = new LinkedHashMap<>();
         Set<Long> conceptIds = new HashSet<>();
         for (Concept c : concepts) {
             conceptIds.add(c.getId());
             nameByConcept.put(c.getId(), c.getName());
-            Long industryId = c.getGroupId() != null
-                    ? groupIdToIndustry.getOrDefault(c.getGroupId(), -1L) : -1L;
-            industryByConcept.put(c.getId(), industryId);
         }
 
-        // 关系元数据按行业解析（此前 sourceToTargetMap.putIfAbsent 全局取第一条，跨行业串味）
-        Map<Long, Map<String, RelationMeta>> metaByIndustry = new HashMap<>();
+        // 关系类型元数据取自全局注册表；同名类型重复时取 or 保守并集
+        Map<String, RelationMeta> metaByType = new HashMap<>();
         Map<String, Boolean> sourceToTargetByType = new HashMap<>();
-        for (IndustryRelation ir : industryRelations) {
-            String type = ir.getRelationType();
-            sourceToTargetByType.putIfAbsent(type, Boolean.TRUE.equals(ir.getSourceToTarget()));
-            RelationMeta existing = metaByIndustry
-                    .computeIfAbsent(ir.getIndustryId(), k -> new HashMap<>())
-                    .get(type);
-            boolean transitive = Boolean.TRUE.equals(ir.getIsTransitive())
+        for (com.luban.entity.RelationType rt : relationTypes) {
+            String type = rt.getRelationType();
+            sourceToTargetByType.putIfAbsent(type, Boolean.TRUE.equals(rt.getSourceToTarget()));
+            RelationMeta existing = metaByType.get(type);
+            boolean transitive = Boolean.TRUE.equals(rt.getIsTransitive())
                     || (existing != null && existing.transitive());
-            boolean symmetric = Boolean.TRUE.equals(ir.getIsSymmetric())
+            boolean symmetric = Boolean.TRUE.equals(rt.getIsSymmetric())
                     || (existing != null && existing.symmetric());
-            metaByIndustry.get(ir.getIndustryId()).put(type, new RelationMeta(transitive, symmetric));
+            metaByType.put(type, new RelationMeta(transitive, symmetric));
         }
 
         Map<Long, List<RelationEdge>> outgoing = new HashMap<>();
@@ -308,7 +284,7 @@ public class OntologyService {
 
         this.graph = new OntologyGraph(
                 Map.copyOf(outgoing), Map.copyOf(incoming), Map.copyOf(parentsByChild), Map.copyOf(childrenByParent),
-                Map.copyOf(metaByIndustry), Map.copyOf(industryByConcept), Map.copyOf(nameByConcept),
+                Map.copyOf(metaByType), Map.copyOf(nameByConcept),
                 Map.copyOf(expressions));
     }
 
@@ -492,7 +468,7 @@ public class OntologyService {
         }
         // 对称关系入边
         for (RelationEdge e : g.incoming.getOrDefault(concept.getId(), List.of())) {
-            RelationMeta meta = g.meta(e.sourceId(), e.relationType());
+            RelationMeta meta = g.meta(e.relationType());
             if (meta != null && meta.symmetric()) {
                 neighbors.add(new Neighbor(e.sourceId(), e.relationType()));
             }

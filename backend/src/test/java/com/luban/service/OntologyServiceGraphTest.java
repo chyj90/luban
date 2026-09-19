@@ -4,16 +4,16 @@ import com.luban.constant.BindingType;
 import com.luban.entity.Concept;
 import com.luban.entity.ConceptRelation;
 import com.luban.entity.ConceptToolBinding;
-import com.luban.entity.IndustryRelation;
 import com.luban.entity.OntologyGroup;
+import com.luban.entity.RelationType;
 import com.luban.entity.ToolDefinition;
 import com.luban.repository.ConceptJoinMappingRepository;
 import com.luban.repository.ConceptMappingRepository;
 import com.luban.repository.ConceptRelationRepository;
 import com.luban.repository.ConceptRepository;
 import com.luban.repository.ConceptToolBindingRepository;
-import com.luban.repository.IndustryRelationRepository;
 import com.luban.repository.OntologyGroupRepository;
+import com.luban.repository.RelationTypeRepository;
 import com.luban.repository.ToolDefinitionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,8 +34,8 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
- * 验证内存图版 OntologyService 与原 Jena 实现的语义等价性：
- * transitive 传递闭包、symmetric 双向展开、父子层级、工具扩展、跨域关系。
+ * 验证内存图版 OntologyService 的语义：transitive 传递闭包、symmetric 双向展开、
+ * 父子层级、工具扩展、跨域关系。关系元数据来自全局关系类型注册表（relation_type）。
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -47,8 +47,7 @@ class OntologyServiceGraphTest {
     @Mock private ConceptJoinMappingRepository conceptJoinMappingRepository;
     @Mock private ConceptToolBindingRepository conceptToolBindingRepository;
     @Mock private ToolDefinitionRepository toolDefinitionRepository;
-    @Mock private OntologyGroupRepository groupRepository;
-    @Mock private IndustryRelationRepository industryRelationRepository;
+    @Mock private RelationTypeRepository relationTypeRepository;
 
     private OntologyService service;
 
@@ -60,14 +59,13 @@ class OntologyServiceGraphTest {
         return c;
     }
 
-    private IndustryRelation meta(Long industryId, String type, boolean transitive, boolean symmetric) {
-        IndustryRelation ir = new IndustryRelation();
-        ir.setIndustryId(industryId);
-        ir.setRelationType(type);
-        ir.setSourceToTarget(false);
-        ir.setIsTransitive(transitive);
-        ir.setIsSymmetric(symmetric);
-        return ir;
+    private RelationType meta(String type, boolean transitive, boolean symmetric) {
+        RelationType rt = new RelationType();
+        rt.setRelationType(type);
+        rt.setSourceToTarget(false);
+        rt.setIsTransitive(transitive);
+        rt.setIsSymmetric(symmetric);
+        return rt;
     }
 
     private ConceptRelation relation(long source, long target, String type, String expression) {
@@ -84,15 +82,14 @@ class OntologyServiceGraphTest {
         service = new OntologyService(conceptRepository, conceptRelationRepository,
                 conceptMappingRepository, conceptJoinMappingRepository,
                 conceptToolBindingRepository, toolDefinitionRepository,
-                groupRepository, industryRelationRepository);
+                relationTypeRepository);
     }
 
     private void build(List<Concept> concepts, List<ConceptRelation> relations,
-            List<IndustryRelation> metas, List<OntologyGroup> groups) {
+            List<RelationType> metas) {
         when(conceptRepository.findAll()).thenReturn(concepts);
         when(conceptRelationRepository.findAll()).thenReturn(relations);
-        when(industryRelationRepository.findAll()).thenReturn(metas);
-        when(groupRepository.findAll()).thenReturn(groups);
+        when(relationTypeRepository.findAll()).thenReturn(metas);
         lenient().when(conceptRepository.findById(anyLong()))
                 .thenAnswer(inv -> concepts.stream()
                         .filter(c -> c.getId().equals(inv.getArgument(0, Long.class)))
@@ -105,11 +102,10 @@ class OntologyServiceGraphTest {
 
     @Test
     void transitiveDrillClosure() {
-        // 行业1: DRILLS_INTO transitive=true；A→B→C
+        // DRILLS_INTO transitive=true；A→B→C
         build(List.of(concept(1, "A", 10L), concept(2, "B", 10L), concept(3, "C", 10L)),
                 List.of(relation(1, 2, "DRILLS_INTO", null), relation(2, 3, "DRILLS_INTO", null)),
-                List.of(meta(1L, "DRILLS_INTO", true, false)),
-                List.of(group(10L, 1L)));
+                List.of(meta("DRILLS_INTO", true, false)));
 
         List<Map<String, Object>> dimsA = service.getDrillDimensions(1L);
         assertThat(dimsA).extracting(d -> ((Number) d.get("conceptId")).longValue())
@@ -124,8 +120,7 @@ class OntologyServiceGraphTest {
     void nonTransitiveDrillReturnsDirectOnly() {
         build(List.of(concept(1, "A", 10L), concept(2, "B", 10L), concept(3, "C", 10L)),
                 List.of(relation(1, 2, "DRILLS_INTO", null), relation(2, 3, "DRILLS_INTO", null)),
-                List.of(meta(1L, "DRILLS_INTO", false, false)),
-                List.of(group(10L, 1L)));
+                List.of(meta("DRILLS_INTO", false, false)));
 
         List<Map<String, Object>> dimsA = service.getDrillDimensions(1L);
         assertThat(dimsA).extracting(d -> ((Number) d.get("conceptId")).longValue())
@@ -137,8 +132,7 @@ class OntologyServiceGraphTest {
         // 只存 A→B 一条边，CORRELATED symmetric，双向均可查到
         build(List.of(concept(1, "A", 10L), concept(2, "B", 10L)),
                 List.of(relation(1, 2, "CORRELATED", null)),
-                List.of(meta(1L, "CORRELATED", false, true)),
-                List.of(group(10L, 1L)));
+                List.of(meta("CORRELATED", false, true)));
 
         assertThat(service.getCorrelatedDimensions(1L))
                 .extracting(d -> ((Number) d.get("conceptId")).longValue()).containsExactly(2L);
@@ -151,8 +145,7 @@ class OntologyServiceGraphTest {
         build(List.of(concept(1, "OEE", 10L), concept(2, "可用率", 10L), concept(3, "性能率", 10L)),
                 List.of(relation(1, 2, "COMPUTED_FROM", "OEE = 可用率 × 性能率"),
                         relation(1, 3, "COMPUTED_FROM", null)),
-                List.of(meta(1L, "COMPUTED_FROM", false, false)),
-                List.of(group(10L, 1L)));
+                List.of(meta("COMPUTED_FROM", false, false)));
 
         Map<String, Object> result = service.analyzeContext(List.of(1L), Map.of(1L, 0.9));
         assertThat((List<Long>) result.get("conceptIds")).contains(1L);
@@ -178,7 +171,7 @@ class OntologyServiceGraphTest {
     @Test
     void toolExpansionViaSubclass() {
         // parent=source: PARENT_OF A→B 表示 B 是 A 的子类；T2 绑定在子类 B 上，应被 T1 扩展出来
-        IndustryRelation parentOf = meta(1L, "PARENT_OF", false, false);
+        RelationType parentOf = meta("PARENT_OF", false, false);
         parentOf.setSourceToTarget(true);
 
         ToolDefinition t1 = tool(100L, "tool_consumes");
@@ -186,8 +179,7 @@ class OntologyServiceGraphTest {
 
         build(List.of(concept(1, "A", 10L), concept(2, "B", 10L)),
                 List.of(relation(1, 2, "PARENT_OF", null)),
-                List.of(parentOf),
-                List.of(group(10L, 1L)));
+                List.of(parentOf));
 
         when(conceptToolBindingRepository.findByToolIdAndBindingType(100L, BindingType.CONSUMES))
                 .thenReturn(List.of(binding(1L, 100L, BindingType.CONSUMES)));
@@ -202,12 +194,11 @@ class OntologyServiceGraphTest {
     }
 
     @Test
-    void crossIndustryRelationIsTraversed() {
-        // A 在行业1，B 在行业2——原 Jena 按行业分模型会丢弃该关系，图实现应可遍历
+    void crossDomainRelationIsTraversed() {
+        // A 在域10，B 在域20——全局图中按 conceptId 建边，跨域关系可遍历
         build(List.of(concept(1, "A", 10L), concept(2, "B", 20L)),
                 List.of(relation(1, 2, "DRILLS_INTO", null)),
-                List.of(meta(1L, "DRILLS_INTO", false, false), meta(2L, "DRILLS_INTO", false, false)),
-                List.of(group(10L, 1L), group(20L, 2L)));
+                List.of(meta("DRILLS_INTO", false, false)));
 
         assertThat(service.getDrillDimensions(1L))
                 .extracting(d -> ((Number) d.get("conceptId")).longValue()).containsExactly(2L);
@@ -218,7 +209,6 @@ class OntologyServiceGraphTest {
         g.setId(id);
         g.setName("g" + id);
         g.setDisplayName("g" + id);
-        g.setIndustryId(industryId);
         return g;
     }
 

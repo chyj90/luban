@@ -38,6 +38,12 @@ app:
 luban:
   mock-mes:
     enabled: true
+  # 运营商行业语义包（开箱即用）：演示业务表建在独立演示库 luban_demo_operator（与平台库解耦），
+  # 注册数据源「运营商演示库」+ 标准层概念/关系/术语词典/回归题集。
+  # 未来其他行业部署置 false 关闭本包，或删除「运营商语义」概念域与演示数据源后重启不会重建。
+  # 演示库创建需要数据库账号有建库权限；无权限时本包自动跳过（不阻断启动）。
+  operator-package:
+    enabled: true
   sandbox:
     # 编排 python 节点与附件解析代码共用的沙箱服务；compose 里经 LUBAN_EMBEDDING_BASE_URL 指向 embedding 容器
     base-url: ${LUBAN_EMBEDDING_BASE_URL:http://127.0.0.1:8765}

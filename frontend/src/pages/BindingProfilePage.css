@@ -1,0 +1,295 @@
+.bp-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.bp-content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+.bp-loading {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+  color: #1677ff;
+}
+
+.bp-spin {
+  animation: bp-rotate 0.9s linear infinite;
+}
+
+@keyframes bp-rotate {
+  to { transform: rotate(360deg); }
+}
+
+.bp-empty {
+  text-align: center;
+  color: #8c8c8c;
+  padding: 60px 0;
+}
+
+.bp-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.bp-table thead tr {
+  background: #fafafa;
+}
+
+.bp-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #595959;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.bp-table td {
+  padding: 12px 14px;
+  font-size: 13px;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.bp-row-active {
+  background: #f0f7ff;
+}
+
+.bp-ds-name {
+  font-weight: 600;
+  color: #262626;
+}
+
+.bp-ds-id {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #8c8c8c;
+}
+
+.bp-status {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.bp-status--active {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.bp-status--empty {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.bp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.bp-btn:hover:not(:disabled) {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.bp-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bp-btn--primary {
+  background: #1677ff;
+  border-color: #1677ff;
+  color: #fff;
+}
+
+.bp-btn--primary:hover:not(:disabled) {
+  background: #4096ff;
+  color: #fff;
+}
+
+.bp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: #8c8c8c;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.bp-icon-btn:hover {
+  color: #ff4d4f;
+  background: #fff1f0;
+}
+
+.bp-detail-cell {
+  background: #fafcff;
+  padding: 16px 20px !important;
+}
+
+.bp-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.bp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bp-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #262626;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bp-section-hint {
+  font-size: 11px;
+  font-weight: 400;
+  color: #8c8c8c;
+}
+
+.bp-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bp-form-row label {
+  width: 48px;
+  font-size: 12px;
+  color: #595959;
+  flex-shrink: 0;
+}
+
+.bp-form-row input,
+.bp-synonym-row input,
+.bp-enum-refresh input {
+  padding: 5px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.bp-form-row input {
+  width: 320px;
+}
+
+.bp-form-row input:focus,
+.bp-synonym-row input:focus,
+.bp-enum-refresh input:focus {
+  border-color: #1677ff;
+}
+
+.bp-synonym-list {
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bp-synonym-head,
+.bp-synonym-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1.6fr 1.6fr 36px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+}
+
+.bp-synonym-head {
+  background: #fafafa;
+  font-size: 11px;
+  color: #8c8c8c;
+}
+
+.bp-synonym-row {
+  border-top: 1px solid #f5f5f5;
+}
+
+.bp-synonym-row input {
+  width: 100%;
+}
+
+.bp-enum-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.bp-enum-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.bp-enum-item code {
+  color: #1677ff;
+}
+
+.bp-enum-item span {
+  color: #8c8c8c;
+}
+
+.bp-enum-refresh {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bp-autobind-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #1677ff;
+}
+
+.bp-autobind-result {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: #262626;
+}
+
+.bp-autobind-result--error {
+  color: #cf1322;
+}
+
+.bp-autobind-result--done {
+  color: #389e0d;
+}

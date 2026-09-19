@@ -38,10 +38,18 @@ public class DatasourceService {
     private final ApplicationRepository applicationRepository;
     private final com.luban.repository.SystemPermissionRepository systemPermissionRepository;
     private final com.luban.security.appaccess.AppAccessService appAccessService;
+    private final com.luban.repository.DatasourceSchemaRepository datasourceSchemaRepository;
     private final ObjectMapper objectMapper;
     private final JdbcDriverService jdbcDriverService;
     private final CryptoUtil cryptoUtil;
     private final RsaKeyProvider rsaKeyProvider;
+
+    /** 表结构缓存 TTL（秒）：问数/自动映射/校验读缓存，过期后首个访问者触发刷新 */
+    @Value("${luban.schema-cache-ttl-seconds:600}")
+    private long schemaCacheTtlSeconds;
+
+    /** 每个 datasource 一把锁，避免并发问数对同一数据源的 schema 刷新风暴 */
+    private final Map<Long, Object> schemaLocks = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Value("${spring.datasource.url}")
     private String systemDbUrl;
@@ -56,6 +64,7 @@ public class DatasourceService {
                              ApplicationRepository applicationRepository,
                              com.luban.repository.SystemPermissionRepository systemPermissionRepository,
                              com.luban.security.appaccess.AppAccessService appAccessService,
+                             com.luban.repository.DatasourceSchemaRepository datasourceSchemaRepository,
                              ObjectMapper objectMapper,
                              JdbcDriverService jdbcDriverService,
                              CryptoUtil cryptoUtil,
@@ -64,6 +73,7 @@ public class DatasourceService {
         this.applicationRepository = applicationRepository;
         this.systemPermissionRepository = systemPermissionRepository;
         this.appAccessService = appAccessService;
+        this.datasourceSchemaRepository = datasourceSchemaRepository;
         this.objectMapper = objectMapper;
         this.jdbcDriverService = jdbcDriverService;
         this.cryptoUtil = cryptoUtil;
@@ -301,16 +311,73 @@ public class DatasourceService {
         }
     }
 
+    /**
+     * 表结构读取入口：优先返回缓存（datasource_schema），TTL 内直接命中；
+     * 过期/缺失时实时拉取并回写。实时拉取失败时降级返回过期缓存（带 stale 标记），
+     * 避免单个数据源故障拖垮整轮问数。
+     */
     public Map<String, Object> getStructure(Long id) {
+        return loadStructure(id, false);
+    }
+
+    /** 强制刷新表结构（数据源配置变更或管理端手动触发） */
+    public Map<String, Object> refreshStructure(Long id) {
+        return loadStructure(id, true);
+    }
+
+    private Map<String, Object> loadStructure(Long id, boolean force) {
         Datasource ds = datasourceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("数据源不存在"));
+        synchronized (schemaLocks.computeIfAbsent(id, k -> new Object())) {
+            com.luban.entity.DatasourceSchema cached = datasourceSchemaRepository.findByDatasourceId(id).orElse(null);
+            boolean fresh = cached != null
+                    && Boolean.TRUE.equals(cached.getSyncOk())
+                    && cached.getSyncedAt() != null
+                    && cached.getSyncedAt().isAfter(java.time.LocalDateTime.now().minusSeconds(schemaCacheTtlSeconds));
+            if (!force && fresh) {
+                return parseSchemaJson(cached.getTablesJson());
+            }
+            try {
+                Map<String, Object> structure = fetchStructureLive(ds);
+                int tableCount = structure.get("tables") instanceof List<?> l ? l.size() : 0;
+                com.luban.entity.DatasourceSchema row = cached != null ? cached : new com.luban.entity.DatasourceSchema();
+                row.setDatasourceId(id);
+                row.setTablesJson(toJson(structure));
+                row.setTableCount(tableCount);
+                row.setSyncedAt(java.time.LocalDateTime.now());
+                row.setSyncOk(true);
+                row.setSyncError(null);
+                datasourceSchemaRepository.save(row);
+                return structure;
+            } catch (Exception e) {
+                if (cached != null) {
+                    log.warn("Schema refresh failed for datasource {}, falling back to stale cache (syncedAt={}): {}",
+                            id, cached.getSyncedAt(), e.getMessage());
+                    Map<String, Object> stale = parseSchemaJson(cached.getTablesJson());
+                    stale.put("stale", true);
+                    stale.put("error", "实时刷新失败，返回缓存结构: " + e.getMessage());
+                    return stale;
+                }
+                throw e;
+            }
+        }
+    }
+
+    private Map<String, Object> fetchStructureLive(Datasource ds) {
         Map<String, Object> config = fromJsonMap(ds.getConfig());
         String type = ds.getType().toLowerCase();
-
         if ("rest_api".equals(type)) {
             return getApiStructure(config);
         }
         return getJdbcStructure(type, config);
+    }
+
+    private Map<String, Object> parseSchemaJson(String json) {
+        try {
+            return objectMapper.readValue(json, Map.class);
+        } catch (Exception e) {
+            return Map.of("tables", List.of());
+        }
     }
 
     private Map<String, Object> getJdbcStructure(String type, Map<String, Object> config) {
@@ -409,6 +476,7 @@ public class DatasourceService {
 
     public void delete(Long id) {
         datasourceRepository.deleteById(id);
+        datasourceSchemaRepository.deleteByDatasourceId(id);
     }
 
     public Map<String, Object> update(Long id, CreateDatasourceRequest request) {
@@ -432,6 +500,8 @@ public class DatasourceService {
         }
         ds.setStatus("pending");
         ds = datasourceRepository.save(ds);
+        // 连接配置已变更，旧的表结构缓存作废
+        datasourceSchemaRepository.deleteByDatasourceId(id);
         return buildDatasourceMap(ds);
     }
 
@@ -470,6 +540,110 @@ public class DatasourceService {
 
     public String buildJdbcUrl(String type, Map<String, Object> config) {
         return jdbcDriverService.buildJdbcUrl(type, config);
+    }
+
+    /**
+     * 平台系统库数据源（内置组织/人员语义包的数据底座）。
+     * 指向平台自身的 users/user_dept/departments，幂等：按 slug=PLATFORM + name 查找，存在即返回。
+     */
+    @Transactional
+    public Datasource ensurePlatformSystemDatasource() {
+        return datasourceRepository.findBySlug("PLATFORM").stream()
+                .filter(d -> PLATFORM_DS_NAME.equals(d.getName()))
+                .findFirst()
+                .orElseGet(() -> {
+                    String[] hostPort = parseHostPort(systemDbUrl);
+                    String database = parseDatabaseName(systemDbUrl);
+                    Map<String, Object> config = new LinkedHashMap<>();
+                    config.put("host", hostPort[0]);
+                    config.put("port", Integer.parseInt(hostPort[1]));
+                    config.put("database", database);
+                    config.put("username", systemDbUser);
+                    config.put("password", systemDbPassword);
+                    encryptPasswordInConfig(config);
+
+                    Datasource ds = new Datasource();
+                    ds.setOwnerId(null);
+                    ds.setSlug("PLATFORM");
+                    ds.setScope("PLATFORM");
+                    ds.setName(PLATFORM_DS_NAME);
+                    ds.setType("MySQL");
+                    ds.setConfig(toJson(config));
+                    ds.setStatus("connected");
+                    return datasourceRepository.save(ds);
+                });
+    }
+
+    /**
+     * 幂等注册内置演示数据源（如运营商演示库）：在平台 MySQL 实例上创建独立的演示库并指向它。
+     * 业务数据（哪怕是演示数据）与平台系统库物理隔离——平台库只存平台元数据，
+     * 删除演示库不影响平台；且演示接入形态与真实外部库接入完全同构（连接 → 绑定映射）。
+     * 数据库账号需有建库权限；无权限时抛出异常，由调用方降级跳过行业语义包。
+     */
+    public Datasource ensureBuiltinDemoDatasource(String slug, String name, String database) {
+        var hostPort = parseHostPort(systemDbUrl);
+        String host = hostPort[0];
+        String port = hostPort[1];
+        String adminUrl = String.format("jdbc:mysql://%s:%s?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC", host, port);
+        try (Connection conn = DriverManager.getConnection(adminUrl, systemDbUser, systemDbPassword);
+             Statement stmt = conn.createStatement()) {
+            stmt.executeUpdate("CREATE DATABASE IF NOT EXISTS " + database + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        } catch (Exception e) {
+            throw new RuntimeException("创建演示库 " + database + " 失败（需要建库权限，或配置关闭对应语义包）: " + e.getMessage(), e);
+        }
+
+        return datasourceRepository.findBySlug(slug).stream()
+                .filter(d -> name.equals(d.getName()))
+                .findFirst()
+                .map(existing -> {
+                    // 内置演示数据源的连接信息始终跟随平台当前配置重写（含重新加密的密码）：
+                    // 换 LUBAN_DATASOURCE_SECRET 后无需手工修复，启动即自愈
+                    Map<String, Object> config = new LinkedHashMap<>();
+                    config.put("host", host);
+                    config.put("port", Integer.parseInt(port));
+                    config.put("database", database);
+                    config.put("username", systemDbUser);
+                    config.put("password", systemDbPassword);
+                    encryptPasswordInConfig(config);
+                    existing.setConfig(toJson(config));
+                    existing.setStatus("connected");
+                    return datasourceRepository.save(existing);
+                })
+                .orElseGet(() -> {
+                    Map<String, Object> config = new LinkedHashMap<>();
+                    config.put("host", host);
+                    config.put("port", Integer.parseInt(port));
+                    config.put("database", database);
+                    config.put("username", systemDbUser);
+                    config.put("password", systemDbPassword);
+                    encryptPasswordInConfig(config);
+
+                    Datasource ds = new Datasource();
+                    ds.setOwnerId(null);
+                    ds.setSlug(slug);
+                    ds.setScope("PLATFORM");
+                    ds.setName(name);
+                    ds.setType("MySQL");
+                    ds.setConfig(toJson(config));
+                    ds.setStatus("connected");
+                    return datasourceRepository.save(ds);
+                });
+    }
+
+    public static final String PLATFORM_DS_NAME = "平台系统库";
+
+    /** jdbc:mysql://host:port/db?params → db */
+    private String parseDatabaseName(String jdbcUrl) {
+        try {
+            String rest = jdbcUrl.substring(jdbcUrl.indexOf("://") + 3);
+            int slash = rest.indexOf('/');
+            int question = rest.indexOf('?');
+            if (slash >= 0) {
+                return question > slash ? rest.substring(slash + 1, question) : rest.substring(slash + 1);
+            }
+        } catch (Exception ignored) {
+        }
+        return "luban";
     }
 
     /** 传输层信封解密：rsa: 前缀字段用私钥解密回明文（随后由 encryptPasswordInConfig 做 AES 落库） */
