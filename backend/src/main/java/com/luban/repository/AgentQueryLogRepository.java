@@ -49,4 +49,33 @@ public interface AgentQueryLogRepository extends JpaRepository<AgentQueryLog, Lo
 
     @Query(value = "SELECT COALESCE(MAX(execution_latency_ms), 0) FROM (SELECT execution_latency_ms, ROW_NUMBER() OVER (ORDER BY execution_latency_ms) AS rn, COUNT(*) OVER () AS cnt FROM agent_query_log WHERE created_at >= :since AND execution_latency_ms IS NOT NULL) t WHERE rn = CEIL(cnt * 0.95)", nativeQuery = true)
     Double p95ExecutionLatencySince(@Param("since") LocalDateTime since);
+
+    @Query(value = "SELECT COALESCE(MAX(total_latency_ms), 0) FROM (SELECT total_latency_ms, ROW_NUMBER() OVER (ORDER BY total_latency_ms) AS rn, COUNT(*) OVER () AS cnt FROM agent_query_log WHERE created_at >= :since AND total_latency_ms IS NOT NULL) t WHERE rn = CEIL(cnt * 0.95)", nativeQuery = true)
+    Double p95TotalLatencySince(@Param("since") LocalDateTime since);
+
+    // 请求日志列表（给监控页下钻用；只取最近 N 条避免全量拉取）
+    List<AgentQueryLog> findTop300ByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime since);
+
+    List<AgentQueryLog> findTop300ByCreatedAtAfterAndSqlExecutedTrueAndSqlSuccessFalseOrderByCreatedAtDesc(LocalDateTime since);
+
+    // 上一等长周期聚合（KPI 环比用）
+    long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    long countBySqlExecutedTrueAndCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    long countBySqlSuccessTrueAndCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    @Query("SELECT AVG(l.totalLatencyMs) FROM AgentQueryLog l WHERE l.createdAt >= :start AND l.createdAt < :end AND l.totalLatencyMs IS NOT NULL")
+    Double avgTotalLatencyBetween(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    // 窗口内最近一次命中事件（告警时间戳取真实发生时间，而非刷新时间）
+    AgentQueryLog findFirstByCreatedAtAfterAndSqlExecutedTrueAndSqlSuccessFalseOrderByCreatedAtDesc(LocalDateTime since);
+
+    AgentQueryLog findFirstByCreatedAtAfterAndLlmLatencyMsGreaterThanOrderByCreatedAtDesc(LocalDateTime since, Long threshold);
+
+    AgentQueryLog findFirstByCreatedAtAfterAndExecutionLatencyMsGreaterThanOrderByCreatedAtDesc(LocalDateTime since, Long threshold);
+
+    AgentQueryLog findFirstByCreatedAtAfterAndFeedbackGivenTrueOrderByCreatedAtDesc(LocalDateTime since);
+
+    AgentQueryLog findFirstByCreatedAtAfterAndPermissionDeniedTrueOrderByCreatedAtDesc(LocalDateTime since);
 }

@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,8 +41,9 @@ public class AgentMetricsService {
         }
     }
 
-    public Map<String, Object> getOverview() {
-        LocalDateTime since = LocalDateTime.now().minusDays(7);
+    public Map<String, Object> getOverview(LocalDateTime since) {
+        // 上一等长周期窗口，用于 KPI 环比
+        LocalDateTime prevStart = since.minus(Duration.between(since, LocalDateTime.now()));
         Map<String, Object> overview = new LinkedHashMap<>();
 
         long totalRequests = queryLogRepository.countSince(since);
@@ -53,6 +55,7 @@ public class AgentMetricsService {
         Double avgLlmLatency = queryLogRepository.avgLlmLatencySince(since);
         Double avgExecLatency = queryLogRepository.avgExecutionLatencySince(since);
         Double avgTotalLatency = queryLogRepository.avgTotalLatencySince(since);
+        Double p95TotalLatency = queryLogRepository.p95TotalLatencySince(since);
 
         List<Object[]> decisionDist = queryLogRepository.countDecisionDistribution(since);
 
@@ -65,6 +68,15 @@ public class AgentMetricsService {
         overview.put("avgLlmLatencyMs", avgLlmLatency != null ? Math.round(avgLlmLatency) : 0);
         overview.put("avgExecutionLatencyMs", avgExecLatency != null ? Math.round(avgExecLatency) : 0);
         overview.put("avgTotalLatencyMs", avgTotalLatency != null ? Math.round(avgTotalLatency) : 0);
+        overview.put("p95TotalLatencyMs", p95TotalLatency != null ? Math.round(p95TotalLatency) : 0);
+
+        long totalRequestsPrev = queryLogRepository.countByCreatedAtBetween(prevStart, since);
+        long sqlExecutedPrev = queryLogRepository.countBySqlExecutedTrueAndCreatedAtBetween(prevStart, since);
+        long sqlSuccessPrev = queryLogRepository.countBySqlSuccessTrueAndCreatedAtBetween(prevStart, since);
+        Double avgTotalLatencyPrev = queryLogRepository.avgTotalLatencyBetween(prevStart, since);
+        overview.put("totalRequestsPrev", totalRequestsPrev);
+        overview.put("sqlSuccessRatePrev", sqlExecutedPrev > 0 ? Math.round(sqlSuccessPrev * 10000.0 / sqlExecutedPrev) / 100.0 : 0);
+        overview.put("avgTotalLatencyMsPrev", avgTotalLatencyPrev != null ? Math.round(avgTotalLatencyPrev) : 0);
 
         Map<String, Long> decisionMap = new LinkedHashMap<>();
         for (Object[] row : decisionDist) {
@@ -75,8 +87,7 @@ public class AgentMetricsService {
         return overview;
     }
 
-    public List<Map<String, Object>> getConceptHealth() {
-        LocalDateTime since = LocalDateTime.now().minusDays(7);
+    public List<Map<String, Object>> getConceptHealth(LocalDateTime since) {
         List<AgentQueryLog> recentLogs = queryLogRepository.findRecentSince(since);
 
         Map<String, Map<String, Object>> conceptStats = new LinkedHashMap<>();
@@ -126,8 +137,7 @@ public class AgentMetricsService {
         return result;
     }
 
-    public List<Map<String, Object>> getRecentAnomalies() {
-        LocalDateTime since = LocalDateTime.now().minusDays(7);
+    public List<Map<String, Object>> getRecentAnomalies(LocalDateTime since) {
         List<Map<String, Object>> anomalies = new ArrayList<>();
 
         long total = queryLogRepository.countSince(since);
@@ -138,61 +148,114 @@ public class AgentMetricsService {
         if (sqlExecuted > 0) {
             double rate = (double) sqlSuccess / sqlExecuted;
             if (rate < 0.85) {
+                AgentQueryLog lastFailed = queryLogRepository
+                        .findFirstByCreatedAtAfterAndSqlExecutedTrueAndSqlSuccessFalseOrderByCreatedAtDesc(since);
                 anomalies.add(Map.of(
                         "type", "sql_success_rate_low",
-                        "level", "warning",
+                        "level", rate < 0.5 ? "critical" : "warning",
                         "message", "SQL 成功率低于 85%: " + Math.round(rate * 10000) / 100.0 + "%",
-                        "detail", "SQL 执行 " + sqlExecuted + " 次，成功 " + sqlSuccess + " 次",
-                        "time", LocalDateTime.now().toString()
+                        "detail", "SQL 执行 " + sqlExecuted + " 次，成功 " + sqlSuccess + " 次，最近失败见请求日志",
+                        "time", eventTime(lastFailed)
                 ));
             }
         }
 
         Double p95Llm = queryLogRepository.p95LlmLatencySince(since);
         if (p95Llm != null && p95Llm > 5000) {
+            AgentQueryLog lastSlowLlm = queryLogRepository
+                    .findFirstByCreatedAtAfterAndLlmLatencyMsGreaterThanOrderByCreatedAtDesc(since, 5000L);
             anomalies.add(Map.of(
                     "type", "llm_latency_high",
                     "level", "warning",
                     "message", "LLM P95 延迟超过 5s: " + Math.round(p95Llm) + "ms",
                     "detail", "LLM 响应时间过长，可能影响用户体验",
-                    "time", LocalDateTime.now().toString()
+                    "time", eventTime(lastSlowLlm)
             ));
         }
 
         Double p95Exec = queryLogRepository.p95ExecutionLatencySince(since);
         if (p95Exec != null && p95Exec > 10000) {
+            AgentQueryLog lastSlowExec = queryLogRepository
+                    .findFirstByCreatedAtAfterAndExecutionLatencyMsGreaterThanOrderByCreatedAtDesc(since, 10000L);
             anomalies.add(Map.of(
                     "type", "execution_latency_high",
                     "level", "warning",
                     "message", "SQL 执行 P95 延迟超过 10s: " + Math.round(p95Exec) + "ms",
                     "detail", "数据源连接或查询性能有问题",
-                    "time", LocalDateTime.now().toString()
+                    "time", eventTime(lastSlowExec)
             ));
         }
 
         long feedbackCount = queryLogRepository.countByFeedbackGivenTrueAndCreatedAtAfter(since);
         if (total > 0 && (double) feedbackCount / total > 0.1) {
+            AgentQueryLog lastFeedback = queryLogRepository
+                    .findFirstByCreatedAtAfterAndFeedbackGivenTrueOrderByCreatedAtDesc(since);
             anomalies.add(Map.of(
                     "type", "feedback_rate_high",
                     "level", "warning",
                     "message", "用户反馈率超过 10%: " + Math.round(feedbackCount * 10000.0 / total) / 100.0 + "%",
                     "detail", "反馈 " + feedbackCount + " 条，总请求 " + total + " 次",
-                    "time", LocalDateTime.now().toString()
+                    "time", eventTime(lastFeedback)
             ));
         }
 
         long permissionDenied = queryLogRepository.countByPermissionDeniedTrueAndCreatedAtAfter(since);
         if (total > 0 && (double) permissionDenied / total > 0.05) {
+            AgentQueryLog lastDenied = queryLogRepository
+                    .findFirstByCreatedAtAfterAndPermissionDeniedTrueOrderByCreatedAtDesc(since);
             anomalies.add(Map.of(
                     "type", "permission_denied_rate_high",
                     "level", "info",
                     "message", "无权限拒绝率超过 5%: " + Math.round(permissionDenied * 10000.0 / total) / 100.0 + "%",
                     "detail", "拒绝 " + permissionDenied + " 次，总请求 " + total + " 次",
-                    "time", LocalDateTime.now().toString()
+                    "time", eventTime(lastDenied)
             ));
         }
 
         return anomalies;
+    }
+
+    private String eventTime(AgentQueryLog log) {
+        return (log != null && log.getCreatedAt() != null)
+                ? log.getCreatedAt().toString() : LocalDateTime.now().toString();
+    }
+
+    /** 请求日志列表：监控页下钻入口，failedOnly=true 时只返回执行失败的请求 */
+    public List<Map<String, Object>> getRequests(LocalDateTime since, boolean failedOnly, int limit) {
+        List<AgentQueryLog> logs = failedOnly
+                ? queryLogRepository.findTop300ByCreatedAtAfterAndSqlExecutedTrueAndSqlSuccessFalseOrderByCreatedAtDesc(since)
+                : queryLogRepository.findTop300ByCreatedAtAfterOrderByCreatedAtDesc(since);
+        if (logs.size() > limit) {
+            logs = logs.subList(0, limit);
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (AgentQueryLog log : logs) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("messageId", log.getMessageId());
+            item.put("sessionId", log.getSessionId());
+            item.put("userQuery", truncate(log.getUserQuery(), 120));
+            item.put("decisionType", log.getDecisionType());
+            item.put("conceptMatchCount", log.getConceptMatchCount());
+            item.put("conceptExpandCount", log.getConceptExpandCount());
+            item.put("apiToolCount", log.getApiToolCount());
+            item.put("sqlExecuted", log.isSqlExecuted());
+            item.put("sqlSuccess", log.isSqlSuccess());
+            item.put("sqlError", truncate(log.getSqlError(), 160));
+            item.put("llmLatencyMs", log.getLlmLatencyMs());
+            item.put("executionLatencyMs", log.getExecutionLatencyMs());
+            item.put("totalLatencyMs", log.getTotalLatencyMs());
+            item.put("permissionDenied", log.isPermissionDenied());
+            item.put("feedbackGiven", log.isFeedbackGiven());
+            item.put("createdAt", log.getCreatedAt() != null ? log.getCreatedAt().toString() : null);
+            result.add(item);
+        }
+        return result;
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max) + "…";
     }
 
     public Map<String, Object> getQueryDetail(String messageId) {

@@ -11,11 +11,17 @@ export interface MetricsOverview {
   avgLlmLatencyMs: number;
   avgExecutionLatencyMs: number;
   avgTotalLatencyMs: number;
+  p95TotalLatencyMs: number;
+  /** 上一等长周期快照，用于 KPI 环比 */
+  totalRequestsPrev: number;
+  sqlSuccessRatePrev: number;
+  avgTotalLatencyMsPrev: number;
   decisionDistribution: Record<string, number>;
 }
 
 export interface ConceptHealth {
   conceptId: string;
+  conceptName?: string;
   totalQueries: number;
   sqlSuccess: number;
   sqlTotal: number;
@@ -29,6 +35,49 @@ export interface Anomaly {
   message: string;
   detail: string;
   time: string;
+}
+
+/** 请求日志列表项（轻量，详情走 getAgentQueryDetail） */
+export interface RequestLogItem {
+  messageId: string;
+  sessionId: string;
+  userQuery: string;
+  decisionType: string;
+  conceptMatchCount: number;
+  conceptExpandCount: number;
+  apiToolCount: number;
+  sqlExecuted: boolean;
+  sqlSuccess: boolean;
+  sqlError: string | null;
+  llmLatencyMs: number | null;
+  executionLatencyMs: number | null;
+  totalLatencyMs: number | null;
+  permissionDenied: boolean;
+  feedbackGiven: boolean;
+  createdAt: string;
+}
+
+/** 请求详情（抽屉展示：含生成的 SQL 与报错） */
+export interface QueryDetail {
+  found: boolean;
+  sessionId?: string;
+  messageId?: string;
+  userQuery?: string;
+  decisionType?: string;
+  conceptIds?: string;
+  conceptMatchCount?: number;
+  conceptExpandCount?: number;
+  apiToolCount?: number;
+  sqlGenerated?: string;
+  sqlExecuted?: boolean;
+  sqlSuccess?: boolean;
+  sqlError?: string;
+  llmLatencyMs?: number;
+  executionLatencyMs?: number;
+  totalLatencyMs?: number;
+  permissionDenied?: boolean;
+  feedbackGiven?: boolean;
+  createdAt?: string;
 }
 
 export interface FaissHealth {
@@ -50,16 +99,24 @@ export interface AgentChatParams {
   datasourceId?: number;
 }
 
-export function getAgentMetricsOverview() {
-  return get<MetricsOverview>('/agent-metrics/overview');
+export function getAgentMetricsOverview(hours: number) {
+  return get<MetricsOverview>(`/agent-metrics/overview?hours=${hours}`);
 }
 
-export function getAgentMetricsConceptHealth() {
-  return get<ConceptHealth[]>('/agent-metrics/concept-health');
+export function getAgentMetricsConceptHealth(hours: number) {
+  return get<ConceptHealth[]>(`/agent-metrics/concept-health?hours=${hours}`);
 }
 
-export function getAgentMetricsAnomalies() {
-  return get<Anomaly[]>('/agent-metrics/recent-anomalies');
+export function getAgentMetricsRequests(hours: number, failedOnly = false, limit = 200) {
+  return get<RequestLogItem[]>(`/agent-metrics/requests?hours=${hours}&failedOnly=${failedOnly}&limit=${limit}`);
+}
+
+export function getAgentMetricsAnomalies(hours: number) {
+  return get<Anomaly[]>(`/agent-metrics/recent-anomalies?hours=${hours}`);
+}
+
+export function getAgentQueryDetail(messageId: string) {
+  return get<QueryDetail>(`/agent-metrics/query-detail?messageId=${encodeURIComponent(messageId)}`);
 }
 
 export function getFaissHealth() {
