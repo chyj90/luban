@@ -22,6 +22,15 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
 
+embedding:
+  service:
+    # 语义服务地址：统一取 LUBAN_EMBEDDING_BASE_URL（此前 FaissService 未接线，
+    # 一直用 localhost 默认值，容器部署下 FAISS 检索指向不存在的地址）
+    url: ${LUBAN_EMBEDDING_BASE_URL:http://127.0.0.1:8765}
+    # 多副本可选：显式列出全部语义服务实例地址（逗号分隔）。
+    # 未配置时自动按 base-url 主机名的 DNS A 记录展开——K8s 下指向 headless service 即可
+    endpoints: ${EMBEDDING_SERVICE_ENDPOINTS:}
+
 app:
   security:
     jwt:

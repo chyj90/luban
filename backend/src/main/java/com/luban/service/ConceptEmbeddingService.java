@@ -5,6 +5,8 @@ import com.luban.repository.ConceptRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -23,8 +25,12 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class ConceptEmbeddingService {
 
+    /** 跨后端实例的重建互斥锁（MySQL GET_LOCK）：多副本同时触发全量重建时串行化，避免打爆 EB */
+    private static final String REBUILD_LOCK = "luban:faiss-rebuild";
+
     private final ConceptRepository conceptRepository;
     private final FaissService faissService;
+    private final JdbcTemplate jdbcTemplate;
 
     @Value("${embedding.model.version:default}")
     private String embeddingModelVersion;
@@ -115,10 +121,78 @@ public class ConceptEmbeddingService {
         return all.size();
     }
 
-    /** 从 FAISS 索引移除已删除概念（概念删除后调用，避免死 ID 留在索引里） */
-    public void removeFromIndex(List<String> conceptIds) {
-        if (conceptIds == null || conceptIds.isEmpty()) return;
-        faissService.removeConcepts(conceptIds);
+    /** 跨实例互斥的全量重建：索引是可从 MySQL 重建的缓存，失败由定时对账兜底 */
+    public void rebuildIndexWithLock() {
+        boolean locked = false;
+        try {
+            Integer got = jdbcTemplate.queryForObject(
+                    "SELECT GET_LOCK(?, ?)", Integer.class, REBUILD_LOCK, 30);
+            locked = got != null && got == 1;
+        } catch (Exception e) {
+            log.debug("GET_LOCK unavailable (non-MySQL env?), rebuild without lock: {}", e.getMessage());
+        }
+        try {
+            rebuildIndex();
+        } finally {
+            if (locked) {
+                try {
+                    jdbcTemplate.queryForObject("SELECT RELEASE_LOCK(?)", Integer.class, REBUILD_LOCK);
+                } catch (Exception e) {
+                    log.warn("RELEASE_LOCK failed: {}", e.getMessage());
+                }
+            }
+        }
+    }
+
+    /** 事务提交后触发全量重建（广播全部 EB 实例）。失败仅告警：定时对账自愈。 */
+    public void scheduleRebuildAfterCommit() {
+        Runnable task = () -> {
+            try {
+                rebuildIndexWithLock();
+            } catch (Exception e) {
+                log.error("Failed to rebuild FAISS index after commit: {}", e.getMessage());
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    Thread.startVirtualThread(task);
+                }
+            });
+        } else {
+            Thread.startVirtualThread(task);
+        }
+    }
+
+    /** 概念检索自愈：EB 实例缺索引（新副本/EB 重启）时全量重建后重试一次 */
+    public List<Map<String, Object>> searchWithHeal(List<Float> embedding, int topK) {
+        try {
+            return faissService.search(embedding, topK);
+        } catch (FaissIndexMissingException e) {
+            log.warn("FAISS index missing on EB instance, rebuilding: {}", e.getMessage());
+            rebuildIndexWithLock();
+            return faissService.search(embedding, topK);
+        }
+    }
+
+    /**
+     * 多副本对账（60s）：逐 EB 实例核对概念索引规模，仅向落后实例广播重建。
+     * 覆盖 EB 重启丢索引、新副本上线、构建广播部分失败三种漂移来源。
+     */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 90_000)
+    public void reconcileFaissIndex() {
+        try {
+            if (!faissService.isHealthy()) return;
+            long expected = loadAllEmbeddings().size();
+            List<String> stale = faissService.staleConceptIndexEndpoints(expected);
+            if (stale.isEmpty()) return;
+            log.info("[faiss-reconcile] {} EB endpoint(s) behind (expected {}), rebuilding",
+                    stale.size(), expected);
+            faissService.buildIndexTo(stale, loadAllEmbeddings());
+        } catch (Exception e) {
+            log.warn("[faiss-reconcile] reconciliation failed: {}", e.getMessage());
+        }
     }
 
     public int regenerateAll() {

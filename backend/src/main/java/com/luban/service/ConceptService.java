@@ -174,7 +174,7 @@ public class ConceptService {
     @Transactional
     public void delete(Long id) {
         deleteCore(Collections.singletonList(id));
-        scheduleFaissCleanupAfterCommit(Collections.singletonList(id));
+        conceptEmbeddingService.scheduleRebuildAfterCommit();
         ontologyService.reloadAfterCommit();
     }
 
@@ -182,36 +182,13 @@ public class ConceptService {
     public void deleteBatch(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return;
         deleteCore(ids);
-        scheduleFaissCleanupAfterCommit(ids);
+        conceptEmbeddingService.scheduleRebuildAfterCommit();
         ontologyService.reloadAfterCommit();
     }
 
-    /**
-     * 事务提交后从 FAISS 索引移除已删除概念，避免死 ID 永久留在索引里
-     * （此前 removeConcepts 全工程无调用，索引只增不减）。
-     * 失败仅告警：索引可在下次 rebuildIndex 时自愈。
-     */
-    private void scheduleFaissCleanupAfterCommit(List<Long> ids) {
-        List<String> idStrings = ids.stream().map(String::valueOf).toList();
-        Runnable task = () -> {
-            try {
-                conceptEmbeddingService.removeFromIndex(idStrings);
-            } catch (Exception e) {
-                log.warn("Failed to remove deleted concepts from FAISS index {}: {}", ids, e.getMessage());
-            }
-        };
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            Thread.startVirtualThread(task);
-                        }
-                    });
-        } else {
-            Thread.startVirtualThread(task);
-        }
-    }
+    // 概念删除后的索引清理改为全量重建（scheduleRebuildAfterCommit）：
+    // 多副本下增量 remove 只会落到单个 EB 实例，是索引发散的根源；
+    // 索引以 MySQL 为唯一事实源，全量重建（IndexFlatIP 毫秒级）+ 定时对账兜底。
 
     private void deleteCore(List<Long> ids) {
         conceptMappingRepository.deleteByConceptIdIn(ids);

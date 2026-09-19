@@ -46,6 +46,10 @@ public class OntologyService {
     private final ConceptToolBindingRepository conceptToolBindingRepository;
     private final ToolDefinitionRepository toolDefinitionRepository;
     private final com.luban.repository.RelationTypeRepository relationTypeRepository;
+    private final com.luban.repository.OntologyChangeLogRepository ontologyChangeLogRepository;
+
+    /** 内存图对应的库内指纹（多副本对账用）：与本地图不一致即触发 reload */
+    private volatile String lastGraphFingerprint = "";
 
     private static final int MAX_CONCEPT_EXPAND = 20;
     private static final int MAX_API_TOOLS = 15;
@@ -155,7 +159,8 @@ public class OntologyService {
                            ConceptJoinMappingRepository conceptJoinMappingRepository,
                            ConceptToolBindingRepository conceptToolBindingRepository,
                            ToolDefinitionRepository toolDefinitionRepository,
-                           com.luban.repository.RelationTypeRepository relationTypeRepository) {
+                           com.luban.repository.RelationTypeRepository relationTypeRepository,
+                           com.luban.repository.OntologyChangeLogRepository ontologyChangeLogRepository) {
         this.conceptRepository = conceptRepository;
         this.conceptRelationRepository = conceptRelationRepository;
         this.conceptMappingRepository = conceptMappingRepository;
@@ -163,12 +168,14 @@ public class OntologyService {
         this.conceptToolBindingRepository = conceptToolBindingRepository;
         this.toolDefinitionRepository = toolDefinitionRepository;
         this.relationTypeRepository = relationTypeRepository;
+        this.ontologyChangeLogRepository = ontologyChangeLogRepository;
     }
 
     @PostConstruct
     public void init() {
         try {
             buildGraph();
+            lastGraphFingerprint = computeGraphFingerprint();
             log.info("Ontology graph initialized: {} concepts, {} relation edges",
                     graph.nameByConcept.size(), graph.outgoing.values().stream().mapToInt(List::size).sum());
         } catch (Exception e) {
@@ -184,11 +191,44 @@ public class OntologyService {
     public void reload() {
         try {
             buildGraph();
+            lastGraphFingerprint = computeGraphFingerprint();
             log.info("Ontology graph reloaded: {} concepts, {} relation edges",
                     graph.nameByConcept.size(), graph.outgoing.values().stream().mapToInt(List::size).sum());
         } catch (Exception e) {
             log.error("Failed to reload ontology graph: {}", e.getMessage(), e);
         }
+    }
+
+    /**
+     * 多副本对账（30s）：库内本体指纹与内存图不一致时自动 reload。
+     * reloadAfterCommit 只刷新收到请求的实例，其余实例图 stale 到重启；
+     * 指纹覆盖概念（数量+最后更新时间）、关系、关系类型与变更台账，任何实例上的
+     * 本体变更都会在下一个周期被其他实例感知（本实例经 reloadAfterCommit 即时刷新）。
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 30_000, initialDelay = 45_000)
+    public void reconcileGraph() {
+        try {
+            String fingerprint = computeGraphFingerprint();
+            if (!fingerprint.equals(lastGraphFingerprint)) {
+                log.info("Ontology fingerprint changed, reloading graph");
+                buildGraph();
+                lastGraphFingerprint = fingerprint;
+                log.info("Ontology graph reloaded (reconcile): {} concepts, {} relation edges",
+                        graph.nameByConcept.size(), graph.outgoing.values().stream().mapToInt(List::size).sum());
+            }
+        } catch (Exception e) {
+            log.error("Ontology graph reconcile failed: {}", e.getMessage());
+        }
+    }
+
+    private String computeGraphFingerprint() {
+        java.time.LocalDateTime maxConceptUpdate = conceptRepository.maxUpdatedAt();
+        return "c" + conceptRepository.count()
+                + "u" + (maxConceptUpdate == null ? "-" : maxConceptUpdate)
+                + "r" + conceptRelationRepository.count()
+                + "ri" + conceptRelationRepository.maxId()
+                + "rt" + relationTypeRepository.count()
+                + "cl" + ontologyChangeLogRepository.maxId();
     }
 
     private static final Object RELOAD_REGISTERED_KEY = new Object();

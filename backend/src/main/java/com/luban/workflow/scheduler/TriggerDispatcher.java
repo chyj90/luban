@@ -25,8 +25,10 @@ import java.util.Map;
  * at-least-once：失败按退避序列重试，超过 maxAttempts 置 DEAD（死信）并告警日志；
  * 幂等键 = "otb-"+outbox.id（确定性），漏斗按该键对已成功的调用去重，
  * "目标已成功但响应丢失"的重发不会重复执行。
- * 组门槛：同组（同一来源节点同一事件的多个触发器）按 group_order 顺序派发，
- * 前序成员未成功时后续成员不派发——配置声明的执行顺序在重试场景下依然成立。
+ * 多副本认领：扫描行后先以条件 UPDATE 抢占（PENDING→DISPATCHING），赢者派发、输者跳过；
+ * 认领超时（实例崩溃残留）可被重认领。组门槛：同组（同一来源节点同一事件的多个触发器）
+ * 按 group_order 顺序派发，前序成员未成功时后续成员不派发——配置声明的执行顺序在
+ * 重试场景下依然成立。
  */
 @Slf4j
 @Service
@@ -35,18 +37,49 @@ public class TriggerDispatcher {
 
     private static final List<Long> DEFAULT_BACKOFF = List.of(30L, 120L, 600L);
 
+    /** 认领超时：DISPATCHING 超过该时长视为实例崩溃，可被重认领（须大于最慢一次派发耗时） */
+    private static final java.time.Duration STALE_CLAIM = java.time.Duration.ofMinutes(5);
+
     private final WorkflowTriggerOutboxRepository outboxRepository;
     private final WorkflowTriggerService triggerService;
     private final ObjectProvider<InvocationService> invocationServiceProvider;
+    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
 
     @Scheduled(fixedDelay = 5_000)
     public void dispatchPending() {
-        List<WorkflowTriggerOutbox> batch = outboxRepository
-                .findTop20ByStatusAndNextRetryAtBeforeOrderByIdAsc("PENDING", LocalDateTime.now());
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime staleBefore = now.minus(STALE_CLAIM);
+        List<WorkflowTriggerOutbox> batch = outboxRepository.findDispatchable(
+                now, staleBefore, org.springframework.data.domain.PageRequest.of(0, 20));
         for (WorkflowTriggerOutbox row : batch) {
-            if (!groupReady(row)) continue;
+            if (!claimRow(row, now, staleBefore)) continue;
+            if (!groupReady(row)) {
+                releaseClaim(row);
+                continue;
+            }
             dispatch(row);
         }
+    }
+
+    /**
+     * 多副本认领：条件 UPDATE 抢占，赢者派发、输者跳过（另一实例已抢到）。
+     * 赢者同步内存实体状态，保证后续 markDispatched/scheduleRetry 落库正确。
+     */
+    private boolean claimRow(WorkflowTriggerOutbox row, LocalDateTime now, LocalDateTime staleBefore) {
+        boolean staleResidual = "DISPATCHING".equals(row.getStatus());
+        Integer updated = transactionTemplate.execute(tx -> staleResidual
+                ? outboxRepository.reclaimStaleRow(row.getId(), now, staleBefore)
+                : outboxRepository.claimPendingRow(row.getId(), now));
+        if (updated == null || updated != 1) return false;
+        row.setStatus("DISPATCHING");
+        row.setClaimedAt(now);
+        return true;
+    }
+
+    private void releaseClaim(WorkflowTriggerOutbox row) {
+        transactionTemplate.executeWithoutResult(tx -> outboxRepository.releaseClaim(row.getId()));
+        row.setStatus("PENDING");
+        row.setClaimedAt(null);
     }
 
     /**
@@ -128,6 +161,7 @@ public class TriggerDispatcher {
 
     private void markDispatched(WorkflowTriggerOutbox row) {
         row.setStatus("DISPATCHED");
+        row.setClaimedAt(null);
         row.setDispatchedAt(LocalDateTime.now());
         outboxRepository.save(row);
     }
@@ -139,9 +173,13 @@ public class TriggerDispatcher {
         row.setLastError(message.length() > 512 ? message.substring(0, 512) : message);
         if (attempts >= (row.getMaxAttempts() == null ? 3 : row.getMaxAttempts())) {
             row.setStatus("DEAD");
+            row.setClaimedAt(null);
             log.error("触发器派发失败进入死信: row={} target={}:{} err={}",
                     row.getId(), row.getTargetType(), row.getTargetRef(), message, e);
         } else {
+            // 归还队列：认领失败路径（DISPATCHING）必须回到 PENDING 才会被下一轮扫描
+            row.setStatus("PENDING");
+            row.setClaimedAt(null);
             long backoff = backoffSeconds(row).stream()
                     .skip(Math.max(0, attempts - 1)).findFirst().orElse(600L);
             row.setNextRetryAt(LocalDateTime.now().plusSeconds(backoff));

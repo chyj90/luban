@@ -163,23 +163,24 @@ concept_index = None           # faiss.IndexFlatIP
 concept_ids = []               # list of concept IDs (strings)
 concept_index_dim = None       # dimension of the index
 
-column_index = None            # faiss.IndexFlatIP for column-level search
-column_ids = []                # list of "tableName.columnName" (strings)
-column_index_dim = None        # dimension of the column index
-column_index_built_for = None  # datasource_id that the column index was built for
+# 列级索引按 datasource_id 分槽：多数据源索引并存（v2 单槽会被后建数据源覆盖），
+# fingerprint 由后端按表列 id 集合计算，数据源结构变更后状态检查失配即触发重建；
+# 多副本语义服务实例间不共享此内存态，由后端"构建广播 + 检索失败自愈"保证一致。
+column_indexes = {}            # datasource_id(str) -> {"index": IndexFlatIP, "ids": [...], "dim": int, "fingerprint": str|None}
 
 
 @app.route("/v1/faiss/health", methods=["GET"])
 def faiss_health():
+    column_total = sum(len(v["ids"]) for v in column_indexes.values())
     return jsonify({
         "faiss_available": FAISS_AVAILABLE,
         "index_built": concept_index is not None,
         "index_size": len(concept_ids) if concept_ids else 0,
         "dimension": concept_index_dim,
-        "column_index_built": column_index is not None,
-        "column_index_size": len(column_ids) if column_ids else 0,
-        "column_index_dim": column_index_dim,
-        "column_index_built_for": column_index_built_for,
+        "column_index_built": bool(column_indexes),
+        "column_index_size": column_total,
+        "column_index_datasources": len(column_indexes),
+        "column_index_dim": next((v["dim"] for v in column_indexes.values()), None),
     })
 
 
@@ -226,7 +227,7 @@ def faiss_search():
     if not FAISS_AVAILABLE:
         return jsonify({"error": "FAISS is not installed"}), 503
     if concept_index is None:
-        return jsonify({"error": "Index not built yet"}), 503
+        return jsonify({"error": "Index not built yet", "reason": "index_not_built"}), 503
 
     data = request.get_json()
     if not data or "embedding" not in data:
@@ -248,79 +249,21 @@ def faiss_search():
     return jsonify({"results": results})
 
 
-@app.route("/v1/faiss/add", methods=["POST"])
-def faiss_add():
-    """Add vectors to the existing index.
-    Request: { "concepts": [ { "id": "concept_new", "embedding": [...] }, ... ] }
-    """
-    global concept_index, concept_ids
-
-    if not FAISS_AVAILABLE:
-        return jsonify({"error": "FAISS is not installed"}), 503
-    if concept_index is None:
-        return jsonify({"error": "Index not built yet, use /v1/faiss/build first"}), 503
-
-    data = request.get_json()
-    if not data or "concepts" not in data:
-        return jsonify({"error": "Missing 'concepts' field"}), 400
-
-    for c in data["concepts"]:
-        vec = np.array([c["embedding"]], dtype=np.float32)
-        concept_index.add(vec)
-        concept_ids.append(str(c["id"]))
-
-    return jsonify({"status": "ok", "index_size": concept_index.ntotal})
-
-
-@app.route("/v1/faiss/remove", methods=["POST"])
-def faiss_remove():
-    """Remove concepts from index by IDs. Since FAISS IndexFlatIP doesn't support
-    removal, we rebuild the index without the specified IDs.
-    Request: { "ids": ["concept_1", "concept_2"] }
-    """
-    global concept_index, concept_ids
-
-    if not FAISS_AVAILABLE:
-        return jsonify({"error": "FAISS is not installed"}), 503
-    if concept_index is None:
-        return jsonify({"error": "Index not built yet"}), 503
-
-    data = request.get_json()
-    remove_ids = set(data.get("ids", []))
-    if not remove_ids:
-        return jsonify({"error": "Missing 'ids' field"}), 400
-
-    keep_indices = [i for i, cid in enumerate(concept_ids) if cid not in remove_ids]
-    if not keep_indices:
-        concept_index = None
-        concept_ids = []
-        return jsonify({"status": "ok", "index_size": 0})
-
-    remaining_vectors = concept_index.reconstruct_n(0, concept_index.ntotal)[keep_indices]
-    new_concept_ids = [concept_ids[i] for i in keep_indices]
-
-    dim = remaining_vectors.shape[1]
-    new_index = faiss.IndexFlatIP(dim)
-    new_index.add(remaining_vectors.astype(np.float32))
-
-    concept_index = new_index
-    concept_ids = new_concept_ids
-
-    return jsonify({"status": "ok", "index_size": concept_index.ntotal})
+# 增量 add/remove 接口已移除：多实例下增量只会落到单个实例，是索引发散的根源。
+# 索引以 MySQL 为唯一事实源，一律由后端全量 build（IndexFlatIP 毫秒级）+ 失败自愈 + 定时对账。
 
 
 # ---- Column-level FAISS Index for Datasource Structure Pruning ----
 
 @app.route("/v1/faiss/build-column-index", methods=["POST"])
 def faiss_build_column_index():
-    """Build column-level FAISS index from datasource structure.
+    """Build/replace the column-level FAISS index of ONE datasource (per-ds slot).
     Request: {
         "datasource_id": "ds_1",
+        "fingerprint": "ab12cd34",   # optional; backend computes from column id set
         "columns": [ { "id": "ACDOCA.HSL", "text": "金额", "embedding": [...] }, ... ]
     }
     """
-    global column_index, column_ids, column_index_dim, column_index_built_for
-
     if not FAISS_AVAILABLE:
         return jsonify({"error": "FAISS is not installed"}), 503
 
@@ -328,71 +271,92 @@ def faiss_build_column_index():
     if not data or "columns" not in data or "datasource_id" not in data:
         return jsonify({"error": "Missing 'columns' or 'datasource_id' field"}), 400
 
-    ds_id = data["datasource_id"]
+    ds_id = str(data["datasource_id"])
     columns = data["columns"]
     if not columns:
-        return jsonify({"error": "Empty columns list"}), 400
+        column_indexes.pop(ds_id, None)
+        return jsonify({"status": "ok", "datasource_id": ds_id, "index_size": 0})
 
     dim = len(columns[0]["embedding"])
-    column_index = faiss.IndexFlatIP(dim)
-    column_index_dim = dim
-    column_ids = []
-    column_index_built_for = ds_id
-
+    index = faiss.IndexFlatIP(dim)
     vectors = np.array([c["embedding"] for c in columns], dtype=np.float32)
-    column_ids = [str(c["id"]) for c in columns]
-    column_index.add(vectors)
+    ids = [str(c["id"]) for c in columns]
+    index.add(vectors)
+
+    column_indexes[ds_id] = {
+        "index": index, "ids": ids, "dim": dim,
+        "fingerprint": data.get("fingerprint"),
+    }
 
     return jsonify({
         "status": "ok",
         "datasource_id": ds_id,
-        "index_size": column_index.ntotal,
+        "index_size": len(ids),
         "dimension": dim,
     })
 
 
 @app.route("/v1/faiss/search-columns", methods=["POST"])
 def faiss_search_columns():
-    """Search similar columns by embedding.
-    Request: { "embedding": [...], "top_k": 30 }
-    Response: { "results": [ { "id": "ACDOCA.HSL", "score": 0.95 }, ... ] }
+    """Search similar columns across the given datasources' indexes (merged).
+    Request: { "datasource_ids": ["1","2"], "embedding": [...], "top_k": 30 }
+    Response: { "results": [ { "id": "ACDOCA.HSL", "score": 0.95 }, ... ],
+                "missing": ["3"] }   # missing = 尚未构建索引的数据源，后端据此自愈
     """
     if not FAISS_AVAILABLE:
         return jsonify({"error": "FAISS is not installed"}), 503
-    if column_index is None:
-        return jsonify({"error": "Column index not built yet"}), 503
 
     data = request.get_json()
     if not data or "embedding" not in data:
         return jsonify({"error": "Missing 'embedding' field"}), 400
 
+    ds_ids = data.get("datasource_ids")
+    if not ds_ids and data.get("datasource_id"):
+        ds_ids = [data["datasource_id"]]
+    if not ds_ids:
+        return jsonify({"error": "Missing 'datasource_ids' field"}), 400
+
     query_vec = np.array([data["embedding"]], dtype=np.float32)
-    top_k = min(data.get("top_k", 30), len(column_ids))
+    try:
+        top_k = max(1, int(data.get("top_k", 30)))
+    except (TypeError, ValueError):
+        top_k = 30
 
-    scores, indices = column_index.search(query_vec, top_k)
+    merged = {}
+    missing = []
+    for ds in ds_ids:
+        entry = column_indexes.get(str(ds))
+        if entry is None:
+            missing.append(str(ds))
+            continue
+        k = min(top_k, len(entry["ids"]))
+        if k <= 0:
+            continue
+        scores, indices = entry["index"].search(query_vec, k)
+        for score, idx in zip(scores[0], indices[0]):
+            if 0 <= idx < len(entry["ids"]):
+                cid = entry["ids"][idx]
+                if cid not in merged or float(score) > merged[cid]:
+                    merged[cid] = float(score)
 
-    results = []
-    for score, idx in zip(scores[0], indices[0]):
-        if idx >= 0 and idx < len(column_ids):
-            results.append({
-                "id": column_ids[idx],
-                "score": float(score),
-            })
-
-    return jsonify({"results": results})
+    results = [{"id": cid, "score": s} for cid, s in
+               sorted(merged.items(), key=lambda kv: kv[1], reverse=True)[:top_k]]
+    return jsonify({"results": results, "missing": missing})
 
 
 @app.route("/v1/faiss/column-index-status", methods=["GET"])
 def faiss_column_index_status():
-    """Check if column index is built for a specific datasource.
-    Query param: ?datasource_id=ds_1
+    """Check if the column index is built for a datasource, optionally matching fingerprint.
+    Query params: ?datasource_id=ds_1[&fingerprint=ab12cd34]
     """
     ds_id = request.args.get("datasource_id")
+    fingerprint = request.args.get("fingerprint")
+    entry = column_indexes.get(str(ds_id)) if ds_id is not None else None
+    built = entry is not None and (not fingerprint or entry.get("fingerprint") == fingerprint)
     return jsonify({
-        "built": column_index is not None and column_index_built_for == ds_id,
+        "built": built,
         "datasource_id": ds_id,
-        "built_for": column_index_built_for,
-        "index_size": len(column_ids) if column_ids else 0,
+        "index_size": len(entry["ids"]) if entry else 0,
     })
 
 

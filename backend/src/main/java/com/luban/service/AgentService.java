@@ -86,7 +86,7 @@ public class AgentService {
     private final ConcurrentHashMap<String, CompiledGraph<AgentState>> compiledGraphs = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Deque<Long>> rateLimitBuckets = new ConcurrentHashMap<>();
     private final AtomicInteger totalCallCount = new AtomicInteger(0);
-    private final Semaphore agentConcurrencySemaphore = new Semaphore(AGENT_CONCURRENT_LIMIT, true);
+    private final Semaphore agentConcurrencySemaphore;
 
     private final java.util.concurrent.ScheduledExecutorService idleExecutor =
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
@@ -105,8 +105,6 @@ public class AgentService {
     private static final Duration LLM_IDLE_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration LLM_HARD_TIMEOUT = Duration.ofSeconds(300);
     private static final long AGENT_TOTAL_TIMEOUT_MS = 300_000;
-    private static final int AGENT_CONCURRENT_LIMIT = 5;
-
     private static final int MAX_CONCEPT_EXPAND = 20;
     private static final int MAX_CONCEPT_IDS = 10;
     private static final int MAX_API_TOOLS = 15;
@@ -143,7 +141,9 @@ public class AgentService {
                         AlgorithmExecutionLogRepository algorithmExecutionLogRepository,
                         com.luban.service.algorithm.JsonSchemaValidator jsonSchemaValidator,
                         ContextBuilder contextBuilder,
-                        SqlExecutionService sqlExecutionService) {
+                        SqlExecutionService sqlExecutionService,
+                        @org.springframework.beans.factory.annotation.Value("${luban.agent.concurrent.limit:5}")
+                        int agentConcurrentLimit) {
         this.agentConfigRepository = agentConfigRepository;
         this.agentConfigService = agentConfigService;
         this.toolDefinitionRepository = toolDefinitionRepository;
@@ -165,6 +165,8 @@ public class AgentService {
         this.jsonSchemaValidator = jsonSchemaValidator;
         this.contextBuilder = contextBuilder;
         this.sqlExecutionService = sqlExecutionService;
+        // 多副本注意：并发闸门按 Pod 生效，全局并发 = 配置值 × 副本数
+        this.agentConcurrencySemaphore = new Semaphore(Math.max(1, agentConcurrentLimit), true);
     }
 
     public Map<String, Object> chat(String sessionId, String userMessage, Long userId, String userName) {

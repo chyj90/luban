@@ -2,6 +2,14 @@ FROM python:3.11-slim
 
 RUN pip install --no-cache-dir numpy scipy pandas openpyxl
 
+# 外部托管模式（受限 K8s，无 API 权限）：镜像内置 HTTP Agent，
+# 容器以 Agent 为主进程常驻，供语义服务探活与执行脚本（见 doc/部署文档.md 附录 G.4）。
+# docker runtime（本地 dev）同样可用本镜像——Agent 主进程等效于 sleep infinity 的常驻占位。
+COPY sandbox_agent.py /opt/sandbox_agent.py
+EXPOSE 9000
+
 RUN useradd -m -s /bin/bash sandbox
 USER sandbox
 WORKDIR /home/sandbox
+
+CMD ["python3", "/opt/sandbox_agent.py"]

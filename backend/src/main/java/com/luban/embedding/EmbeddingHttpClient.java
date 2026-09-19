@@ -24,6 +24,9 @@ public class EmbeddingHttpClient implements AutoCloseable {
     private final String baseUrl;
     private volatile boolean available = false;
     private volatile int dimension = 0;
+    /** 不可用时的节流重查：backend 启动早于 EB 就绪不再永久降级（v2 构造时判死后不恢复） */
+    private volatile long lastRecheckAt = 0;
+    private static final long RECHECK_INTERVAL_MS = 15_000;
 
     public EmbeddingHttpClient() {
         this.httpClient = HttpClient.newBuilder()
@@ -62,11 +65,15 @@ public class EmbeddingHttpClient implements AutoCloseable {
     }
 
     public boolean isAvailable() {
+        if (!available && System.currentTimeMillis() - lastRecheckAt >= RECHECK_INTERVAL_MS) {
+            lastRecheckAt = System.currentTimeMillis();
+            checkHealth();
+        }
         return available;
     }
 
     public int getDimension() {
-        if (dimension == 0 && available) {
+        if (dimension == 0 && isAvailable()) {
             try {
                 float[] vec = encode("test");
                 if (vec != null) {
@@ -80,7 +87,7 @@ public class EmbeddingHttpClient implements AutoCloseable {
     }
 
     public float[] encode(String text) {
-        if (!available) return null;
+        if (!isAvailable()) return null;
         try {
             List<float[]> results = encodeBatch(List.of(text));
             return (results != null && !results.isEmpty()) ? results.get(0) : null;
@@ -91,7 +98,7 @@ public class EmbeddingHttpClient implements AutoCloseable {
     }
 
     public List<float[]> encodeBatch(List<String> texts) {
-        if (!available || texts == null || texts.isEmpty()) {
+        if (!isAvailable() || texts == null || texts.isEmpty()) {
             return List.of();
         }
 
@@ -137,7 +144,7 @@ public class EmbeddingHttpClient implements AutoCloseable {
      * 返回与入参顺序一致的关键词列表；服务不可用或失败时返回 null，调用方自行降级。
      */
     public List<List<String>> segment(List<String> texts, int topK) {
-        if (texts == null || texts.isEmpty()) {
+        if (texts == null || texts.isEmpty() || !isAvailable()) {
             return List.of();
         }
         try {

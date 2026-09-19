@@ -2,6 +2,7 @@ package com.luban.repository;
 
 import com.luban.entity.ConceptRelation;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import java.util.List;
 
 public interface ConceptRelationRepository extends JpaRepository<ConceptRelation, Long> {
@@ -16,4 +17,8 @@ public interface ConceptRelationRepository extends JpaRepository<ConceptRelation
             Long sourceConceptId, Long targetConceptId, String relationType);
     void deleteBySourceConceptIdIn(List<Long> sourceConceptIds);
     void deleteByTargetConceptIdIn(List<Long> targetConceptIds);
+
+    /** 本体图对账指纹用 */
+    @Query("select max(r.id) from ConceptRelation r")
+    Long maxId();
 }

@@ -324,7 +324,7 @@ public class ConceptMappingService {
         } catch (Exception e) { log.warn("[rule] 获取概念 embedding 失败: {}", e.getMessage()); }
         if (conceptEmbedding != null) {
             try {
-                for (Map<String, Object> r : faissService.searchColumns(conceptEmbedding, 30)) {
+                for (Map<String, Object> r : searchColumnsWithHeal(conceptEmbedding, 30, prunedDsStructures)) {
                     double score = r.get("score") instanceof Number n ? n.doubleValue() : 0.0;
                     if (score >= 0.5) embeddingHitColumns.add((String) r.get("id"));
                 }
@@ -1412,7 +1412,7 @@ public class ConceptMappingService {
         Set<String> embeddingHitColumns = new LinkedHashSet<>();
         if (conceptEmbedding != null) {
             try {
-                List<Map<String, Object>> results = faissService.searchColumns(conceptEmbedding, 30);
+                List<Map<String, Object>> results = searchColumnsWithHeal(conceptEmbedding, 30, dsStructures);
                 for (Map<String, Object> r : results) {
                     double score = r.get("score") instanceof Number n ? n.doubleValue() : 0.0;
                     if (score >= 0.5) {
@@ -1562,17 +1562,53 @@ public class ConceptMappingService {
     private void buildColumnIndexIfNeeded(List<Map<String, Object>> dsStructures, List<Datasource> datasources) {
         if (datasources.isEmpty()) return;
         Set<Long> requestedDsIds = datasources.stream().map(Datasource::getId).collect(Collectors.toSet());
+        List<Map<String, Object>> scoped = dsStructures.stream()
+                .filter(ds -> ds.get("id") instanceof Number n && requestedDsIds.contains(n.longValue()))
+                .toList();
+        buildColumnIndexesFor(scoped);
+    }
 
+    /** 跨数据源列检索（带多副本自愈）：缺失索引的实例先补建再重试，仍缺失则用部分结果降级 */
+    private List<Map<String, Object>> searchColumnsWithHeal(List<Float> embedding, int topK,
+                                                            List<Map<String, Object>> dsStructures) {
+        List<String> dsIds = dsStructures.stream()
+                .filter(ds -> ds.get("id") != null)
+                .map(ds -> String.valueOf(ds.get("id")))
+                .toList();
+        try {
+            return faissService.searchColumns(embedding, topK, dsIds);
+        } catch (FaissColumnIndexMissingException e) {
+            log.warn("[column-index] EB 实例缺失列索引 {}, 触发自愈重建", e.getMissingDatasources());
+            List<Map<String, Object>> missingStructures = dsStructures.stream()
+                    .filter(ds -> e.getMissingDatasources().contains(String.valueOf(ds.get("id"))))
+                    .toList();
+            buildColumnIndexesFor(missingStructures);
+            try {
+                return faissService.searchColumns(embedding, topK, dsIds);
+            } catch (FaissColumnIndexMissingException e2) {
+                log.warn("[column-index] 自愈后仍缺失 {}, 使用部分结果（该部分数据源退化为关键词匹配）",
+                        e2.getMissingDatasources());
+                return e2.getPartialResults();
+            }
+        }
+    }
+
+    /**
+     * 逐数据源构建列索引。EB 侧按 datasource_id 分槽存放（多数据源并存），
+     * 以结构指纹判断是否需要构建：表列增删/改名后指纹变化即重建，避免旧索引残响；
+     * 多副本下要求全部 EB 实例就绪才算已构建。
+     */
+    private void buildColumnIndexesFor(List<Map<String, Object>> dsStructures) {
         for (Map<String, Object> ds : dsStructures) {
             Object idObj = ds.get("id");
             if (!(idObj instanceof Number n)) continue;
             long dsId = n.longValue();
-            if (!requestedDsIds.contains(dsId)) continue;
 
             String dsKey = String.valueOf(dsId);
+            String fingerprint = structureFingerprint(ds);
             try {
-                if (faissService.isColumnIndexBuiltFor(dsKey)) {
-                    log.info("[column-index] 数据源 {} 列索引已构建，跳过", dsKey);
+                if (faissService.isColumnIndexBuiltFor(dsKey, fingerprint)) {
+                    log.info("[column-index] 数据源 {} 列索引已就绪（指纹匹配），跳过", dsKey);
                     continue;
                 }
             } catch (Exception e) {
@@ -1605,14 +1641,38 @@ public class ConceptMappingService {
                 }
             }
 
-            if (!columnEntries.isEmpty()) {
-                try {
-                    faissService.buildColumnIndex(dsKey, columnEntries);
-                    log.info("[column-index] 数据源 {} 列索引构建完成: {} 条", dsKey, columnEntries.size());
-                } catch (Exception e) {
-                    log.warn("[column-index] 数据源 {} 列索引构建失败: {}", dsKey, e.getMessage());
+            try {
+                faissService.buildColumnIndex(dsKey, fingerprint, columnEntries);
+                log.info("[column-index] 数据源 {} 列索引构建完成: {} 条", dsKey, columnEntries.size());
+            } catch (Exception e) {
+                log.warn("[column-index] 数据源 {} 列索引构建失败: {}", dsKey, e.getMessage());
+            }
+        }
+    }
+
+    /** 结构指纹：表列 id 集合的 SHA-256 前 32 位十六进制（表列增删/改名即变化，与 embedding 内容无关） */
+    private String structureFingerprint(Map<String, Object> ds) {
+        StringBuilder sb = new StringBuilder();
+        Map<String, Object> structure = (Map<String, Object>) ds.get("structure");
+        List<Map<String, Object>> tables = (List<Map<String, Object>>) (structure == null ? null : structure.get("tables"));
+        if (tables != null) {
+            for (Map<String, Object> table : tables) {
+                String tableName = (String) table.get("name");
+                List<Map<String, Object>> cols = (List<Map<String, Object>>) table.get("columns");
+                if (cols == null) continue;
+                for (Map<String, Object> col : cols) {
+                    sb.append(tableName).append('.').append(col.get("name")).append('\n');
                 }
             }
+        }
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) hex.append(String.format("%02x", b));
+            return hex.substring(0, 32);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return String.valueOf(sb.hashCode());
         }
     }
 }

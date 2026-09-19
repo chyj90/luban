@@ -30,9 +30,11 @@ services:
   # ============================================================
   # Embedding 向量服务 (Python)
   # 沙箱说明：SANDBOX_ENABLED 默认关闭（LLM 生成的代码在本容器 subprocess 直跑，有网络权限）。
-  # 如需开启沙箱池，需给本容器挂载 /var/run/docker.sock 并预构建 luban-sandbox 镜像
-  #（embedding-service/Dockerfile.sandbox）——等价于授予本容器 Docker 权限，生产建议
-  # 改为宿主部署 embedding 或经 docker socket proxy 收敛权限。池状态：GET /v1/sandbox/health
+  # dev 开启沙箱：设置 SANDBOX_ENABLED=true 并挂载 /var/run/docker.sock、预构建
+  # luban-sandbox 镜像（embedding-service/Dockerfile.sandbox）——等价于授予容器 Docker 权限，
+  # 仅限本地开发。生产 K8s 不挂 docker.sock：受限集群（无 API 权限）用 SANDBOX_RUNTIME=external
+  # + 人工部署沙箱 Deployment；允许 API 的集群用 k8s runtime。见 doc/部署文档.md 附录 G.4。
+  # 池状态：GET /v1/sandbox/health
   # ============================================================
   embedding:
     build:

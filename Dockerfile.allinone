@@ -51,12 +51,16 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
     && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip
 
 # ---------- 安装 Python 依赖 & 预下载模型 ----------
+# 最小包剔除 kubernetes 客户端（约 20MB）：它仅 SANDBOX_RUNTIME=k8s（需要 K8s API 权限的
+# 集群）使用；缺失时该 runtime 会自动降级 subprocess 并打 WARNING，external/docker 沙箱不受
+# 影响（见 doc/部署文档.md 附录 G.4）。allinone 如需 k8s runtime，改用独立镜像部署或去掉过滤。
 COPY embedding-service/requirements.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu \
     && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
        "transformers==4.46.3" "sentence-transformers==3.1.1" \
-    && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+    && grep -v '^kubernetes' /tmp/requirements.txt > /tmp/requirements-min.txt \
+    && python3 -m pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r /tmp/requirements-min.txt \
+    && rm -f /tmp/requirements.txt /tmp/requirements-min.txt
 
 ENV HF_ENDPOINT=https://hf-mirror.com \
     EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5 \

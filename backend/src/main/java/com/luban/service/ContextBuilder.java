@@ -23,6 +23,7 @@ public class ContextBuilder {
     private final org.slf4j.Logger agentDebug = LoggerFactory.getLogger("agent-debug");
 
     private final FaissService faissService;
+    private final ConceptEmbeddingService conceptEmbeddingService;
     private final OntologyService ontologyService;
     private final ConceptRepository conceptRepository;
     private final ConceptMappingRepository conceptMappingRepository;
@@ -522,7 +523,7 @@ public class ContextBuilder {
         try {
             List<Float> prevEmbedding = faissService.getEmbedding(prevQuery);
             if (prevEmbedding != null && !prevEmbedding.isEmpty()) {
-                List<Map<String, Object>> prevResults = faissService.search(prevEmbedding, 10);
+                List<Map<String, Object>> prevResults = conceptEmbeddingService.searchWithHeal(prevEmbedding, 10);
                 if (prevResults != null) {
                     for (Map<String, Object> r : prevResults) {
                         Object id = r.get("id");
@@ -638,7 +639,7 @@ public class ContextBuilder {
         try {
             List<Float> embedding = faissService.getEmbedding(userQuery);
             if (embedding == null || embedding.isEmpty()) return new ConceptSearchResult(List.of(), true);
-            List<Map<String, Object>> results = faissService.search(embedding, 10);
+            List<Map<String, Object>> results = conceptEmbeddingService.searchWithHeal(embedding, 10);
             if (results == null || results.isEmpty()) return new ConceptSearchResult(List.of(), false);
             List<Map<String, Object>> enriched = new ArrayList<>();
             for (Map<String, Object> r : results) {

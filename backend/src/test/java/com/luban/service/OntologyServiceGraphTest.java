@@ -48,6 +48,7 @@ class OntologyServiceGraphTest {
     @Mock private ConceptToolBindingRepository conceptToolBindingRepository;
     @Mock private ToolDefinitionRepository toolDefinitionRepository;
     @Mock private RelationTypeRepository relationTypeRepository;
+    @Mock private com.luban.repository.OntologyChangeLogRepository ontologyChangeLogRepository;
 
     private OntologyService service;
 
@@ -82,7 +83,7 @@ class OntologyServiceGraphTest {
         service = new OntologyService(conceptRepository, conceptRelationRepository,
                 conceptMappingRepository, conceptJoinMappingRepository,
                 conceptToolBindingRepository, toolDefinitionRepository,
-                relationTypeRepository);
+                relationTypeRepository, ontologyChangeLogRepository);
     }
 
     private void build(List<Concept> concepts, List<ConceptRelation> relations,

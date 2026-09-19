@@ -88,6 +88,13 @@ public class WorkflowTriggerOutbox {
     @Column(name = "dispatched_at")
     private LocalDateTime dispatchedAt;
 
+    /**
+     * 多副本认领时间戳：派发前以条件 UPDATE 抢占（PENDING→DISPATCHING），
+     * 超过 STALE_CLAIM 时长未完成视为实例崩溃，可被重新认领（幂等键兜底重复执行）。
+     */
+    @Column(name = "claimed_at")
+    private LocalDateTime claimedAt;
+
     @Column(name = "last_error", length = 512)
     private String lastError;
 
